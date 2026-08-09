@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+*.tsbuildinfo
+
+# Coverage output (c8)
+coverage/
+
+# Credentials & environment
+.env
+.env.*
+!.env.example
+
+# Packed tarballs
+*.tgz
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+
+# NOTE: the AI-harness files (CLAUDE.md, CLAUDE.local.md, WORKLOG.md, .claude/,
+# docs/ai/) are deliberately NOT listed here — they are excluded via
+# .git/info/exclude so the exclusion itself never gets committed.

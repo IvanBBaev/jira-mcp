@@ -1,0 +1,27 @@
+# Automated dependency updates (npm + GitHub Actions), weekly.
+#
+# Minor/patch are grouped so the weekly churn is one PR; majors stay separate,
+# because a breaking bump deserves its own review. The github-actions ecosystem
+# bumps the SHA pins in .github/workflows/ — pinned actions are only as safe as
+# the process that refreshes them.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # A brand-new npm version is the window in which a compromised release is
+    # still unnoticed. Waiting a week costs nothing here and skips that window.
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: ['minor', 'patch']

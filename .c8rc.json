@@ -1,0 +1,20 @@
+{
+  "//": "Coverage is measured over the COMPILED output, because that is what the test runner executes (`node --test build/**/*.test.js`). `excludeAfterRemap` makes the exclude patterns below apply to the ORIGINAL src/*.ts paths after source-map remapping, which is why they are written in src/ terms even though `src` points at build/. Thresholds are the Phase-0 starting levels from TESTING.md; IMPLEMENTATION-PLAN.md enforces them inside `npm run check` from Phase 3 on and raises them in Phase 5.",
+  "all": true,
+  "src": ["build"],
+  "excludeAfterRemap": true,
+  "exclude": [
+    "src/index.ts",
+    "src/**/*.test.ts",
+    "src/testing/**",
+    "src/core/fakes/**",
+    "**/*.d.ts"
+  ],
+  "reporter": ["text", "text-summary", "lcov"],
+  "reports-dir": "coverage",
+  "check-coverage": true,
+  "lines": 70,
+  "branches": 60,
+  "functions": 75,
+  "statements": 70
+}

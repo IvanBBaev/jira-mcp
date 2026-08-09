@@ -1,0 +1,21 @@
+# Normalize line endings to LF in the repo. `prettier --check` runs on every CI
+# leg; a CRLF checkout would fail it for every text file while passing on
+# Linux/macOS. The env-file store also does atomic, line-ending-preserving
+# rewrites, so committed CRLF would leak into written credentials files.
+* text=auto eol=lf
+
+# Binary assets — never normalize or diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+
+# Lockfile: treat as generated so diffs stay collapsed in review.
+package-lock.json linguist-generated=true diff=json
+
+# Recorded Jira fixtures are data, not source — keep them out of language stats.
+test/fixtures/** linguist-generated=true

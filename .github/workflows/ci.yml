@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The live read suite is scheduled, never triggered by a PR: it needs repo
+  # secrets, and a fork PR must never be able to reach them. Mondays 04:17 UTC —
+  # an odd minute, because on-the-hour cron slots are the congested ones.
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer worthless.
+# Keyed per-ref, and never cancelling on main so the default branch keeps a
+# complete history of green/red.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Read-only by default. The `check` job touches no secret at all: the unit
+# suite runs behind the network fence against synthetic fixtures, never a real
+# Jira site.
+permissions:
+  contents: read
+
+env:
+  # Determinism knobs (docs/TESTING.md §Determinism knobs): a machine-local
+  # timezone or locale must never decide whether an assertion passes.
+  TZ: UTC
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  check:
+    name: check (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  # Coverage is its own job rather than part of `check`: instrumenting the suite
+  # roughly doubles its runtime, and the matrix would pay that cost twice for an
+  # identical number.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npm run coverage
+
+  # Suite 9 (docs/TESTING.md): read-only probes against the scratch site, asking
+  # the one question fixtures cannot — has Atlassian changed the wire? Weekly, on
+  # the default branch only. Every gate below has to hold:
+  #   - schedule/manual only, so no PR (least of all a fork's) can reach it;
+  #   - the `live` environment, where the JIRA_* secrets are scoped;
+  #   - JIRA_API_TOKEN actually present, so a fresh clone of this repo without
+  #     secrets reports "skipped", not a red build nobody can fix.
+  # JIRA_WRITE_MODE=plan is belt-and-braces: the suite exercises no write tool,
+  # and the gate would refuse it anyway.
+  live:
+    name: live read suite
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    environment: live
+    # Job-level, not step-level: a step's own `env:` is not visible to that
+    # step's `if:`, so the presence check below would always read empty.
+    env:
+      JIRA_LIVE_TEST: '1'
+      JIRA_SITE: ${{ secrets.JIRA_SITE }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_WRITE_MODE: plan
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Run live read suite
+        if: env.JIRA_API_TOKEN != ''
+        run: npm test
+      - name: Report missing credentials
+        if: env.JIRA_API_TOKEN == ''
+        run: echo "::notice::Live suite skipped — the JIRA_* secrets are not configured."

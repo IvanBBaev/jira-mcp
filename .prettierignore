@@ -1,0 +1,18 @@
+node_modules/
+build/
+coverage/
+package-lock.json
+*.tgz
+
+# Not owned by this project's formatter: the spec corpus and the local-only
+# AI-harness files are maintained (or intentionally not formatted) by their own
+# owners. `scripts/docs-lint.mjs` is what polices docs/, not Prettier.
+docs/
+WORKLOG.md
+CLAUDE.md
+
+# The published README carries hand-formatted blocks — the verbatim `.mcp.json`
+# registration example (copied from docs/CONFIGURATION.md, where the pinned
+# version is normative) and the GENERATED tool table injected in Wave 4 — that
+# Prettier would reflow. Kept out of the gate.
+README.md
