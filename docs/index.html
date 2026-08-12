@@ -1,0 +1,2751 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jira-mcp-ai — Jira Cloud MCP Server for AI assistants</title>
+    <meta
+      name="description"
+      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. TypeScript, MIT, Node 22+."
+    />
+    <meta name="author" content="Ivan Baev" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f6f8fb" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)" />
+    <link rel="canonical" href="https://ivanbbaev.github.io/jira-mcp/" />
+
+    <!-- Favicon: inline data-URI SVG, no network request -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%230052CC'/%3E%3Cpath%20d='M36 12h10v26a14 14 0 0 1-28 0v-6h10v6a4 4 0 0 0 8 0z'%20fill='%23fff'/%3E%3C/svg%3E"
+    />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="jira-mcp-ai" />
+    <meta property="og:title" content="jira-mcp-ai — Jira Cloud MCP Server" />
+    <meta
+      property="og:description"
+      content="Drive Jira Cloud from your AI assistant. A local-first MCP server: JQL search, issue reads, transitions, comments, worklogs, boards and sprints — headless API-token auth, plan-and-apply write safety."
+    />
+    <meta property="og:url" content="https://ivanbbaev.github.io/jira-mcp/" />
+    <meta
+      property="og:image"
+      content="https://ivanbbaev.github.io/jira-mcp/assets/og-banner.png"
+    />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="jira-mcp-ai — Jira Cloud MCP Server with plan-and-apply write safety"
+    />
+
+    <!-- Twitter card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="jira-mcp-ai — Jira Cloud MCP Server" />
+    <meta
+      name="twitter:description"
+      content="Drive Jira Cloud from your AI assistant. A local-first MCP server: JQL search, issue reads, transitions, comments, worklogs, boards and sprints — headless API-token auth, plan-and-apply write safety."
+    />
+    <meta
+      name="twitter:image"
+      content="https://ivanbbaev.github.io/jira-mcp/assets/og-banner.png"
+    />
+
+    <!-- Structured data: SoftwareApplication + FAQ. Every answer below mirrors
+         copy that is visible on the page. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "name": "jira-mcp-ai",
+            "alternateName": "Jira Cloud MCP Server",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "MCP Server",
+            "operatingSystem": "Cross-platform (Node.js 22+)",
+            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud: JQL search, issue reads, transitions, comments, worklogs, project and field metadata, boards and sprints — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write.",
+            "url": "https://ivanbbaev.github.io/jira-mcp/",
+            "codeRepository": "https://github.com/IvanBBaev/jira-mcp",
+            "license": "https://opensource.org/licenses/MIT",
+            "programmingLanguage": "TypeScript",
+            "author": {
+              "@type": "Person",
+              "name": "Ivan Baev",
+              "url": "https://github.com/IvanBBaev"
+            },
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "isAccessibleForFree": true
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is jira-mcp-ai affiliated with Atlassian?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. This is an independent, community-built project and is not affiliated with, endorsed by, or sponsored by Atlassian Pty Ltd. Jira, Atlassian and related marks are trademarks of Atlassian Pty Ltd, used here only nominatively to indicate compatibility."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Why not Atlassian's official remote MCP server?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The official server is remote and OAuth-based: fine for interactive desktop use, unusable anywhere nobody can click through a browser consent screen. jira-mcp-ai is headless — Basic auth with your own API token — so it runs from cron, CI and remote sessions, keeps all traffic between your machine and your Jira site, and adds a plan-and-apply write gate the official server does not have. If OAuth and a hosted service fit your setup, use the official one; this exists for everyone else."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which credentials does it need?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Three environment variables: JIRA_SITE, JIRA_EMAIL and JIRA_API_TOKEN — the token is minted in your Atlassian profile under Security → API tokens and inherits exactly your permissions, nothing more. Jira Cloud tokens expire (a year at most); set JIRA_TOKEN_EXPIRES and the server warns you 30 days ahead instead of failing cold."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is it safe to let an AI assistant write to my Jira site?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. v1 has no delete, bulk or attachment tools at all, and a write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What actually works today?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "This is a spec-first repository. The complete contract — all 27 tools, the write gate, the error catalog, the corner cases — is written down in docs/ and is normative. The core HTTP layer and the first typed API wrappers are implemented and covered by hermetic tests behind a network fence; the MCP layer and the tool surface are being built against that spec now. There is no tagged release and no npm package yet."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "When will it be published to npm?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "In the release phase, after the full read surface and the write gate have been proven against a real Jira site. Publication is planned through npm trusted publishing (OIDC) with provenance attestation, so the artifact on npm is verifiably built from this repository. Until then there is nothing to install — watch the repository instead."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which MCP clients will it work with?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Any client that speaks the Model Context Protocol over stdio — Claude Code, Claude Desktop, VS Code and Cursor among them. An optional loopback-only Streamable HTTP transport is specified for advanced setups; it binds 127.0.0.1 only and refuses to start without a bearer token."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How can I support the project?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "jira-mcp-ai is MIT-licensed and free, with no paid tier. It is maintained by one person in their own time, so donations are welcome through GitHub Sponsors (github.com/sponsors/IvanBBaev), Ko-fi (ko-fi.com/ivanbbaev) or Donatree (donatr.ee/ivanbbaev). Donating buys no priority support and no SLA; starring the repository or filing a good bug report helps just as much."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <script>
+      // Theme bootstrap — runs before first paint so a stored choice never flashes.
+      try {
+        var t = localStorage.getItem('jmcp-theme');
+        if (t === 'light' || t === 'dark')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    </script>
+
+    <style>
+      /* jira-mcp-ai — documentation site.
+         One file, zero build step, no external requests. Light palette on bare
+         :root; dark tokens are redefined twice — once for the system preference
+         and once for the explicit toggle — so neither direction can win by
+         accident. Code surfaces stay dark in both themes on purpose. */
+
+      /* ---------- tokens: light ---------- */
+      :root {
+        --bg: #f6f8fb;
+        --bg-blur: rgba(246, 248, 251, 0.85);
+        --raised: #ffffff;
+        --sunken: #eef2f7;
+        --line: rgba(12, 20, 32, 0.13);
+        --line-strong: rgba(12, 20, 32, 0.32);
+        --fill: rgba(12, 20, 32, 0.045);
+
+        --heading: #0a1220;
+        --text: #25303f;
+        --text-2: #445365;
+        --muted: #5d6b7d;
+
+        --link: #0b56c9;
+        --accent: #0052cc;
+        --accent-soft: rgba(0, 82, 204, 0.08);
+        --accent-line: rgba(0, 82, 204, 0.3);
+        --cta-bg: #0052cc;
+        --cta-bg-hover: #0747a6;
+        --cta-ink: #ffffff;
+
+        --read: #0a6274;
+        --write: #855000;
+        --danger: #a52222;
+        --ok: #0b6b46;
+        --warn-bg: rgba(176, 108, 0, 0.1);
+        --warn-line: rgba(176, 108, 0, 0.4);
+        --warn-ink: #74490a;
+
+        --shadow-sm:
+          0 1px 2px rgba(10, 18, 32, 0.05), 0 4px 12px -6px rgba(10, 18, 32, 0.12);
+        --shadow-lg: 0 30px 70px -40px rgba(10, 18, 32, 0.45);
+
+        /* code surfaces — identical in both themes */
+        --code-bg: #0b1017;
+        --code-raised: #131b25;
+        --code-text: #dce5f1;
+        --code-dim: #8695a6;
+        --code-line: rgba(255, 255, 255, 0.1);
+        --code-accent: #6fb0ff;
+        --code-ok: #4ade80;
+        --code-warn: #fbbf24;
+
+        /* scale */
+        --r-sm: 6px;
+        --r: 10px;
+        --r-lg: 16px;
+        --pill: 999px;
+        --topbar-h: 57px;
+        --measure: 68ch;
+
+        --font:
+          system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+          'Noto Sans', sans-serif;
+        --mono:
+          ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+          'Liberation Mono', monospace;
+      }
+
+      /* ---------- tokens: dark ---------- */
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --bg: #0b0f14;
+          --bg-blur: rgba(11, 15, 20, 0.82);
+          --raised: #141a22;
+          --sunken: #080b10;
+          --line: rgba(255, 255, 255, 0.11);
+          --line-strong: rgba(255, 255, 255, 0.3);
+          --fill: rgba(255, 255, 255, 0.05);
+
+          --heading: #f4f8fd;
+          --text: #e7edf4;
+          --text-2: #cfdae8;
+          --muted: #9aa6b4;
+
+          --link: #7fb1ff;
+          --accent: #579dff;
+          --accent-soft: rgba(87, 157, 255, 0.14);
+          --accent-line: rgba(87, 157, 255, 0.38);
+          --cta-bg: #579dff;
+          --cta-bg-hover: #85b8ff;
+          --cta-ink: #06101d;
+
+          --read: #38bdf8;
+          --write: #f5a623;
+          --danger: #ff8080;
+          --ok: #34d399;
+          --warn-bg: rgba(245, 166, 35, 0.1);
+          --warn-line: rgba(245, 166, 35, 0.32);
+          --warn-ink: #f0b45c;
+
+          --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px -8px rgba(0, 0, 0, 0.6);
+          --shadow-lg: 0 30px 80px -40px rgba(0, 0, 0, 0.85);
+        }
+      }
+      :root[data-theme='dark'] {
+        --bg: #0b0f14;
+        --bg-blur: rgba(11, 15, 20, 0.82);
+        --raised: #141a22;
+        --sunken: #080b10;
+        --line: rgba(255, 255, 255, 0.11);
+        --line-strong: rgba(255, 255, 255, 0.3);
+        --fill: rgba(255, 255, 255, 0.05);
+
+        --heading: #f4f8fd;
+        --text: #e7edf4;
+        --text-2: #cfdae8;
+        --muted: #9aa6b4;
+
+        --link: #7fb1ff;
+        --accent: #579dff;
+        --accent-soft: rgba(87, 157, 255, 0.14);
+        --accent-line: rgba(87, 157, 255, 0.38);
+        --cta-bg: #579dff;
+        --cta-bg-hover: #85b8ff;
+        --cta-ink: #06101d;
+
+        --read: #38bdf8;
+        --write: #f5a623;
+        --danger: #ff8080;
+        --ok: #34d399;
+        --warn-bg: rgba(245, 166, 35, 0.1);
+        --warn-line: rgba(245, 166, 35, 0.32);
+        --warn-ink: #f0b45c;
+
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px -8px rgba(0, 0, 0, 0.6);
+        --shadow-lg: 0 30px 80px -40px rgba(0, 0, 0, 0.85);
+      }
+
+      /* ---------- base ---------- */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+        scroll-behavior: smooth;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 16px;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        overflow-wrap: break-word;
+      }
+      h1,
+      h2,
+      h3,
+      h4 {
+        color: var(--heading);
+        line-height: 1.2;
+        margin: 0;
+        letter-spacing: -0.015em;
+        font-weight: 700;
+      }
+      p {
+        margin: 0;
+      }
+      a {
+        color: var(--link);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 2px;
+      }
+      a:hover {
+        text-decoration-thickness: 2px;
+      }
+      code,
+      kbd,
+      pre,
+      samp {
+        font-family: var(--mono);
+      }
+      :where(p, li, td) > code {
+        background: var(--fill);
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        padding: 0.1em 0.38em;
+        font-size: 0.88em;
+        white-space: nowrap;
+      }
+      /* An env-var name or a Windows path has no break opportunity of its own,
+         so on a phone nowrap would push the whole page sideways. Below the
+         narrowest layout breakpoint, let them break rather than overflow. */
+      @media (max-width: 620px) {
+        :where(p, li, td) > code {
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+      }
+      img,
+      svg {
+        max-width: 100%;
+      }
+      hr {
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 0;
+      }
+      :focus-visible {
+        outline: 2px solid var(--heading);
+        outline-offset: 2px;
+        box-shadow: 0 0 0 5px var(--accent-soft);
+        border-radius: var(--r-sm);
+      }
+
+      .wrap {
+        width: 100%;
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+      .measure {
+        max-width: var(--measure);
+      }
+      .skip {
+        position: absolute;
+        left: -9999px;
+        top: 8px;
+        z-index: 100;
+        background: var(--raised);
+        color: var(--heading);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r);
+        padding: 10px 16px;
+        font-weight: 600;
+      }
+      .skip:focus {
+        left: 12px;
+      }
+
+      /* ---------- topbar ---------- */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: var(--bg);
+        border-bottom: 1px solid var(--line);
+      }
+      @supports (backdrop-filter: blur(4px)) {
+        .topbar {
+          background: var(--bg-blur);
+          backdrop-filter: blur(12px) saturate(1.5);
+        }
+      }
+      .topbar .wrap {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-height: var(--topbar-h);
+        flex-wrap: wrap;
+        padding-block: 8px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        color: var(--heading);
+        text-decoration: none;
+        letter-spacing: -0.02em;
+        margin-right: auto;
+      }
+      .brand .mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: #0052cc;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .brand .mark svg {
+        width: 15px;
+        height: 15px;
+        fill: #fff;
+      }
+      .brand .ver {
+        font: 600 11px/1 var(--mono);
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: var(--pill);
+        padding: 4px 7px;
+      }
+      .nav {
+        display: flex;
+        gap: 2px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        max-width: 100%;
+      }
+      .nav::-webkit-scrollbar {
+        display: none;
+      }
+      .nav a {
+        color: var(--text-2);
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        padding: 7px 11px;
+        border-radius: var(--r-sm);
+        white-space: nowrap;
+      }
+      .nav a:hover {
+        color: var(--heading);
+        background: var(--fill);
+      }
+      .nav a[aria-current='true'] {
+        color: var(--accent);
+        background: var(--accent-soft);
+        font-weight: 600;
+      }
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .icon-btn {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--r-sm);
+        border: 1px solid var(--line);
+        background: var(--raised);
+        color: var(--text-2);
+        cursor: pointer;
+        padding: 0;
+      }
+      .icon-btn:hover {
+        color: var(--heading);
+        border-color: var(--line-strong);
+      }
+      .icon-btn svg {
+        width: 17px;
+        height: 17px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .icon-btn svg.solid {
+        fill: currentColor;
+        stroke: none;
+      }
+      .i-sun {
+        display: none;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) .i-moon {
+          display: none;
+        }
+        :root:not([data-theme='light']) .i-sun {
+          display: block;
+        }
+      }
+      :root[data-theme='dark'] .i-moon {
+        display: none;
+      }
+      :root[data-theme='dark'] .i-sun {
+        display: block;
+      }
+      @media (max-width: 860px) {
+        .nav {
+          order: 3;
+          flex-basis: 100%;
+          border-top: 1px solid var(--line);
+          padding-top: 6px;
+          margin-top: 2px;
+        }
+      }
+
+      /* ---------- sections ---------- */
+      main section {
+        padding: 72px 0;
+        scroll-margin-top: calc(var(--topbar-h) + 16px);
+      }
+      main section + section {
+        border-top: 1px solid var(--line);
+      }
+      .eyebrow {
+        font: 600 12px/1 var(--mono);
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 14px;
+        display: block;
+      }
+      h2 {
+        font-size: 26px;
+        margin-bottom: 12px;
+      }
+      h3 {
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+      .sub {
+        color: var(--text-2);
+        max-width: var(--measure);
+      }
+      .stack > * + * {
+        margin-top: 16px;
+      }
+      .stack-lg > * + * {
+        margin-top: 32px;
+      }
+
+      /* ---------- hero ---------- */
+      .hero {
+        padding: 64px 0 72px !important;
+      }
+      .hero h1 {
+        font-size: clamp(38px, 7vw, 60px);
+        letter-spacing: -0.035em;
+        font-family: var(--mono);
+        font-weight: 700;
+      }
+      .hero .lead {
+        font-size: clamp(17px, 2.2vw, 21px);
+        color: var(--text-2);
+        max-width: 58ch;
+        margin-top: 16px;
+      }
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 24px;
+      }
+      .badge {
+        font: 600 12px/1 var(--mono);
+        color: var(--text-2);
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--pill);
+        padding: 6px 11px;
+      }
+      .badge.hi {
+        color: var(--accent);
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+      }
+      .badge.warn {
+        color: var(--warn-ink);
+        border-color: var(--warn-line);
+        background: var(--warn-bg);
+      }
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 44px;
+        padding: 0 20px;
+        border-radius: var(--r);
+        font-size: 15px;
+        font-weight: 600;
+        text-decoration: none;
+        border: 1px solid transparent;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .btn svg {
+        width: 16px;
+        height: 16px;
+        flex: none;
+      }
+      .btn-primary {
+        background: var(--cta-bg);
+        color: var(--cta-ink);
+      }
+      .btn-primary:hover {
+        background: var(--cta-bg-hover);
+      }
+      .btn-ghost {
+        background: var(--raised);
+        color: var(--heading);
+        border-color: var(--line-strong);
+      }
+      .btn-ghost:hover {
+        background: var(--fill);
+      }
+
+      /* ---------- terminal ---------- */
+      .term {
+        margin-top: 40px;
+        background: var(--code-bg);
+        border: 1px solid var(--code-line);
+        border-radius: var(--r-lg);
+        overflow: hidden;
+        box-shadow: var(--shadow-lg);
+      }
+      .term-bar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--code-line);
+        background: var(--code-raised);
+      }
+      .term-bar i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .term-bar span {
+        margin-left: 6px;
+        font: 500 12px/1 var(--mono);
+        color: var(--code-dim);
+      }
+      .term-body {
+        padding: 18px;
+        overflow-x: auto;
+        font: 13.5px/1.75 var(--mono);
+        color: var(--code-text);
+        tab-size: 2;
+      }
+      /* Alignment is preserved per line, not on the container — so source-level
+         indentation between the lines never leaks into the transcript. */
+      .term-body .l {
+        display: block;
+        white-space: pre;
+        min-height: 1.75em;
+      }
+      .term-body .u {
+        color: var(--code-accent);
+      }
+      .term-body .t {
+        color: #fff;
+      }
+      .term-body .d {
+        color: var(--code-dim);
+      }
+      .term-body .w {
+        color: var(--code-warn);
+      }
+      .term-body .o {
+        color: var(--code-ok);
+      }
+      .term-body.run .l {
+        opacity: 0;
+        animation: linein 0.32s ease forwards;
+        animation-delay: calc(var(--i) * 0.3s);
+      }
+      @keyframes linein {
+        from {
+          opacity: 0;
+          transform: translateY(3px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .caret {
+        display: inline-block;
+        width: 8px;
+        height: 15px;
+        vertical-align: -3px;
+        background: var(--code-accent);
+        animation: blink 1.15s step-end infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .term-body.run .l {
+          opacity: 1;
+          animation: none;
+        }
+        .caret {
+          animation: none;
+        }
+      }
+
+      /* ---------- stats ---------- */
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 1px;
+        margin-top: 40px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        overflow: hidden;
+      }
+      .stats div {
+        background: var(--raised);
+        padding: 18px 20px;
+      }
+      .stats b {
+        display: block;
+        font: 700 26px/1.1 var(--mono);
+        color: var(--heading);
+        letter-spacing: -0.02em;
+      }
+      .stats span {
+        display: block;
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      /* ---------- blocks ---------- */
+      .card {
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        padding: 22px;
+        box-shadow: var(--shadow-sm);
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
+      }
+      .note {
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        background: var(--accent-soft);
+        border-radius: var(--r);
+        padding: 14px 16px;
+        color: var(--text-2);
+        font-size: 15px;
+        max-width: var(--measure);
+      }
+      .note.warn {
+        border-left-color: var(--warn-line);
+        background: var(--warn-bg);
+        color: var(--warn-ink);
+      }
+      .note strong {
+        color: inherit;
+      }
+
+      /* ---------- code ---------- */
+      .code {
+        background: var(--code-bg);
+        border: 1px solid var(--code-line);
+        border-radius: var(--r);
+        overflow: hidden;
+      }
+      .code-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 8px 8px 14px;
+        border-bottom: 1px solid var(--code-line);
+        background: var(--code-raised);
+        font: 12px/1.4 var(--mono);
+        color: var(--code-dim);
+        min-height: 38px;
+      }
+      .code-head span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .code pre {
+        margin: 0;
+        padding: 16px;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--code-text);
+      }
+      .code pre .c {
+        color: var(--code-dim);
+      }
+      .code pre .p {
+        color: var(--code-accent);
+      }
+      .copy {
+        flex: none;
+        border: 1px solid var(--code-line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--code-text);
+        border-radius: var(--r-sm);
+        font: 600 12px/1 var(--font);
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+      .copy:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .copy[data-done='1'] {
+        color: var(--code-ok);
+      }
+
+      /* ---------- tabs ---------- */
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: var(--fill);
+        border: 1px solid var(--line);
+        border-radius: var(--pill);
+        width: max-content;
+        max-width: 100%;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .tabs::-webkit-scrollbar {
+        display: none;
+      }
+      .tab {
+        border: 0;
+        background: transparent;
+        color: var(--text-2);
+        font: 600 13px/1 var(--font);
+        padding: 9px 14px;
+        border-radius: var(--pill);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .tab:hover {
+        color: var(--heading);
+      }
+      .tab[aria-selected='true'] {
+        background: var(--raised);
+        color: var(--heading);
+        box-shadow: var(--shadow-sm);
+      }
+      [role='tabpanel'][hidden] {
+        display: none;
+      }
+      [role='tabpanel'] {
+        margin-top: 14px;
+      }
+
+      /* ---------- tables ---------- */
+      .tw {
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        background: var(--raised);
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        min-width: 560px;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th {
+        text-align: left;
+        font: 600 11px/1.4 var(--font);
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--fill);
+        white-space: nowrap;
+      }
+      td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+        color: var(--text-2);
+      }
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      td:first-child {
+        color: var(--heading);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      td code,
+      th code {
+        white-space: nowrap;
+      }
+
+      /* ---------- pills ---------- */
+      .tag {
+        display: inline-block;
+        font: 600 11px/1 var(--mono);
+        border-radius: var(--pill);
+        padding: 4px 8px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .tag.read {
+        color: var(--read);
+        border-color: color-mix(in srgb, var(--read) 40%, transparent);
+      }
+      .tag.write {
+        color: var(--write);
+        border-color: color-mix(in srgb, var(--write) 40%, transparent);
+      }
+      .tag.irr {
+        color: var(--danger);
+        border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+      }
+      .tag.on {
+        color: var(--ok);
+        border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+      }
+
+      /* ---------- tier list ---------- */
+      .tiers {
+        display: grid;
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        overflow: hidden;
+      }
+      .tier {
+        background: var(--raised);
+        padding: 18px 20px;
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        gap: 6px 20px;
+        align-items: start;
+      }
+      .tier > div:first-child {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .tier h3 {
+        font: 700 14px/1.2 var(--mono);
+        color: var(--heading);
+      }
+      .tier p {
+        color: var(--text-2);
+        font-size: 15px;
+        max-width: 62ch;
+      }
+      @media (max-width: 620px) {
+        .tier {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ---------- layers ---------- */
+      .layers {
+        display: grid;
+        gap: 8px;
+      }
+      .layer {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 16px;
+        align-items: center;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent-line);
+        border-radius: var(--r);
+        padding: 14px 16px;
+        font-size: 14px;
+        color: var(--text-2);
+      }
+      .layer b {
+        font: 700 13px/1 var(--mono);
+        color: var(--accent);
+      }
+      @media (max-width: 560px) {
+        .layer {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+      }
+      .hosts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .host {
+        font: 500 12.5px/1 var(--mono);
+        color: var(--text-2);
+        background: var(--sunken);
+        border: 1px solid var(--line);
+        border-radius: var(--pill);
+        padding: 8px 12px;
+      }
+      .checks {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 10px;
+        max-width: var(--measure);
+      }
+      .checks li {
+        display: grid;
+        grid-template-columns: 18px 1fr;
+        gap: 10px;
+        color: var(--text-2);
+        font-size: 15px;
+      }
+      .checks li::before {
+        content: '';
+        width: 16px;
+        height: 16px;
+        margin-top: 5px;
+        border-radius: 50%;
+        background: var(--accent-soft);
+        border: 1px solid var(--accent-line);
+      }
+
+      /* ---------- steps ---------- */
+      .steps {
+        counter-reset: s;
+        display: grid;
+        gap: 28px;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 32px 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      .step::before {
+        counter-increment: s;
+        content: counter(s);
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--accent-soft);
+        border: 1px solid var(--accent-line);
+        color: var(--accent);
+        font: 700 14px/1 var(--mono);
+      }
+      /* The 1fr track takes its automatic minimum from the content, and a code
+         block's longest line is not breakable — without this the whole page
+         grows wider than the viewport instead of letting the <pre> scroll. */
+      .step > div {
+        min-width: 0;
+      }
+      .step > div > * + * {
+        margin-top: 12px;
+      }
+
+      /* ---------- details ---------- */
+      details {
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        margin-bottom: 10px;
+        scroll-margin-top: calc(var(--topbar-h) + 16px);
+      }
+      details summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 16px 18px;
+        cursor: pointer;
+        font-weight: 600;
+        color: var(--heading);
+        list-style: none;
+      }
+      details summary::-webkit-details-marker {
+        display: none;
+      }
+      details summary::after {
+        content: '+';
+        font: 400 20px/1 var(--mono);
+        color: var(--muted);
+        flex: none;
+      }
+      details[open] summary::after {
+        content: '\2212';
+      }
+      details[open] summary {
+        border-bottom: 1px solid var(--line);
+      }
+      .details-body {
+        padding: 16px 18px;
+        color: var(--text-2);
+        max-width: var(--measure);
+        font-size: 15px;
+      }
+      .details-body > * + * {
+        margin-top: 12px;
+      }
+
+      /* ---------- support ---------- */
+      .fund {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+      }
+      .fund a {
+        display: block;
+        text-decoration: none;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        padding: 16px 18px;
+        box-shadow: var(--shadow-sm);
+      }
+      .fund a:hover {
+        border-color: var(--accent-line);
+      }
+      .fund b {
+        display: block;
+        color: var(--heading);
+        font-size: 15px;
+      }
+      .fund span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      /* ---------- footer ---------- */
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 40px 0 56px;
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+      footer .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        margin-bottom: 18px;
+      }
+      footer p {
+        max-width: 78ch;
+      }
+      footer p + p {
+        margin-top: 10px;
+      }
+
+      /* ---------- to top ---------- */
+      .totop {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--raised);
+        border: 1px solid var(--line-strong);
+        color: var(--heading);
+        box-shadow: var(--shadow-sm);
+        cursor: pointer;
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          opacity 0.2s ease,
+          visibility 0.2s ease;
+        z-index: 40;
+      }
+      .totop.show {
+        opacity: 1;
+        visibility: visible;
+      }
+      .totop svg {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      @media print {
+        .topbar,
+        .totop,
+        .copy,
+        .cta {
+          display: none !important;
+        }
+        body {
+          background: #fff;
+          color: #000;
+        }
+        details[open] .details-body,
+        details .details-body {
+          display: block;
+        }
+        [role='tabpanel'][hidden] {
+          display: block !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand" href="#top">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <path d="M36 12h10v26a14 14 0 0 1-28 0v-6h10v6a4 4 0 0 0 8 0z" />
+            </svg>
+          </span>
+          jira-mcp-ai
+          <span class="ver">pre-1.0</span>
+        </a>
+
+        <nav class="nav" aria-label="Sections">
+          <a href="#install">Install</a>
+          <a href="#capabilities">Tools</a>
+          <a href="#safety">Safety</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#config">Config</a>
+          <a href="#roadmap">Roadmap</a>
+          <a href="#faq">FAQ</a>
+          <a href="#support">Support</a>
+        </nav>
+
+        <div class="topbar-actions">
+          <button
+            class="icon-btn"
+            id="theme"
+            type="button"
+            aria-label="Switch colour theme"
+          >
+            <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+            </svg>
+            <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+              />
+            </svg>
+          </button>
+          <a
+            class="icon-btn"
+            href="https://github.com/IvanBBaev/jira-mcp"
+            aria-label="Repository on GitHub"
+          >
+            <svg class="solid" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.9 18.3 5.2 18.3 5.2c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"
+              />
+            </svg>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <span id="top"></span>
+
+      <!-- ============ HERO ============ -->
+      <section class="hero" id="overview" aria-labelledby="h-overview">
+        <div class="wrap">
+          <span class="eyebrow">Model Context Protocol server</span>
+          <h1 id="h-overview">jira-mcp-ai</h1>
+          <p class="lead">
+            Give your AI assistant a real seat in Jira Cloud — JQL search, issue reads,
+            transitions, comments, worklogs, boards and sprints. It runs on your
+            machine, with your API token, fenced to a single host, and every write is
+            disarmed until you say otherwise.
+          </p>
+
+          <div class="badges">
+            <span class="badge hi">TypeScript</span>
+            <span class="badge">MIT</span>
+            <span class="badge">Node 22+</span>
+            <span class="badge">Jira Cloud REST v3</span>
+            <span class="badge">27 tools · 7 packages</span>
+            <span class="badge warn">pre-1.0 · not on npm yet</span>
+          </div>
+
+          <div class="cta">
+            <a class="btn btn-primary" href="#install">
+              Get started
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/IvanBBaev/jira-mcp">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.9 18.3 5.2 18.3 5.2c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"
+                />
+              </svg>
+              View source
+            </a>
+          </div>
+
+          <div class="term">
+            <div class="term-bar" aria-hidden="true">
+              <i></i><i></i><i></i>
+              <span>assistant · jira-mcp-ai (stdio)</span>
+            </div>
+            <div
+              class="term-body"
+              id="term"
+              role="img"
+              tabindex="0"
+              aria-label="Transcript: the assistant reads the available transitions, plans a transition and a worklog — both explicitly not performed in plan mode — then applies both after the operator agrees."
+            >
+<span class="l" style="--i:0"><span class="u">you ›</span> <span class="t">Move NOVA-142 to In Progress and log the 2h I spent.</span></span>
+<span class="l" style="--i:1"></span>
+<span class="l" style="--i:2"><span class="o">▸</span> jira_get_transitions <span class="d">— read</span>   <span class="d">11</span> To Do · <span class="d">21</span> In Progress · <span class="d">31</span> Done</span>
+<span class="l" style="--i:3"><span class="o">▸</span> jira_transition_issue <span class="d">— plan</span></span>
+<span class="l" style="--i:4"><span class="d">  would POST  </span>/issue/NOVA-142/transitions  <span class="d">{"transition":{"id":"21"}}</span></span>
+<span class="l" style="--i:5"><span class="d">  plan_id     </span>plan_9f31c04ab2…</span>
+<span class="l" style="--i:6"><span class="w">  ⚠ NOT performed — plan mode.</span></span>
+<span class="l" style="--i:7"><span class="o">▸</span> jira_add_worklog <span class="d">— plan</span>   2h  <span class="d">plan_id</span> plan_c04d11be7f…</span>
+<span class="l" style="--i:8"></span>
+<span class="l" style="--i:9"><span class="u">you ›</span> <span class="t">Both look right — apply them.</span></span>
+<span class="l" style="--i:10"></span>
+<span class="l" style="--i:11"><span class="o">▸</span> jira_transition_issue <span class="d">— apply</span>   <span class="o">ok</span>  NOVA-142 → In Progress</span>
+<span class="l" style="--i:12"><span class="o">▸</span> jira_add_worklog <span class="d">— apply</span>   <span class="o">ok</span>  2h logged</span>
+<span class="l" style="--i:13"><span class="o">▸</span> jira_get_issue <span class="d">— read</span>   <span class="d">status</span> In Progress · <span class="d">timespent</span> 2h</span>
+<span class="l" style="--i:14"><span class="caret"></span></span>
+            </div>
+          </div>
+
+          <div class="stats">
+            <div><b>27</b><span>tools in 7 packages</span></div>
+            <div><b>19 / 8</b><span>read tools / write tools</span></div>
+            <div><b>1</b><span>host the process may reach</span></div>
+            <div><b>0</b><span>telemetry calls, by design</span></div>
+          </div>
+
+          <p class="note warn" style="margin-top: 32px">
+            <strong>Status, honestly.</strong> This is a spec-first repository: the
+            complete contract — all 27 tools, the write gate, the error catalog, the
+            corner cases — is written down in <code>docs/</code> and is normative. The
+            core HTTP layer and the first typed API wrappers are implemented and covered
+            by hermetic tests behind a network fence; the MCP layer and the tool surface
+            are being built against that spec now. There is no tagged release and no npm
+            package yet.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============ INSTALL ============ -->
+      <section id="install" aria-labelledby="h-install">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Install</span>
+            <h2 id="h-install">Three steps, once it ships</h2>
+            <p class="sub">
+              No developer app, no OAuth consent screen, no App Review — a Jira Cloud
+              site and an API token are the whole setup. Node 22 or newer.
+            </p>
+          </div>
+
+          <p class="note warn">
+            <strong>Not on npm yet.</strong> jira-mcp-ai is pre-1.0 and unpublished. The
+            registration below is the target contract the docs already guarantee — it
+            will resolve as-is once the first release is tagged. Until then,
+            <a href="https://github.com/IvanBBaev/jira-mcp">watch the repository</a>.
+          </p>
+
+          <div class="steps">
+            <div class="step">
+              <div>
+                <h3>Mint an API token</h3>
+                <p class="sub">
+                  In your
+                  <a href="https://id.atlassian.com/manage-profile/security/api-tokens"
+                    >Atlassian profile</a
+                  >
+                  under <em>Security → API tokens</em>. The token inherits exactly your
+                  permissions — nothing more. Cloud tokens expire (a year at most), so
+                  note the date: set <code>JIRA_TOKEN_EXPIRES</code> and the server warns
+                  you 30 days ahead instead of failing cold one morning.
+                </p>
+              </div>
+            </div>
+
+            <div class="step">
+              <div>
+                <h3>Register the server</h3>
+
+                <div class="tabs" role="tablist" aria-label="MCP client">
+                  <button
+                    class="tab"
+                    role="tab"
+                    id="t-cc"
+                    aria-controls="p-cc"
+                    aria-selected="true"
+                  >
+                    Claude Code
+                  </button>
+                  <button
+                    class="tab"
+                    role="tab"
+                    id="t-desktop"
+                    aria-controls="p-desktop"
+                    aria-selected="false"
+                    tabindex="-1"
+                  >
+                    Claude Desktop
+                  </button>
+                  <button
+                    class="tab"
+                    role="tab"
+                    id="t-vscode"
+                    aria-controls="p-vscode"
+                    aria-selected="false"
+                    tabindex="-1"
+                  >
+                    VS Code
+                  </button>
+                </div>
+
+                <div role="tabpanel" id="p-cc" aria-labelledby="t-cc" tabindex="0">
+                  <div class="code">
+                    <div class="code-head">
+                      <span>.mcp.json</span>
+                      <button class="copy" type="button" data-copy="c-cc">Copy</button>
+                    </div>
+                    <pre id="c-cc">{
+  <span class="p">"mcpServers"</span>: {
+    <span class="p">"jira"</span>: {
+      <span class="p">"command"</span>: "npx",
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.1.0"],
+      <span class="p">"env"</span>: {
+        <span class="p">"JIRA_SITE"</span>: "mycompany",
+        <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
+        <span class="p">"JIRA_API_TOKEN"</span>: "&lt;api-token&gt;",
+        <span class="p">"JIRA_WRITE_MODE"</span>: "plan"
+      }
+    }
+  }
+}</pre>
+                  </div>
+                </div>
+
+                <div
+                  role="tabpanel"
+                  id="p-desktop"
+                  aria-labelledby="t-desktop"
+                  tabindex="0"
+                  hidden
+                >
+                  <div class="code">
+                    <div class="code-head">
+                      <span
+                        >~/Library/Application Support/Claude/claude_desktop_config.json</span
+                      >
+                      <button class="copy" type="button" data-copy="c-desktop">
+                        Copy
+                      </button>
+                    </div>
+                    <pre id="c-desktop">{
+  <span class="p">"mcpServers"</span>: {
+    <span class="p">"jira"</span>: {
+      <span class="p">"command"</span>: "npx",
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.1.0"],
+      <span class="p">"env"</span>: {
+        <span class="p">"JIRA_SITE"</span>: "mycompany",
+        <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
+        <span class="p">"JIRA_API_TOKEN"</span>: "&lt;api-token&gt;",
+        <span class="p">"JIRA_WRITE_MODE"</span>: "plan"
+      }
+    }
+  }
+}</pre>
+                  </div>
+                  <p class="sub" style="margin-top: 10px; font-size: 14px">
+                    On Windows the file lives at
+                    <code>%APPDATA%\Claude\claude_desktop_config.json</code>.
+                  </p>
+                </div>
+
+                <div
+                  role="tabpanel"
+                  id="p-vscode"
+                  aria-labelledby="t-vscode"
+                  tabindex="0"
+                  hidden
+                >
+                  <div class="code">
+                    <div class="code-head">
+                      <span>.vscode/mcp.json</span>
+                      <button class="copy" type="button" data-copy="c-vscode">Copy</button>
+                    </div>
+                    <pre id="c-vscode">{
+  <span class="p">"servers"</span>: {
+    <span class="p">"jira"</span>: {
+      <span class="p">"type"</span>: "stdio",
+      <span class="p">"command"</span>: "npx",
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.1.0"],
+      <span class="p">"env"</span>: {
+        <span class="p">"JIRA_SITE"</span>: "mycompany",
+        <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
+        <span class="p">"JIRA_API_TOKEN"</span>: "&lt;api-token&gt;"
+      }
+    }
+  }
+}</pre>
+                  </div>
+                </div>
+
+                <p class="sub" style="font-size: 14px">
+                  The version is pinned deliberately: an unpinned
+                  <code>npx -y jira-mcp-ai</code> re-resolves to whatever is newest at
+                  spawn time, which lets a published package start running new code
+                  inside an agent session with no review step. Bump the pin when you have
+                  read the changelog. Prefer keeping the token out of project files —
+                  the server also loads <code>~/.config/jira-mcp-ai/.env</code> via
+                  Node's own <code>process.loadEnvFile()</code>; there is no dotenv in
+                  the chain, because dotenv ≥ 17 prints a banner to stdout, and stdout
+                  belongs to the MCP protocol.
+                </p>
+              </div>
+            </div>
+
+            <div class="step">
+              <div>
+                <h3>Stay read-only until you mean it</h3>
+                <p class="sub">
+                  Out of the box every write describes instead of executing. Narrow the
+                  surface further, or open the gate, with two variables:
+                </p>
+                <div class="code">
+                  <div class="code-head">
+                    <span>env</span>
+                    <button class="copy" type="button" data-copy="c-modes">Copy</button>
+                  </div>
+                  <pre id="c-modes">JIRA_WRITE_MODE=plan       <span class="c"># default — writes return a plan, nothing executes</span>
+JIRA_TOOL_PACKAGES=reader  <span class="c"># reads only — write tools are never registered</span>
+JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also passes apply:true</span></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ CAPABILITIES ============ -->
+      <section id="capabilities" aria-labelledby="h-capabilities">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Capabilities</span>
+            <h2 id="h-capabilities">Seven packages, 27 tools</h2>
+            <p class="sub">
+              Packages are the unit of exposure: <code>JIRA_TOOL_PACKAGES</code> picks a
+              profile (<code>core</code>, <code>reader</code>, <code>all</code> — the
+              default) or an explicit list, <code>JIRA_PACKAGES_DENY</code> removes one
+              regardless, and <code>JIRA_PACKAGES_READONLY</code> keeps a package's reads
+              while dropping its writes. <code>core</code> is always on.
+            </p>
+          </div>
+
+          <div
+            class="tw"
+            role="group"
+            tabindex="0"
+            aria-label="Tool packages, scrollable table"
+          >
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Package</th>
+                  <th scope="col">Tools</th>
+                  <th scope="col">Write mode</th>
+                  <th scope="col">What it covers</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>core</code></td>
+                  <td><span class="tag read">2 read</span></td>
+                  <td>—</td>
+                  <td>
+                    <code>jira_capabilities</code> self-describes the running surface;
+                    <code>jira_get_myself</code> verifies auth. Always registered — even
+                    a deny list cannot remove it.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>search</code></td>
+                  <td><span class="tag read">2 read</span></td>
+                  <td>—</td>
+                  <td>
+                    JQL search and approximate count over the current
+                    <code>/rest/api/3/search/jql</code> endpoint — the legacy search API
+                    Atlassian removed in 2025 is never called.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>issues</code></td>
+                  <td><span class="tag read">5 read</span></td>
+                  <td>—</td>
+                  <td>
+                    One issue with ADF flattened to plain text (raw on request),
+                    comments, transitions, changelog, worklogs.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>issues-write</code></td>
+                  <td><span class="tag write">7 write</span></td>
+                  <td><code>plan</code></td>
+                  <td>
+                    Create, update, transition, comment, assign, log work, link — every
+                    one behind the plan → apply gate.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>meta</code></td>
+                  <td><span class="tag read">6 read</span></td>
+                  <td>—</td>
+                  <td>
+                    Projects, fields, create-meta, statuses and link types — the
+                    discovery calls that make writes land on the first try.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>users</code></td>
+                  <td><span class="tag read">1 read</span></td>
+                  <td>—</td>
+                  <td>
+                    User search: the only path from a human name to the
+                    <code>accountId</code> every other tool requires. Emails stay hidden
+                    unless you opt in.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>agile</code></td>
+                  <td>
+                    <span class="tag read">3 read</span>
+                    <span class="tag write">1 write</span>
+                  </td>
+                  <td><code>plan</code></td>
+                  <td>
+                    Boards, sprints and sprint issues; moving issues into a sprint is the
+                    one write.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="grid2">
+            <div class="card">
+              <h3>What it deliberately does not do</h3>
+              <p class="sub" style="font-size: 15px">
+                No deletes of any kind, no bulk operations, no attachment upload or
+                download — excluded by decision, not by omission. No Confluence, no Jira
+                Service Management, no Data Center. A tool that does not exist cannot be
+                talked into running.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Built for 2026 Jira</h3>
+              <p class="sub" style="font-size: 15px">
+                v3 REST only: ADF documents in, readable plain text out. Users are
+                addressed exclusively by <code>accountId</code> — the GDPR-era contract.
+                Search paginates by <code>nextPageToken</code>, and
+                <code>jira_count</code> returns Jira's approximate count and labels it as
+                such instead of pretending it is exact.
+              </p>
+            </div>
+          </div>
+
+          <p class="sub">
+            The full 27-tool catalog — input schemas, hints and the error contract per
+            tool — lives in
+            <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/TOOLS.md"
+              >docs/TOOLS.md</a
+            >.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============ SAFETY ============ -->
+      <section id="safety" aria-labelledby="h-safety">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Safety</span>
+            <h2 id="h-safety">A write model you can reason about</h2>
+            <p class="sub">
+              Every tool declares a tier. The tier — not the tool, and not the model's
+              confidence — decides what has to happen before your Jira site is touched.
+            </p>
+          </div>
+
+          <div class="tiers">
+            <div class="tier">
+              <div>
+                <h3>read</h3>
+                <span class="tag read">19 tools</span>
+              </div>
+              <p>Never mutates anything. Safe to expose first, and to leave on.</p>
+            </div>
+            <div class="tier">
+              <div>
+                <h3>standard</h3>
+                <span class="tag write">8 tools</span>
+              </div>
+              <p>
+                Every write in v1. Governed by <code>JIRA_WRITE_MODE</code>: under
+                <code>plan</code> — the default — the tool returns exactly what it would
+                have sent and performs zero network mutations; under
+                <code>apply</code> it executes, and only when the call itself also opts
+                in.
+              </p>
+            </div>
+            <div class="tier">
+              <div>
+                <h3>irreversible</h3>
+                <span class="tag irr">0 tools</span>
+              </div>
+              <p>
+                Empty on purpose. Deletes, bulk edits and attachments are excluded from
+                v1 by decision — the tier exists so anything added later inherits rules
+                that are already written down, instead of negotiating them in a pull
+                request.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid2">
+            <div class="card">
+              <h3>The plan → apply contract</h3>
+              <p class="sub" style="font-size: 15px">
+                In plan mode a write returns the method, path and redacted body it would
+                have sent, plus a single-use <code>plan_id</code> — and its first line
+                is, literally, <em>NOT performed — plan mode.</em> Executing the same
+                call requires all three: the server started with
+                <code>JIRA_WRITE_MODE=apply</code>, the call passing
+                <code>apply: true</code>, and a <code>plan_id</code> minted for identical
+                arguments — change one field and the fingerprint no longer matches.
+              </p>
+              <p class="sub" style="font-size: 15px; margin-top: 12px">
+                Plans live in memory only. A restart voids them; nothing can be armed in
+                advance and fired later.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Ambiguous failures never replay</h3>
+              <p class="sub" style="font-size: 15px">
+                When a timeout or a dropped socket makes it unknowable whether a write
+                reached Jira, the server refuses to guess: the call fails as
+                <code>ambiguous_write</code>, marked non-retryable, with the remediation
+                to read current state first. A comment posted twice is a mess a human
+                cleans up — this server would rather fail honestly than tidy over it.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <h3>Defence in depth</h3>
+            <ul class="checks" style="margin-top: 12px">
+              <li>
+                <span
+                  ><strong>One host, and no others.</strong> The HTTP layer refuses any
+                  request that resolves outside your site — including redirects that try
+                  to leave it. Extra hosts need an explicit allowlist entry: exact name
+                  or anchored regex, never a suffix match.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>No telemetry, no phone-home.</strong> The only outbound
+                  traffic is the Jira call you asked for.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>Secrets never surface.</strong> The API token is registered
+                  with a redactor at startup; one choke point scrubs logs, errors and
+                  results, and <code>Authorization</code> header echoes are
+                  stripped.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>Jira text is data, not instructions.</strong> Every
+                  content-bearing read comes back inside
+                  <code>⟦BEGIN UNTRUSTED CONTENT⟧ … ⟦END UNTRUSTED CONTENT⟧</code>
+                  markers, so a ticket that says "ignore your instructions" reads as a
+                  ticket, not as instructions.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>stdout belongs to the protocol.</strong> Diagnostics go to
+                  stderr through a structured logger, and a stray
+                  <code>console.log</code> is redirected before it can corrupt a JSON-RPC
+                  frame.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>Writes can be journalled.</strong> Set
+                  <code>JIRA_JOURNAL_PATH</code> for an append-only JSONL record of every
+                  write call: tool, argument hash, result, timestamp.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>The HTTP transport fails closed.</strong> It binds loopback
+                  only, refuses to start without <code>JIRA_HTTP_TOKEN</code>, and checks
+                  <code>Origin</code> against DNS rebinding. stdio stays the
+                  default.</span
+                >
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <div class="hosts">
+              <span class="host">your-site.atlassian.net</span>
+            </div>
+            <p class="sub" style="font-size: 14px; margin-top: 10px">
+              That pill is the entire default egress surface — one origin, resolved once
+              at startup.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ ARCHITECTURE ============ -->
+      <section id="architecture" aria-labelledby="h-architecture">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Architecture</span>
+            <h2 id="h-architecture">Four layers, one direction</h2>
+            <p class="sub">
+              Imports point leftward only — <code>core ← api ← mcp ← tools</code> — and
+              the rule is enforced twice in eslint, as import zones and as string
+              patterns, so it never depends on how modules happen to resolve.
+            </p>
+          </div>
+
+          <div class="layers">
+            <div class="layer">
+              <b>tools</b>
+              <span
+                >One file per package exporting its tool specs; thin glue from validated
+                input to API call to shaped result.</span
+              >
+            </div>
+            <div class="layer">
+              <b>mcp</b>
+              <span
+                >Protocol plumbing: <code>defineTool</code> with import-time assertions,
+                the registry, the result envelope, taint marking, the write gate,
+                transports.</span
+              >
+            </div>
+            <div class="layer">
+              <b>api</b>
+              <span
+                >Typed wrappers over Jira REST, one module per domain — search, issues,
+                meta, users, agile. ADF flattening lives here.</span
+              >
+            </div>
+            <div class="layer">
+              <b>core</b>
+              <span
+                >Config, host resolution, errors, redaction, logging, clock — and the
+                HTTP client, the only module in the repository allowed to touch the
+                network.</span
+              >
+            </div>
+          </div>
+
+          <div class="grid2">
+            <div class="card">
+              <h3>Typed without codegen</h3>
+              <p class="sub" style="font-size: 15px">
+                Atlassian's OpenAPI spec is enormous, churns constantly, and knows
+                nothing about your <code>customfield_10xxx</code>. So no generated
+                optimism: wire data enters as <code>unknown</code>, is narrowed by
+                minimal hand-written guards at the API boundary, and a guard failure
+                surfaces as a typed error naming the unexpected shape — never a
+                <code>TypeError</code> five frames deep.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Deterministic by injection</h3>
+              <p class="sub" style="font-size: 15px">
+                Time comes from an injected clock, retry jitter from an injected RNG,
+                and <code>fetch</code> is read off <code>globalThis</code> at call time.
+                Backoff sequences are asserted exactly in tests, and a network fence
+                turns any accidental real socket into a test failure.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ CONFIG ============ -->
+      <section id="config" aria-labelledby="h-config">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Configuration</span>
+            <h2 id="h-config">Credentials and environment</h2>
+            <p class="sub">
+              Headless by design: Basic auth with your Atlassian account email and an
+              API token. No browser OAuth dance, nothing to click through — it works
+              from cron, CI and remote boxes, which is the main reason this exists next
+              to Atlassian's official remote MCP server.
+            </p>
+          </div>
+
+          <div class="tw" role="group" tabindex="0" aria-label="Core credentials">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Variable</th>
+                  <th scope="col">Required</th>
+                  <th scope="col">What it does</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>JIRA_SITE</code></td>
+                  <td>yes</td>
+                  <td>
+                    <code>"mycompany"</code>, <code>"mycompany.atlassian.net"</code> or a
+                    full URL — resolved once into the single origin the allowlist then
+                    pins.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>JIRA_EMAIL</code></td>
+                  <td>yes</td>
+                  <td>Atlassian account email for Basic auth.</td>
+                </tr>
+                <tr>
+                  <td><code>JIRA_API_TOKEN</code></td>
+                  <td>yes</td>
+                  <td>
+                    <strong>Secret.</strong> Registered with the redactor before anything
+                    else gets a chance to log it.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>JIRA_TOKEN_EXPIRES</code></td>
+                  <td>no</td>
+                  <td>
+                    ISO date of the token's expiry — Cloud tokens live a year at most.
+                    When set, startup and <code>doctor</code> warn 30 days out.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>JIRA_ALLOWED_HOSTS</code></td>
+                  <td>no</td>
+                  <td>
+                    Extra allowed hosts for Server/DC or vanity domains: exact host or
+                    anchored regex. Suffix matching is banned.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details id="env">
+            <summary>The full environment surface</summary>
+            <div class="details-body" style="max-width: none; padding: 0">
+              <div
+                class="tw"
+                role="group"
+                tabindex="0"
+                aria-label="Environment variables"
+                style="border: 0; border-radius: 0"
+              >
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Variable</th>
+                      <th scope="col">Default</th>
+                      <th scope="col">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>JIRA_ENV_FILE</code></td>
+                      <td>—</td>
+                      <td>
+                        Explicit env-file path; wins over
+                        <code>~/.config/jira-mcp-ai/.env</code> and the project-local
+                        <code>.env</code>.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_SITE</code></td>
+                      <td>—</td>
+                      <td>Site name, host or URL. Required.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_EMAIL</code></td>
+                      <td>—</td>
+                      <td>Account email for Basic auth. Required.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_API_TOKEN</code></td>
+                      <td>—</td>
+                      <td><strong>Secret.</strong> API token. Required.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_TOKEN_EXPIRES</code></td>
+                      <td>—</td>
+                      <td>ISO expiry date; warning 30 days out when set.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_ALLOWED_HOSTS</code></td>
+                      <td>—</td>
+                      <td>
+                        Comma list of extra allowed hosts — exact or anchored regex.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_PROFILE_&lt;NAME&gt;_SITE</code> / <code>_EMAIL</code> / <code>_API_TOKEN</code></td>
+                      <td>—</td>
+                      <td>Named profile credentials for multi-site setups.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_ACTIVE_PROFILE</code></td>
+                      <td>—</td>
+                      <td>Profile used when a call does not name one.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_LOCK_PROFILE</code></td>
+                      <td><code>true</code></td>
+                      <td>
+                        Per-call profile switching is rejected by default — a model that
+                        can pick the tenant per call can leak issue text across tenants,
+                        so unlocking is a deliberate act.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_TOOL_PACKAGES</code></td>
+                      <td><code>all</code></td>
+                      <td>
+                        Profile (<code>core</code>, <code>reader</code>,
+                        <code>all</code>) or explicit comma list of packages.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_PACKAGES_DENY</code></td>
+                      <td>—</td>
+                      <td>Deny list; wins over selection; <code>core</code> is force-re-added.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_PACKAGES_READONLY</code></td>
+                      <td>—</td>
+                      <td>Packages whose write-tier tools are dropped; reads stay.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_WRITE_MODE</code></td>
+                      <td><code>plan</code></td>
+                      <td>
+                        <code>plan</code> = writes describe instead of execute;
+                        <code>apply</code> = writes execute when the call passes
+                        <code>apply: true</code>.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_REQUEST_TIMEOUT_MS</code></td>
+                      <td><code>30000</code></td>
+                      <td>Per-request timeout.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_CALL_BUDGET_MS</code></td>
+                      <td><code>120000</code></td>
+                      <td>
+                        Wall-clock budget for one tool call's total HTTP activity —
+                        retry waits and queueing count against it.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_HOST_CONCURRENCY</code></td>
+                      <td><code>4</code></td>
+                      <td>Per-host semaphore slots.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_RETRY_ATTEMPTS</code></td>
+                      <td><code>3</code></td>
+                      <td>
+                        Max retry attempts — for requests that are safe to retry.
+                        Ambiguous write outcomes are never replayed.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_MAX_RESULT_CHARS</code></td>
+                      <td><code>25000</code></td>
+                      <td>
+                        Truncation budget for tool results; whole items are dropped so
+                        output stays valid JSON.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_MAX_PAGES</code></td>
+                      <td><code>20</code></td>
+                      <td>Loop guard for paginated fetches.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_TRANSPORT</code></td>
+                      <td><code>stdio</code></td>
+                      <td><code>stdio</code> or <code>http</code>.</td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_HTTP_PORT</code></td>
+                      <td><code>3334</code></td>
+                      <td>
+                        TCP port for the <code>http</code> transport; the bind host is
+                        fixed to loopback.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_HTTP_TOKEN</code></td>
+                      <td>—</td>
+                      <td>
+                        <strong>Secret.</strong> Bearer token required by the
+                        <code>http</code> transport; it fails closed without it.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_LOG_LEVEL</code></td>
+                      <td><code>info</code></td>
+                      <td>
+                        Stderr log verbosity: <code>debug</code>, <code>info</code>,
+                        <code>warn</code>, <code>error</code>.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_JOURNAL_PATH</code></td>
+                      <td>—</td>
+                      <td>
+                        Optional write journal — JSONL of every write tool call: tool,
+                        argument hash, result, timestamp.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+
+          <p class="note">
+            The defaults are chosen so that an environment holding nothing beyond the
+            three credentials is already a sensible posture: every package registered,
+            every write disarmed, exactly one host reachable. The normative table, with
+            validation ranges and edge cases, is
+            <a
+              href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md"
+              >docs/CONFIGURATION.md</a
+            >.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============ ROADMAP ============ -->
+      <section id="roadmap" aria-labelledby="h-roadmap">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Roadmap</span>
+            <h2 id="h-roadmap">Where it stands</h2>
+            <p class="sub">
+              The spec was written first, reviewed, and revised before serious code — so
+              the phases below are gates with exit criteria, not vibes. Two are done,
+              two are moving, four are queued.
+            </p>
+          </div>
+
+          <div class="tw" role="group" tabindex="0" aria-label="Implementation phases">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Phase</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Exit gate</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0 · Scaffold</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    Repo furniture, the full docs corpus and the initial core/api
+                    skeleton committed.
+                  </td>
+                </tr>
+                <tr>
+                  <td>0.5 · Spec revision</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    External review-panel findings folded back into the spec; both exit
+                    gates met on the spec side.
+                  </td>
+                </tr>
+                <tr>
+                  <td>1 · Core</td>
+                  <td><span class="tag write">in progress</span></td>
+                  <td>
+                    First runnable artifact: wire-tier HTTP policy tests green;
+                    <code>doctor</code> exits 0 against a real site.
+                  </td>
+                </tr>
+                <tr>
+                  <td>2a · MCP layer + search</td>
+                  <td><span class="tag write">in progress</span></td>
+                  <td>
+                    First usable build: registered in Claude Code, a real JQL search
+                    end-to-end.
+                  </td>
+                </tr>
+                <tr>
+                  <td>2b · ADF + issue read</td>
+                  <td><span class="tag">planned</span></td>
+                  <td>Issue reads with ADF flattening proven against recorded fixtures.</td>
+                </tr>
+                <tr>
+                  <td>3 · Full read surface</td>
+                  <td><span class="tag">planned</span></td>
+                  <td>
+                    Every read tool green against a live scratch site; coverage
+                    thresholds enforced from here on.
+                  </td>
+                </tr>
+                <tr>
+                  <td>4 · Writes</td>
+                  <td><span class="tag">planned</span></td>
+                  <td>
+                    The plan → apply gate proven end-to-end in both modes; write journal;
+                    the full 27-tool surface locked.
+                  </td>
+                </tr>
+                <tr>
+                  <td>5 · Hardening &amp; release</td>
+                  <td><span class="tag">planned</span></td>
+                  <td>
+                    npm publish via OIDC trusted publishing with provenance; corner cases
+                    traceable to tests.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="sub">
+            The full plan, with per-phase exit gates and open decisions, is
+            <a
+              href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/IMPLEMENTATION-PLAN.md"
+              >docs/IMPLEMENTATION-PLAN.md</a
+            >; the longer horizon is
+            <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/ROADMAP.md"
+              >docs/ROADMAP.md</a
+            >.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============ FAQ ============ -->
+      <section id="faq" aria-labelledby="h-faq">
+        <div class="wrap">
+          <span class="eyebrow">FAQ</span>
+          <h2 id="h-faq" style="margin-bottom: 28px">Questions worth asking first</h2>
+
+          <details id="faq-atlassian">
+            <summary>Is jira-mcp-ai affiliated with Atlassian?</summary>
+            <div class="details-body">
+              <p>
+                No. This is an independent, community-built project and is not
+                affiliated with, endorsed by, or sponsored by Atlassian Pty Ltd. Jira,
+                Atlassian and related marks are trademarks of Atlassian Pty Ltd, used
+                here only nominatively to indicate compatibility.
+              </p>
+            </div>
+          </details>
+
+          <details id="faq-official">
+            <summary>Why not Atlassian's official remote MCP server?</summary>
+            <div class="details-body">
+              <p>
+                The official server is remote and OAuth-based: fine for interactive
+                desktop use, unusable anywhere nobody can click through a browser
+                consent screen. jira-mcp-ai is headless — Basic auth with your own API
+                token — so it runs from cron, CI and remote sessions, keeps all traffic
+                between your machine and your Jira site, and adds a plan-and-apply write
+                gate the official server does not have.
+              </p>
+              <p>
+                If OAuth and a hosted service fit your setup, use the official one; this
+                exists for everyone else.
+              </p>
+            </div>
+          </details>
+
+          <details id="faq-credentials">
+            <summary>Which credentials does it need?</summary>
+            <div class="details-body">
+              <p>
+                Three environment variables: <code>JIRA_SITE</code>,
+                <code>JIRA_EMAIL</code> and <code>JIRA_API_TOKEN</code> — the token is
+                minted in your Atlassian profile under <em>Security → API tokens</em> and
+                inherits exactly your permissions, nothing more. Jira Cloud tokens
+                expire (a year at most); set <code>JIRA_TOKEN_EXPIRES</code> and the
+                server warns you 30 days ahead instead of failing cold.
+              </p>
+            </div>
+          </details>
+
+          <details id="faq-safety">
+            <summary>Is it safe to let an AI assistant write to my Jira site?</summary>
+            <div class="details-body">
+              <p>
+                Writes ship disarmed. In the default plan mode a write tool returns the
+                exact method, path and redacted body it would have sent, plus a
+                single-use <code>plan_id</code> — its first line is, literally,
+                <em>NOT performed — plan mode.</em> Executing requires all three: the
+                server started with <code>JIRA_WRITE_MODE=apply</code>, the call passing
+                <code>apply: true</code>, and a <code>plan_id</code> minted for identical
+                arguments.
+              </p>
+              <p>
+                v1 has no delete, bulk or attachment tools at all, and a write whose
+                outcome is unknowable — a timeout mid-flight — is never retried: the
+                server asks you to check state instead of guessing.
+              </p>
+            </div>
+          </details>
+
+          <details id="faq-status">
+            <summary>What actually works today?</summary>
+            <div class="details-body">
+              <p>
+                This is a spec-first repository. The complete contract — all 27 tools,
+                the write gate, the error catalog, the corner cases — is written down in
+                <a href="https://github.com/IvanBBaev/jira-mcp/tree/main/docs"
+                  ><code>docs/</code></a
+                >
+                and is normative. The core HTTP layer and the first typed API wrappers
+                are implemented and covered by hermetic tests behind a network fence;
+                the MCP layer and the tool surface are being built against that spec
+                now.
+              </p>
+              <p>There is no tagged release and no npm package yet.</p>
+            </div>
+          </details>
+
+          <details id="faq-npm">
+            <summary>When will it be published to npm?</summary>
+            <div class="details-body">
+              <p>
+                In the release phase, after the full read surface and the write gate
+                have been proven against a real Jira site. Publication is planned
+                through npm trusted publishing (OIDC) with provenance attestation, so
+                the artifact on npm is verifiably built from this repository. Until then
+                there is nothing to install —
+                <a href="https://github.com/IvanBBaev/jira-mcp">watch the repository</a>
+                instead.
+              </p>
+            </div>
+          </details>
+
+          <details id="faq-clients">
+            <summary>Which MCP clients will it work with?</summary>
+            <div class="details-body">
+              <p>
+                Any client that speaks the Model Context Protocol over stdio — Claude
+                Code, Claude Desktop, VS Code and Cursor among them. An optional
+                loopback-only Streamable HTTP transport is specified for advanced
+                setups; it binds <code>127.0.0.1</code> only and refuses to start
+                without a bearer token.
+              </p>
+            </div>
+          </details>
+
+          <details id="faq-support">
+            <summary>How can I support the project?</summary>
+            <div class="details-body">
+              <p>
+                jira-mcp-ai is MIT-licensed and free, with no paid tier. It is
+                maintained by one person in their own time, so donations are welcome —
+                see <a href="#support">Support</a> below. Donating buys no priority
+                support and no SLA; starring the repository or filing a good bug report
+                helps just as much.
+              </p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- ============ SUPPORT ============ -->
+      <section id="support" aria-labelledby="h-support">
+        <div class="wrap stack-lg">
+          <div>
+            <span class="eyebrow">Support</span>
+            <h2 id="h-support">Free, MIT, and built in spare time</h2>
+            <p class="sub">
+              There is no paid tier and no hosted version. If this saves you an
+              afternoon, a donation keeps the coffee flowing — but a star, a bug report
+              or a fix helps just as much.
+            </p>
+          </div>
+
+          <div class="fund">
+            <a href="https://github.com/sponsors/IvanBBaev">
+              <b>GitHub Sponsors →</b>
+              <span>One-off or monthly, through GitHub.</span>
+            </a>
+            <a href="https://ko-fi.com/ivanbbaev">
+              <b>Ko-fi →</b>
+              <span>Buy a coffee, no account needed.</span>
+            </a>
+            <a href="https://donatr.ee/ivanbbaev">
+              <b>Donatree →</b>
+              <span>Alternative donation link.</span>
+            </a>
+          </div>
+
+          <div class="grid2">
+            <div class="card">
+              <h3>Found a bug?</h3>
+              <p class="sub" style="font-size: 15px">
+                Open an issue with what you asked the assistant to do, the tool call it
+                made, and the <code>ok: false</code> envelope it returned — the error's
+                <code>kind</code> and the hints answer most of the first round of
+                questions.
+              </p>
+              <p style="margin-top: 12px">
+                <a href="https://github.com/IvanBBaev/jira-mcp/issues">Open an issue →</a>
+              </p>
+            </div>
+            <div class="card">
+              <h3>Found a security problem?</h3>
+              <p class="sub" style="font-size: 15px">
+                Please report it privately through GitHub's private vulnerability
+                reporting rather than in a public issue.
+              </p>
+              <p style="margin-top: 12px">
+                <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/SECURITY.md"
+                  >Security policy →</a
+                >
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <div class="links">
+          <a href="https://github.com/IvanBBaev/jira-mcp">GitHub</a>
+          <a href="https://github.com/IvanBBaev/jira-mcp#readme">README</a>
+          <a href="https://github.com/IvanBBaev/jira-mcp/tree/main/docs">Docs</a>
+          <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/CHANGELOG.md"
+            >Changelog</a
+          >
+          <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/SECURITY.md"
+            >Security</a
+          >
+          <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+        </div>
+        <p>
+          © 2026 Ivan Baev · MIT licensed · Built with no dependencies on this page — one
+          file, no tracking, no external requests.
+        </p>
+        <p>
+          Not affiliated with, endorsed by or sponsored by Atlassian Pty Ltd. Jira,
+          Atlassian and related marks are trademarks of Atlassian Pty Ltd, used here
+          only nominatively to indicate compatibility. You remain responsible for
+          complying with the Atlassian Cloud Terms of Service when you automate a site
+          you administer.
+        </p>
+      </div>
+    </footer>
+
+    <button class="totop" id="totop" type="button" aria-label="Back to top">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+    </button>
+
+    <script>
+      (function () {
+        'use strict';
+        var doc = document;
+        var reduced = matchMedia('(prefers-reduced-motion: reduce)');
+
+        /* ---------- theme toggle ---------- */
+        var btn = doc.getElementById('theme');
+        var dark = matchMedia('(prefers-color-scheme: dark)');
+        function current() {
+          return doc.documentElement.getAttribute('data-theme') ||
+            (dark.matches ? 'dark' : 'light');
+        }
+        function label() {
+          btn.setAttribute(
+            'aria-label',
+            current() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+          );
+        }
+        if (btn) {
+          label();
+          btn.addEventListener('click', function () {
+            var next = current() === 'dark' ? 'light' : 'dark';
+            doc.documentElement.setAttribute('data-theme', next);
+            try {
+              localStorage.setItem('jmcp-theme', next);
+            } catch (e) {}
+            label();
+          });
+          dark.addEventListener('change', label);
+        }
+
+        /* ---------- tabs (roving tabindex) ---------- */
+        Array.prototype.forEach.call(
+          doc.querySelectorAll('[role="tablist"]'),
+          function (list) {
+            var tabs = Array.prototype.slice.call(
+              list.querySelectorAll('[role="tab"]')
+            );
+            function select(tab, focus) {
+              tabs.forEach(function (t) {
+                var on = t === tab;
+                t.setAttribute('aria-selected', on ? 'true' : 'false');
+                t.tabIndex = on ? 0 : -1;
+                var panel = doc.getElementById(t.getAttribute('aria-controls'));
+                if (panel) panel.hidden = !on;
+              });
+              if (focus) tab.focus();
+            }
+            tabs.forEach(function (tab, i) {
+              tab.addEventListener('click', function () {
+                select(tab, false);
+              });
+              tab.addEventListener('keydown', function (ev) {
+                var k = ev.key,
+                  n = -1;
+                if (k === 'ArrowRight') n = (i + 1) % tabs.length;
+                else if (k === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+                else if (k === 'Home') n = 0;
+                else if (k === 'End') n = tabs.length - 1;
+                if (n < 0) return;
+                ev.preventDefault();
+                select(tabs[n], true);
+              });
+            });
+          }
+        );
+
+        /* ---------- copy buttons (text comes from the DOM) ---------- */
+        Array.prototype.forEach.call(doc.querySelectorAll('.copy'), function (b) {
+          b.addEventListener('click', function () {
+            var src = doc.getElementById(b.getAttribute('data-copy'));
+            if (!src) return;
+            var text = src.innerText;
+            var done = function (ok) {
+              b.textContent = ok ? 'Copied' : 'Press ⌘C';
+              b.setAttribute('data-done', '1');
+              setTimeout(function () {
+                b.textContent = 'Copy';
+                b.removeAttribute('data-done');
+              }, 1600);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).then(
+                function () {
+                  done(true);
+                },
+                function () {
+                  done(false);
+                }
+              );
+            } else {
+              done(false);
+            }
+          });
+        });
+
+        /* ---------- scroll spy ---------- */
+        var links = Array.prototype.slice.call(doc.querySelectorAll('.nav a'));
+        var map = {};
+        links.forEach(function (a) {
+          map[a.getAttribute('href').slice(1)] = a;
+        });
+        var targets = Object.keys(map)
+          .map(function (id) {
+            return doc.getElementById(id);
+          })
+          .filter(Boolean);
+        if ('IntersectionObserver' in window && targets.length) {
+          var visible = {};
+          var io = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (e) {
+                visible[e.target.id] = e.isIntersecting;
+              });
+              var active = null;
+              targets.forEach(function (t) {
+                if (visible[t.id] && !active) active = t.id;
+              });
+              links.forEach(function (a) {
+                if (active && a === map[active]) a.setAttribute('aria-current', 'true');
+                else a.removeAttribute('aria-current');
+              });
+            },
+            { rootMargin: '-70px 0px -65% 0px', threshold: 0 }
+          );
+          targets.forEach(function (t) {
+            io.observe(t);
+          });
+        }
+
+        /* ---------- terminal replay ---------- */
+        var term = doc.getElementById('term');
+        if (term && !reduced.matches && 'IntersectionObserver' in window) {
+          var playing = false;
+          var play = function () {
+            if (playing) return;
+            playing = true;
+            term.classList.remove('run');
+            void term.offsetWidth;
+            term.classList.add('run');
+            setTimeout(function () {
+              playing = false;
+            }, 5200);
+          };
+          new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (e) {
+                if (e.isIntersecting) play();
+              });
+            },
+            { threshold: 0.35 }
+          ).observe(term);
+        }
+
+        /* ---------- back to top ---------- */
+        var top = doc.getElementById('totop');
+        if (top) {
+          var tick = false;
+          addEventListener(
+            'scroll',
+            function () {
+              if (tick) return;
+              tick = true;
+              requestAnimationFrame(function () {
+                top.classList.toggle('show', scrollY > 700);
+                tick = false;
+              });
+            },
+            { passive: true }
+          );
+          top.addEventListener('click', function () {
+            scrollTo({ top: 0, behavior: reduced.matches ? 'auto' : 'smooth' });
+            var brand = doc.querySelector('.brand');
+            if (brand) brand.focus();
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>
