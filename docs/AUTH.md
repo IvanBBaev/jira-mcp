@@ -57,8 +57,12 @@ shows the complete picture):
 3. env-file permissions (0600) when an env file is in use;
 4. `GET /myself` → identity, accountId, timezone;
 5. `GET /serverInfo` → deployment type sanity (warns if not Cloud);
-6. one-page `search/jql` probe (`jql: "order by created desc"`, maxResults 1) —
-   verifies search permission and the new-endpoint availability;
+6. one-page `search/jql` probe (`jql: "created >= \"1970-01-01\" order by
+   created desc"`, maxResults 1) — verifies search permission and the
+   new-endpoint availability. The date clause is a restriction Jira requires,
+   not a filter: a query that restricts nothing is refused with HTTP 400
+   "Unbounded JQL queries are not allowed here" on sites past a size Atlassian
+   does not publish (D88);
 7. agile root probe (`GET /rest/agile/1.0/board`, maxResults 1) — the Agile API
    is a separate root with its own permission surface; a green platform probe
    does not imply it;

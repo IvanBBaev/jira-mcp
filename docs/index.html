@@ -123,15 +123,15 @@
                 "name": "What actually works today?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "The whole surface, offline. All 52 tools across 10 packages are implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,400+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. What has not happened yet is verification against a real Jira site and the first tagged release, so there is no npm package to install."
+                  "text": "The whole surface, offline. All 52 tools across 10 packages are implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,400+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. And now online too, in part: two runs against a real Atlassian tenant have proven 40 of the 52 tools against the live API — all 27 reads and 13 of the 25 writes. Of the 12 still unproven, seven need a project administrator — the watcher pair, the version pair, the component pair and issue delete — and five are the sprint writes, which that run never reached because the gate itself asked Jira for an over-long sprint name."
                 }
               },
               {
                 "@type": "Question",
-                "name": "When will it be published to npm?",
+                "name": "Is it on npm?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Once it has been proven against a real Jira site. The code is complete and the offline gate is green; what is left is the live verification pass on a scratch site and the decision to publish. Publication goes through npm trusted publishing (OIDC) with provenance attestation, so the artifact on npm is verifiably built from this repository. Until then there is nothing to install — watch the repository instead."
+                  "text": "Yes — jira-mcp-ai, currently 0.9.4. It is published from a git tag by GitHub Actions with provenance attestation, so the artifact on npm is verifiably built from this repository; npm audit signatures will say so. The version is deliberately below 1.0.0 and will stay there until the live verification is complete. Pin the exact version in your client configuration — the changelog is written for someone deciding whether to move that pin."
                 }
               },
               {
@@ -1362,7 +1362,7 @@
             <span class="badge">Node 22+</span>
             <span class="badge">Jira Cloud REST v3</span>
             <span class="badge">52 tools · 10 packages</span>
-            <span class="badge warn">pre-1.0 · not on npm yet</span>
+            <span class="badge warn">pre-1.0 · on npm</span>
           </div>
 
           <div class="cta">
@@ -1446,12 +1446,15 @@
           </div>
 
           <p class="note warn">
-            <strong>On npm as <code>jira-mcp-ai@0.9.0</code>, and pre-1.0 on
-            purpose.</strong> The surface is complete and the offline gate is green, but
-            no build has yet spoken to a real Jira site — every test in the suite answers
-            a fake. The version number says so, and it stays below 1.0.0 until that run
-            has happened. The registration below resolves as written; it installs the
-            published package, provenance and all.
+            <strong>On npm as <code>jira-mcp-ai@0.9.4</code>, and pre-1.0 on
+            purpose.</strong> The surface is complete, the offline gate is green, and the
+            build has now been run against a real Atlassian tenant — 40 of the 52 tools
+            have been proven live, every read tool among them, and the three bugs that
+            run found are fixed in this version. The 12 still unproven are all writes,
+            and most of them need a project-administrator account nobody has pointed at
+            it yet, so the number stays below 1.0.0 until they are covered too. The
+            registration below resolves as written; it installs the published package,
+            provenance and all.
           </p>
 
           <div class="steps">
@@ -1517,7 +1520,7 @@
   <span class="p">"mcpServers"</span>: {
     <span class="p">"jira"</span>: {
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.0"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.4"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -1550,7 +1553,7 @@
   <span class="p">"mcpServers"</span>: {
     <span class="p">"jira"</span>: {
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.0"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.4"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -1604,7 +1607,7 @@
     <span class="p">"jira"</span>: {
       <span class="p">"type"</span>: "stdio",
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.0"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.4"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -2349,7 +2352,9 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
             <p class="sub">
               The spec was written first, reviewed, and revised before serious code — so
               the phases below are gates with exit criteria, not vibes. All eight are
-              closed. What is left before a release is not code.
+              closed, and the package is on npm. What is left before 1.0.0 is mostly not
+              code either: one more gate run for the sprint tools, and a Jira site where
+              the test account may administer a project for the rest.
             </p>
           </div>
 
@@ -2449,29 +2454,46 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                   </td>
                 </tr>
                 <tr>
-                  <td>Live verification</td>
-                  <td><span class="tag write">outstanding</span></td>
+                  <td>Live verification · read half</td>
+                  <td><span class="tag on">done</span></td>
                   <td>
-                    One run of the driver against a real scratch Jira site. Nothing here
-                    has spoken to Atlassian's API yet — every test in the suite answers a
-                    fake. This is why the published version is pre-1.0.
+                    First contact with a real Atlassian tenant, 2026-08-17. Every one of
+                    the 27 read tools proven against the live API, and three bugs found
+                    that no fixture could have produced — all three fixed in 0.9.4.
                   </td>
                 </tr>
                 <tr>
-                  <td>0.9.0 on npm</td>
+                  <td>Live verification · write half</td>
+                  <td><span class="tag write">partial</span></td>
+                  <td>
+                    Run 2026-08-18 against a sandbox project: 13 of the 25 write tools
+                    applied successfully, taking the live-proven surface to 40 of 52.
+                    Seven of the remaining 12 wait on permissions the test account does
+                    not hold — both watcher writes, both version writes, both component
+                    writes and issue delete, each answering with a correctly shaped
+                    refusal rather than a result. The other five are the sprint writes,
+                    which the run never reached: the gate asked Jira for a sprint name
+                    past a length cap Atlassian does not document. That was the harness,
+                    not the server, and it is fixed here.
+                  </td>
+                </tr>
+                <tr>
+                  <td>0.9.4 on npm</td>
                   <td><span class="tag on">done</span></td>
                   <td>
-                    Published from a tag with provenance, under a one-run bootstrap token
-                    because npm cannot register a trusted publisher for a package that
-                    does not exist yet.
+                    Published from a tag with provenance. Still on the one-run bootstrap
+                    token, because npm cannot register a trusted publisher for a package
+                    that does not exist yet and the switch has not been made.
                   </td>
                 </tr>
                 <tr>
                   <td>1.0.0 on npm</td>
                   <td><span class="tag">planned</span></td>
                   <td>
-                    The live run above, green, and the semver promise made: from then on
-                    OIDC trusted publishing, no token in the repository.
+                    The 12 remaining tools proven — the sprint five on any site with a
+                    Scrum board, the other seven on a site where the account may
+                    administer a project — and the semver promise made: from then on OIDC
+                    trusted publishing, no token in the repository.
                   </td>
                 </tr>
               </tbody>
@@ -2579,24 +2601,40 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                 consistency all enforced in CI.
               </p>
               <p>
-                What has not happened yet is verification against a real Jira site and
-                the first tagged release, so there is no npm package to install.
+                And now online too, in part. Two runs against a real Atlassian tenant
+                have proven 40 of the 52 tools against the live API — all 27 reads, and
+                13 of the 25 writes: issue create and update, comments and comment edit,
+                worklogs, transitions, links, assignment, votes, attachment upload and
+                the comment and worklog deletes. Of the 12 still unproven, seven need a
+                project administrator — the watcher pair, the version pair, the component
+                pair and issue delete — and five are the sprint writes, which that run
+                never reached because the gate itself asked Jira for an over-long sprint
+                name. All 12 are implemented and tested offline; the sprint five need
+                only another run, and the other seven need a site where the account holds
+                the permission.
               </p>
             </div>
           </details>
 
           <details id="faq-npm">
-            <summary>When will it be published to npm?</summary>
+            <summary>Is it on npm?</summary>
             <div class="details-body">
               <p>
-                Once it has been proven against a real Jira site. The code is complete
-                and the offline gate is green; what is left is the live verification
-                pass on a scratch site and the decision to publish. Publication goes
-                through npm trusted publishing (OIDC) with provenance attestation, so
-                the artifact on npm is verifiably built from this repository. Until then
-                there is nothing to install —
-                <a href="https://github.com/IvanBBaev/jira-mcp">watch the repository</a>
-                instead.
+                Yes —
+                <a href="https://www.npmjs.com/package/jira-mcp-ai"
+                  ><code>jira-mcp-ai</code></a
+                >, currently 0.9.4. It is published from a git tag by GitHub Actions with
+                provenance attestation, so the artifact on npm is verifiably built from
+                this repository; <code>npm audit signatures</code> will say so.
+              </p>
+              <p>
+                The version is deliberately below 1.0.0 and will stay there until the
+                live verification above is complete. Pin the exact version in your client
+                configuration — the
+                <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/CHANGELOG.md"
+                  >changelog</a
+                >
+                is written for someone deciding whether to move that pin.
               </p>
             </div>
           </details>

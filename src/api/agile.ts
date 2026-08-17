@@ -988,6 +988,24 @@ const AGILE_ROOT_REMEDIATION =
   'account allowed to view boards. Verify the licence and the account, then ' +
   'retry; no agile tool can work until then.';
 
+/**
+ * A board that cannot hold sprints will never hold one, whatever is retried.
+ *
+ * Jira answers the sprint routes with HTTP 400 and this exact sentence for a
+ * kanban or a team-managed ("simple") board, which `core/http.ts` reads as
+ * `validation` — the kind that means "your arguments were wrong". They were
+ * not: the board id is real and the request is well formed, the board is just
+ * the wrong shape. Told `validation`, a model re-sends with different
+ * parameters until it gives up (CC-95, D89).
+ */
+const BOARD_WITHOUT_SPRINTS = /the board does not support sprints/i;
+
+const BOARD_WITHOUT_SPRINTS_REMEDIATION =
+  'Only scrum boards have sprints. This board is kanban or team-managed, so ' +
+  'the sprint routes will refuse it however the call is retried — list the ' +
+  'boards and pick one of type `scrum`, or read the issues directly with ' +
+  'jira_search.';
+
 /** …but on an id-bearing route the id is the likelier culprit, so say both. */
 const AGILE_SCOPED_REMEDIATION =
   'If other agile calls fail the same way, the Agile API itself may be ' +
@@ -1017,6 +1035,26 @@ async function agileCall<T>(
 function asAgileError(error: unknown, context: { readonly rootProbe: boolean }): unknown {
   if (!(error instanceof JiraError)) return error;
   const status = error.httpStatus;
+
+  // Checked before the 403/404 gate below, because this one is a 400 and would
+  // otherwise fall straight through as `validation`.
+  if (
+    status === 400 &&
+    (error.jiraMessages ?? []).some((m) => BOARD_WITHOUT_SPRINTS.test(m))
+  ) {
+    return createJiraError({
+      kind: 'unsupported',
+      reason:
+        'This board does not support sprints. Jira Software gives sprints to ' +
+        'scrum boards only.',
+      httpStatus: status,
+      ...(error.jiraMessages === undefined ? {} : { jiraMessages: error.jiraMessages }),
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
+      remediation: BOARD_WITHOUT_SPRINTS_REMEDIATION,
+      cause: error,
+    });
+  }
+
   if (status !== 403 && status !== 404) return error;
   // Only the two kinds a missing Agile root can hide behind are rewritten. A 403
   // that the client already read as `auth` (CC-18: expired token, login denied)

@@ -10,6 +10,52 @@ user reads before bumping the pin. Entries describe what changes for **them** �
 new or renamed tools, changed tool input/output shapes, changed defaults, changed
 env var names — not internal refactors.
 
+## [Unreleased]
+
+Nothing yet.
+
+## [0.9.4] — 2026-08-18
+
+The first release with live evidence behind it. Every entry below comes from
+running against a real Atlassian tenant. No fixture could have produced any of
+them: one depends on the size of the site, one on a board type no fake was told
+to have, and one on a status code Atlassian's own documentation does not lead
+you to expect.
+
+Nothing in the tool surface changed — same 52 tools, same 10 packages, same
+inputs and outputs. What changed is that three of them stop giving wrong advice
+when a real Jira site refuses them. Moving the pin from `0.9.0` is safe in both
+directions; it is worth doing if you run `doctor` on a large site, or if you
+have ever been told to regenerate a token that was fine.
+
+(0.9.1 through 0.9.3 do not exist. The number was picked by the owner, not by
+the diff — nothing was published under those versions and nothing ever will be,
+since npm does not let a version be reused.)
+
+### Fixed
+
+- `jira-mcp-ai doctor` no longer reports `[FAIL] search` on a large site. Its
+  search probe sent a JQL that restricted nothing (`order by created desc`),
+  which Jira refuses with HTTP 400 "Unbounded JQL queries are not allowed here"
+  once a site is past a size Atlassian does not publish. The probe now carries a
+  lower bound that predates Jira, so it still matches every issue the token can
+  see. Only the doctor's own probe changed — a JQL you pass to `jira_search` is
+  sent exactly as written, then and now (D88).
+- The sprint tools (`jira_list_sprints`, `jira_get_sprint_issues` and the sprint
+  writes) now answer `unsupported` instead of `validation` when the board is
+  kanban or team-managed, and say to pick a board of type `scrum`. Jira reports
+  that case as HTTP 400 "The board does not support sprints", which read as
+  "your arguments were wrong" — so a caller would keep retrying a call that
+  cannot succeed on that board however it is phrased (D89).
+- `jira_list_project_roles` and `jira_get_project_role` no longer tell you to
+  regenerate your API token when the account simply is not a project
+  administrator. Jira refuses that read with HTTP 401 "You cannot edit the
+  configuration of this project", which read as an authentication failure — so
+  the advice was to replace a credential that was working perfectly. The result
+  is now `permission` and names the "Administer projects" permission instead. A
+  real credentials failure on the same route is unchanged: still `auth`, still
+  telling you to check `JIRA_EMAIL` / `JIRA_API_TOKEN` (D90).
+
 ## [0.9.0] — 2026-08-17
 
 The first release. Everything below is "added" relative to nothing, so this

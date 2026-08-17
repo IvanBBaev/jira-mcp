@@ -77,6 +77,18 @@ export const EXIT_PROBE_FAILED = 1;
 /** A usage error or a broken configuration prevented a meaningful run. */
 export const EXIT_CONFIG = 2;
 
+/**
+ * The JQL the search probe sends.
+ *
+ * Exported so the regression test can assert on its shape rather than on a
+ * fixture. The leading clause is a RESTRICTION, not a filter: Jira refuses a
+ * query that restricts nothing on sites above some size it does not publish,
+ * and answers HTTP 400 "Unbounded JQL queries are not allowed here" (D88). A
+ * lower bound that predates Jira itself satisfies that rule while still
+ * matching every issue the token can see.
+ */
+export const SEARCH_PROBE_JQL = 'created >= "1970-01-01" order by created desc';
+
 // ---------------------------------------------------------------------------
 // Report shape
 // ---------------------------------------------------------------------------
@@ -758,7 +770,7 @@ const PROBES: readonly Probe[] = [
         path: '/search/jql',
         // A pure read behind a POST verb: safe to replay (JIRA-API.md).
         safe: true,
-        body: { jql: 'order by created desc', maxResults: 1, fields: ['key'] },
+        body: { jql: SEARCH_PROBE_JQL, maxResults: 1, fields: ['key'] },
       });
       const data: unknown = response?.data;
       const issues = readArrayLength(data, 'issues');

@@ -3,7 +3,7 @@
   "name": "io.github.IvanBBaev/jira-mcp-ai",
   "title": "Jira Cloud",
   "description": "Jira Cloud over MCP: JQL search, issue reads, and writes behind a plan/apply gate.",
-  "version": "0.9.0",
+  "version": "0.9.4",
   "websiteUrl": "https://github.com/IvanBBaev/jira-mcp#readme",
   "repository": {
     "url": "https://github.com/IvanBBaev/jira-mcp",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jira-mcp-ai",
-      "version": "0.9.0",
+      "version": "0.9.4",
       "transport": { "type": "stdio" },
       "environmentVariables": [
         {

@@ -2,9 +2,9 @@
 
 > Status: procedural — the publish-day runbook. Unlike the rest of this corpus
 > it does not describe shipped behaviour but owner actions, and it has now been
-> run once: `jira-mcp-ai` 0.9.0 was published from tag `v0.9.0` on 2026-08-17.
-> Every step below therefore describes both what to do and what happened the
-> first time.
+> run twice: `jira-mcp-ai` 0.9.0 from tag `v0.9.0` on 2026-08-17, and 0.9.4 from
+> `v0.9.4` on 2026-08-18. Every step below therefore describes both what to do
+> and what happened when it was done.
 
 The release machinery was written, reviewed and dry-run long before the
 decision to publish. That was the point: on the day, nothing here should need a
@@ -97,14 +97,15 @@ Pages page, one in `.claude-plugin/plugin.json` — D61, D68). A drifted pin is 
 copy-pasteable snippet that 404s, which is the worst possible first-run
 experience — so the lint fails rather than the user.
 
-Note the deliberate inconsistency before the first publish: the manifests read
-`0.0.0` while the registration pins already name the version that will exist.
-Both forms are broken today; only the pins become correct on publish day
-without an edit.
+Before the first publish the two forms disagreed on purpose — the manifests read
+`0.0.0` while the registration pins already named the version that would exist.
+That is over: from 0.9.0 on, all twelve carry the same number, and the two
+machine checks above are what keeps them that way.
 
-Also on the day: drop `"private": true` from `package.json` (it is the last
-mechanical stop before an accidental publish) and turn the CHANGELOG's
-unreleased section into a dated release entry.
+Also on the day: turn the CHANGELOG's unreleased section into a dated release
+entry. (`"private": true` was dropped from `package.json` for 0.9.0 and does not
+come back — the mechanical stop against an accidental publish is now
+`PUBLISH_ENABLED` and the tag itself.)
 
 ## 3. Publishing
 
@@ -237,9 +238,9 @@ off below is checked off against that run; the rest is still open.
   right" and "the published package starts" are different claims. The §3
   rehearsal already answers the second one; what only the registry can answer is
   whether npm stored and served the same bytes, and `doctor` against a real site
-  is the part no local run reaches at all. **Half done for 0.9.0:** the registry
-  copy was installed and started, but the real-site half is Gate C and has still
-  not happened.
+  is the part no local run reaches at all. **Done for 0.9.0:** the registry copy
+  was installed and started, and `doctor` has since run against a real tenant —
+  where it failed on its first contact and produced D88.
 - Verify the provenance attestation appears on the package page. **Done for
   0.9.0** — `npm view jira-mcp-ai --json` reports a `dist.attestations` entry
   with predicate type `https://slsa.dev/provenance/v1`, which is the same claim
@@ -258,11 +259,85 @@ off below is checked off against that run; the rest is still open.
   release-day errand (CC-82). What stays deferred is named in
   `.github/dependabot.yml` with the event that unblocks it — `typescript` 7 and
   `@types/node` above the supported Node floor.
-- **Gate C** — verification against a live Jira site. It no longer blocks *a*
-  release: 0.9.0 shipped without it, deliberately and visibly, because a
-  pre-1.0 version number is how a project says "complete, unverified" in the one
-  place every consumer already reads (D87). It blocks **1.0.0**, and nothing
-  else will unblock it. What this file will not decide is *which* site
+- **Gate C** — verification against a live Jira site. It does not block *a*
+  release: 0.9.0 shipped before it had ever run and 0.9.4 shipped with it half
+  done, deliberately and visibly, because a pre-1.0 version number is how a
+  project says "complete, not fully verified" in the one place every consumer
+  already reads (D87). It blocks **1.0.0**, and nothing else will unblock it.
+
+  **Read half: run, 2026-08-17**, against a large company tenant (58 projects,
+  83 boards, ~10k issues) with `--project DEV --project2 CAL --issue DEV-1243`
+  and no write flags — 22 claims, 22 PASS, exit 0. It cost three defects, none of
+  which any fixture could have produced: the doctor's search probe sent an
+  unbounded JQL that a site of that size refuses (D88), a sprint route on a
+  kanban board reported `validation` where the board is simply incapable of
+  sprints (D89), and the project-role read told the operator to regenerate a
+  working API token because Jira refuses it with a 401 (D90). All three are
+  fixed and pinned by tests. The read phase also grew three claims in the course
+  of that run — C34, C35 and C36 — after the first pass showed the gate proving
+  23 of the 52 tools and never touching five reads that cost nothing to exercise;
+  D90 is what the first of them found. Read this as what it is: evidence that the
+  read surface works on a real tenant, not a completed gate. The write half ran a
+  day later, and the paragraph below says both what it proved and what it cost —
+  it leaves artifacts on the site permanently, which is a thing to do to a
+  scratch org and not to somebody's production Jira.
+
+  The write half then grew five claims of its own — C37 to C41 — closing the
+  last gap in the gate's tool coverage: votes, transitions, links, comment edits
+  and components were the seven tools no claim touched, and all seven are writes,
+  so none of them could be covered from the read half. Two of them buy more than
+  coverage: C38 proves a transition id is read from the issue rather than
+  remembered, and C40 proves CC-31's replace semantics against Atlassian's own
+  ADF converter instead of against ours.
+
+  **Write half: run, 2026-08-18**, against the same tenant's `SAN` sandbox
+  project with `--project SAN --project2 DEV --write --irreversible` — **33 PASS,
+  5 FAIL, 3 SKIP, exit 1**. The failures split cleanly in two, and only one of
+  them is about this code:
+
+  - **One real defect, in the gate itself.** C27 died on `Sprint name must be
+    shorter than 30 characters` — the sprint was the one artifact carrying the
+    ` (safe to delete)` suffix, which puts `gate-c-<runid>` at 32. C28, C29 and
+    C30 skipped behind it, so a naming slip cost four claims. The name is now
+    bare (`GATE_C_ARTIFACT_NAME` always allowed that), the fake enforces Jira's
+    cap so eleven green passes can never again say nothing about it, and the cap
+    itself is written down in [JIRA-API.md](JIRA-API.md) because the Cloud
+    reference does not state it.
+  - **Four permission refusals, which are the tenant's answer and not a bug.**
+    The token can create and edit issues on `SAN` but is not a project
+    administrator there and cannot delete: C21 (add watcher, 403 "not allowed to
+    add watchers"), C22 (version create, 404 naming "Administer projects"), C41
+    (component create, 403 "You cannot edit the configuration of this project")
+    and C26 (issue delete, 403). Every one of them came back as the right kind
+    with a remediation that names the missing permission — which is the D90
+    behaviour working, observed rather than asserted. They cannot pass without a
+    project where the account administers, so **the gate is not closed**.
+
+  Thirteen write tools applied successfully against Atlassian — issue create and
+  update, comment add and edit, worklog add, assign, attachment upload, both vote
+  directions, transition, link, and the comment and worklog deletes. With the 27
+  reads the earlier phase proved, that is **40 of the 52 tools answered by a real
+  Jira site**; count it from the run log rather than by adding phases together,
+  because a claim may exercise a write in *plan* mode, where nothing is sent and
+  nothing is proven (C14 and C15 do exactly that). Twelve are
+  still unproven, and they do not fail for the same reason: seven wait on a
+  permission this account does not have on `SAN` (both watcher writes, both
+  version writes, both component writes, the issue delete), and five — sprint
+  create, start and close, plus the sprint and backlog moves — never got a
+  request sent, because the name the gate chose was refused. Those five should
+  clear on the next run against any board; the seven will not clear anywhere the
+  account is not a project administrator.
+
+  Read the run as three separate results. The write path works — plan → apply,
+  fingerprint binding, the bare-string watcher body, the multipart upload, links,
+  transitions, comment replacement and the vote round trip all landed on a real
+  site. The refusal path works. The gate's own housekeeping did not: because the
+  delete tier is barred on `SAN`, both throwaway issues stayed behind and the
+  documented `--purge` cannot clear them either. That is the argument for a
+  scratch site restated as evidence — a site where the account cannot clean up
+  after itself is not a site this gate should be pointed at twice.
+
+  What this file will not decide is *which* site
   and *when*; the procedure itself is no longer prose. It is one command,
   rehearsed offline against the fake before it is ever pointed at a tenant
   ([TESTING.md](TESTING.md), "Rehearsing the live gate"), and it is refused
@@ -274,11 +349,11 @@ off below is checked off against that run; the rest is still open.
       --write --irreversible --confirm-site <scratch>.atlassian.net
   ```
 
-  Run it against a **scratch** site. It creates issues, a version, a sprint and
-  an attachment, and every run ends by printing an inventory of what it left
-  behind together with the command that removes the removable part — see
-  `scripts/verify-live.mjs`, whose header is the authoritative safety contract.
-  Two artifacts (the version and the sprint) cannot be removed by any command,
-  because this server ships no delete for either and the gate does not get to
-  widen the product's write surface (D73); the inventory says so in as many
-  words rather than implying a cleanup that does not exist.
+  Run it against a **scratch** site. It creates issues, a version, a sprint, a
+  component and an attachment, and every run ends by printing an inventory of
+  what it left behind together with the command that removes the removable part
+  — see `scripts/verify-live.mjs`, whose header is the authoritative safety
+  contract. Three artifacts (the version, the sprint and the component) cannot be
+  removed by any command, because this server ships no delete for any of them and
+  the gate does not get to widen the product's write surface (D73); the inventory
+  says so in as many words rather than implying a cleanup that does not exist.

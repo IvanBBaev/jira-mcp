@@ -287,6 +287,7 @@ function seedState(config) {
     users,
     projects,
     issues: new Map(),
+    links: [],
     components: new Map(),
     versions: new Map(),
     boards: [
@@ -682,6 +683,53 @@ function wireWorklog(state, issue, worklog, origin) {
   return body;
 }
 
+/**
+ * The link catalogue, shared by `GET /issueLinkType` and the link route so a
+ * link created by name comes back carrying the same inward/outward wording.
+ */
+const LINK_TYPES = [
+  { id: '10000', name: 'Blocks', inward: 'is blocked by', outward: 'blocks' },
+  { id: '10001', name: 'Relates', inward: 'relates to', outward: 'relates to' },
+];
+
+/**
+ * One issue's links, from ITS side.
+ *
+ * Jira never echoes both ends: the issue you read is implied, and the entry
+ * carries only the other one — `inwardIssue` when you are the outward end,
+ * `outwardIssue` when you are the inward end. `shapeIssueLink` in
+ * `src/api/issues.ts` reads the direction back out of exactly that asymmetry,
+ * so a fake that emitted both would let a direction bug through.
+ */
+function wireIssueLinks(state, issue, origin) {
+  const out = [];
+  for (const link of state.links) {
+    const isOutward = link.outwardKey === issue.key;
+    const isInward = link.inwardKey === issue.key;
+    if (!isOutward && !isInward) continue;
+    const otherKey = isOutward ? link.inwardKey : link.outwardKey;
+    const other = state.issues.get(otherKey);
+    if (other === undefined || other.deleted) continue;
+    out.push({
+      id: link.id,
+      self: `${origin}/rest/api/3/issueLink/${link.id}`,
+      type: { ...link.type, self: `${origin}/rest/api/3/issueLinkType/${link.type.id}` },
+      [isOutward ? 'inwardIssue' : 'outwardIssue']: {
+        id: other.id,
+        key: other.key,
+        self: `${origin}/rest/api/3/issue/${other.id}`,
+        fields: {
+          summary: other.summary,
+          status: other.status,
+          priority: other.priority,
+          issuetype: { id: other.issueType.id, name: other.issueType.name },
+        },
+      },
+    });
+  }
+  return out;
+}
+
 /** The `fields` bag, honouring the `fields` query the client sent. */
 function wireIssueFields(state, issue, origin, requested) {
   const all = {
@@ -706,7 +754,7 @@ function wireIssueFields(state, issue, origin, requested) {
     attachment: issue.attachmentIds.map((id) =>
       wireAttachment(state, state.attachments.get(id), origin),
     ),
-    issuelinks: [],
+    issuelinks: wireIssueLinks(state, issue, origin),
     fixVersions: [],
     components: [],
     worklog: {
@@ -1102,22 +1150,10 @@ function buildRoutes(server) {
       '/rest/api/3/issueLinkType',
       () =>
         json(200, {
-          issueLinkTypes: [
-            {
-              id: '10000',
-              name: 'Blocks',
-              inward: 'is blocked by',
-              outward: 'blocks',
-              self: `${origin()}/rest/api/3/issueLinkType/10000`,
-            },
-            {
-              id: '10001',
-              name: 'Relates',
-              inward: 'relates to',
-              outward: 'relates to',
-              self: `${origin()}/rest/api/3/issueLinkType/10001`,
-            },
-          ],
+          issueLinkTypes: LINK_TYPES.map((type) => ({
+            ...type,
+            self: `${origin()}/rest/api/3/issueLinkType/${type.id}`,
+          })),
         }),
     ],
 
@@ -1600,7 +1636,38 @@ function buildRoutes(server) {
       },
     ],
 
-    ['POST', '/rest/api/3/issueLink', () => ({ status: 201 })],
+    [
+      'POST',
+      '/rest/api/3/issueLink',
+      (ctx) => {
+        // Jira answers 201 with an EMPTY body — no link id, no echo — so the
+        // only way a gate run can prove the link happened is to read one of the
+        // issues back. That is why this handler records state instead of just
+        // returning 201: a fake that forgets would let a claim pass against a
+        // link that was never made.
+        const name = ctx.body?.type?.name;
+        const type = LINK_TYPES.find((row) => row.name === name);
+        if (type === undefined) {
+          return jiraError(404, [
+            `No issue link type with name '${String(name)}' found.`,
+          ]);
+        }
+        const inward = findIssue(ctx.body?.inwardIssue?.key ?? ctx.body?.inwardIssue?.id);
+        const outward = findIssue(
+          ctx.body?.outwardIssue?.key ?? ctx.body?.outwardIssue?.id,
+        );
+        if (inward === undefined || outward === undefined) return notFound('Issue');
+        state.links.push({
+          id: nextId(),
+          type,
+          inwardKey: inward.key,
+          outwardKey: outward.key,
+        });
+        // A `comment` on the request is accepted and dropped: real Jira posts it
+        // on the inward issue, and no claim reads it back.
+        return { status: 201 };
+      },
+    ],
 
     [
       'DELETE',
@@ -1703,6 +1770,14 @@ function buildRoutes(server) {
       (ctx) => {
         const issue = issueOf(ctx.params);
         if (issue === undefined) return notFound('Issue');
+        // The rule the gate cannot get around: you may not vote for an issue you
+        // reported, and Jira says so with a 404 rather than a 403. Every issue
+        // the gate creates is reported by the account it runs as, so C37 meets
+        // this on a real site and has to meet it here too — a fake that took the
+        // vote would rehearse a path that cannot happen.
+        if (issue.reporterAccountId === SELF_ACCOUNT) {
+          return jiraError(404, ['You cannot vote for an issue you have reported.']);
+        }
         if (!issue.votes.includes(SELF_ACCOUNT)) issue.votes.push(SELF_ACCOUNT);
         return noContent();
       },
@@ -2137,6 +2212,17 @@ function buildRoutes(server) {
         const body = ctx.body ?? {};
         if (typeof body.name !== 'string' || body.name.trim() === '') {
           return jiraError(400, [], { name: 'Sprint name must not be empty.' });
+        }
+        // Jira's own cap, verbatim down to the off-by-one in its wording: 30 is
+        // rejected, 29 is fine. The gate's sprint name used to carry the same
+        // " (safe to delete)" suffix as every other artifact, which put it at 32,
+        // and this fake took it happily — so eleven green passes said nothing
+        // about the one call that mattered, and the first live write run spent
+        // C27 (and C28/C29/C30 behind it) finding out.
+        if (body.name.length >= 30) {
+          return jiraError(400, [], {
+            name: 'Sprint name must be shorter than 30 characters.',
+          });
         }
         // THE CLAIM THIS CANNOT SETTLE (C27). `originBoardId` is a NUMBER here
         // while nearly every id in the v3 API is a string — the same trap as

@@ -70,7 +70,17 @@ runbook for the mechanical half is [RELEASING.md](RELEASING.md).
       AND company-managed project, rich-ADF sample issues per TESTING.md, a
       second user, API token. Needed by the Phase 1 exit, Phase 2b fixtures,
       and Phase 4. **Still open — this is Gate C (O-2), the single largest
-      unclosed item in the project.**
+      unclosed item in the project.** Narrowed twice. On 2026-08-17 the read
+      phase and the doctor preflight ran green against a live company tenant. On
+      2026-08-18 the write phase ran against a sandbox project on the same
+      tenant and applied thirteen write tools, which leaves a smaller and much
+      more specific ask: a site where the account may **administer a project and
+      delete issues**. Without that, seven tools cannot be proven anywhere and
+      the gate cannot clean up after itself — the 2026-08-18 run stranded two
+      issues it was not allowed to delete. (The other five still unproven — the
+      sprint writes — need no permission, only another run: the gate's own
+      over-long sprint name stopped them, and that is fixed.) Fixture recording
+      still needs the same site.
 
 Exit: `npm run check` green on an empty-but-wired repo (one placeholder test).
 **Met.** The gate has been green continuously since Phase 1 and is now green on
@@ -178,9 +188,11 @@ work — and that gate has since been resolved.
 
 Exit (**Milestone M1 — first runnable artifact**): wire-tier HTTP policy tests
 green (retry matrix, allowlist, headers; CC-11…15, CC-27…30); `doctor`
-exits 0 with all probes green against the scratch site. **First half met; the
-second half is Gate C** — `doctor` has never been run against a real tenant, and
-no amount of local work changes that.
+exits 0 with all probes green against the scratch site. **Met, 2026-08-17** —
+the wire tier since Phase 1, and `doctor` now on a live tenant: it exited 1 on
+first contact (the unbounded search probe, D88) and exits 0 with 6 passed / 4
+informational since the fix. The site was a company tenant rather than the
+scratch org, so the probes that would write are still unexercised.
 
 ## Phase 2a — MCP layer + search tools
 
@@ -227,8 +239,11 @@ Exit: every `reader`-profile tool returns `ok: true` in a scripted pass against
 the scratch site; c8 thresholds (70/60/75/70) enforced in `npm run check` from
 this phase on; CC-16…19 covered. **Coverage half met and long since exceeded**
 (D36 raised the floors in Wave 5); the scripted pass exists as
-`scripts/verify-live.mjs` and has been rehearsed offline (D72) but never run
-against the scratch site — Gate C.
+`scripts/verify-live.mjs`, was rehearsed offline first (D72), and **has now run
+against a live tenant** — read half green on 2026-08-17, write half partially
+green on 2026-08-18. Every `reader`-profile tool it exercises returned
+`ok: true`; what the run did not reach is the ten write tools listed under
+Gate C below.
 
 ## Phase 4 — Writes
 
@@ -236,12 +251,17 @@ against the scratch site — Gate C.
 - [x] `api/issues.ts` write side + `api/agile.ts` sprint move.
 - [x] Tools: create, update, transition, comment, assign, worklog, link,
       move-to-sprint. CC-20…24.
-- [ ] End-to-end write test against scratch Jira site — blocked on Gate C.
-      **Written, never run.** It did not land where this line predicted: there
+- [x] End-to-end write test against a live Jira site — **run 2026-08-18**, on a
+      sandbox project rather than the scratch org this line assumed. Thirteen
+      write tools applied against Atlassian; seven are still unproven for want of
+      project-admin and delete permissions, and five more — the sprint writes —
+      because the gate asked for a sprint name past Jira's undocumented cap.
+      It did not land where this line predicted in shape either: there
       is no `scripts/smoke/`, because the driver grew into
       `scripts/verify-live.mjs` (C01–C26 in Wave 8, the agile write surface
       C27–C30 in Wave 10, the site confirmation and residue claims C00 and
-      C31–C33 in Wave 13), reads-by-default with `--write` and `--irreversible`
+      C31–C33 in Wave 13, votes/transitions/links/comment edits/components as
+      C37–C41 in Wave 14), reads-by-default with `--write` and `--irreversible`
       opt-ins, refused outright unless the operator names the host. It has been
       rehearsed against a stateful offline fake (D72) — the pass set is
       TESTING.md's to state — which is evidence about the *driver*, not about
@@ -250,8 +270,14 @@ against the scratch site — Gate C.
 Exit: the full tool surface locked by the TOOLS.md catalog and manifest
 snapshot; write path proven on a real site in both plan and apply modes.
 **First half met** (snapshot test + generated README); the second half is
-Gate C, which has still not run — which is why what published on 2026-08-17 is
-`0.9.0` and not `1.0.0` (D87).
+Gate C, whose **read phase ran green on 2026-08-17** (19/19 on a live company
+tenant, RELEASING.md §6) and whose **apply phase ran on 2026-08-18** — both
+modes are now proven on a real site, plan by C14/C15 and apply by the thirteen
+writes that landed. It is a partial pass, not an exit: four claims came back as
+permission refusals the tenant is entitled to give, so ten tools stay unproven
+and the run stranded artifacts it was not allowed to delete (D73). That is why
+what published on 2026-08-17 is `0.9.0`, what published on 2026-08-18 is
+`0.9.4`, and neither is `1.0.0` (D87).
 
 ## Phase 5 — Hardening & release
 
@@ -300,9 +326,13 @@ Gate C, which has still not run — which is why what published on 2026-08-17 is
       visibility + CodeQL. **Partly closed.** Visibility resolved 2026-08-15
       (O-10: public) and CodeQL ships as a workflow (D67), so both halves of the
       "revisit" are answered. The secrets are not: the `live` environment exists
-      and holds none (checked 2026-08-17), which is consistent — there is no
-      tenant to point them at until Gate C. The remaining repository settings
-      are enumerated with their measured state in RELEASING.md §1.
+      and holds none (checked 2026-08-17). That was consistent while no tenant
+      existed; since 2026-08-18 one does, and the reason has changed rather than
+      gone away — the credentials that ran the gate belong to a company tenant
+      whose `SAN` project this repository has no standing claim on, so putting
+      them in a public repository's environment is a decision for whoever owns
+      the site, not a chore. The remaining repository settings are enumerated
+      with their measured state in RELEASING.md §1.
 
 Exit: coverage raised per TESTING.md (or a lower target recorded with
 rationale); all corner cases then defined (CC-01…CC-35) traceable to named
@@ -387,9 +417,11 @@ here because the phase list alone would suggest the project stopped on
 | 11 | 2026-08-17 | The **shipped artifact** audited rather than the source: a cold install of the real tarball starts, answers `initialize` + `tools/list`, and keeps stdout protocol-pure; the Node floor is proven by refusal, not argued. `exports` gained `./package.json`; `check-tarball` now follows the manifest instead of a hand-maintained table. Three of four agents were killed mid-edit by a usage limit — their findings are lost, and `cli/doctor.ts` went back into the queue because of it. **First push**: `a8cb4b0`. |
 | 12 | 2026-08-17 | Release mechanics and the last deferrals. The publish build (RELEASING.md §3.1) removes the dangling `sourceMappingURL` footer every shipped file used to carry, and RELEASING.md §1 now records the measured state of each repository setting instead of an undated claim that they are all off. The distribution-manifest suite (TESTING.md suite 10) is why the version-bump set is now guarded by a test. A placeholder credential can no longer shred the diagnostics silently — it is warned about by name (D79) — and `doctor --json` emits JSON a parser will take even when it does (D81), after two real bugs in that command. All three deferred dependency majors landed (D82, closing O-14), and the hole that made them risky closed with them: the manifest snapshot now records every emitted JSON Schema, not just its key list (CC-82). |
 | 13 | 2026-08-17 | Gate C stopped being a procedure and became one command that refuses to run against a site the operator has not named (D83), ends every run with an inventory of the five residue classes it leaves and a `--purge` for the removable ones, and is rehearsed offline over eleven passes instead of seven. Two fail-closed corrections: an environment value still holding a client's `${…}` placeholder is a failure rather than a credential (D84), and the redaction step now refuses a result it cannot re-read instead of falling back to the unredacted envelope (D85). The **stranger's-eye** audit of the install path found the flagship registration snippet was tagged `jsonc`, carried a U+2026 where the token goes, and could not be parsed by anything a user would paste it into; it is valid JSON in all four places now, and the two things that actually break a first run — Claude Desktop's minimal PATH, and where stderr goes — are written down for the first time. docs-lint grew check 8, so code may cite a corner case only if the ledger defines it. |
+| 14 | 2026-08-18 | The gate's tool coverage closed. Seven tools — votes (add/remove), transition, link, comment edit, component create/update — had no claim at all; all seven are writes, so none could be reached from the read half. C37–C41 cover them, and two buy more than a checkbox: C38 proves a transition id is read off the issue rather than remembered (CC-21 from the refusal side as well as the happy path), and C40 proves comment edits replace the whole body (CC-31) against Atlassian's own ADF converter rather than against ours. C39 links a **second** throwaway issue instead of a tenant issue, because a link has no delete tool either — both ends must be issues the gate created and removes. C41 records the cost honestly: a component is the **third** artifact a `--write` run strands (D73), and its note says so on screen. The offline fake gained the fidelity the new claims depend on: Jira's own-reporter vote 404, a validating `POST /issueLink` that records state, and real `issuelinks` on reads emitted from one side only, the way Jira does — a fake that echoed both ends would let a direction bug through. Then the write phase **ran live** for the first time, against the tenant's `SAN` sandbox: 33 PASS / 5 FAIL / 3 SKIP, thirteen write tools proven against Atlassian, and one defect that eleven green offline passes had no way to see — Jira caps a sprint name at 29 characters and the gate's was 32, so C27 took C28–C30 down with it. Fixed in the driver, enforced in the fake, and written into JIRA-API.md because the Cloud reference does not state the cap. The other four failures are the account's missing project-admin and delete permissions on that project, each reported with the right kind and a remediation naming the permission — D90's behaviour observed rather than asserted. |
+| 15 | 2026-08-18 | **0.9.4 shipped**, carrying the three defects the live runs found (D88, D89, D90) and nothing else — the tool surface is byte-identical to 0.9.0. The corpus was swept for claims the tenant had made false: the site's hero badge still said "not on npm yet" and its FAQ still said there was nothing to install, a day after 0.9.0 published; README's status banner said the same. The live-coverage number was wrong everywhere it appeared — "42 of 52" had been reached by adding thirteen applied writes to a read-phase count of 29 that itself double-counted two tools exercised in *plan* mode only, where no request is sent. Recounted from the run log against the registered tool list: **40 of 52**, all 27 reads and 13 of 25 writes, with 12 outstanding (seven on permission, five on the sprint name). The lesson is the same one C38 encodes about transition ids — a number worth publishing is read off the artifact, not remembered. |
 
-**Snapshot, 2026-08-17.** Full suite green: 1483 tests across 63 files,
-coverage 98.12 statements / 93.07 branches / 98.46 functions / 98.12 lines
+**Snapshot, 2026-08-18.** Full suite green: 1488 tests across 63 files,
+coverage 98.13 statements / 92.99 branches / 98.46 functions / 98.13 lines
 against the D36 floors of 94 / 82 / 97 / 94; `scripts/docs-lint.mjs` reports 17
 files clean. These are measurements, not commitments: the counts move with every
 wave, and the floors — not the counts — are the thing the gate enforces. Treat a
@@ -400,10 +432,21 @@ claim with teeth.
 
 Nothing in the remaining work is blocked on a keyboard:
 
-- **Gate C (O-2)** — a scratch Jira Cloud site. Everything downstream of it is
-  written and rehearsed; none of it has ever spoken to Atlassian. It is the
-  honest reason the published version is pre-1.0, and it is the only thing
-  standing between 0.9.0 and 1.0.0 (D87).
+- **Gate C (O-2)** — a scratch Jira Cloud site. Half of this is now done: the
+  read phase ran green against a real tenant on 2026-08-17 (22 claims, exit 0),
+  which cost three defects no fixture could have produced (D88, D89, D90) and
+  proved all 27 read tools against Atlassian. The write phase then ran on
+  2026-08-18 against the same tenant's `SAN` sandbox project — **33 PASS, 5 FAIL,
+  3 SKIP** — which applied 13 of the 25 write tools and took the live-proven
+  surface to 40 of 52, at the cost of one defect in the gate's own naming (Jira
+  caps a sprint name at 29 characters; ours was 32, and four claims died behind
+  it). What it did **not** do is close the gate: the account is not a project
+  administrator on `SAN` and cannot delete issues there, so seven write tools —
+  the watcher pair, the version pair, the component pair and `jira_delete_issue`
+  — came back as correctly shaped permission refusals rather than as proof they
+  work. Those seven, the five sprint writes that the naming defect stranded, and
+  a site where the gate can clean up after itself, are what still stand between
+  0.9.4 and 1.0.0 (D87). RELEASING.md §6 has the full account.
 - ~~**O-9**~~ — resolved 2026-08-17: published. It cost one repository variable,
   one environment and one tag, as the inert-by-construction design intended
   (D37). What it left behind is the bootstrap token to retire (D86,
@@ -421,5 +464,5 @@ Nothing in the remaining work is blocked on a keyboard:
 | Scoped-token permission surprises | doctor probes per-endpoint; error remediation names the scope |
 | Rate limits under agent load | semaphore + capped Retry-After honouring; hints teach the model to narrow fields/maxResults |
 | Scratch-site drift in fixtures | fixtures redacted + stable placeholders; record script versioned |
-| Scratch site absent when Phase 1 exit needs it | **Materialized, and it is now the project's critical path.** The mitigation held only in the sense that the checklist exists and the work routed around the absence: seven phases were completed and the live driver was rehearsed offline instead. What it did not do is stop the gap from compounding — every phase since Phase 1 has closed with a Gate-C clause outstanding. |
+| Scratch site absent when Phase 1 exit needs it | **Materialized, and it stayed the project's critical path until 2026-08-17.** The mitigation held only in the sense that the checklist exists and the work routed around the absence: seven phases were completed and the live driver was rehearsed offline instead. What it did not do is stop the gap from compounding — every phase since Phase 1 closed with a Gate-C clause outstanding, and when a tenant finally arrived the first two runs found four defects in a day (D88–D90 plus the gate's own sprint name). Now shrinking rather than compounding: 40 of 52 tools are proven live, and what is left is a permission grant, not a site. |
 | Multi-week pause (solo side project) | WORKLOG + plan checkboxes kept current every session; donor SHAs pinned; park only at phase exits |

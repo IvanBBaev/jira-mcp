@@ -576,3 +576,23 @@ with a note, and gaps stay gaps.
   have been applied — never "call again". The bytes were already on the wire, so
   cancellation says nothing about what Jira did with them; the caller must
   verify, not re-send (the same rule as CC-59 for a timed-out multipart upload).
+- **CC-95** A sprint route called on a board that has no sprints is
+  `unsupported`, not `validation`. Jira answers HTTP 400 "The board does not
+  support sprints" for a kanban or a team-managed board, which the status table
+  reads as "your arguments were wrong" — they were not: the board id is real and
+  the request is well formed, the board is simply the wrong kind, permanently.
+  `asAgileError` rewrites that one sentence to `unsupported` and points at
+  `type: scrum`; an ordinary 400 on the same route keeps its `validation` kind,
+  because the rule is keyed on Jira's message, not on the status (D89).
+- **CC-96** Jira refuses a project-configuration read with HTTP **401**, and that
+  is a permission story, not a credentials one. `GET /project/{key}/role` answers
+  401 "You cannot edit the configuration of this project" for an account that may
+  not administer the project — on a company-managed and a team-managed project
+  alike, with credentials every other call in the same session accepted. 401 is
+  `auth`, whose remediation says to check `JIRA_EMAIL`/`JIRA_API_TOKEN` and
+  regenerate the token: following it costs a working credential and changes
+  nothing. `asCollabError` rewrites that one sentence to `permission` and replaces
+  the remediation with the "Administer projects" hint, dropping the regenerate
+  advice rather than extending it. Keyed on Jira's message, not the status — a
+  genuinely expired token reaches the same route with the same 401 and must keep
+  saying so (D90).

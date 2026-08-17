@@ -270,6 +270,12 @@ and `https://developer.atlassian.com/cloud/jira/software/rest/api-group-backlog/
   sprint, stamps `completeDate`, and moves every not-done issue out of the
   sprint per board configuration. A closed sprint cannot be reopened or
   updated through this API.
+- **A sprint name must be shorter than 30 characters**, and the endpoint says so
+  in exactly those words with a 400 keyed on `name`. The cap is undocumented in
+  the reference above; it was found on the first live write run, where the Gate C
+  sprint was called `gate-c-<runid> (safe to delete)` — 32 characters — and took
+  three dependent claims down with it. Nothing client-side enforces this: the
+  limit is the site's to state, and Jira's message is already the remediation.
 - **Backlog move.** `POST /rest/agile/1.0/backlog/issue`, body
   `{ "issues": ["ABC-1", ...] }`, answers 204 with no body. Jira defines it as
   "removing the future and active sprints from a given set of issues", so it

@@ -32,13 +32,15 @@
  *   3. **Reads by default.** The write phase needs `--write`, the delete phase
  *      needs `--irreversible`. Neither is implied by the other.
  *   4. **Writes touch only what this script created.** The write phase creates
- *      one throwaway issue and confines every mutation to it. The exceptions are
- *      project- or board-scoped by Jira's own API: `jira_create_version` (named
- *      with the run id, archived again on the way out) and `jira_create_sprint`
- *      (named with the run id, started and closed so it does not sit on the
- *      backlog). **Neither can be removed** — this server ships no version
- *      delete and no sprint delete, on purpose — so a `--write` run leaves
- *      exactly those two behind.
+ *      two throwaway issues — the second one only so the link claim has a far
+ *      end it is allowed to delete — and confines every mutation to them. The
+ *      exceptions are project- or board-scoped by Jira's own API:
+ *      `jira_create_version` (named with the run id, archived again on the way
+ *      out), `jira_create_sprint` (named with the run id, started and closed so
+ *      it does not sit on the backlog) and `jira_create_component` (named with
+ *      the run id). **None of the three can be removed** — this server ships no
+ *      version, sprint or component delete, on purpose — so a `--write` run
+ *      leaves exactly those three behind.
  *   5. **Deletes come last**, and only against the throwaway issue.
  *   6. **Every run ends with a residue inventory** (C32): the artifacts this
  *      gate's naming convention can still find on the site, each with the way to
@@ -112,8 +114,9 @@ Flags:
                       Defaults to the authenticated user.
   --confirm-site <H>  The host you mean to write to. REQUIRED by --write,
                       --irreversible and --purge, and it must match JIRA_SITE.
-  --write             Run the write phase (creates ONE throwaway issue, ONE
-                      version and ONE sprint; the last two are permanent).
+  --write             Run the write phase (creates TWO throwaway issues, ONE
+                      version, ONE sprint and ONE component; the last three
+                      are permanent).
   --irreversible      Allow the delete tier (the throwaway issue; with --purge,
                       the leftover gate-c issues).
   --residue           Skip the claims and only inventory what past runs left.
@@ -314,8 +317,8 @@ export function residuePlan(inventory = {}) {
       removal: 'manual',
       how:
         'Project settings → Components → the component → ••• → Delete. This ' +
-        'server ships no component delete. No claim creates one — a row here ' +
-        'means a human did.',
+        'server ships no component delete (D73), so every --write run leaves ' +
+        'exactly one of these behind — expected, not a surprise.',
     },
     {
       kind: 'sprints',
@@ -815,6 +818,7 @@ const found = {
   secondAccountId: undefined,
   issueKey: undefined,
   projectNumericId: undefined,
+  filterId: undefined,
   styles: [],
 };
 
@@ -1007,13 +1011,32 @@ async function readPhase(session, flags, credentials) {
   });
 
   await claim('C11', 'agile surface reads (boards, sprints, sprint issues)', async () => {
-    const boards = dataOrSkip(
+    const all = dataOrSkip(
       await call(session, 'jira_list_boards', {}),
       'jira_list_boards',
       ['unsupported'],
     );
-    const board = (boards.boards ?? [])[0];
-    if (board === undefined) skip('no board on the site — create a Scrum board');
+    if ((all.boards ?? []).length === 0)
+      skip('no board on the site — create a Scrum board');
+    // Ask for the scrum boards rather than taking the first board of any type.
+    // Sprints exist on scrum boards ONLY; a kanban or team-managed board answers
+    // every sprint route with "The board does not support sprints" (D89), and on
+    // a real site the first board is as likely to be one of those as not. Taking
+    // boards[0] made this claim's verdict depend on the site's board ordering,
+    // which is not a property of the code under test. The filtered call also
+    // exercises the `type` parameter, which nothing else here reached.
+    const scrum = dataOrSkip(
+      await call(session, 'jira_list_boards', { type: 'scrum' }),
+      'jira_list_boards (type=scrum)',
+      ['unsupported'],
+    );
+    const board = (scrum.boards ?? [])[0];
+    if (board === undefined) {
+      skip(
+        `site has ${String((all.boards ?? []).length)} board(s) but none of type scrum — ` +
+          'sprints need one',
+      );
+    }
     const sprints = dataOf(
       await call(session, 'jira_list_sprints', { boardId: board.id }),
       'jira_list_sprints',
@@ -1032,8 +1055,112 @@ async function readPhase(session, flags, credentials) {
       await call(session, 'jira_list_filters', {}),
       'jira_list_filters',
     );
+    const first = (data.filters ?? [])[0];
+    if (first !== undefined) found.filterId = first.id;
     return `${String((data.filters ?? []).length)} filter(s)`;
   });
+
+  // C34–C36 are read claims added after the first live run (2026-08-17), which
+  // showed the gate proving 23 of 52 tools and never touching twelve — five of
+  // them pure reads that cost nothing to exercise. A claim that needs no write
+  // has no excuse to be missing from the read phase.
+
+  await claim(
+    'C34',
+    'project satellites read (versions, components, statuses, roles)',
+    async () => {
+      if (flags.project === undefined) skip('no --project');
+      const versions = dataOf(
+        await call(session, 'jira_list_versions', { project: flags.project }),
+        'jira_list_versions',
+      );
+      const components = dataOf(
+        await call(session, 'jira_list_components', { project: flags.project }),
+        'jira_list_components',
+      );
+      // The last two reads are administrative: `/statuses/search` and the project
+      // role list both answer 403 for a token without site or project admin, which
+      // an ordinary developer token routinely is. A refusal there is the tool
+      // reporting a permission correctly, not a defect, so it is tolerated inline —
+      // `dataOrSkip` would throw away the versions and components read above along
+      // with it, and this claim exists to prove those too.
+      const tolerated = async (tool, params) => {
+        const envelope = await call(session, tool, params);
+        if (envelope.ok !== true && envelope.error?.kind !== 'permission') {
+          dataOf(envelope, tool);
+        }
+        return envelope.ok === true ? envelope.data : undefined;
+      };
+      // `projectId` is Jira's numeric id carried as a STRING, which is how the id
+      // travels everywhere in the v3 API — the version-create body C15 pins is the
+      // single place it must be a real number (D52). Passing the key here would be
+      // the mistake this call is shaped to avoid.
+      const statuses = await tolerated('jira_list_statuses', {
+        ...(found.projectNumericId === undefined
+          ? {}
+          : { projectId: String(found.projectNumericId) }),
+      });
+      if (statuses !== undefined && (statuses.statuses ?? []).length === 0) {
+        throw new Error('a site with issues reported no workflow statuses');
+      }
+      const roles = await tolerated('jira_list_project_roles', {
+        project: flags.project,
+      });
+      const withheld = 'permission withheld';
+      return (
+        `${String(versions.count)} version(s), ${String(components.count)} component(s), ` +
+        `statuses ${statuses === undefined ? withheld : String(statuses.count)}, ` +
+        `roles ${roles === undefined ? withheld : String(roles.count)}`
+      );
+    },
+  );
+
+  await claim(
+    'C35',
+    'jira_get_filter returns the stored JQL without running it',
+    async () => {
+      if (found.filterId === undefined) skip('no saved filter on the site — see C12');
+      const data = dataOf(
+        await call(session, 'jira_get_filter', { filterId: found.filterId }),
+        'jira_get_filter',
+      );
+      const filter = data.filter ?? {};
+      if (typeof filter.jql !== 'string') {
+        throw new Error(`filter ${String(found.filterId)} carried no jql string`);
+      }
+      // The documented contract of both filter tools: they hand back the query,
+      // they never execute it (`jira_search` is the only tool that runs a JQL).
+      // A result that carried issues would mean the read had silently become a
+      // search — against a saved filter of somebody else's making.
+      if ('issues' in data || 'issues' in filter) {
+        throw new Error('the filter read returned issues — it executed the stored JQL');
+      }
+      return `filter ${String(found.filterId)} read, ${String(filter.jql.length)} chars of JQL, not executed`;
+    },
+  );
+
+  await claim(
+    'C36',
+    'jira_list_watchers reports visibility, not just a list',
+    async () => {
+      const key = found.issueKey;
+      if (key === undefined) skip('no issue available');
+      const data = dataOf(
+        await call(session, 'jira_list_watchers', { issue: key }),
+        'jira_list_watchers',
+      );
+      if (typeof data.watchersVisible !== 'boolean') {
+        throw new Error('the read did not say whether the names were visible');
+      }
+      // Without "View voters and watchers" Jira sends the count and withholds the
+      // names, so an empty list means "withheld", not "nobody is watching". The
+      // tool has to carry that difference or a caller will read silence as fact.
+      if (data.watchersVisible === false && typeof data.note !== 'string') {
+        throw new Error('names were withheld but the result carried no note saying so');
+      }
+      return `${String(data.watchCount ?? (data.watchers ?? []).length)} watcher(s), visible=${String(data.watchersVisible)}`;
+    },
+  );
 
   // NOT "follows the 303 media-host hop". The client asks for
   // `/attachment/content/{id}?redirect=false`, and for that Jira answers 200
@@ -1179,17 +1306,19 @@ function runId() {
 /**
  * What this run made and is responsible for.
  *
- * Two entries are the odd ones out. The issue, its comment and its worklog are
- * all deletable by a tool this server exposes, and the delete phase removes
- * them. A **sprint** (C27) and a **version** (C22) are not: `src/api/agile.ts`
- * ships no sprint delete and `src/api/collab.ts` ships no version delete, both
- * on purpose, so each `--write` run adds one of each to the site permanently.
- * The version was the quieter of the two — until this wave only the sprint was
- * warned about — which is exactly why the tail of `run()` now enumerates the
- * residue from a READ of the site instead of from this object.
+ * Three entries are the odd ones out. Both issues, the comment and the worklog
+ * are all deletable by a tool this server exposes, and the delete phase removes
+ * them. A **sprint** (C27), a **version** (C22) and a **component** (C41) are
+ * not: `src/api/agile.ts` ships no sprint delete and `src/api/collab.ts` ships
+ * neither a version nor a component delete, all three on purpose, so each
+ * `--write` run adds one of each to the site permanently. The version was the
+ * quiet one — until this wave only the sprint was warned about — which is
+ * exactly why the tail of `run()` now enumerates the residue from a READ of the
+ * site instead of from this object.
  */
 const created = {
   issueKey: undefined,
+  issueKey2: undefined,
   commentId: undefined,
   worklogId: undefined,
   sprintId: undefined,
@@ -1197,8 +1326,17 @@ const created = {
   sprintStarted: false,
   versionId: undefined,
   versionName: undefined,
+  componentId: undefined,
+  componentName: undefined,
   mediaFiles: [],
 };
+
+/** Jira states a status as an object; a shaped read may hand back either form. */
+function statusName(value) {
+  if (typeof value === 'string') return value;
+  if (value !== null && typeof value === 'object') return String(value.name ?? '');
+  return '';
+}
 
 async function writePhase(session, flags) {
   await claim('C17', 'plan → apply creates the throwaway issue', async () => {
@@ -1352,6 +1490,262 @@ async function writePhase(session, flags) {
     return `${name} uploaded and observed on ${key}`;
   });
 
+  await claim(
+    'C37',
+    'votes: add is refused on your own issue, remove is a no-op',
+    async () => {
+      const key = created.issueKey;
+      if (key === undefined) skip('no throwaway issue');
+      // The happy path is out of reach on purpose. Jira refuses a vote on an issue
+      // you REPORTED, and every issue this gate creates is reported by the token it
+      // runs as — proving `voted: true` would mean voting on an issue somebody else
+      // owns, on a tenant this script does not own either. So the claim pins what
+      // is reachable without touching anything but its own issue: the refusal, and
+      // the withdrawal Jira documents as a no-op rather than an error. A site that
+      // DOES accept the vote is not a failure; the first branch proves the round
+      // trip instead, and the withdrawal below puts the site back either way.
+      const args = { issue: key };
+      const plan = dataOf(
+        await call(session, 'jira_add_vote', args),
+        'jira_add_vote (plan)',
+      );
+      const applied = await call(session, 'jira_add_vote', {
+        ...args,
+        apply: true,
+        plan_id: plan.plan_id,
+      });
+      let note;
+      if (applied.ok === true) {
+        if (applied.data?.voted !== true)
+          throw new Error('apply reported ok without voted:true');
+        note = 'the vote was accepted, then withdrawn again';
+      } else {
+        const error = applied.error ?? {};
+        const said = `${String(error.message)} ${String(error.remediation ?? '')}`;
+        // Not the kind — a 404 is what Jira sends and `not_found` is the honest
+        // reading of it. What must hold is that the text explains WHY, because
+        // "issue not found" on an issue created seconds ago would otherwise send a
+        // model hunting for a key that is perfectly correct.
+        if (!/vote/i.test(said) || !/report/i.test(said)) {
+          throw new Error(
+            `the refusal explains neither voting nor the reporter rule: ${said}`,
+          );
+        }
+        note = `refused as kind=${String(error.kind)}, and the reason names the reporter rule`;
+      }
+      const removed = await planAndApply(session, 'jira_remove_vote', { issue: key });
+      if (removed.applied.voted !== false)
+        throw new Error('remove did not report voted:false');
+      return note;
+    },
+  );
+
+  await claim(
+    'C38',
+    'transition: the id is read from the issue, never guessed',
+    async () => {
+      const key = created.issueKey;
+      if (key === undefined) skip('no throwaway issue');
+      const before = dataOf(
+        await call(session, 'jira_get_transitions', { issue: key }),
+        'jira_get_transitions',
+      );
+      const rows = before.transitions ?? [];
+      // A name is only usable as proof of name→id resolution if it is unique on
+      // this workflow; where it is not, the id still proves the wire path.
+      const named = rows.find(
+        (row) =>
+          typeof row.name === 'string' &&
+          rows.filter((other) => other.name === row.name).length === 1,
+      );
+      const target = named ?? rows[0];
+      if (target === undefined)
+        skip('the workflow offers no transition from this status');
+
+      // CC-21 from the other side: a transition nobody offers is refused HERE, by
+      // name, before anything reaches Jira — and the refusal carries the real
+      // catalogue, so a model that invented a transition is told what the issue
+      // actually offers instead of being handed a 400 it cannot act on.
+      const invented = await call(session, 'jira_transition_issue', {
+        issue: key,
+        transition: 'Teleport to Done',
+      });
+      const refusal = errorOf(invented, 'jira_transition_issue', 'validation');
+      if (!String(refusal.message).includes(target.id)) {
+        throw new Error(
+          'the local refusal does not list the transitions the issue really has',
+        );
+      }
+
+      const { applied } = await planAndApply(session, 'jira_transition_issue', {
+        issue: key,
+        transition: named === undefined ? target.id : String(target.name),
+      });
+      if (applied.transitioned !== true)
+        throw new Error('apply did not report transitioned:true');
+      if (applied.transitionId !== target.id) {
+        throw new Error(
+          `apply reported transition ${String(applied.transitionId)}, expected ${target.id}`,
+        );
+      }
+      const after = dataOf(
+        await call(session, 'jira_get_issue', { issue: key, fields: ['status'] }),
+        'jira_get_issue',
+      );
+      const reached = statusName(after.fields?.status);
+      const wanted = target.to?.name;
+      if (wanted !== undefined && reached !== '' && reached !== wanted) {
+        throw new Error(
+          `the issue is in "${reached}", the transition said it goes to "${wanted}"`,
+        );
+      }
+      return `${named === undefined ? 'id' : 'name'} ${String(target.name ?? target.id)} → ${
+        reached === '' ? 'applied' : reached
+      }`;
+    },
+  );
+
+  await claim(
+    'C39',
+    'link: a second throwaway issue is linked to the first',
+    async () => {
+      const key = created.issueKey;
+      if (key === undefined) skip('no throwaway issue');
+      if (flags.project === undefined) skip('no --project');
+      const types = dataOf(
+        await call(session, 'jira_list_link_types', {}),
+        'jira_list_link_types',
+      );
+      const linkType = (types.linkTypes ?? []).find(
+        (row) => typeof row.name === 'string',
+      );
+      if (linkType === undefined) skip('the site defines no issue link types');
+      // A link needs a second issue, and the gate will not borrow somebody's real
+      // one: a link has no delete tool (WP-72), so the only way to leave the site
+      // as it was found is for BOTH ends to be issues this run created and the
+      // delete phase removes. Same summary as C17, so the residue inventory and
+      // `--purge` recognise it without being taught anything new.
+      const { applied: second } = await planAndApply(session, 'jira_create_issue', {
+        project: flags.project,
+        issueType: flags['issue-type'],
+        summary: `gate-c verify-live ${runId()} (safe to delete)`,
+        description: 'Created by scripts/verify-live.mjs during Gate C. Safe to delete.',
+      });
+      if (typeof second.key !== 'string')
+        throw new Error('the second create returned no key');
+      created.issueKey2 = second.key;
+
+      const { applied } = await planAndApply(session, 'jira_link_issues', {
+        linkType: String(linkType.name),
+        inwardIssue: second.key,
+        outwardIssue: key,
+      });
+      if (applied.linked !== true) throw new Error('apply did not report linked:true');
+      // Jira answers the link POST with an empty 201 and no link id, so the result
+      // is an echo of the request. A read of the issue is the only actual evidence.
+      const read = dataOf(
+        await call(session, 'jira_get_issue', { issue: key, fields: ['issuelinks'] }),
+        'jira_get_issue',
+      );
+      const links = read.fields?.issuelinks ?? [];
+      if (!links.some((row) => row.issue?.key === second.key)) {
+        throw new Error(
+          `${key} carries no link to ${second.key} after a successful apply`,
+        );
+      }
+      return `${second.key} "${String(linkType.name)}" ${key}, observed on the issue`;
+    },
+  );
+
+  await claim('C40', 'comment edit REPLACES the whole body (CC-31)', async () => {
+    const key = created.issueKey;
+    const commentId = created.commentId;
+    if (key === undefined || commentId === undefined) skip('no comment from C20');
+    const { applied } = await planAndApply(session, 'jira_update_comment', {
+      issue: key,
+      commentId: String(commentId),
+      body: 'Gate C replaced this comment **entirely**.',
+      format: 'markdown',
+    });
+    if (String(applied.id) !== String(commentId)) {
+      throw new Error('the edit came back under a different comment id');
+    }
+    const body = String(applied.body ?? '');
+    if (/verification comment/i.test(body)) {
+      throw new Error(
+        'the sentence C20 wrote survived an edit documented as a full replace',
+      );
+    }
+    if (!/entirely/i.test(body))
+      throw new Error('the new text is not in the stored comment');
+    // Markdown in, markdown out, through ADF and back — the only place the round
+    // trip is proved against Atlassian's own converter rather than against ours.
+    const read = dataOf(
+      await call(session, 'jira_get_comments', { issue: key, format: 'markdown' }),
+      'jira_get_comments',
+    );
+    const stored = (read.comments ?? []).find(
+      (row) => String(row.id) === String(commentId),
+    );
+    if (stored === undefined)
+      throw new Error('the edited comment is no longer on the issue');
+    if (!/\*\*entirely\*\*/.test(String(stored.body ?? ''))) {
+      throw new Error('the bold the markdown asked for did not survive the round trip');
+    }
+    return `comment ${String(commentId)} replaced in full; markdown made the round trip`;
+  });
+
+  await claim(
+    'C41',
+    'component create returns a STRING id the update wants as a NUMBER',
+    async () => {
+      if (flags.project === undefined) skip('no --project');
+      const name = `gate-c-${runId()}`;
+      // The mirror image of C15/C22. A version is created by NUMERIC project id;
+      // a component is created by project KEY, in the body. Both then hand their
+      // own id back as a string that the update tool will only take as a number.
+      const { applied } = await planAndApply(session, 'jira_create_component', {
+        project: flags.project,
+        name,
+        description: 'Created by scripts/verify-live.mjs during Gate C. Safe to delete.',
+      });
+      const componentId = applied.component?.id;
+      if (componentId === undefined) throw new Error('create returned no component id');
+      // Recorded before anything else can fail: from here on the component exists
+      // and no tool this server ships removes it (D73), so the residue inventory
+      // has to be able to name it.
+      created.componentId = String(componentId);
+      created.componentName = name;
+      if (typeof componentId !== 'string') {
+        throw new Error(
+          `Jira sent the component id as ${typeof componentId}, not a string`,
+        );
+      }
+      const numericId = Number(componentId);
+      if (!Number.isInteger(numericId)) {
+        throw new Error(`component id ${componentId} is not an integer`);
+      }
+      const description = 'Updated by scripts/verify-live.mjs during Gate C.';
+      const { applied: updated } = await planAndApply(session, 'jira_update_component', {
+        componentId: numericId,
+        description,
+      });
+      if (updated.component?.description !== description) {
+        throw new Error('the partial update did not change the description');
+      }
+      // The other half of "partial": a PUT that names only the description must
+      // not silently blank the name Jira already had.
+      if (updated.component?.name !== name) {
+        throw new Error('the partial update dropped the name it was not given');
+      }
+      return (
+        `component ${String(componentId)} created, then updated by numeric id — ` +
+        `NO TOOL HERE CAN DELETE A COMPONENT: "${name}" stays on the project until ` +
+        `you remove it by hand (Project settings → Components → Delete)`
+      );
+    },
+  );
+
   await agileWriteClaims(session);
 }
 
@@ -1396,7 +1790,12 @@ async function agileWriteClaims(session) {
       const board = all.find((b) => b.type === 'scrum') ?? all[0];
       if (board === undefined) skip('no board on the site — create a Scrum board (1.3)');
 
-      const name = `gate-c-${runId()} (safe to delete)`;
+      // No " (safe to delete)" suffix here, and it is not an oversight: the agile
+      // API caps a sprint name at 29 characters ("must be shorter than 30"), which
+      // the suffix blows past on its own. `gate-c-<runid>` is 15 and still matches
+      // GATE_C_ARTIFACT_NAME, whose suffix has always been optional. Found on the
+      // first live write run — the offline fake now enforces the same cap.
+      const name = `gate-c-${runId()}`;
       const { plan, applied } = await planAndApply(session, 'jira_create_sprint', {
         name,
         originBoardId: board.id,
@@ -1582,12 +1981,21 @@ async function deletePhase(session) {
         commentId: String(created.commentId),
       });
     }
+    // The link C39 made has no delete tool of its own (D73 again), so removing
+    // the issue at its far end is how the site gets back the shape it had.
+    const second = created.issueKey2;
+    if (second !== undefined) {
+      await planAndApply(session, 'jira_delete_issue', { issue: second });
+      created.issueKey2 = undefined;
+    }
     const { applied } = await planAndApply(session, 'jira_delete_issue', { issue: key });
     if (applied.before === undefined) {
       throw new Error('the apply did not echo the before-state snapshot');
     }
     created.issueKey = undefined;
-    return `${key} and its comment/worklog deleted, snapshot echoed`;
+    return second === undefined
+      ? `${key} and its comment/worklog deleted, snapshot echoed`
+      : `${key} (with comment/worklog) and ${second} deleted, snapshot echoed`;
   });
 }
 
@@ -1701,10 +2109,17 @@ async function collectResidue(session, flags, site) {
     for (const board of boards.data?.boards ?? []) {
       const sprints = await call(session, 'jira_list_sprints', { boardId: board.id });
       if (sprints.ok !== true) {
-        inventory.unavailable.push({
-          kind: 'sprints',
-          why: `board ${String(board.id)}: ${String(sprints.error?.kind)}`,
-        });
+        // `unsupported` here means the board is kanban or team-managed, so it
+        // cannot hold a sprint at all (D89). That is not an unread board — no
+        // residue can hide on it — so it must not degrade the verdict to
+        // UNKNOWN; on a site of any size those boards outnumber the scrum ones
+        // and would bury a genuine "could not read" (CC-85).
+        if (sprints.error?.kind !== 'unsupported') {
+          inventory.unavailable.push({
+            kind: 'sprints',
+            why: `board ${String(board.id)}: ${String(sprints.error?.kind)}`,
+          });
+        }
         continue;
       }
       for (const sprint of sprints.data?.sprints ?? []) {

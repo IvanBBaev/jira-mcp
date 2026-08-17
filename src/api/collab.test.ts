@@ -415,6 +415,60 @@ test('a permission error with no remediation of its own gets the hint alone', as
   assert.match(error.message, /View voters and watchers/);
 });
 
+test('CC-96: a 401 refusing project configuration is permission, not auth', async () => {
+  // What a live tenant answers for an account that is not a project admin: the
+  // role route 401s, on company-managed and team-managed projects alike, while
+  // every other call in the same session succeeds on the same credentials.
+  const jira = createFakeJiraRequest().enqueue(
+    jiraErr(
+      createJiraError({
+        kind: 'auth',
+        reason: 'Jira rejected GET /project/{projectIdOrKey}/role with HTTP 401.',
+        remediation:
+          'Check JIRA_EMAIL and JIRA_API_TOKEN. Atlassian API tokens expire within a year — regenerate the token at id.atlassian.com if it has.',
+        httpStatus: 401,
+        jiraMessages: ['You cannot edit the configuration of this project.'],
+        detail: 'project',
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => listProjectRoles({ jira: jira.fn, project: 'ABC' })),
+  );
+
+  assert.equal(error.kind, 'permission');
+  assert.equal(error.httpStatus, 401);
+  assert.match(error.message, /Administer projects/);
+  // The credentials advice must not survive in any form: acting on it costs the
+  // user a working token and leaves the refusal exactly as it was.
+  assert.doesNotMatch(error.message, /id\.atlassian\.com/);
+  assert.doesNotMatch(error.remediation ?? '', /id\.atlassian\.com/);
+  assert.deepEqual(error.jiraMessages, [
+    'You cannot edit the configuration of this project.',
+  ]);
+  assert.equal(error.detail, 'project');
+  assert.equal(error.cause instanceof JiraError, true);
+});
+
+test('CC-96: an ordinary 401 on the same route keeps its auth kind', async () => {
+  // The rewrite is keyed on Jira's sentence, not on the status, because a
+  // genuinely expired token reaches this route with a 401 too — and there the
+  // "regenerate the token" remediation is the correct instruction.
+  const expired = createJiraError({
+    kind: 'auth',
+    reason: 'Jira rejected GET /project/{projectIdOrKey}/role with HTTP 401.',
+    httpStatus: 401,
+    jiraMessages: ['Client must be authenticated to access this resource.'],
+  });
+  const jira = createFakeJiraRequest().enqueue(jiraErr(expired));
+
+  assert.equal(
+    await caught(() => listProjectRoles({ jira: jira.fn, project: 'ABC' })),
+    expired,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Votes
 // ---------------------------------------------------------------------------

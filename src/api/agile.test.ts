@@ -963,6 +963,62 @@ test('CC-34: a 403 on an id-bearing route keeps its kind and names the other cau
   assert.match(error.remediation ?? '', /Agile API/);
 });
 
+test('CC-95: a board that cannot hold sprints is unsupported, not a bad argument', async () => {
+  const upstream = new JiraError({
+    kind: 'validation',
+    message:
+      'Jira rejected GET /rest/agile/1.0/board/7/sprint with HTTP 400: ' +
+      'The board does not support sprints',
+    httpStatus: 400,
+    jiraMessages: ['The board does not support sprints'],
+    remediation: 'Check the request fields and retry.',
+    detail: '{"errorMessages":["The board does not support sprints"]}',
+  });
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board/7/sprint',
+    jiraErr(upstream),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprints({ jira: jira.fn, boardId: 7 })),
+  );
+
+  // `validation` would say the caller's arguments were wrong; they were not —
+  // board 7 exists and the request is well formed, it is simply kanban or
+  // team-managed. `unsupported` is the kind that stops the retry loop.
+  assert.equal(error.kind, 'unsupported');
+  assert.equal(error.httpStatus, 400);
+  assert.match(error.remediation ?? '', /scrum/);
+  assert.doesNotMatch(error.remediation ?? '', /Check the request fields/);
+  // Jira's own words and the raw body survive the rewrite (CC-21's shape).
+  assert.deepEqual(error.jiraMessages, ['The board does not support sprints']);
+  assert.equal(error.detail, upstream.detail);
+  assert.equal(error.cause, upstream);
+});
+
+test('CC-95: an ordinary 400 on a sprint list keeps its validation kind', async () => {
+  const upstream = new JiraError({
+    kind: 'validation',
+    message: 'Jira rejected GET /rest/agile/1.0/board/7/sprint with HTTP 400.',
+    httpStatus: 400,
+    jiraMessages: ['The state parameter is invalid.'],
+    remediation: 'Check the request fields and retry.',
+  });
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board/7/sprint',
+    jiraErr(upstream),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprints({ jira: jira.fn, boardId: 7 })),
+  );
+
+  // The rewrite is keyed on Jira's sentence, not on the status — a 400 that
+  // really is a bad argument must still read as one.
+  assert.equal(error.kind, 'validation');
+  assert.equal(error.remediation, 'Check the request fields and retry.');
+});
+
 test("CC-36: a stale sprint state keeps Jira's words and replaces only the advice", async () => {
   const upstream = new JiraError({
     kind: 'validation',

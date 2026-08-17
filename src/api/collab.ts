@@ -1007,8 +1007,10 @@ const PROJECT_READ_HINT =
 
 const ROLE_READ_HINT =
   'Reading project roles needs the "Administer projects" project permission (or ' +
-  '"Administer Jira" globally); Jira answers 404 for a project you may not ' +
-  'administer, so a wrong key and a missing permission look identical here.';
+  '"Administer Jira" globally). Without it Jira answers HTTP 401 "You cannot edit ' +
+  'the configuration of this project" — the credentials are fine, the account is ' +
+  'not a project admin — and it answers 404 for a project you may not see at all, ' +
+  'so a wrong key and a missing permission look identical there.';
 
 const PROJECT_ADMIN_HINT =
   'Creating or changing components and versions needs the "Administer projects" ' +
@@ -1034,24 +1036,58 @@ async function collabCall<T>(hint: string, run: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Jira's project-configuration refusal, which arrives as a 401 (CC-96, D90).
+ *
+ * `GET /project/{key}/role` answers HTTP 401 with this sentence for an account
+ * that may not administer the project — on a live site, for a company-managed
+ * and a team-managed project alike, with credentials every other call in the
+ * same session accepted. 401 is `auth`, whose remediation tells the caller the
+ * token is wrong and to regenerate it at id.atlassian.com. It is not wrong: the
+ * account simply is not a project admin, and no new token will change that.
+ */
+const PROJECT_CONFIG_DENIED = /you cannot edit the configuration of this project/i;
+
+/**
  * Append the permission sentence to a 403/404 remediation, keeping everything
  * else — kind included, because the id really may be wrong. Modelled on
  * `asAgileError` (CC-34): the original remediation is sliced off the tail of the
  * message (which `createJiraError` builds as `reason + ' ' + remediation`)
  * before the extended one is appended in its place.
+ *
+ * The 401 above is the one case where the kind itself is rewritten, and it is
+ * keyed on Jira's message rather than the status: a real credentials failure
+ * reaches this same route with the same 401 and must keep saying so.
  */
 function asCollabError(error: unknown, hint: string): unknown {
   if (!(error instanceof JiraError)) return error;
   const status = error.httpStatus;
+  const reason =
+    error.remediation !== undefined && error.message.endsWith(error.remediation)
+      ? error.message.slice(0, error.message.length - error.remediation.length).trimEnd()
+      : error.message;
+
+  if (
+    status === 401 &&
+    (error.jiraMessages ?? []).some((m) => PROJECT_CONFIG_DENIED.test(m))
+  ) {
+    return createJiraError({
+      kind: 'permission',
+      reason,
+      httpStatus: status,
+      ...(error.jiraMessages === undefined ? {} : { jiraMessages: error.jiraMessages }),
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
+      // The `auth` remediation is dropped rather than extended: "regenerate your
+      // token" is the one instruction that must not survive, because following
+      // it costs the user a working credential and changes nothing.
+      remediation: hint,
+      cause: error,
+    });
+  }
   if (status !== 403 && status !== 404) return error;
   // A 403 the client already read as `auth` (CC-18: expired token) keeps its
   // kind and its remediation — a project permission is not that user's problem.
   if (error.kind !== 'permission' && error.kind !== 'not_found') return error;
 
-  const reason =
-    error.remediation !== undefined && error.message.endsWith(error.remediation)
-      ? error.message.slice(0, error.message.length - error.remediation.length).trimEnd()
-      : error.message;
   return createJiraError({
     kind: error.kind,
     reason,

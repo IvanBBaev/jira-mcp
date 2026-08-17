@@ -47,7 +47,13 @@ owner decision, or a deliberate scope call:
   openly: Gate C creates a sprint it cannot remove, so every `--write` run
   strands one and tells the operator to delete it by hand. That cost was
   accepted rather than paid off, because a delete tool added to service the
-  project's own gate would widen the product's write surface for no user.
+  project's own gate would widen the product's write surface for no user. The
+  first live `--write` run (2026-08-18) charged a larger version of the same
+  bill: the account could not delete **issues** either, so the two throwaway
+  issues the gate creates stayed behind as well, and `--purge` could not clear
+  them. That is a permission on the site, not a missing tool — `jira_delete_issue`
+  exists and was called — but it is the same lesson, that a gate leaving residue
+  is a cost paid by whoever owns the site.
 
 ## Considered and parked
 

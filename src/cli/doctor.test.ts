@@ -38,6 +38,7 @@ import {
   mergeEnvFile,
   nodeDoctorFs,
   run,
+  SEARCH_PROBE_JQL,
   type DoctorFsHost,
   type DoctorOptions,
   type DoctorReport,
@@ -329,10 +330,19 @@ test('the search probe uses the new endpoint, one page, as a safe POST', async (
   assert.equal(search.method, 'POST');
   assert.equal(search.safe, true);
   assert.deepEqual(search.body, {
-    jql: 'order by created desc',
+    jql: SEARCH_PROBE_JQL,
     maxResults: 1,
     fields: ['key'],
   });
+});
+
+test('the search probe carries a JQL restriction, which large sites require', () => {
+  // Regression guard for D88. A fixture cannot reproduce this — the rejection
+  // is a property of site size, and the fake accepts anything — so the test
+  // that protects it asserts on the shape of the query instead: whatever the
+  // probe sends, it must not be `ORDER BY` and nothing else.
+  const withoutOrder = SEARCH_PROBE_JQL.replace(/\border\s+by\b.*$/i, '').trim();
+  assert.notEqual(withoutOrder, '', 'the probe JQL is only an ORDER BY clause');
 });
 
 test('an auth failure fails the run: exit 1, the other probes still run', async () => {

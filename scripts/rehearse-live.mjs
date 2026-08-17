@@ -325,8 +325,11 @@ const PASSES = [
       );
       if (!deleted)
         failures.push('--irreversible ran but no issue DELETE reached the fake');
-      if (claims.length !== 33) {
-        failures.push(`expected 33 claims in the report, saw ${String(claims.length)}`);
+      // A full run is every claim the driver owns. The exact number is asserted
+      // rather than a floor, so adding a claim without teaching the fake the
+      // routes it needs is caught here instead of on a live tenant.
+      if (claims.length !== 41) {
+        failures.push(`expected 41 claims in the report, saw ${String(claims.length)}`);
       }
       const c00 = claims.find((c) => c.id === 'C00');
       if (c00 === undefined) failures.push('C00 did not run — no doctor preflight');
@@ -335,14 +338,14 @@ const PASSES = [
       if (c31 === undefined) failures.push('C31 did not run — --project2 is dead again');
       else if (c31.status !== 'PASS') failures.push(`C31 is ${c31.status}: ${c31.note}`);
       failures.push(...agileWriteChecks({ requests, claims, state }));
-      // A full run deletes its issue but CANNOT delete the version or the
-      // sprint (D73), and it leaves the file it staged for the upload. Those
-      // three numbers are the gate's residue contract; if any of them moves,
-      // the runbook is lying to the owner.
+      // A full run deletes both its issues but CANNOT delete the version, the
+      // sprint or the component (D73), and it leaves the file it staged for the
+      // upload. Those four numbers are the gate's residue contract; if any of
+      // them moves, the runbook is lying to the owner.
       failures.push(
         ...residueChecks(
           { claims, stderr },
-          { issues: 0, versions: 1, components: 0, sprints: 1, media: 1 },
+          { issues: 0, versions: 1, components: 1, sprints: 1, media: 1 },
         ),
       );
       // Recorded, not incidental: with the fake behaving the way real Jira
@@ -592,7 +595,7 @@ const PASSES = [
       failures.push(
         ...residueChecks(
           { claims, stderr },
-          { issues: 1, versions: 1, components: 0, sprints: 1, media: 1 },
+          { issues: 2, versions: 1, components: 1, sprints: 1, media: 1 },
         ),
       );
       // Read-only means read-only: --residue without --purge must not mutate.
@@ -637,8 +640,10 @@ const PASSES = [
       const deleted = requests.filter(
         (r) => r.method === 'DELETE' && /^\/rest\/api\/3\/issue\/[^/]+$/.test(r.path),
       );
-      if (deleted.length !== 1) {
-        failures.push(`expected 1 issue DELETE, saw ${String(deleted.length)}`);
+      // Two, not one: the link claim (C39) needs a far end, and `--keep` left
+      // both throwaway issues on the site for the purge to find.
+      if (deleted.length !== 2) {
+        failures.push(`expected 2 issue DELETEs, saw ${String(deleted.length)}`);
       }
       const alive = [...state.issues.values()].filter(
         (issue) => !issue.deleted && /^gate-c verify-live /.test(String(issue.summary)),
@@ -647,17 +652,17 @@ const PASSES = [
         failures.push(`${String(alive.length)} gate-c issue(s) survived the purge`);
       }
       // C32 runs BEFORE the purge, so its note is the inventory that the purge
-      // then acted on — one issue and one staged file.
+      // then acted on — two issues and one staged file.
       failures.push(
         ...residueChecks(
           { claims, stderr },
-          { issues: 1, versions: 1, components: 0, sprints: 1, media: 1 },
+          { issues: 2, versions: 1, components: 1, sprints: 1, media: 1 },
         ),
       );
       // The table printed at the end is the post-purge truth: what it could
       // clear is gone, and what it CANNOT clear is still named, or the operator
-      // will believe the site is clean when a version and a sprint are still
-      // on it.
+      // will believe the site is clean when a version, a sprint and a component
+      // are still on it.
       for (const line of [
         'throwaway issues: none',
         'local files in JIRA_MEDIA_DIR: none',
@@ -666,7 +671,11 @@ const PASSES = [
           failures.push(`after the purge the table should say "${line}"`);
         }
       }
-      for (const marker of ['Project settings → Releases', 'Backlog → the sprint']) {
+      for (const marker of [
+        'Project settings → Releases',
+        'Backlog → the sprint',
+        'Project settings → Components',
+      ]) {
         if (!stderr.includes(marker)) {
           failures.push(`the residue table stopped saying how to remove: ${marker}`);
         }
