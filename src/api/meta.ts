@@ -25,9 +25,9 @@
 //     the classic `startAt`/`maxResults`/`total`/`isLast` model, so it goes
 //     through `fetchAll` from `api/shared.ts` and inherits its page cap, budget
 //     checks and stop reasons verbatim. The `partial` / `stopReason` /
-//     `nextStartAt` metadata is passed straight out to the caller — Wave 3 turns
-//     it into the `truncated` hint; the api ring never invents hints or
-//     envelopes.
+//     `nextStartAt` metadata is passed straight out to the caller — the tool
+//     ring turns it into the `truncated` hint; the api ring never invents hints
+//     or envelopes.
 //  2. **Wire data enters as `unknown`.** Each response is narrowed by a
 //     hand-rolled guard (ARCHITECTURE.md §Typing strategy); a shape Jira should
 //     never send becomes a `JiraError` with `kind: "unexpected_shape"`, never a
@@ -43,13 +43,16 @@
 // §Custom fields pins the per-project endpoints as the only ones we call.
 // ---------------------------------------------------------------------------
 
+import { createJiraError } from '../core/errors.js';
+import { encodeSegment } from '../core/http-util.js';
 import {
-  JiraError,
+  type JiraError,
   type JiraRequestFn,
   type JiraRequestSpec,
   type JiraResponse,
 } from '../core/types.js';
 import {
+  budgetOf,
   fetchAll,
   type BudgetGuard,
   type ClassicCursor,
@@ -95,7 +98,8 @@ export const DEFAULT_PROJECT_DETAIL_EXPAND = 'description,lead,issueTypes';
 /**
  * What every call here needs: the injected wire seam and the MCP request's
  * cancellation. Intersected with {@link BudgetGuard} at each call site, so
- * `deadlineAt` can never arrive without the {@link Clock} that gives it meaning.
+ * `deadlineAt` can never arrive without the `Clock` (`core/clock.ts`) that gives
+ * it meaning.
  */
 export interface MetaBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
@@ -374,8 +378,10 @@ export interface LinkTypeInfo {
  * `isLast` (or the page cap / budget / abort trips).
  *
  * The result carries `partial` and `stopReason` exactly as `fetchAll` reports
- * them: a `max_pages` or `budget` stop is a SUCCESSFUL read of a prefix, and the
- * tool layer turns it into a `truncated` hint rather than an error.
+ * them: a `max_pages` or `budget` stop is a SUCCESSFUL read of a prefix. The
+ * tool layer reports it as paging data (`partial`/`stopReason`), never as the
+ * `truncated` hint — that hint is reserved for the `JIRA_MAX_RESULT_CHARS`
+ * rendering budget (TOOLS.md hint catalog).
  */
 export function listProjects(
   options: ListProjectsOptions,
@@ -408,7 +414,7 @@ export function listProjects(
  * `core/http.ts` when it builds the error, not here.
  */
 export async function getProject(options: GetProjectOptions): Promise<ProjectDetail> {
-  const project = pathSegment(options.project, 'project key or id', PROJECT_REMEDIATION);
+  const project = pathSegment(options.project, 'project key or id');
   const response = await sendOne(options, {
     method: 'GET',
     path: `/project/${project}`,
@@ -485,7 +491,7 @@ export function filterFields(
 export function listCreateMetaIssueTypes(
   options: CreateMetaIssueTypesOptions,
 ): Promise<ClassicLoopResult<IssueTypeRef>> {
-  const project = pathSegment(options.project, 'project key or id', PROJECT_REMEDIATION);
+  const project = pathSegment(options.project, 'project key or id');
   return runClassic(
     options,
     CREATE_META_PAGE_SIZE,
@@ -514,12 +520,8 @@ export function listCreateMetaIssueTypes(
 export async function getCreateMeta(
   options: CreateMetaOptions,
 ): Promise<CreateMetaResult> {
-  const project = pathSegment(options.project, 'project key or id', PROJECT_REMEDIATION);
-  const issueTypeId = pathSegment(
-    options.issueTypeId,
-    'issue type id',
-    'List the ids with the createmeta issue-types call (jira_get_create_meta without an issue type).',
-  );
+  const project = pathSegment(options.project, 'project key or id');
+  const issueTypeId = pathSegment(options.issueTypeId, 'issue type id');
   const loop = await runClassic(
     options,
     CREATE_META_PAGE_SIZE,
@@ -600,15 +602,12 @@ export async function listLinkTypes(
 // 8. Request plumbing
 // ---------------------------------------------------------------------------
 
-const PROJECT_REMEDIATION =
-  'Pass a project key (e.g. ABC) or numeric id; list them with jira_list_projects.';
-
 /**
  * Issue ONE request, stamping the caller's cancellation and call-budget deadline
  * onto it. A spec that set its own keeps it, mirroring `withLoopControls` in
  * `api/shared.ts` so single and looped reads behave identically.
  *
- * The {@link Clock} of the {@link BudgetGuard} is unused on this path — there is
+ * The `Clock` of the {@link BudgetGuard} is unused on this path — there is
  * no page boundary at which to check a deadline; `core/http.ts` enforces
  * `deadlineAt` for the request itself. It still travels in the same options
  * object so a caller passes one context to every function in this module.
@@ -625,10 +624,10 @@ function sendOne(
 }
 
 /**
- * Run one classic pagination loop. The `deadlineAt`/`clock` pair is rebuilt as a
- * discriminated pair rather than spread, because {@link BudgetGuard} is a UNION:
- * spreading it would let a `deadlineAt` reach `fetchAll` beside an absent clock,
- * which is the exact mistake the union exists to prevent.
+ * Run one classic pagination loop. The `deadlineAt`/`clock` pair goes through
+ * {@link budgetOf} rather than being spread raw, because {@link BudgetGuard} is
+ * a UNION: spreading it would let a `deadlineAt` reach `fetchAll` beside an
+ * absent clock, which is the exact mistake the union exists to prevent.
  */
 function runClassic<T>(
   options: MetaPagedOptions,
@@ -644,27 +643,19 @@ function runClassic<T>(
     request,
     readPage,
   };
-  return options.deadlineAt === undefined
-    ? fetchAll<T>({ ...base, clock: options.clock })
-    : fetchAll<T>({ ...base, clock: options.clock, deadlineAt: options.deadlineAt });
+  return fetchAll<T>({ ...base, ...budgetOf(options) });
 }
 
 /**
- * Percent-encode ONE path segment, per the `JiraRequestSpec.path` contract
+ * Validate-and-encode ONE path segment, per the `JiraRequestSpec.path` contract
  * ("each dynamic segment must already be percent-encoded per segment by the
- * caller"). Encoding the whole path instead would eat the slashes; not encoding
- * at all would let a key smuggle a `../` into the URL.
+ * caller"). Delegates to `encodeSegment`, which also REJECTS traversal
+ * segments, separators and control characters rather than encoding them —
+ * encoding alone would let `..` survive intact. Trimmed first: a stray space
+ * around a project key is a caller slip, not an attack.
  */
-function pathSegment(value: string, what: string, remediation: string): string {
-  const clean = value.trim();
-  if (clean.length === 0) {
-    throw new JiraError({
-      kind: 'validation',
-      message: `A ${what} is required and must not be empty.`,
-      remediation,
-    });
-  }
-  return encodeURIComponent(clean);
+function pathSegment(value: string, what: string): string {
+  return encodeSegment(value.trim(), what);
 }
 
 /** Blank query filters are omitted from the URL rather than sent as `''`. */
@@ -679,7 +670,7 @@ function trimmed(value: string | undefined): string | undefined {
 // ---------------------------------------------------------------------------
 
 function shapeError(message: string, remediation: string): JiraError {
-  return new JiraError({ kind: 'unexpected_shape', message, remediation });
+  return createJiraError({ kind: 'unexpected_shape', reason: message, remediation });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

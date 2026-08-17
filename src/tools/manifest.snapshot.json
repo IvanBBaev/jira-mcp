@@ -1,0 +1,748 @@
+{
+  "$regenerate": "npm run build && UPDATE_SNAPSHOT=1 node --import ./build/testing/network-fence.js --test \"build/tools/index.test.js\"",
+  "packages": [
+    {
+      "id": "core",
+      "tools": [
+        {
+          "name": "jira_capabilities",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false
+          },
+          "inputKeys": ["profile"]
+        },
+        {
+          "name": "jira_get_myself",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["profile"]
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "tools": [
+        {
+          "name": "jira_search",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": [
+            "expand",
+            "fields",
+            "jql",
+            "maxResults",
+            "nextPageToken",
+            "profile",
+            "reconcileIssues"
+          ]
+        },
+        {
+          "name": "jira_count",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["jql", "profile"]
+        },
+        {
+          "name": "jira_list_filters",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["accountId", "filterName", "maxResults", "profile", "startAt"]
+        },
+        {
+          "name": "jira_get_filter",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["filterId", "profile"]
+        }
+      ]
+    },
+    {
+      "id": "issues",
+      "tools": [
+        {
+          "name": "jira_get_issue",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": [
+            "expand",
+            "fields",
+            "format",
+            "issue",
+            "profile",
+            "properties",
+            "raw"
+          ]
+        },
+        {
+          "name": "jira_get_comments",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["format", "issue", "maxResults", "orderBy", "profile", "startAt"]
+        },
+        {
+          "name": "jira_get_transitions",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["issue", "profile"]
+        },
+        {
+          "name": "jira_get_changelog",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["issue", "maxResults", "profile", "startAt"]
+        },
+        {
+          "name": "jira_get_worklogs",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["issue", "maxResults", "profile", "startAt"]
+        }
+      ]
+    },
+    {
+      "id": "issues-write",
+      "tools": [
+        {
+          "name": "jira_create_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "assigneeAccountId",
+            "description",
+            "fields",
+            "format",
+            "issueType",
+            "labels",
+            "parent",
+            "plan_id",
+            "priority",
+            "profile",
+            "project",
+            "summary"
+          ]
+        },
+        {
+          "name": "jira_update_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "assigneeAccountId",
+            "description",
+            "fields",
+            "format",
+            "issue",
+            "labels",
+            "labelsAdd",
+            "labelsRemove",
+            "notifyUsers",
+            "parent",
+            "plan_id",
+            "priority",
+            "profile",
+            "summary"
+          ]
+        },
+        {
+          "name": "jira_transition_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "comment",
+            "fields",
+            "format",
+            "issue",
+            "plan_id",
+            "profile",
+            "transition"
+          ]
+        },
+        {
+          "name": "jira_add_comment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "body",
+            "format",
+            "issue",
+            "plan_id",
+            "profile",
+            "visibility"
+          ]
+        },
+        {
+          "name": "jira_update_comment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "body",
+            "commentId",
+            "format",
+            "issue",
+            "plan_id",
+            "profile",
+            "visibility"
+          ]
+        },
+        {
+          "name": "jira_assign_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["accountId", "apply", "issue", "plan_id", "profile", "unassign"]
+        },
+        {
+          "name": "jira_add_worklog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "comment",
+            "format",
+            "issue",
+            "plan_id",
+            "profile",
+            "started",
+            "timeSpent",
+            "timeSpentSeconds"
+          ]
+        },
+        {
+          "name": "jira_link_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "comment",
+            "format",
+            "inwardIssue",
+            "linkType",
+            "outwardIssue",
+            "plan_id",
+            "profile"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "issues-delete",
+      "tools": [
+        {
+          "name": "jira_delete_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputKeys": ["apply", "deleteSubtasks", "issue", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_delete_comment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputKeys": ["apply", "commentId", "issue", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_delete_worklog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputKeys": ["apply", "issue", "plan_id", "profile", "worklogId"]
+        }
+      ]
+    },
+    {
+      "id": "attachments",
+      "tools": [
+        {
+          "name": "jira_list_attachments",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["issue", "profile"]
+        },
+        {
+          "name": "jira_download_attachment",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "inputKeys": ["attachmentId", "profile"]
+        },
+        {
+          "name": "jira_upload_attachment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "contentType", "issue", "name", "plan_id", "profile"]
+        }
+      ]
+    },
+    {
+      "id": "collab",
+      "tools": [
+        {
+          "name": "jira_list_watchers",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["issue", "profile"]
+        },
+        {
+          "name": "jira_add_watcher",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["accountId", "apply", "issue", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_remove_watcher",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["accountId", "apply", "issue", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_add_vote",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "issue", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_remove_vote",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "issue", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_list_components",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["maxResults", "profile", "project", "query", "startAt"]
+        },
+        {
+          "name": "jira_create_component",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "assigneeType",
+            "description",
+            "leadAccountId",
+            "name",
+            "plan_id",
+            "profile",
+            "project"
+          ]
+        },
+        {
+          "name": "jira_update_component",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "assigneeType",
+            "componentId",
+            "description",
+            "leadAccountId",
+            "name",
+            "plan_id",
+            "profile"
+          ]
+        },
+        {
+          "name": "jira_list_versions",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["maxResults", "profile", "project", "query", "startAt", "status"]
+        },
+        {
+          "name": "jira_create_version",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "archived",
+            "description",
+            "name",
+            "plan_id",
+            "profile",
+            "projectId",
+            "releaseDate",
+            "released",
+            "startDate"
+          ]
+        },
+        {
+          "name": "jira_update_version",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "archived",
+            "description",
+            "name",
+            "plan_id",
+            "profile",
+            "releaseDate",
+            "released",
+            "startDate",
+            "versionId"
+          ]
+        },
+        {
+          "name": "jira_list_project_roles",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["profile", "project", "roleId"]
+        }
+      ]
+    },
+    {
+      "id": "meta",
+      "tools": [
+        {
+          "name": "jira_list_projects",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["profile", "query"]
+        },
+        {
+          "name": "jira_get_project",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["expand", "profile", "project"]
+        },
+        {
+          "name": "jira_list_fields",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["profile", "query"]
+        },
+        {
+          "name": "jira_get_create_meta",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["issueTypeId", "profile", "project"]
+        },
+        {
+          "name": "jira_list_statuses",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["profile", "projectId"]
+        },
+        {
+          "name": "jira_list_link_types",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["profile"]
+        }
+      ]
+    },
+    {
+      "id": "users",
+      "tools": [
+        {
+          "name": "jira_search_users",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": [
+            "includeEmail",
+            "issue",
+            "maxResults",
+            "profile",
+            "project",
+            "query",
+            "startAt"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agile",
+      "tools": [
+        {
+          "name": "jira_list_boards",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["maxResults", "profile", "projectKeyOrId", "startAt", "type"]
+        },
+        {
+          "name": "jira_list_sprints",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["boardId", "maxResults", "profile", "startAt", "state"]
+        },
+        {
+          "name": "jira_get_sprint_issues",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputKeys": ["fields", "jql", "maxResults", "profile", "sprintId", "startAt"]
+        },
+        {
+          "name": "jira_move_to_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "issues", "plan_id", "profile", "sprintId"]
+        },
+        {
+          "name": "jira_move_to_backlog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "issues", "plan_id", "profile"]
+        },
+        {
+          "name": "jira_create_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": [
+            "apply",
+            "endDate",
+            "goal",
+            "name",
+            "originBoardId",
+            "plan_id",
+            "profile",
+            "startDate"
+          ]
+        },
+        {
+          "name": "jira_start_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "endDate", "plan_id", "profile", "sprintId", "startDate"]
+        },
+        {
+          "name": "jira_close_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputKeys": ["apply", "plan_id", "profile", "sprintId"]
+        }
+      ]
+    }
+  ]
+}

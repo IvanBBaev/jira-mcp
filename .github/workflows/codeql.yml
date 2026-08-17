@@ -1,0 +1,81 @@
+name: CodeQL
+
+# Static analysis for the TypeScript sources and for the workflows themselves.
+# This is the "advanced" setup — a workflow file in the repo — rather than
+# GitHub's default setup, because the pins, the permissions and the schedule then
+# live in review like every other workflow here. The two are mutually exclusive:
+# turning on default setup in the repository settings disables this file, so pick
+# one and leave the other off.
+#
+# It needs no secret and touches no Jira site: CodeQL reads the checked-out
+# source and nothing else.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Wednesdays 05:43 UTC. A weekly re-scan matters because the query pack moves
+  # even when the code does not — a rule shipped tomorrow can find a bug in code
+  # committed last year. Deliberately a different day and an odd minute from
+  # CI's Monday 04:17, to keep the two off each other's toes.
+  schedule:
+    - cron: '43 5 * * 3'
+  workflow_dispatch:
+
+# Same policy as CI: a superseded run's answer is worthless on a branch, but
+# main keeps a complete history.
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Read-only at the top; the analysis job adds exactly the one write scope it
+# needs to upload results.
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the SARIF results to the code-scanning API. This is the only
+      # write scope in the file.
+      security-events: write
+      contents: read
+      # CodeQL reads workflow metadata to attribute alerts to a run.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `javascript-typescript` is one language to CodeQL, not two: listing
+          # them separately analyses the same files twice.
+          - language: javascript-typescript
+            build-mode: none
+          # The workflows themselves. This repo's publish job holds an OIDC
+          # identity and `id-token: write`, which makes expression injection in
+          # a workflow a credential problem rather than a style problem — worth
+          # a scanner of its own.
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No `setup-node`, no `npm ci`: with build-mode `none` CodeQL extracts the
+      # TypeScript directly, so a dependency install would only add supply-chain
+      # surface to a job that holds a write scope.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # `security-extended` over the default pack: this server holds an API
+          # token, parses untrusted Jira content and writes files with explicit
+          # modes, so the extra taint-tracking and path-handling queries are the
+          # ones worth their false positives here.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: '/language:${{ matrix.language }}'

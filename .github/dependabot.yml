@@ -14,7 +14,37 @@ updates:
     # still unnoticed. Waiting a week costs nothing here and skips that window.
     cooldown:
       default-days: 7
+    # Majors that cannot be merged today, and would otherwise be reopened every
+    # week for months. Both entries name the event that unblocks them, so this
+    # list stays a decision rather than a habit.
+    ignore:
+      # TypeScript 7.0 is the Go-native compiler and shipped without the public
+      # programmatic compiler API that typescript-eslint's type-aware linting is
+      # built on; every published typescript-eslint, canary included, still caps
+      # `typescript` at `<6.1.0`, so the bump fails at `npm ci` before it reads a
+      # single source file. Revisit when TS 7.1 ships the new API *and* a
+      # typescript-eslint release widens its peer range.
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+      # `@types/node`'s major tracks the Node major it describes. Typings above
+      # `engines.node` silently accept APIs the supported floor cannot run — the
+      # exact class of bug types exist to catch. Keep them on the floor and
+      # revisit when `engines.node` moves.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
+      # ESLint and its config package are one project released in lockstep:
+      # `@eslint/js@10` declares `peer eslint: ^10`, so bumping it alone leaves
+      # npm nesting a second copy and the repo linting with eslint 9 against
+      # eslint 10's ruleset. Listed before `minor-and-patch` so every eslint
+      # update — major or not — lands in one coordinated PR.
+      eslint:
+        patterns:
+          - 'eslint'
+          - '@eslint/*'
+          - 'typescript-eslint'
+          - 'eslint-plugin-*'
+          - 'eslint-config-*'
       minor-and-patch:
         update-types: ['minor', 'patch']
 

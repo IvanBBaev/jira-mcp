@@ -6,7 +6,8 @@
 //  1. **`GET /rest/api/3/myself`** — who the credentials belong to. Also the
 //     source of the worklog `started` offset (D16): the site's calendar, not the
 //     host's, so `timeZone` is carried through here rather than dropped as
-//     noise. `api/worklogs.ts` caches it per process; this module just reads.
+//     noise. The worklog write path calls it on every `add_worklog`, so the
+//     answer is memoized per process — see {@link getMyself}.
 //  2. **User search** — the ONLY path from a human name to an `accountId`. Cloud
 //     is GDPR-mode: there are no usernames and no user keys (JIRA-API.md
 //     §Users), so every other tool takes an `accountId` and something has to
@@ -30,6 +31,7 @@ import type {
   QueryParams,
 } from '../core/types.js';
 import {
+  budgetOf,
   fetchAll,
   type BudgetGuard,
   type ClassicCursor,
@@ -97,6 +99,13 @@ export interface GetMyselfBase {
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request. */
   readonly signal?: AbortSignal;
+  /**
+   * Bypass the per-process cache and re-read `/myself` from Jira (D16). The
+   * fresh answer replaces the cached one. Nothing in the tool ring sets this
+   * today; it exists so a long-lived process that suspects a stale identity has
+   * a way out that is not "restart the server".
+   */
+  readonly refresh?: boolean;
 }
 
 /** Options for {@link getMyself}. */
@@ -182,13 +191,46 @@ export interface SearchUsersResult {
 // ---------------------------------------------------------------------------
 
 /**
+ * Memoized `/myself` answers, keyed by the IDENTITY of the request function
+ * (D16 — "fetched once and cached per process").
+ *
+ * Keying on the seam rather than on a module-level singleton is what makes the
+ * cache safe in a server that can talk to more than one tenant and in more than
+ * one mode:
+ *
+ *  - the plain path hands every tool the same `deps.jira`, so repeated
+ *    `add_worklog` calls hit the cache;
+ *  - a per-call `profile` is served by a distinct `withProfile(...)` wrapper, so
+ *    one tenant's identity can never answer another's;
+ *  - plan mode substitutes a capturing wrapper (`mcp/write-mode.ts`), which is
+ *    again a distinct function — a plan can neither read nor poison the live
+ *    entry.
+ *
+ * A `WeakMap` because the key IS the lifetime: when a profile wrapper is
+ * collected its identity goes with it. No TTL — credentials are fixed at
+ * startup, so the authenticated identity is genuinely process-stable; a
+ * revoked token surfaces as the underlying `auth` error on the NEXT real call,
+ * exactly as it does today, because only successful reads are ever stored.
+ */
+const myselfCache = new WeakMap<JiraRequestFn, MyselfResult>();
+
+/**
  * Read the authenticated user (`GET /rest/api/3/myself`).
  *
  * Doubles as the credential probe used by the doctor CLI (AUTH.md §Doctor) and
  * as the worklog offset source (D16) — which is why `timeZone` survives the
  * narrowing even though no tool prints it directly.
+ *
+ * The answer is cached per request function (see {@link myselfCache}), so the
+ * worklog write path pays for `/myself` once per process instead of once per
+ * call. Pass `refresh: true` to force a re-read.
  */
 export async function getMyself(options: GetMyselfOptions): Promise<MyselfResult> {
+  if (options.refresh !== true) {
+    const cached = myselfCache.get(options.jira);
+    if (cached !== undefined) return cached;
+  }
+
   const response = await options.jira({
     method: 'GET',
     path: MYSELF_PATH,
@@ -197,7 +239,12 @@ export async function getMyself(options: GetMyselfOptions): Promise<MyselfResult
   });
 
   const user = toJiraUser(response.data, `${MYSELF_PATH} response`);
-  return { user, emailHidden: user.emailAddress === undefined };
+  // Only a successful, well-shaped read is remembered: a throw above leaves the
+  // cache untouched, so a transient 429 or a malformed body does not pin a
+  // failure for the life of the process.
+  const result: MyselfResult = { user, emailHidden: user.emailAddress === undefined };
+  myselfCache.set(options.jira, result);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,13 +264,14 @@ export async function searchUsers(
 ): Promise<SearchUsersResult> {
   const query = requireQuery(options.query);
   const maxResults = resolveMaxResults(options.maxResults);
+  // The scope follows the parameter that will actually be SENT, not the one that
+  // was passed: a blank `project` is no restriction at all, and calling the
+  // assignable endpoint without either parameter earns an opaque 400.
+  const scopeQuery = assignableScopeQuery(options);
   const scope: UserSearchScope =
-    options.issueKey !== undefined || options.project !== undefined
-      ? 'assignable'
-      : 'query';
+    Object.keys(scopeQuery).length > 0 ? 'assignable' : 'query';
   const maxPages = options.maxPages ?? DEFAULT_USER_SEARCH_MAX_PAGES;
   const path = scope === 'assignable' ? ASSIGNABLE_USER_SEARCH_PATH : USER_SEARCH_PATH;
-  const scopeQuery = assignableScopeQuery(options);
 
   const request = (cursor: ClassicCursor): JiraRequestSpec => ({
     method: 'GET',
@@ -349,16 +397,6 @@ function resolveMaxResults(requested: number | undefined): {
   return requested > MAX_USER_SEARCH_RESULTS
     ? { value: MAX_USER_SEARCH_RESULTS, clamped: true }
     : { value: requested, clamped: false };
-}
-
-/**
- * Re-express the budget half of the options as the {@link BudgetGuard} union, so
- * `deadlineAt` and `clock` stay welded together across the spread.
- */
-function budgetOf(guard: BudgetGuard): BudgetGuard {
-  return guard.deadlineAt === undefined
-    ? { ...(guard.clock === undefined ? {} : { clock: guard.clock }) }
-    : { deadlineAt: guard.deadlineAt, clock: guard.clock };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 # Architecture
 
-> Status: target-state spec (pre-code) — code may lag until the phase noted in
-> IMPLEMENTATION-PLAN.md. Read this document first; docs/README.md maps which
-> document owns which class of fact.
+> Status: normative and implemented — this document and the code ship together;
+> drift is a bug. Read this document first; docs/README.md maps which document
+> owns which class of fact.
 
 `jira-mcp-ai` is a Model Context Protocol (MCP) server for Jira Cloud, written in
 TypeScript. It follows the house template established by its sibling repos:
@@ -71,13 +71,16 @@ part untyped. `any` is banned [eslint]; `unknown` + guard is the idiom.
 
 ## Dependency injection boundary
 
-`src/index.ts` splits into:
+The entry concern splits into:
 
-- `buildServer(deps: BuildServerDeps): ConnectableServer` — **pure**: no env, no
-  process streams, no transport. Receives settings, `jiraRequest`, logger,
-  redactor, clock, journal, write gate, and the package manifest. Tests drive it
-  with fixture tools and a fake request function.
-- `main()` — the real bootstrap: `loadSettings()` → `collectSecrets` →
+- `buildServer(deps: BuildServerDeps): ConnectableServer` (`src/mcp/server.ts`) —
+  **pure**: no env, no process streams, no transport. Receives settings,
+  `jiraRequest`, logger, redactor, clock, journal, write gate, and the package
+  manifest. The manifest is *injected*, which is what lets `buildServer` live in
+  the mcp ring without importing `tools/` — and it cannot live in `src/index.ts`,
+  which is import-free at module scope (below) while `buildServer` is
+  synchronous. Tests drive it with fixture tools and a fake request function.
+- `main()` (`src/index.ts`) — the real bootstrap: `loadSettings()` → `collectSecrets` →
   `createRedactor` → `createLogger` → `createJiraRequest` → registry → transport.
   Guarded by `process.argv[1] === fileURLToPath(import.meta.url)` so importing the
   module never boots the server. CLI subcommands (`doctor`, later `login`) are
@@ -88,8 +91,15 @@ CJS launcher shim, so the self-run guard is false by construction and the shim
 has to call the entry explicitly. Renaming the export turns every installed
 binary into a no-op that exits 0 — the failure mode with no error message.
 
-`src/index.ts` is import-free at module scope: a Node version guard runs first,
-then everything is a dynamic `import()`. Set `process.exitCode`, never call
+`src/index.ts` is import-free at module scope, with one exception: a Node
+version guard runs first, then everything is a dynamic `import()`. The
+exception is `core/credentials.ts` (WP-51) — a deliberately dependency-free
+leaf (type-only imports, host resolver injected) holding the one credential
+rule, which the entry point re-exports (`buildCredentialResolver`) and doctor
+and `loadSettings` consume; a second static import stays banned. Before the
+server path loads anything else, `serve()` rebinds the whole `console` to
+stderr so a dependency's stray `console.log` cannot reach the protocol stream
+(CLI paths keep their stdout). Set `process.exitCode`, never call
 `process.exit()` (piped stdout must not be truncated).
 
 ## MCP server style

@@ -17,8 +17,8 @@
 // not the shape of an issue: the caller passes a `request` builder (which owns
 // the path, the JQL, the field list, `safe: true` on the search POSTs) and a
 // `readPage` narrowing function (which owns `issues` vs `values` vs `comments`
-// and the runtime guard behind it). Endpoint knowledge lands in Wave 2
-// (`api/search.ts`, `api/issues.ts`, `api/meta.ts`, `api/agile.ts`).
+// and the runtime guard behind it). Endpoint knowledge lives in the sibling api
+// modules (`api/search.ts`, `api/issues.ts`, `api/meta.ts`, `api/agile.ts`).
 //
 // Three properties every loop here guarantees:
 //
@@ -69,8 +69,8 @@ export const DEFAULT_MAX_PAGES = 20;
 export const NEXT_PAGE_TOKEN_KEY = 'nextPageToken';
 
 /**
- * Why a pagination loop stopped. Machine-stable: Wave-2 callers branch on it to
- * choose the hint they attach to the envelope (TOOLS.md §Hint catalog).
+ * Why a pagination loop stopped. Machine-stable: the tool ring branches on it to
+ * choose the hint it attaches to the envelope (TOOLS.md §Hint catalog).
  *
  * - `exhausted`  — the server said there is no more data (`isLast`, no token, a
  *   short page, or `startAt` reached `total`). The result is COMPLETE; no hint.
@@ -172,6 +172,21 @@ export interface ClassicPage<T> {
 export type BudgetGuard =
   | { readonly deadlineAt?: undefined; readonly clock?: Clock }
   | { readonly deadlineAt: number; readonly clock: Clock };
+
+/**
+ * Re-narrow a wider options object down to just its {@link BudgetGuard} half, so
+ * it can be spread into a loop's options without TypeScript losing the union
+ * arm. Spreading `{ deadlineAt: number | undefined }` widens both properties to
+ * optional and the union stops holding `deadlineAt` and `clock` together; this
+ * helper picks the arm explicitly instead. Every api module that forwards a
+ * budget into {@link searchPages}/{@link fetchAll}/{@link fetchPage} funnels
+ * through here so the narrowing exists exactly once.
+ */
+export function budgetOf(guard: BudgetGuard): BudgetGuard {
+  return guard.deadlineAt === undefined
+    ? { ...(guard.clock === undefined ? {} : { clock: guard.clock }) }
+    : { deadlineAt: guard.deadlineAt, clock: guard.clock };
+}
 
 /** Loop controls stamped onto every outgoing request. */
 interface LoopControls {

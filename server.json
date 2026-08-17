@@ -1,0 +1,178 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.IvanBBaev/jira-mcp-ai",
+  "title": "Jira Cloud",
+  "description": "Jira Cloud over MCP: JQL search, issue reads, and writes behind a plan/apply gate.",
+  "version": "0.0.0",
+  "websiteUrl": "https://github.com/IvanBBaev/jira-mcp#readme",
+  "repository": {
+    "url": "https://github.com/IvanBBaev/jira-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "jira-mcp-ai",
+      "version": "0.0.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "JIRA_SITE",
+          "description": "Jira Cloud site: \"mycompany\", \"mycompany.atlassian.net\", or a full URL.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_EMAIL",
+          "description": "Atlassian account email used for Basic auth alongside the API token.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_API_TOKEN",
+          "description": "Atlassian API token for that account. Never logged; registered with the redactor.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_ENV_FILE",
+          "description": "Explicit path to the env file; wins over XDG and project-local resolution.",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "JIRA_TOKEN_EXPIRES",
+          "description": "ISO date the API token expires. Startup and doctor warn 30 days out.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_ALLOWED_HOSTS",
+          "description": "Comma list of extra allowed hosts. Exact host or anchored regex; no suffix matching.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_ACTIVE_PROFILE",
+          "description": "Named credential profile used when a tool call does not specify one.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_LOCK_PROFILE",
+          "description": "Reject per-call profile switching. Locked by default so one call cannot change tenant.",
+          "isRequired": false,
+          "default": "true",
+          "format": "boolean"
+        },
+        {
+          "name": "JIRA_TOOL_PACKAGES",
+          "description": "Tool packages to register: a profile (core, reader, all) or an explicit comma list.",
+          "isRequired": false,
+          "default": "all",
+          "format": "string"
+        },
+        {
+          "name": "JIRA_PACKAGES_DENY",
+          "description": "Packages to drop. Wins over the selection; the core package is force-re-added.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_PACKAGES_READONLY",
+          "description": "Packages whose write-tier tools are dropped before registration.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_WRITE_MODE",
+          "description": "plan: write tools describe the change. apply: they execute when the call passes apply.",
+          "isRequired": false,
+          "default": "plan",
+          "choices": ["plan", "apply"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_REQUEST_TIMEOUT_MS",
+          "description": "Per-request timeout in milliseconds.",
+          "isRequired": false,
+          "default": "30000",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_CALL_BUDGET_MS",
+          "description": "Wall-clock budget for one tool call's HTTP activity, retry waits and queueing included.",
+          "isRequired": false,
+          "default": "120000",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_HOST_CONCURRENCY",
+          "description": "Per-host semaphore slots.",
+          "isRequired": false,
+          "default": "4",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_RETRY_ATTEMPTS",
+          "description": "Maximum retry attempts. Unsafe writes are never replayed on an ambiguous failure.",
+          "isRequired": false,
+          "default": "3",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_MAX_RESULT_CHARS",
+          "description": "Truncation budget for a single tool result, in characters.",
+          "isRequired": false,
+          "default": "25000",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_MAX_PAGES",
+          "description": "Loop guard on paged reads.",
+          "isRequired": false,
+          "default": "20",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_TRANSPORT",
+          "description": "Transport to serve. stdio is the registered form; http is loopback-only.",
+          "isRequired": false,
+          "default": "stdio",
+          "choices": ["stdio", "http"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_HTTP_PORT",
+          "description": "Loopback port for the http transport.",
+          "isRequired": false,
+          "default": "3334",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_HTTP_TOKEN",
+          "description": "Bearer token for the http transport. Required for it; unused under stdio.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_LOG_LEVEL",
+          "description": "Diagnostic verbosity. All log output goes to stderr; stdout is the MCP protocol.",
+          "isRequired": false,
+          "default": "info",
+          "choices": ["debug", "info", "warn", "error"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_JOURNAL_PATH",
+          "description": "Optional JSONL journal of every write tool call: tool, args hash, result, timestamp.",
+          "isRequired": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

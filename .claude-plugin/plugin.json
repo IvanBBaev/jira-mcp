@@ -1,0 +1,61 @@
+{
+  "name": "jira-mcp-ai",
+  "displayName": "Jira Cloud (jira-mcp-ai)",
+  "version": "0.0.0",
+  "description": "Jira Cloud tools for Claude Code: JQL search, issue reads, and writes behind a plan/apply gate.",
+  "author": {
+    "name": "Ivan Baev",
+    "email": "ivanbbaev@gmail.com",
+    "url": "https://github.com/IvanBBaev"
+  },
+  "homepage": "https://github.com/IvanBBaev/jira-mcp#readme",
+  "repository": "https://github.com/IvanBBaev/jira-mcp",
+  "license": "MIT",
+  "keywords": ["mcp", "jira", "jira-cloud", "atlassian", "jql", "issue-tracker"],
+  "userConfig": {
+    "jira_site": {
+      "type": "string",
+      "title": "Jira site",
+      "description": "\"mycompany\", \"mycompany.atlassian.net\", or the full site URL.",
+      "required": true
+    },
+    "jira_email": {
+      "type": "string",
+      "title": "Atlassian account email",
+      "description": "The account the API token belongs to. Used for Basic auth.",
+      "required": true
+    },
+    "jira_api_token": {
+      "type": "string",
+      "title": "Atlassian API token",
+      "description": "Create one at id.atlassian.com > Security > API tokens. Stored in secure storage, never in settings.json.",
+      "required": true,
+      "sensitive": true
+    },
+    "jira_write_mode": {
+      "type": "string",
+      "title": "Write mode",
+      "description": "\"plan\" (default) makes write tools describe the change instead of performing it. \"apply\" lets a call that passes apply: true execute. Leave it on plan unless you mean it.",
+      "default": "plan"
+    },
+    "jira_tool_packages": {
+      "type": "string",
+      "title": "Tool packages",
+      "description": "Which tool packages to register: \"all\", \"reader\" (reads only), \"core\", or an explicit comma list.",
+      "default": "all"
+    }
+  },
+  "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": ["-y", "jira-mcp-ai@1.0.0"],
+      "env": {
+        "JIRA_SITE": "${user_config.jira_site}",
+        "JIRA_EMAIL": "${user_config.jira_email}",
+        "JIRA_API_TOKEN": "${user_config.jira_api_token}",
+        "JIRA_WRITE_MODE": "${user_config.jira_write_mode}",
+        "JIRA_TOOL_PACKAGES": "${user_config.jira_tool_packages}"
+      }
+    }
+  }
+}

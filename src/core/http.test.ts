@@ -19,8 +19,10 @@ import type { FakeLogger } from './fakes/fakeLogger.js';
 import { createFakeRedactor } from './fakes/fakeRedactor.js';
 import { withFetch } from '../testing/with-fetch.js';
 import type { FetchMock } from '../testing/with-fetch.js';
+import { MAX_ATTACHMENT_BYTES } from './http-util.js';
 import { createJiraRequest } from './http.js';
 import type { JiraHttpOptions } from './http.js';
+import { createTelemetry } from './telemetry.js';
 
 const SITE: HostRef = { origin: 'https://acme.atlassian.net', pathPrefix: '' };
 const TOKEN = 'super-secret-token';
@@ -690,6 +692,169 @@ test('the per-host semaphore limits how many requests are in flight at once', as
 });
 
 /* ------------------------------------------------------------------------- *
+ * The body is part of the attempt
+ *
+ * Headers arriving is not the call finishing. Everything below drives a
+ * response whose HEADERS land instantly and whose BODY never does — the case
+ * that used to slip past the attempt timeout, the call budget and the host
+ * slot all three, because each of them ended when `fetch` resolved.
+ * ------------------------------------------------------------------------- */
+
+/** A body whose stream is opened and then never yields a byte. */
+function stallingBody(onCancel?: () => void): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>(() => {
+        /* no chunk, ever: only an abort can end a read of this */
+      });
+    },
+    cancel() {
+      onCancel?.();
+    },
+  });
+}
+
+/** A body that stays open until the returned release function is called. */
+function gatedBody(): { stream: ReadableStream<Uint8Array>; release: () => void } {
+  let release = (): void => {
+    /* replaced by `start` before any consumer can run */
+  };
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      release = () => {
+        controller.enqueue(new TextEncoder().encode('{"ok":true}'));
+        controller.close();
+      };
+    },
+  });
+  return { stream, release };
+}
+
+test('a stalled body times out: the attempt timeout covers the read, not just the headers', async () => {
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(stallingBody(), { status: 200 })),
+    async (calls) => {
+      const { request, clock } = harness({ requestTimeoutMs: 30_000, retryAttempts: 0 });
+
+      const failure = await rejects(clock, request(GET_ISSUE));
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]?.signal?.aborted, true, 'the fetch must be aborted');
+      assert.equal(clock.pendingSleeps(), 0, 'no timer may leak');
+      return failure;
+    },
+  );
+
+  assert.equal(err.kind, 'timeout');
+  assert.match(err.message, /timed out after 30000 ms/);
+});
+
+test('a stalled body is charged to the call budget, not just to the attempt', async () => {
+  // The budget is far shorter than the per-request timeout, so the number in
+  // the message says which of the two ended the read.
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(stallingBody(), { status: 200 })),
+    async () => {
+      const { request, clock } = harness({
+        requestTimeoutMs: 30_000,
+        callBudgetMs: 5_000,
+        retryAttempts: 0,
+      });
+      return await rejects(clock, request(GET_ISSUE), 1_000);
+    },
+  );
+
+  assert.equal(err.kind, 'timeout');
+  assert.match(err.message, /timed out after 5000 ms/);
+});
+
+test('an unsafe write whose body stalls is ambiguous and is sent exactly once', async () => {
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(stallingBody(), { status: 200 })),
+    async (calls) => {
+      const { request, clock, logger } = harness({ requestTimeoutMs: 30_000 });
+
+      const failure = await rejects(
+        clock,
+        request({ method: 'POST', path: '/issue', body: { summary: 'x' } }),
+      );
+
+      assert.equal(calls.length, 1, 'a write is never replayed on an unknown outcome');
+      assert.equal(logger.has('ambiguous_write'), true);
+      return failure;
+    },
+  );
+
+  assert.equal(err.kind, 'ambiguous_write');
+  assert.match(err.message, /timed out after the request was sent/);
+});
+
+test('the host slot is held until the body settles, not until the headers arrive', async () => {
+  const gate = gatedBody();
+  let call = 0;
+  await withRawFetch(
+    () => {
+      call += 1;
+      return Promise.resolve(
+        call === 1
+          ? new Response(gate.stream, { status: 200 })
+          : Response.json({ second: true }),
+      );
+    },
+    async (calls) => {
+      const { request } = harness({ hostConcurrency: 1 });
+
+      const first = request<{ ok: boolean }>(GET_ISSUE);
+      await tick();
+      await tick();
+      assert.equal(calls.length, 1, 'the first request is on the wire');
+
+      const second = request<{ second: boolean }>(GET_ISSUE);
+      await tick();
+      await tick();
+      await tick();
+      assert.equal(
+        calls.length,
+        1,
+        'the second request must wait: the first still owns the slot while its body streams',
+      );
+
+      gate.release();
+      // No clock advance: nothing here is waiting on time, so the guard timers
+      // stay armed and cannot end the wait for us.
+      const [a, b] = await Promise.all([first, second]);
+      assert.equal(calls.length, 2);
+      assert.deepEqual(a.data, { ok: true });
+      assert.deepEqual(b.data, { second: true });
+    },
+  );
+});
+
+test('a body that fails mid-read is a transport failure, not an empty success', async () => {
+  const err = await withRawFetch(
+    () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.error(new Error('connection reset while reading the body'));
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    async () => {
+      const { request, clock } = harness({ retryAttempts: 0 });
+      return await rejects(clock, request(GET_ISSUE));
+    },
+  );
+
+  // Before the body was part of the attempt this resolved `ok` with no data.
+  assert.equal(err.kind, 'transport');
+  assert.match(err.message, /Could not reach Jira/);
+});
+
+/* ------------------------------------------------------------------------- *
  * Status mapping (CC-15/CC-16/CC-18)
  * ------------------------------------------------------------------------- */
 
@@ -749,6 +914,20 @@ test('403 is a permission error unless a login-denied header says otherwise (CC-
     const err = await rejects(clock, request(GET_ISSUE));
     assert.equal(err.kind, 'auth');
     assert.equal(logger.has('auth_failure'), true);
+  });
+
+  // A successful Seraph pass-through on a plain permission 403 must NOT flip
+  // the kind to auth — the header is present but its value clears the account.
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      status: 403,
+      headers: { 'x-seraph-loginreason': 'OK' },
+      json: { errorMessages: ['No permission'] },
+    });
+    const { request, clock, logger } = harness();
+    const err = await rejects(clock, request(GET_ISSUE));
+    assert.equal(err.kind, 'permission');
+    assert.equal(logger.has('auth_failure'), false);
   });
 });
 
@@ -909,4 +1088,438 @@ test('a per-request timeoutMs overrides the client default', async () => {
   } finally {
     restore();
   }
+});
+
+/* ------------------------------------------------------------------------- *
+ * Counters (D12, OBSERVABILITY.md §Counters)
+ * ------------------------------------------------------------------------- */
+
+test('a logical request counts once, whatever it costs in attempts', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({ status: 503 })
+      .enqueue({ status: 503 })
+      .enqueue({ json: { key: 'ABC-1' } });
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({ telemetry });
+
+    await settle(clock, request(GET_ISSUE));
+
+    assert.equal(mock.requests.length, 3);
+    assert.deepEqual(telemetry.snapshot(), {
+      requests: 1,
+      retries: 2,
+      rateLimitWaits: 0,
+      errors: {},
+    });
+  });
+});
+
+test('a 429 wait counts as both a retry and a rate-limit wait', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({ status: 429, headers: { 'retry-after': '2' } })
+      .enqueue({ status: 503 })
+      .enqueue({ json: { ok: true } });
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({ telemetry });
+
+    await settle(clock, request(GET_ISSUE));
+
+    const counters = telemetry.snapshot();
+    assert.equal(counters.retries, 2);
+    assert.equal(counters.rateLimitWaits, 1);
+  });
+});
+
+test('a failure is counted under its error kind', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 404, json: { errorMessages: ['Issue does not exist'] } });
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({ telemetry });
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'not_found');
+    assert.deepEqual(telemetry.snapshot(), {
+      requests: 1,
+      retries: 0,
+      rateLimitWaits: 0,
+      errors: { not_found: 1 },
+    });
+  });
+});
+
+test('a refusal raised before the wire is still counted', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({
+      telemetry,
+      credentials: {
+        ...CREDENTIALS,
+        host: { origin: 'https://evil-atlassian.net', pathPrefix: '' },
+      },
+    });
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'config');
+    assert.equal(mock.requests.length, 0);
+    // Nothing was sent, so `requests` stays 0 — but the operator still needs to
+    // see that this server is failing, and why.
+    assert.deepEqual(telemetry.snapshot(), {
+      requests: 0,
+      retries: 0,
+      rateLimitWaits: 0,
+      errors: { config: 1 },
+    });
+  });
+});
+
+test('counters accumulate across calls and instances stay independent', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ json: { ok: true } });
+    const telemetry = createTelemetry();
+    const other = createTelemetry();
+    const { request, clock } = harness({ telemetry });
+
+    await settle(clock, request(GET_ISSUE));
+    await settle(clock, request(GET_ISSUE));
+
+    assert.equal(telemetry.snapshot().requests, 2);
+    assert.equal(other.snapshot().requests, 0);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * Attachments: binary responses and multipart uploads (WP-70)
+ * ------------------------------------------------------------------------- */
+
+const GET_CONTENT: JiraRequestSpec = {
+  method: 'GET',
+  path: '/attachment/content/10000',
+  pathTemplate: '/attachment/content/{id}',
+  accept: 'binary',
+};
+
+/**
+ * A raw `fetch` swap for the two cases the recording mock cannot express: an
+ * `init.body` that is a `FormData` (the mock stringifies it to a marker) and a
+ * response whose body is a live stream (the cap must trip mid-transfer).
+ */
+async function withRawFetch<T>(
+  impl: (input: Parameters<typeof fetch>[0], init: RequestInit) => Promise<Response>,
+  fn: (calls: RequestInit[]) => Promise<T>,
+): Promise<T> {
+  const previous = globalThis.fetch;
+  const calls: RequestInit[] = [];
+  globalThis.fetch = (
+    input: Parameters<typeof fetch>[0],
+    init?: RequestInit,
+  ): Promise<Response> => {
+    calls.push(init ?? {});
+    return impl(input, init ?? {});
+  };
+  try {
+    return await fn(calls);
+  } finally {
+    globalThis.fetch = previous;
+  }
+}
+
+test('accept: binary returns the bytes untouched and asks for anything', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]) });
+    const { request, clock } = harness();
+
+    const res = await settle(clock, request<Uint8Array>(GET_CONTENT));
+
+    assert.ok(res.data instanceof Uint8Array, 'a binary read must not be parsed');
+    assert.deepEqual([...res.data], [0x25, 0x50, 0x44, 0x46]);
+    assert.equal(mock.lastRequest()?.headers['accept'], '*/*');
+  });
+});
+
+test('CC-53: a binary GET follows the media 303 exactly once, and anonymously', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({
+        status: 303,
+        headers: { location: 'https://media.atlassian.com/file/abc?token=signed' },
+      })
+      .enqueue({ bytes: new Uint8Array([1, 2, 3]) });
+    const { request, clock, logger } = harness();
+
+    const res = await settle(clock, request<Uint8Array>(GET_CONTENT));
+
+    assert.deepEqual([...res.data], [1, 2, 3]);
+    assert.equal(mock.requests.length, 2);
+    assert.equal(
+      mock.requests[1]?.url,
+      'https://media.atlassian.com/file/abc?token=signed',
+    );
+    // The whole point of the hand-built hop: undici would strip this crossing
+    // origins anyway, and a media host must never be handed the site token.
+    assert.equal(mock.requests[1]?.headers['authorization'], undefined);
+    assert.equal(mock.requests[0]?.headers['authorization'] !== undefined, true);
+    // Both hops are visible in the log, and neither event carries the URL.
+    const responses = logger.eventsOf('http_response');
+    assert.deepEqual(
+      responses.map((e) => fieldsOf(e)['status']),
+      [303, 200],
+    );
+    assert.equal(
+      fieldsOf(responses[0])['pathTemplate'],
+      '/rest/api/3/attachment/content/{id}',
+    );
+  });
+});
+
+test('the media hop refuses a non-https location and sends nothing to it', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 303, headers: { location: 'http://media.example.com/f' } });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_CONTENT));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /non-https/);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('the media hop refuses a link-local target (the SSRF blocklist still applies)', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      status: 303,
+      headers: { location: 'https://169.254.169.254/latest/meta-data/' },
+    });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_CONTENT));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /never contacted/);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('a 303 with no Location is a refusal, not a second blind request', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 303 });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_CONTENT));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /no Location header/);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('the hop is taken once: a redirect from the media host is refused', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({ status: 303, headers: { location: 'https://media.atlassian.com/a' } })
+      .enqueue({ status: 303, headers: { location: 'https://media.atlassian.com/b' } });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_CONTENT));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /never followed/);
+    assert.equal(mock.requests.length, 2);
+  });
+});
+
+test('a JSON GET still refuses the same 303 — only a binary read may hop', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      status: 303,
+      headers: { location: 'https://media.atlassian.com/file/abc' },
+    });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'config');
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('CC-54: a download over the cap is aborted mid-stream, not buffered and rejected', async () => {
+  const chunk = new Uint8Array(1024 * 1024);
+  // Ten chunks more than the cap allows: the source is still open when the
+  // limit trips, so a reader that did NOT stop would go on pulling.
+  const chunks = Math.ceil(MAX_ATTACHMENT_BYTES / chunk.byteLength) + 10;
+  let sent = 0;
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= chunks) {
+        controller.close();
+        return;
+      }
+      sent += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(stream, { status: 200 })),
+    async () => {
+      const { request, clock } = harness();
+      return await rejects(clock, request(GET_CONTENT));
+    },
+  );
+
+  assert.equal(err.kind, 'validation');
+  assert.match(err.message, /attachment limit/);
+  assert.equal(cancelled, true, 'the transfer must be cancelled, not drained');
+  // The source can still hand out a chunk or two while the cancellation
+  // propagates; what matters is that it never reached its end.
+  assert.ok(sent < chunks, 'the reader must stop near the cap, not drain the body');
+});
+
+test('a download that stalls mid-transfer times out and the stream is cancelled', async () => {
+  let cancelled = false;
+  const err = await withRawFetch(
+    () =>
+      Promise.resolve(
+        new Response(
+          stallingBody(() => {
+            cancelled = true;
+          }),
+          { status: 200 },
+        ),
+      ),
+    async () => {
+      const { request, clock } = harness({ requestTimeoutMs: 30_000, retryAttempts: 0 });
+      return await rejects(clock, request(GET_CONTENT));
+    },
+  );
+
+  assert.equal(err.kind, 'timeout');
+  assert.match(err.message, /timed out after 30000 ms/);
+  assert.equal(cancelled, true, 'a transfer we stop waiting for must not be left open');
+});
+
+test('multipart sends FormData with the XSRF opt-out and no hand-made content-type', async () => {
+  const bytes = new Uint8Array([9, 8, 7]);
+  await withRawFetch(
+    () => Promise.resolve(new Response('[]', { status: 200 })),
+    async (calls) => {
+      const { request, clock } = harness();
+
+      await settle(
+        clock,
+        request({
+          method: 'POST',
+          path: '/issue/ABC-1/attachments',
+          pathTemplate: '/issue/{issueIdOrKey}/attachments',
+          multipart: [
+            {
+              field: 'file',
+              filename: 'notes.txt',
+              contentType: 'text/plain',
+              bytes,
+            },
+          ],
+        }),
+      );
+
+      const init = calls[0];
+      const headers = init?.headers as Record<string, string> | undefined;
+      assert.equal(headers?.['x-atlassian-token'], 'no-check');
+      // Only `fetch` knows the boundary it generated; a hand-set content-type
+      // would produce a body Jira cannot parse.
+      assert.equal(headers?.['content-type'], undefined);
+      assert.ok(init?.body instanceof FormData, 'the body must be a FormData');
+      const part = init.body.get('file');
+      assert.ok(part instanceof Blob, 'the file part must be a Blob');
+      assert.equal((part as File).name, 'notes.txt');
+      assert.equal(part.type, 'text/plain');
+      assert.deepEqual([...new Uint8Array(await part.arrayBuffer())], [9, 8, 7]);
+    },
+  );
+});
+
+test('multipart is refused on a non-POST, alongside a body, and when empty', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    const { request, clock } = harness();
+    const part = { field: 'file', filename: 'a.txt', bytes: new Uint8Array([1]) };
+
+    const onGet = await rejects(
+      clock,
+      request({ method: 'GET', path: '/issue/ABC-1/attachments', multipart: [part] }),
+    );
+    const withBody = await rejects(
+      clock,
+      request({
+        method: 'POST',
+        path: '/issue/ABC-1/attachments',
+        body: { a: 1 },
+        multipart: [part],
+      }),
+    );
+    const empty = await rejects(
+      clock,
+      request({ method: 'POST', path: '/issue/ABC-1/attachments', multipart: [] }),
+    );
+
+    assert.equal(onGet.kind, 'config');
+    assert.equal(withBody.kind, 'config');
+    assert.equal(empty.kind, 'config');
+    assert.equal(mock.requests.length, 0, 'a caller bug never reaches the wire');
+  });
+});
+
+test('an upload over the cap is refused before a single byte is copied', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    const { request, clock } = harness();
+
+    const err = await rejects(
+      clock,
+      request({
+        method: 'POST',
+        path: '/issue/ABC-1/attachments',
+        multipart: [
+          {
+            field: 'file',
+            filename: 'huge.bin',
+            bytes: new Uint8Array(MAX_ATTACHMENT_BYTES + 1),
+          },
+        ],
+      }),
+    );
+
+    assert.equal(err.kind, 'validation');
+    assert.match(err.message, /upload/);
+    assert.equal(mock.requests.length, 0);
+  });
+});
+
+test('CC-59: a multipart upload that times out is ambiguous and is NEVER replayed', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      error: Object.assign(new Error('socket hang up'), { name: 'TimeoutError' }),
+    });
+    const { request, clock, logger } = harness();
+
+    const err = await rejects(
+      clock,
+      request({
+        method: 'POST',
+        path: '/issue/ABC-1/attachments',
+        multipart: [{ field: 'file', filename: 'a.txt', bytes: new Uint8Array([1]) }],
+      }),
+    );
+
+    assert.equal(err.kind, 'ambiguous_write');
+    assert.equal(mock.requests.length, 1, 'an upload is sent at most once');
+    assert.equal(logger.eventsOf('ambiguous_write').length, 1);
+  });
 });

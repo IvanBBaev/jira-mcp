@@ -1,8 +1,8 @@
 # Observability
 
-> Status: target-state spec (pre-code) — code may lag until the phase noted in
-> IMPLEMENTATION-PLAN.md. This document owns the **log-event contract**: event
-> names, fields, the never-log list, correlation ids, and the startup report.
+> Status: normative and implemented — this document and the code ship together;
+> drift is a bug. This document owns the **log-event contract**: event names,
+> fields, the never-log list, correlation ids, and the startup report.
 > `core/log.ts` implements it; tests assert event names against this table.
 
 ## Principles
@@ -31,7 +31,7 @@
 
 | Event | Level | Fields (beyond `cid`) |
 |---|---|---|
-| `server_start` | info | version, transport, packageCount, toolCount, writeMode, profile, host |
+| `server_start` | info | version, transport, packageCount, toolCount, writeMode, allowIrreversible, profile, host |
 | `settings_report` | info | findingCount, worst severity (report text is the startup line, redacted) |
 | `token_expiry_warning` | warn | daysLeft (from `JIRA_TOKEN_EXPIRES`; emitted ≤ 30 days) |
 | `tool_call_start` | debug | tool |
@@ -52,6 +52,11 @@ Notes:
 - `pathTemplate` is the route with placeholders (`/rest/api/3/issue/{key}`),
   never the concrete path — issue keys and project keys are workspace data.
 - The table is complete: a new event = a new row here first, then code.
+- The `tool` field above exists in **log events only**. The model-facing
+  `ErrorRecord` (frozen contract, core/types.ts) has no `tool` field; for
+  `budget_exceeded` and `ambiguous_write` the registry instead appends
+  ` Tool: <name>.` to the error message once (idempotent suffix), so the
+  result a model reads still names the tool that failed.
 
 ## Never-log list
 

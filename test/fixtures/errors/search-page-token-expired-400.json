@@ -1,0 +1,53 @@
+{
+  "scenario": "search-page-token-expired-400",
+  "synthetic": true,
+  "recordedBy": "hand-crafted from docs/JIRA-API.md §Search",
+  "recordedAt": "1970-01-01T00:00:00.000Z",
+  "site": "example.atlassian.net",
+  "note": "SYNTHETIC. An expired nextPageToken cannot be produced on demand (expiry is roughly seven days and community reports show it is not reliable), so TESTING.md §Fixtures sanctions hand-crafting this one. recordedAt is the fake clock's epoch, not a real moment. The 400-not-410 status and the message substring are what JIRA-API.md documents and what api/search.ts matches on (EXPIRED_TOKEN_MARKER, CC-01); errors is the empty object Jira sends alongside errorMessages. The token in the request is deliberately an obvious placeholder rather than an invented realistic one - the fixture exists to preserve the error shape, not to imitate Atlassian's cursor encoding.",
+  "params": {
+    "jql": "project = EX ORDER BY updated DESC",
+    "nextPageToken": "synthetic-expired-token-0001"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "body": {
+          "fields": [
+            "summary",
+            "status",
+            "assignee",
+            "priority",
+            "issuetype",
+            "updated"
+          ],
+          "jql": "project = EX ORDER BY updated DESC",
+          "maxResults": 25,
+          "nextPageToken": "synthetic-expired-token-0001"
+        },
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "headersDropped": [
+          "authorization"
+        ],
+        "method": "POST",
+        "url": "https://example.atlassian.net/rest/api/3/search/jql"
+      },
+      "response": {
+        "body": {
+          "errorMessages": [
+            "The provided next page token is invalid or expired."
+          ],
+          "errors": {}
+        },
+        "headers": {
+          "content-type": "application/json;charset=UTF-8"
+        },
+        "status": 400,
+        "statusText": "Bad Request"
+      }
+    }
+  ]
+}

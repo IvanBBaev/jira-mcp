@@ -1,6 +1,7 @@
 # Parallel execution plan — agent work packages
 
-> Status: target state, written 2026-08-07 (pre-code). Companion to
+> Status: historical — the execution plan as written 2026-08-07, kept as the
+> record of how the work was cut and scheduled. Companion to
 > IMPLEMENTATION-PLAN.md: **phases stay the milestone truth**; this document is
 > the scheduling overlay that decomposes them into work packages (WPs) small
 > enough to hand to independent agents and run in parallel waves.

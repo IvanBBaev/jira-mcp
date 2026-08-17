@@ -1,0 +1,117 @@
+name: Feature request
+description: A tool, an option or a behaviour this server does not have yet.
+title: '[feature] '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Before you write
+
+        The tool surface is deliberately bounded. Every tool this server exposes
+        costs context-window budget for **every** user of the server on **every**
+        turn, whether or not they use it — so "one more tool" is never free, and
+        a request that a model can already satisfy by composing existing tools
+        will usually be declined for that reason.
+
+        The strongest case you can make is a workflow: what you are trying to get
+        done, what you tried, and where the current surface ran out. That is more
+        persuasive than a proposed API.
+
+        Worth a look first:
+        [`docs/TOOLS.md`](https://github.com/IvanBBaev/jira-mcp/blob/main/docs/TOOLS.md)
+        (the tool catalog),
+        [`docs/CONFIGURATION.md`](https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md)
+        (every environment variable) and
+        [`docs/DECISIONS.md`](https://github.com/IvanBBaev/jira-mcp/blob/main/docs/DECISIONS.md)
+        — some things are missing on purpose, and the row explaining why is the
+        thing to argue with.
+
+        As on any public tracker: no credentials, and no confidential Jira
+        content in the examples you paste.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I checked `docs/TOOLS.md` and the existing tools do not cover this.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The workflow, not the feature. What is the model or the user actually trying to accomplish in Jira?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What happens today
+      description: Which tools you tried, and how far they got you. If the gap is a missing field in an existing response, say which one.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shape
+    attributes:
+      label: What shape would the change take?
+      description: A guess is fine — it just helps triage.
+      options:
+        - A new tool
+        - A new argument or option on an existing tool
+        - More (or less) data in an existing response
+        - A configuration or environment variable
+        - CLI / doctor behaviour
+        - Documentation
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour (optional)
+      description: |
+        If you have a concrete design, sketch it: arguments, the result the model
+        would see, and what should happen when it fails. Note whether it reads or
+        writes — writes are gated by `JIRA_WRITE_MODE` and irreversible
+        operations need a second gate, so a write proposal has to say which tier
+        it belongs in.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints it has to live with
+      description: Tick the ones you have already thought about. Not ticking one is not a blocker — it just tells us what to check.
+      options:
+        - label: It can be done with the Jira Cloud v3 REST API (this server does not support Server or Data Center).
+          required: false
+        - label: It does not require the removed legacy `/rest/api/3/search` endpoint.
+          required: false
+        - label: If it writes, it fits the plan/apply gate (and the irreversible tier if it destroys data).
+          required: false
+        - label: The response stays small enough to be worth a model's context window.
+          required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including "do nothing" — sometimes the honest answer is that this belongs in a different tool entirely.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to open a PR for this (see CONTRIBUTING.md).
+          required: false

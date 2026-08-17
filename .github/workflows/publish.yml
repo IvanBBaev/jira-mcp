@@ -1,0 +1,148 @@
+# Release publishing — DELIBERATELY INERT until the owner turns it on.
+#
+# npm publishing is an OPEN owner decision (O-9 in docs/DECISIONS.md, with repo
+# visibility O-10). This file is the pipeline waiting behind that decision, not
+# the decision itself. Four independent things must all be true before a single
+# byte reaches the registry, and none of them can happen by merging this file:
+#
+#   1. A repository variable `PUBLISH_ENABLED` must be set to the string `true`
+#      (Settings > Secrets and variables > Actions > Variables). Unset, the job
+#      is skipped outright.
+#   2. A tag matching `v*` must be pushed. Nothing else publishes: a manual
+#      `workflow_dispatch` run is a rehearsal that stops before `npm publish`.
+#   3. `"private": true` must be removed from package.json. npm refuses to
+#      publish a package marked private, so the release fails loudly until the
+#      owner makes that edit on purpose.
+#   4. A trusted publisher must be registered on npmjs.com for this repository
+#      and for THIS workflow filename — `publish.yml`, extension included, and
+#      case-sensitive. Without it npm rejects the OIDC exchange.
+#
+# Trusted publishing means GitHub OIDC and nothing else. There is no NPM_TOKEN
+# secret in this workflow, and there must never be one: classic tokens were
+# revoked in December 2025 and granular tokens cap at 90 days, so a token-based
+# release is a recurring rotation chore that also sits in the repo as a stealable
+# long-lived credential. Requirements as of npm's current docs: npm CLI >= 11.5.1
+# (hence the Node 24 runner and the explicit assertion below) and
+# `id-token: write` on the publishing job.
+#
+# Two notes for whoever registers the trusted publisher:
+#   - Configurations created after 2026-05-20 must explicitly select at least one
+#     allowed action; pick `npm publish`.
+#   - Provenance requires a PUBLIC repository and a public package. The repo is
+#     public, so `--provenance` is viable; if visibility ever flips back to
+#     private, the flag failing is the correct outcome, not a bug to work
+#     around by dropping it.
+
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  # Rehearsal only. This path runs the gate and the tarball assertion and then
+  # stops: the publish step is guarded on the tag event, so a manual run cannot
+  # reach the registry however it is invoked.
+  workflow_dispatch:
+
+# Read-only at the top. The publishing job widens this for itself, and only to
+# `id-token: write` — the OIDC claim, not a write token for anything in the repo.
+permissions:
+  contents: read
+
+# A publish is not repeatable: the registry rejects a re-publish of the same
+# version. Two runs racing to the same tag must not both reach `npm publish`.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Same determinism knobs as ci.yml (docs/TESTING.md §Determinism knobs) — the
+  # gate runs here too, and it must reach the same verdict it reached in CI.
+  TZ: UTC
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    # Guard 1. `vars.PUBLISH_ENABLED` is unset until the owner decides O-9, so on
+    # today's repository this job is skipped and the workflow is a no-op.
+    if: vars.PUBLISH_ENABLED == 'true'
+    # Give this a required reviewer in Settings > Environments if you want a
+    # human approval step in front of every release as well.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # OIDC claim for npm trusted publishing. No NPM_TOKEN.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Node 24 is the release runner because trusted publishing needs
+          # npm >= 11.5.1, which Node 22 does not ship. The package itself still
+          # supports Node >= 22 — that floor is `engines`, tested in ci.yml.
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+
+      # A silent fallback to a token would be the one failure mode worth
+      # catching early, so assert the CLI version rather than discovering it in
+      # the publish step's error output.
+      - name: Assert npm supports trusted publishing
+        run: |
+          version="$(npm --version)"
+          echo "npm $version"
+          node -e '
+            const [have] = process.argv.slice(1);
+            const need = "11.5.1";
+            const cmp = (a, b) =>
+              a.split(".").map(Number).reduce((r, n, i) => r || n - Number(b.split(".")[i]), 0);
+            if (cmp(have, need) < 0) {
+              console.error(`npm ${have} is older than ${need}, which trusted publishing requires.`);
+              process.exit(1);
+            }
+          ' "$version"
+
+      - run: npm ci
+
+      # The full gate, before anything irreversible — including the advisory
+      # audit, which lives here rather than in `prepublishOnly` (D62) so a
+      # newly disclosed CVE stops the release *before* the tag is consumed
+      # instead of half way through `npm publish`. `prepublishOnly` re-runs
+      # everything except that audit; the duplication is deliberate — it is what
+      # protects a hand-run `npm publish` from a laptop, where this workflow is
+      # not involved at all.
+      - run: npm run check
+
+      # `npm pack` reads build/ off disk rather than compiling, so this has to
+      # follow the gate (which builds), not precede it.
+      - name: Assert tarball contents
+        run: node scripts/check-tarball.mjs
+
+      # A tag that disagrees with package.json means somebody tagged the wrong
+      # commit. Catching it here costs a second; catching it after publish costs
+      # a version number, because the registry never lets one be reused.
+      - name: Assert the tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pkg="$(node -p 'require("./package.json").version')"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "Tag $GITHUB_REF_NAME says $tag but package.json says $pkg." >&2
+            exit 1
+          fi
+          echo "Publishing $pkg from tag $GITHUB_REF_NAME"
+
+      # Guard 2. Only a pushed `v*` tag gets here. `--provenance` is redundant
+      # with current npm, which attests automatically under trusted publishing,
+      # and is kept explicit anyway: the day the default changes, this line is
+      # what says the signed link back to the workflow run and commit was asked
+      # for on purpose, not inherited.
+      - name: Publish
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: npm publish --provenance --access public
+
+      - name: Rehearsal summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "::notice::Rehearsal complete — gate and tarball assertion passed. Push a v* tag to publish."

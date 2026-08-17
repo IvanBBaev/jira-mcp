@@ -1,0 +1,29 @@
+{
+  "name": "jira-mcp-ai",
+  "description": "Single-plugin marketplace for the jira-mcp-ai MCP server: Jira Cloud tools for Claude Code.",
+  "owner": {
+    "name": "Ivan Baev",
+    "email": "ivanbbaev@gmail.com",
+    "url": "https://github.com/IvanBBaev"
+  },
+  "plugins": [
+    {
+      "name": "jira-mcp-ai",
+      "source": "./",
+      "displayName": "Jira Cloud (jira-mcp-ai)",
+      "description": "Jira Cloud tools for Claude Code: JQL search, issue reads, and writes behind a plan/apply gate.",
+      "version": "0.0.0",
+      "author": {
+        "name": "Ivan Baev",
+        "email": "ivanbbaev@gmail.com",
+        "url": "https://github.com/IvanBBaev"
+      },
+      "homepage": "https://github.com/IvanBBaev/jira-mcp#readme",
+      "repository": "https://github.com/IvanBBaev/jira-mcp",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["mcp", "jira", "jira-cloud", "atlassian", "jql", "issue-tracker"],
+      "tags": ["jira", "atlassian", "issue-tracker"]
+    }
+  ]
+}

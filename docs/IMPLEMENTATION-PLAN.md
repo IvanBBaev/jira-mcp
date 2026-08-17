@@ -1,8 +1,9 @@
 # Implementation plan
 
-> Status: target-state spec (pre-code). Phases 0–5 with their exits are the
-> milestone truth for this project; a phase is done when its exit criteria hold,
-> not when its tasks look finished.
+> Status: normative and implemented — this document and the code ship together;
+> drift is a bug. Phases 0–7 with their exits are the milestone truth for this
+> project; a phase is done when its exit criteria hold, not when its tasks look
+> finished.
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -10,11 +11,11 @@
 
 ## Standing decisions
 
-The ledger is **DECISIONS.md** (accepted D1–D16; open owner decisions
-O-1…O-13 minus the resolved O-7, with gates A–C). The plan below references
-decisions by id and never restates their content.
+The ledger is **DECISIONS.md** (accepted D1–D58; open owner decisions
+O-1…O-13 minus the resolved O-3…O-7 and O-11, with gates A–C). The plan below
+references decisions by id and never restates their content.
 
-## Phase 0 — Scaffold  ✅ (docs) / ⬜ (code furniture)
+## Phase 0 — Scaffold  ✅
 
 - [x] `git init`; AI-harness files excluded via `.git/info/exclude`.
 - [x] `docs/` spec set (this directory).
@@ -137,7 +138,7 @@ O-1…O-13 in DECISIONS.md, of which only **Gate A (O-1)** blocks starting work.
       `core/env-lock.ts` (from tiktok-mcp).
 - [x] `src/testing/`: network-fence, with-fetch, with-env; `core/fakes/`:
       fakeClock, fakeJiraRequest, fakeRedactor.
-- [ ] CLI `doctor` (probes per AUTH.md), wired in `src/index.ts` dispatch.
+- [x] CLI `doctor` (probes per AUTH.md), wired in `src/index.ts` dispatch.
 - [ ] Record the minimum fixture set (TESTING.md) in the same session the
       scratch site comes up; hand-craft the synthetic fixtures (429, expired
       token).
@@ -148,20 +149,18 @@ exits 0 with all probes green against the scratch site.
 
 ## Phase 2a — MCP layer + search tools
 
-> Status 2026-08-09 (Wave 1): `mcp/define.ts`, `mcp/result.ts`, `mcp/taint.ts`,
-> `mcp/errors.ts` and `api/shared.ts` are done and tested; `mcp/registry.ts`,
-> `mcp/transport.ts`, `buildServer`/`main`, `api/search.ts`, `api/users.ts`
-> and the tools are Wave 2+.
+> Status 2026-08-12 (Wave 4): everything below is done — mcp ring in Waves
+> 1–2, tools in Wave 3, `buildServer`/`main` + smoke + snapshot in Wave 4.
 
-- [ ] `mcp/define.ts` (assertions per ARCHITECTURE.md), `mcp/result.ts`
+- [x] `mcp/define.ts` (assertions per ARCHITECTURE.md), `mcp/result.ts`
       (envelope + truncation), `mcp/errors.ts`, `mcp/registry.ts` (gating
       triple), `mcp/transport.ts` (stdio; http behind flag), `buildServer`/`main`
       split.
-- [ ] `api/shared.ts` (both pagination helpers), `api/search.ts`,
+- [x] `api/shared.ts` (both pagination helpers), `api/search.ts`,
       `api/users.ts` (myself).
-- [ ] Tools: `jira_capabilities`, `jira_get_myself`, `jira_search`,
+- [x] Tools: `jira_capabilities`, `jira_get_myself`, `jira_search`,
       `jira_count`.
-- [ ] MCP smoke test + first manifest snapshot test.
+- [x] MCP smoke test + first manifest snapshot test.
 
 Exit (**Milestone M2 — first usable**): server registered in Claude Code; real
 JQL search works end-to-end (the default field set carries no ADF, so
@@ -172,20 +171,21 @@ JQL search works end-to-end (the default field set carries no ADF, so
 > Status 2026-08-09 (Wave 1): `api/adf.ts` is done (ported + property tests,
 > synthetic fixtures; real ADF fixtures still need the scratch site — Gate C).
 
-- [ ] `api/adf.ts` (port + property tests + ADF fixtures — needs the scratch
-      site), `api/issues.ts` (read side).
-- [ ] Tool: `jira_get_issue`.
+- [x] `api/adf.ts` (port + property tests; real-site ADF fixtures stay under
+      Gate C), `api/issues.ts` (read side).
+- [x] Tool: `jira_get_issue`.
 
 Exit: issue read with ADF flattening works end-to-end; CC-06…10 covered.
 
 ## Phase 3 — Full read surface
 
-- [ ] `api/meta.ts`, `api/agile.ts`, remaining read wrappers.
-- [ ] Tools: comments, transitions, changelog, worklogs, projects (list/get),
+- [x] `api/meta.ts`, `api/agile.ts`, remaining read wrappers.
+- [x] Tools: comments, transitions, changelog, worklogs, projects (list/get),
       fields, create-meta, statuses, link-types, user search, boards, sprints,
       sprint issues.
-- [ ] Fixture set completed (see TESTING.md); README tool table generation +
-      readme-sync test.
+- [x] README tool table generation + readme-sync test (Wave 4).
+- [ ] Fixture set completed (see TESTING.md) — recording blocked on Gate C
+      (scratch site); synthetic fixtures are in place.
 
 Exit: every `reader`-profile tool returns `ok: true` in a scripted pass against
 the scratch site; c8 thresholds (70/60/75/70) enforced in `npm run check` from
@@ -193,28 +193,31 @@ this phase on; CC-16…19 covered.
 
 ## Phase 4 — Writes
 
-- [ ] `mcp/write-mode.ts` (plan/apply gate), optional write journal.
-- [ ] `api/issues.ts` write side + `api/agile.ts` sprint move.
-- [ ] Tools: create, update, transition, comment, assign, worklog, link,
+- [x] `mcp/write-mode.ts` (plan/apply gate), optional write journal.
+- [x] `api/issues.ts` write side + `api/agile.ts` sprint move.
+- [x] Tools: create, update, transition, comment, assign, worklog, link,
       move-to-sprint. CC-20…24.
 - [ ] End-to-end write test against scratch Jira site (manual script under
-      `scripts/smoke/`, not in CI).
+      `scripts/smoke/`, not in CI) — blocked on Gate C.
 
 Exit: the full tool surface locked by the TOOLS.md catalog and manifest
 snapshot; write path proven on a real site in both plan and apply modes.
 
 ## Phase 5 — Hardening & release
 
-- [ ] Raise coverage thresholds; property tests; audit in check.
-- [ ] `server.json` (MCP registry manifest), `.claude-plugin/` plugin +
-      marketplace manifests, generated README finalized.
+- [x] Raise coverage thresholds; property tests; audit in check. (Wave 5:
+      floors 94/82/97/94 enforced by `check` via `test:coverage` — D36.)
+- [x] `server.json` (MCP registry manifest), `.claude-plugin/` plugin +
+      marketplace manifests, generated README finalized. (Wave 5 — D37;
+      plugin source stays `"./"` until an npm publish exists.)
 - [ ] Decide npm publish (`jira-mcp-ai`) vs private; if publish: `publish.yml`
       via npm **trusted publishing** (GitHub OIDC — no `NPM_TOKEN` secret;
       classic tokens revoked 2025-12, granular tokens cap at 90 days; needs
-      npm ≥ 11.5 → Node 24 release runner), `prepublishOnly: npm run check`,
+      npm ≥ 11.5 → Node 24 release runner), `prepublishOnly: npm run
+      check:publish` (D62),
       tarball-content assertion (`npm pack --dry-run` vs expected list),
       CHANGELOG discipline, version 1.0.0.
-- [ ] Publish hardening (applies whether or not we publish publicly):
+- [x] Publish hardening (applies whether or not we publish publicly):
       `--provenance` on publish so the tarball carries a signed link back to the
       workflow run and commit that built it (free with OIDC trusted publishing,
       and the thing that makes "is this really our build" answerable);
@@ -231,9 +234,66 @@ snapshot; write path proven on a real site in both plan and apply modes.
       visibility + CodeQL.
 
 Exit: coverage raised per TESTING.md (or a lower target recorded with
-rationale); all 35 corner cases traceable to named tests; publish decision
+rationale); all corner cases then defined (CC-01…CC-35) traceable to named
+tests; publish decision
 recorded in the decision table (publish → v1.0.0 tagged + `publish.yml` green;
 private → pinned version, README states the distribution mode).
+
+Status 2026-08-13: everything above is done except the two owner gates —
+O-9/O-10 (publish + visibility) and the Gate-C-blocked live verification.
+The gate stands at 976/976 with coverage enforced.
+
+## Phase 6 — v1.5 (graduated by D38, Wave 6)
+
+- [x] WP-60: markdown ↔ ADF subset converters in `api/adf.ts`;
+      `format: "markdown"` on `jira_get_issue` / `jira_get_comments`
+      (default `text` unchanged; taint envelope preserved). CC-41…45.
+- [x] WP-61: agile writes — `jira_move_to_backlog`, `jira_create_sprint`,
+      `jira_start_sprint`, `jira_close_sprint` (standard tier, CC-34
+      shaping, D22 cap semantics). CC-36/37, D39/D40.
+- [x] WP-62: `jira_list_filters` / `jira_get_filter` (search package) +
+      `jira_update_comment` (D26 deferral matures). CC-38/39/40, D41.
+- [x] Integrator: shared-doc deltas (TOOLS/JIRA-API/CORNER-CASES/ROADMAP)
+      applied; write-side `format` wired into all 7 rich-text write tools
+      (CC-46, D44); manifest snapshot + README regenerated; full gate green.
+
+Exit: new tools in the manifest snapshot + generated README; converters
+CC-06..10-clean; gate green with coverage floors intact.
+
+## Phase 7 — v2 subset (graduated by D45, Wave 7)
+
+- [x] WP-70: attachments — `core/http.ts` contract extension (binary download,
+      multipart upload, per-request headers for `X-Atlassian-Token: no-check`;
+      http.ts stays the only network module), `api/attachments.ts`, attachment
+      tools (list metadata / download / upload). `JIRA_MEDIA_DIR` consumed
+      (refuse `config` when unset); Jira-supplied filenames sanitized
+      (path-traversal defense); size caps both directions.
+- [x] WP-71: collaboration surface — watchers list/add/remove, votes
+      add/remove, components list/create/update, versions list/create/update,
+      project role listing. Standard write tier; no deletes.
+- [x] WP-72: irreversible write tier — gate semantics for
+      `writeTier: 'irreversible'` in `mcp/write-mode.ts`
+      (`JIRA_ALLOW_IRREVERSIBLE` opt-in; the plan captures a before-state
+      snapshot of what the apply destroys), `jira_delete_issue`,
+      `jira_delete_comment`, `jira_delete_worklog`.
+- [x] Integrator (pre-dispatch): settings pre-wired — `JIRA_MEDIA_DIR`,
+      `JIRA_ALLOW_IRREVERSIBLE` in core/settings + CONFIGURATION.md +
+      `.env.example` — so agent file ownership stays disjoint.
+- [x] Integrator (post-wave): doc deltas folded (TOOLS / JIRA-API /
+      CORNER-CASES CC-47…66 / DECISIONS D46…D58 / THREAT-MODEL / CHANGELOG);
+      manifest snapshot + README regenerated; full gate green.
+
+Exit: new tools in the snapshot + README; irreversible applies refused without
+the opt-in (tested); `core/http.ts` still the only fetch site; gate green with
+coverage floors intact.
+
+Status 2026-08-14: **exit met.** The three work packages were executed by three
+background agents on 2026-08-13 and integrated on 2026-08-14; the manifest
+snapshot and the generated README carry the full surface, an irreversible apply
+without `JIRA_ALLOW_IRREVERSIBLE` is refused by a named test, `core/http.ts` is
+still the only module that touches the network (binary and multipart went into
+it, not beside it), and the gate is green at 1265/1265 with the D36 coverage
+floors intact.
 
 ## Risks
 

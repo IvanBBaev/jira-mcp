@@ -1,0 +1,179 @@
+name: Bug report
+description: Something the server does that it should not, or does not do that it should.
+title: '[bug] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Before you paste anything
+
+        This is a **public** issue tracker, and this server handles two kinds of
+        sensitive material:
+
+        - **Credentials.** Never paste `JIRA_API_TOKEN`, an `Authorization`
+          header, a `JIRA_HTTP_TOKEN`, or a `.env` file. A token in a public
+          issue is a token you must rotate immediately — the server redacts its
+          own logs, but it cannot redact what you type here.
+        - **Jira content.** Issue summaries, descriptions, comments, attachment
+          filenames, account ids, display names and error bodies routinely carry
+          confidential or personal data belonging to your employer or your
+          customers. Replace it with placeholders (`PROJ-1`, `Example Corp`)
+          before pasting. Redacting is your call to make, not ours.
+
+        **Found a security vulnerability?** Close this form and read
+        [SECURITY.md](https://github.com/IvanBBaev/jira-mcp/blob/main/SECURITY.md).
+        Opening a public issue for it *is* the disclosure.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true
+        - label: I removed credentials and confidential Jira content from everything below.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: Output of `jira-mcp-ai --version`, or the version your registration pins.
+      placeholder: e.g. 1.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Output of `node -v`. The supported floor is 22.
+      placeholder: e.g. v22.14.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      description: Which program starts the server.
+      options:
+        - Claude Code
+        - Claude Desktop
+        - Another MCP client
+        - No client — the CLI (doctor / --version) only
+    validations:
+      required: true
+
+  - type: input
+    id: client-version
+    attributes:
+      label: Client version and OS
+      placeholder: e.g. Claude Code 2.4.1 on macOS 15.3
+    validations:
+      required: false
+
+  - type: dropdown
+    id: write-mode
+    attributes:
+      label: JIRA_WRITE_MODE
+      description: The write gate changes what a write tool does, so a bug report about a write tool means nothing without it.
+      options:
+        - plan (the default)
+        - apply
+        - not set
+        - not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Jira deployment
+      description: This server supports Jira **Cloud** only. Server and Data Center are not supported and their REST surface differs.
+      options:
+        - Jira Cloud (*.atlassian.net)
+        - Jira Cloud behind a custom domain
+        - Jira Server or Data Center (not supported)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: tool
+    attributes:
+      label: Tool involved
+      description: The MCP tool name, if the bug is in one. Leave empty for startup, configuration or CLI problems.
+      placeholder: e.g. jira_search
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The call you made (arguments with the values replaced), and what the server did. A minimal repro is worth more than a transcript.
+      placeholder: |
+        1. Register the server with JIRA_TOOL_PACKAGES=reader
+        2. Call jira_search with jql "project = PROJ ORDER BY created DESC"
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: envelope
+    attributes:
+      label: Error envelope (redacted)
+      description: |
+        Every failure comes back as one object. Paste it with the message text
+        redacted but the machine-readable parts intact — `error.kind`
+        (`config`, `auth`, `permission`, `not_found`, `validation`,
+        `rate_limited`, `transport`, `timeout`, `ambiguous_write`,
+        `budget_exceeded`, `write_gated`, `unexpected_shape`, `unsupported`),
+        `retryable`, and any `hints[].code`. Those are what identify the bug.
+      render: json
+      placeholder: |
+        {
+          "ok": false,
+          "error": { "kind": "validation", "message": "<redacted>", "retryable": false },
+          "hints": [{ "code": "discovery" }]
+        }
+    validations:
+      required: false
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: doctor output
+      description: |
+        `jira-mcp-ai doctor --json` (or `node bin/jira-mcp-ai.cjs doctor --json`
+        from a source checkout) with the same environment the client uses.
+        `--offline` skips the network probes if you would rather not make live
+        calls. The report is redacted of secrets, but it does name your site and
+        account — replace those if they are sensitive.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics (optional)
+      description: |
+        Relevant stderr with `JIRA_LOG_LEVEL=debug`. stdout is the MCP protocol
+        and carries no diagnostics, so there is nothing useful there. Trim it to
+        the lines around the failure, and check them for issue text before
+        pasting.
+      render: text
+    validations:
+      required: false

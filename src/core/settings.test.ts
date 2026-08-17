@@ -290,6 +290,8 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(settings.transport, DEFAULT_TRANSPORT);
     assert.equal(settings.logLevel, DEFAULT_LOG_LEVEL);
     assert.deepEqual(settings.toolPackages, [DEFAULT_TOOL_PACKAGES]);
+    assert.equal(settings.allowIrreversible, false);
+    assert.equal(settings.mediaDir, undefined);
   });
 
   it('pins the defaults to the CONFIGURATION.md table literals', () => {
@@ -318,12 +320,16 @@ describe('loadSettings — numeric and enum knobs', () => {
       JIRA_HTTP_PORT: '4000',
       JIRA_WRITE_MODE: 'apply',
       JIRA_LOG_LEVEL: 'debug',
+      JIRA_ALLOW_IRREVERSIBLE: 'true',
+      JIRA_MEDIA_DIR: '/srv/jira-media',
     });
     assert.equal(report.ok, true);
     assert.equal(settings.requestTimeoutMs, 5000);
     assert.equal(settings.retryAttempts, 0);
     assert.equal(settings.writeMode, 'apply');
     assert.equal(settings.logLevel, 'debug');
+    assert.equal(settings.allowIrreversible, true);
+    assert.equal(settings.mediaDir, '/srv/jira-media');
   });
 
   it('treats an invalid number as an error finding, not a silent fallback', () => {

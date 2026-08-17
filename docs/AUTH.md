@@ -1,7 +1,8 @@
 # Authentication
 
-> Status: target-state spec (pre-code). This document owns the **credential
-> lifecycle** and the **doctor ops contract**.
+> Status: normative and implemented — this document and the code ship together;
+> drift is a bug. This document owns the **credential lifecycle** and the
+> **doctor ops contract**.
 
 ## v1: Jira Cloud, Basic auth with API token
 

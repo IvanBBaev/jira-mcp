@@ -11,6 +11,14 @@ docs/
 WORKLOG.md
 CLAUDE.md
 
+# Fixtures are written by `scripts/record-fixture.mjs`, byte-for-byte, as
+# `JSON.stringify(document, null, 2) + '\n'` — and the recorder's own suite
+# asserts that re-recording the same exchange produces an identical file.
+# Prettier collapses short arrays onto one line, so formatting a fixture would
+# make it stop matching what the recorder emits and turn the next re-record into
+# a spurious whole-file diff. The recorder owns this format; Prettier does not.
+test/fixtures/
+
 # The published README carries hand-formatted blocks — the verbatim `.mcp.json`
 # registration example (copied from docs/CONFIGURATION.md, where the pinned
 # version is normative) and the GENERATED tool table injected in Wave 4 — that

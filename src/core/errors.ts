@@ -32,7 +32,6 @@ import { JIRA_ERROR_KINDS, JiraError } from './types.js';
 import type {
   ErrorRecord,
   HttpMethod,
-  JiraApiRoot,
   JiraErrorKind,
   JiraResponseHeaders,
   Redactor,
@@ -99,18 +98,23 @@ export const REMEDIATION: Readonly<Record<JiraErrorKind, string>> = Object.freez
     'platform (v3) tool instead, or ask an administrator to enable it.',
 });
 
-/** Status codes whose kind is fixed. Everything else falls through the ranges. */
+/**
+ * Status codes whose kind is fixed. Everything else falls through the ranges.
+ * 405 and 410 are `unsupported`, not client mistakes: on Jira Cloud they are
+ * what the removed legacy endpoints answer (JIRA-API.md §Search — the 2025
+ * `/rest/api/3/search` removal returns 410).
+ */
 const STATUS_KIND: Readonly<Record<number, JiraErrorKind>> = Object.freeze({
   400: 'validation',
   401: 'auth',
   402: 'unsupported',
   403: 'permission',
   404: 'not_found',
-  405: 'validation',
+  405: 'unsupported',
   406: 'validation',
   408: 'timeout',
   409: 'validation',
-  410: 'not_found',
+  410: 'unsupported',
   412: 'validation',
   413: 'validation',
   415: 'validation',
@@ -136,8 +140,6 @@ const SERAPH_OK = 'OK';
 export interface StatusKindContext {
   /** Response headers, lowercased by the client (CC-18 detection). */
   readonly headers?: JiraResponseHeaders;
-  /** Which API root the request targeted; `agile` reclassifies 403/404 (CC-34). */
-  readonly apiRoot?: JiraApiRoot;
 }
 
 function isLoginDenied(headers: JiraResponseHeaders | undefined): boolean {
@@ -152,19 +154,18 @@ function isLoginDenied(headers: JiraResponseHeaders | undefined): boolean {
 /**
  * Map an HTTP status onto the frozen kind catalog.
  *
- * Deviations from the plain table, both documented: a 403 with Jira's
- * login-denied headers is `auth` (CC-18), and a 403/404 from the Agile root is
- * `unsupported` — "board doesn't exist" is the wrong story when the real cause
- * is that Jira Software is not licensed for this account (CC-34).
+ * One documented deviation from the plain table: a 403 with Jira's login-denied
+ * headers is `auth` (CC-18). The OTHER documented status deviation — an Agile
+ * 403/404 that really means "Jira Software is unlicensed" (CC-34) — is
+ * deliberately NOT here: only the agile ring knows whether a request probed the
+ * root (licence story) or named an id (bad-id story), so that rule lives in
+ * `api/agile.ts` (`asAgileError`), the single owner of CC-34.
  */
 export function kindForStatus(
   status: number,
   context: StatusKindContext = {},
 ): JiraErrorKind {
   if (status === 403 && isLoginDenied(context.headers)) return 'auth';
-  if (context.apiRoot === 'agile' && (status === 403 || status === 404)) {
-    return 'unsupported';
-  }
 
   const mapped = STATUS_KIND[status];
   if (mapped !== undefined) return mapped;
@@ -313,9 +314,7 @@ function describeRoute(method?: HttpMethod, pathTemplate?: string): string {
  */
 export function errorFromResponse(options: ResponseErrorOptions): JiraError {
   const { status, body, redactor } = options;
-  const kind =
-    options.kind ??
-    kindForStatus(status, { headers: options.headers, apiRoot: options.apiRoot });
+  const kind = options.kind ?? kindForStatus(status, { headers: options.headers });
 
   const jiraMessages = extractJiraMessages(body);
   const detail = bodySnippet(body, redactor);

@@ -28,6 +28,7 @@ import type {
   JiraRequestFn,
   Logger,
   HttpMethod,
+  QueryParams,
 } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -146,7 +147,7 @@ export interface ToolResult<T = unknown> {
 // 3. Tool descriptors (ARCHITECTURE.md §defineTool, TOOLS.md §Annotations)
 // ---------------------------------------------------------------------------
 
-/** Write-risk tiers; `irreversible` (deletes, bulk) is reserved for v2. */
+/** Write-risk tiers; `irreversible` (deletes) additionally needs `JIRA_ALLOW_IRREVERSIBLE` — D45. */
 export const WRITE_TIERS = ['standard', 'irreversible'] as const;
 
 /**
@@ -209,6 +210,17 @@ export interface PlannedRequest {
   readonly method: HttpMethod;
   /** The concrete path the write would have called. */
   readonly path: string;
+  /**
+   * The query parameters it would have put on the URL, redacted, with the
+   * `undefined` entries already dropped the way the URL builder drops them —
+   * absent when the write carries none.
+   *
+   * Not decoration: for `DELETE /issue/{key}` the difference between losing one
+   * issue and losing a whole subtask tree is `deleteSubtasks`, and for
+   * `DELETE /issue/{key}/watchers` the `accountId` IS the payload. A plan that
+   * showed only method and path would under-state both.
+   */
+  readonly query?: QueryParams;
   /** The body it would have sent, redacted. */
   readonly body?: unknown;
 }
@@ -314,22 +326,28 @@ export type AnyToolSpec = ToolSpec<unknown, unknown>;
 // ---------------------------------------------------------------------------
 
 /**
- * The seven tool packages, in manifest order. `core` is special: it is
+ * The tool packages, in manifest order. `core` is special: it is
  * force-re-added after any deny list, because a session with no
  * `jira_capabilities` cannot discover why its other tools are missing (CC-29).
+ * `issues-delete`, `attachments` and `collab` graduate with Wave 7 (D45);
+ * `issues-delete` is a package of its own so the whole irreversible surface
+ * stays deniable with one `JIRA_PACKAGES_DENY` token.
  */
 export const PACKAGE_IDS = [
   'core',
   'search',
   'issues',
   'issues-write',
+  'issues-delete',
+  'attachments',
+  'collab',
   'meta',
   'users',
   'agile',
 ] as const;
 
 /**
- * One of the seven package ids.
+ * One of the package ids.
  *
  * Produced by: each tool package module (WP-30…WP-34).
  * Consumed by: `mcp/registry.ts` gating triple (WP-24), `jira_capabilities`, the

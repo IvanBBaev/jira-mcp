@@ -19,7 +19,7 @@
 //     `fieldsDefaulted` (→ `fields_defaulted`), `clamped` (→ `clamped`),
 //     `restarted` (→ `pagination_restarted`), `missingRecentIssueIds` (→
 //     `eventual_consistency`), `approximate` on the count. Choosing and wording
-//     hints is the tool ring's job (TOOLS.md §Hint catalog, Wave 3).
+//     hints is the tool ring's job (TOOLS.md §Hint catalog).
 //  4. **Jira's own errors survive.** A JQL 400 propagates exactly as
 //     `core/http.ts` built it (CC-05) — Jira names the offending clause far
 //     better than a rewrite could. The single exception is the expired-cursor
@@ -39,6 +39,7 @@ import type {
   JiraResponse,
 } from '../core/types.js';
 import {
+  budgetOf,
   searchPages,
   type BudgetGuard,
   type PageStopReason,
@@ -106,6 +107,18 @@ export const DEFAULT_SEARCH_MAX_PAGES = 1;
  * to the spaced form first, so both wordings Atlassian has shipped are caught.
  */
 export const EXPIRED_TOKEN_MARKER = 'next page token is invalid or expired';
+
+/**
+ * CC-05 remediation. `core/http.ts` maps every 400 to the same generic advice
+ * ("the messages above name the offending field"), which is right for a field
+ * error and useless for JQL: the offending thing is usually an unquoted value,
+ * and Jira's own message points at a character offset. This is the only place
+ * that knows the body was JQL.
+ */
+export const JQL_REMEDIATION =
+  'Check the JQL: values containing spaces need double quotes ' +
+  '(project = "My Project"), field names and custom field ids come from ' +
+  'jira_list_fields, and people are matched by accountId, never by username.';
 
 // ---------------------------------------------------------------------------
 // 2. Public shapes
@@ -481,16 +494,6 @@ function normalizeToken(token: string | undefined): string | undefined {
   if (token === undefined) return undefined;
   const trimmed = token.trim();
   return trimmed === '' ? undefined : trimmed;
-}
-
-/**
- * Re-express the budget half of the options as the {@link BudgetGuard} union, so
- * `deadlineAt` and `clock` stay welded together across the spread.
- */
-function budgetOf(guard: BudgetGuard): BudgetGuard {
-  return guard.deadlineAt === undefined
-    ? { ...(guard.clock === undefined ? {} : { clock: guard.clock }) }
-    : { deadlineAt: guard.deadlineAt, clock: guard.clock };
 }
 
 // ---------------------------------------------------------------------------

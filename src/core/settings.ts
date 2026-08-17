@@ -17,6 +17,7 @@
 
 import { loadEnvFile } from './config.js';
 import type { EnvFileResult, EnvFileOptions } from './config.js';
+import { effectiveCredentials } from './credentials.js';
 import { resolveHost } from './host.js';
 import type { HostProblem } from './host.js';
 import {
@@ -282,11 +283,20 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
 
   const lockProfile = bool('JIRA_LOCK_PROFILE', DEFAULT_LOCK_PROFILE);
 
-  // The credentials actually used: the active profile wins over the top-level
-  // variables, field by field, so a profile may override only the token.
-  const effectiveSite = activeProfile?.site ?? site;
-  const effectiveEmail = activeProfile?.email ?? email;
-  const effectiveToken = activeProfile?.apiToken ?? apiToken;
+  // The credentials actually used — the per-field profile override, applied by
+  // the rule's one home (`core/credentials.ts`, D29) so load-time diagnostics
+  // can never disagree with the per-call resolver.
+  const {
+    site: effectiveSite,
+    email: effectiveEmail,
+    apiToken: effectiveToken,
+  } = effectiveCredentials({
+    profiles,
+    site,
+    email,
+    apiToken,
+    activeProfile: activeProfileKey,
+  });
   const profileName = activeProfile?.name;
 
   if (effectiveEmail === undefined) {
@@ -364,6 +374,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   }
 
   const writeMode = enumOf<WriteMode>('JIRA_WRITE_MODE', WRITE_MODES, DEFAULT_WRITE_MODE);
+  const allowIrreversible = bool('JIRA_ALLOW_IRREVERSIBLE', false);
 
   // --- HTTP behaviour ------------------------------------------------------
   const requestTimeoutMs = int(
@@ -382,6 +393,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     10000000,
   );
   const maxPages = int('JIRA_MAX_PAGES', DEFAULT_MAX_PAGES, 1, 1000);
+  const mediaDir = str('JIRA_MEDIA_DIR');
 
   if (callBudgetMs < requestTimeoutMs) {
     add({
@@ -427,12 +439,14 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     packagesDeny,
     packagesReadonly,
     writeMode,
+    allowIrreversible,
     requestTimeoutMs,
     callBudgetMs,
     hostConcurrency,
     retryAttempts,
     maxResultChars,
     maxPages,
+    mediaDir,
     transport,
     httpPort,
     httpToken,

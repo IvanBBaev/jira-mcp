@@ -7,23 +7,35 @@ how untrusted Jira content is handled and what is redacted from logs live in
 
 ## Supported versions
 
-Pre-1.0 and pre-release: only the latest published version receives fixes. Once
-a stable line exists this section will name it.
+Security fixes go to the **latest released version**, and only there.
+
+- Once the `1.x` line exists, the newest `1.x` release is the supported one.
+  Fixes are released as a new patch on that line; they are not backported to
+  earlier minors, and an older minor is unsupported the moment a newer one
+  ships.
+- Anything below `1.0.0` is pre-release. It gets fixes only by moving to the
+  current version.
+- The published npm package and this repository are the same artifact. A fork,
+  a vendored copy or a patched build is yours to maintain — report the issue
+  here anyway if it is upstream, but the fix will land upstream only.
+
+Before reporting, please confirm the problem is still present in the latest
+version. Upgrading is the fastest fix that exists.
 
 ## Reporting a vulnerability
 
-Please **do not open a public issue** for a security report — a public issue is
-a disclosure.
+**Do not open a public issue.** For a security problem, opening the issue _is_
+the disclosure.
 
-Use GitHub's private reporting instead: the **Security → Advisories → Report a
-vulnerability** form on
-<https://github.com/IvanBBaev/jira-mcp>. It creates a private thread visible
-only to the maintainer.
+Use GitHub's private vulnerability reporting: the **Report a vulnerability**
+button under [Security](https://github.com/IvanBBaev/jira-mcp/security) on
+<https://github.com/IvanBBaev/jira-mcp>. It opens a thread visible only to you
+and the maintainer, and it is the preferred channel because the whole exchange —
+report, fix, advisory — stays in one place.
 
-<!-- TODO(owner): if private vulnerability reporting is not enabled on the repo
-     (Settings → Code security), enable it, or replace the line above with a
-     contact address. A reporting policy that points at a form nobody has turned
-     on is worse than none. -->
+If that button is not there, or you would rather not use GitHub, email
+**ivanbbaev@gmail.com** with `jira-mcp-ai security` in the subject. Both routes
+reach the same person.
 
 Please include:
 
@@ -33,9 +45,28 @@ Please include:
 - reproduction steps or a proof of concept,
 - whether a fix already exists.
 
-Expect an acknowledgement within **7 days** and an assessment within **30 days**.
-This is a personal, unfunded project — there is no bug bounty, and there is no
-paid support tier.
+Redact as you would in any other report: no real API tokens (a token in a
+report is a token to rotate), and no confidential Jira content beyond what the
+proof of concept actually needs.
+
+## What to expect
+
+This is a personal, unfunded project maintained in spare time. There is no
+service-level agreement, no bug bounty and no paid support tier, and this
+document does not promise a response time it cannot keep.
+
+What it does commit to:
+
+- reports are read, and a genuine vulnerability is taken seriously ahead of
+  feature work;
+- the report stays private until there is a fix, or until you decide otherwise;
+- a fix ships as a new release with a
+  [GitHub Security Advisory](https://github.com/IvanBBaev/jira-mcp/security/advisories)
+  describing the impact and the affected versions;
+- you are credited in that advisory unless you ask not to be.
+
+If a report gets no reply at all and the silence has become the problem, you are
+free to disclose publicly — please just say so first.
 
 ## Scope
 

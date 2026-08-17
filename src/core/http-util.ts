@@ -47,6 +47,22 @@ export const BACKOFF_JITTER_MS = 250;
 /** Fractional jitter added on top of a capped `Retry-After` (0–20 %). */
 export const RETRY_AFTER_JITTER = 0.2;
 
+/**
+ * Hard ceiling on ONE attachment transfer, in bytes — 50 MiB, both directions
+ * (WP-70). Deliberately a constant and not an environment knob: it is a memory
+ * bound, not a preference. An attachment travels through this process as a
+ * single `Uint8Array`, so the ceiling is what keeps a hostile or merely large
+ * attachment from turning into an unbounded allocation in an MCP server that
+ * usually lives inside a desktop client.
+ *
+ * 50 MiB sits above Jira Cloud's default per-file attachment limit (10 MB) with
+ * room for sites that raised it, and below the point where buffering the body
+ * is reckless. Enforced DURING the transfer: a download aborts the stream at
+ * the byte that crosses the line, an upload is measured before any part is
+ * assembled. Breach is `kind=validation` — the same kind an HTTP 413 maps to.
+ */
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
 /* ------------------------------------------------------------------------- *
  * Host policy
  * ------------------------------------------------------------------------- */

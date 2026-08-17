@@ -313,7 +313,11 @@ test('buildQueryString encodes values and drops undefined', () => {
  * Retry arithmetic
  * ------------------------------------------------------------------------- */
 
-test('replayability: GET always, other methods only with an explicit safe flag', () => {
+// CC-13's method rule, as a table: a request may only be re-sent after an
+// ambiguous failure (timeout, transport error) if it is replayable. The wire-level
+// half — that a timed-out GET is retried and a timed-out write becomes
+// `ambiguous_write` — lives in core/http.test.ts.
+test('CC-13: replayability — GET always, other methods only with an explicit safe flag', () => {
   assert.equal(isReplayable('GET'), true);
   assert.equal(isReplayable('POST'), false);
   assert.equal(isReplayable('PUT'), false);
@@ -322,7 +326,7 @@ test('replayability: GET always, other methods only with an explicit safe flag',
   assert.equal(isReplayable('PUT', true), true); // caller's explicit promise
 });
 
-test('429 is retryable for every method; 5xx only for replayable requests', () => {
+test('CC-11/CC-12: 429 is retryable for every method; 5xx only for replayable requests', () => {
   for (const method of ['GET', 'POST', 'PUT', 'DELETE'] as const) {
     assert.equal(shouldRetryStatus(429, method), true, method);
   }

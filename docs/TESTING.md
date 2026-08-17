@@ -1,7 +1,8 @@
 # Testing
 
-> Status: target-state spec (pre-code) — the gate applies from Phase 0's exit
-> onward. Corner-case ids CC-nn referenced by suites live in CORNER-CASES.md.
+> Status: normative and implemented — this document and the code ship together;
+> drift is a bug. Corner-case ids CC-nn referenced by suites live in
+> CORNER-CASES.md.
 
 ## Principles
 
@@ -33,6 +34,14 @@ hand-written inline [honor]. Hand-authored fakes drift into the shape we wish
 Jira had — the guards in `api/*` then pass against fiction. A fixture the fake
 cannot find is a test failure, not a fallback to an empty object. Fakes may
 *narrow* a fixture (pick one issue out of a page) but never invent a field.
+The loader is `createFixtureLoader()` (`core/fakes/fixtures.ts`), which resolves
+the corpus from the compiled module's own location rather than `process.cwd()`
+and hands back a fresh clone per call. It is passed in explicitly —
+`createFakeJiraRequest({ loadFixture: repoFixtureLoader })` — rather than
+defaulted, because the corpus is still only the two synthetic files below and a
+fake that silently reached for it would make "loaded from fixtures" look true
+across a suite where it is not. Defaulting it is a one-line change once the
+minimum set is recorded.
 
 ## Fixtures
 
@@ -50,17 +59,59 @@ cannot find is a test failure, not a fallback to an empty object. Fakes may
   `issuelinks` + `fixVersions` + `expand=changelog` together — the read-shaping
   contract (TOOLS.md) is asserted against that single fixture. Responses that cannot be reliably triggered live (429 with Retry-After,
   expired `nextPageToken`) are hand-crafted from documented shapes and marked
-  `"synthetic": true`.
-- **Fixture PII lint** [test] — a suite walks every `test/fixtures/**/*.json`
+  `"synthetic": true`. Today the corpus holds exactly those two —
+  `errors/rate-limited-429.json` and `errors/search-page-token-expired-400.json`
+  — and nothing else: the recorded majority needs the scratch site (Gate C /
+  O-2), and generating them against `scripts/fake-jira.mjs` instead would
+  launder the fake's own assumptions into files labelled as recorded from Jira,
+  which is the fiction the honor rule exists to prevent.
+- **Fixture PII lint** [test: src/testing/fixture-pii.test.ts] — a suite walks
+  every `test/fixtures/**/*.json`
   and fails on any residue of a real tenant: an email-shaped string, an
   accountId not matching the placeholder pattern, the real site hostname, an
-  `Authorization`/`Cookie`/`set-cookie` key, or a JWT-shaped token. The record
+  `Authorization`/`Cookie`/`set-cookie` key, or a JWT-shaped token. It matches
+  credential-bearing header **keys**, never substrings: the record script drops
+  such headers outright and leaves a `headersDropped` list naming what it
+  removed, so the removal is visible to a reviewer — that list is evidence, not
+  a finding, and a lint that grepped for the substring would fail every fixture
+  the recorder produces. The record
   script redacts, but redaction is a code path that can regress silently and a
   fixture is committed forever — the lint is the thing that actually fails the
   build. It runs inside `npm run check`, so a leaked fixture cannot be pushed.
-  The placeholder vocabulary (`5b10a2844c20165700ede21g`-style ids,
-  `user-1@example.invalid`, `example.atlassian.net`) is part of the lint, so
-  adding a new placeholder form means updating the allow-pattern deliberately.
+  The placeholder vocabulary is part of the lint, so adding a new placeholder
+  form means updating the allow-pattern deliberately. It is: 24-hex accountIds
+  `5b10a2844c20165700ede2NN`, opaque-form accountIds
+  `557058:00000000-0000-0000-0000-0000000000NN` (a `nnnnnn:uuid` id keeps its
+  shape — collapsing it into the 24-hex form would destroy what the fixture
+  exists to preserve), `user-N@example.invalid`, `User N`, and
+  `example.atlassian.net`. Two token shapes are refused outright and have no
+  placeholder form: a JWT (`eyJ…`) and an Atlassian API-token prefix
+  (`ATATT`/`ATCTT`/`ATBB`). A real display name has no shape, so no detector
+  will ever catch one — free-text prose carries that residual risk to the human
+  reviewer. The suite also runs the same detector over a table of adversarial
+  documents built inside the test, asserting each is caught and each legitimate
+  placeholder is not, so the lint still proves something on a day the corpus is
+  small: one exercised only against an empty directory is theatre.
+- The recorder's own redaction is guarded by `npm run check`
+  [test: src/testing/record-fixture.test.ts] — the suite drives the exported
+  `record()` with an
+  injected fake `fetch` whose responses carry every category of sensitive value
+  — including one used as an object KEY, one inside a URL query and a display
+  name 16 ADF levels deep — then reads the artefact back off disk and asserts
+  none survived, that credential headers were dropped rather than masked, that
+  the file is mode 0600, and that re-recording is byte-identical. It also pins
+  the fail-loud paths: an unclassifiable high-entropy value names its JSON path
+  and writes nothing at all, an over-cap body writes nothing, and an error
+  scenario that unexpectedly succeeds is a failure rather than a fixture. The
+  suite reaches the script through a repo-root-relative dynamic import (nothing
+  under `src/` may import `scripts/` statically), and it needs a current
+  `build/` because the recorder loads the compiled `core`/`api` it records
+  through — `npm run check` builds before it tests, so the gate is honest.
+- Fixture files are excluded from Prettier (`.prettierignore`). The recorder
+  owns their bytes — `JSON.stringify(document, null, 2)` plus a newline — and
+  asserts that re-recording produces an identical file; Prettier collapses short
+  arrays, so formatting one would make it stop matching what the recorder emits
+  and turn the next re-record into a whole-file diff.
 
 ## Suites
 
@@ -81,7 +132,8 @@ cannot find is a test failure, not a fallback to an empty object. Fakes may
 5. **Property-based** (fast-check, small) — ADF flattener never throws on
    arbitrary node trees; truncation never produces invalid JSON.
 6. **Doctor** — probes against scripted fetch; exit codes.
-7. **stdout purity** [test] — ported from the donors. Spawns the built entry
+7. **stdout purity** [test: src/index.test.ts] — ported from the donors. Spawns
+   the built entry
    point as a real child process with a scripted `initialize` + `tools/list` on
    stdin, then asserts every line on stdout parses as a JSON-RPC frame and that
    startup diagnostics arrived on stderr. A second case injects a tool that
@@ -89,7 +141,8 @@ cannot find is a test failure, not a fallback to an empty object. Fakes may
    (the in-process assertion catches the regression; the child-process case
    catches banners printed by dependencies before our guard installs — the
    dotenv failure mode D10 avoids).
-8. **env ↔ docs sync** [test] — ported. Collects every `JIRA_*` name read in
+8. **env ↔ docs sync** [test: src/env-docs-sync.test.ts] — ported. Collects
+   every `JIRA_*` name read in
    `src/**` and every row of CONFIGURATION.md's table and asserts the two sets
    are equal, with the documented default matching the code's fallback literal.
    An undocumented env var and a documented-but-dead one both fail. This is the
@@ -105,6 +158,21 @@ cannot find is a test failure, not a fallback to an empty object. Fakes may
    values. Scheduled **weekly** in CI (not per-PR: it needs a secret, it is slow,
    and a red build from someone else's outage teaches the team to ignore red).
    A failure opens an issue rather than blocking a merge.
+
+**Rehearsing the live gate.** The Gate C driver is itself driven offline:
+`scripts/rehearse-live.mjs` runs the real `verify-live.mjs` against the stateful
+`scripts/fake-jira.mjs` over seven passes, A–G: a full run (reads, writes and
+the delete phase), a forced media redirect, an injected 429/503, an unsafe write
+that must not be replayed, a withheld watcher roster (CC-47), a site without
+Jira Software (CC-34), and a board that already has an active sprint (CC-36).
+The last two are the agile degradations, and both run **with** `--write` —
+C27–C30 live in the write phase, so a read-only pass would never reach the
+surface those passes exist to degrade. It needs `openssl`
+and a current build, runs the seven passes in a few seconds, and touches no
+network, so it is **not** part
+of `npm run check`; it is nonetheless the only test `verify-live.mjs` has, and
+re-running it after any edit to that file is the rule (D72). A green rehearsal
+is a statement about this code, never about Jira's.
 
 **Determinism knobs.** The runner pins `TZ=UTC` so a machine-local timezone can
 never make a date assertion pass locally and fail in CI. Because of that, the

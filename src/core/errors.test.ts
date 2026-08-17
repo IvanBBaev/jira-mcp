@@ -30,10 +30,10 @@ describe('kindForStatus', () => {
       [402, 'unsupported'],
       [403, 'permission'],
       [404, 'not_found'],
-      [405, 'validation'],
+      [405, 'unsupported'],
       [408, 'timeout'],
       [409, 'validation'],
-      [410, 'not_found'],
+      [410, 'unsupported'],
       [413, 'validation'],
       [415, 'validation'],
       [422, 'validation'],
@@ -85,11 +85,14 @@ describe('kindForStatus', () => {
     );
   });
 
-  it('reads an Agile-root 403/404 as unsupported (CC-34)', () => {
-    assert.equal(kindForStatus(403, { apiRoot: 'agile' }), 'unsupported');
-    assert.equal(kindForStatus(404, { apiRoot: 'agile' }), 'unsupported');
-    assert.equal(kindForStatus(404, { apiRoot: 'v3' }), 'not_found');
-    assert.equal(kindForStatus(400, { apiRoot: 'agile' }), 'validation');
+  it('stays root-agnostic: CC-34 belongs to api/agile.ts, not this table', () => {
+    // A 403/404 maps the same way wherever it came from. The Agile-root
+    // reclassification (403/404 → unsupported when Jira Software is absent)
+    // is owned by `asAgileError` in api/agile.ts — the only layer that can
+    // tell a root probe (licence story) from an id-bearing route (bad id).
+    assert.equal(kindForStatus(403, {}), 'permission');
+    assert.equal(kindForStatus(404, {}), 'not_found');
+    assert.equal(kindForStatus(400, {}), 'validation');
   });
 });
 
@@ -349,14 +352,10 @@ describe('errorFromResponse', () => {
     assert.ok(!JSON.stringify(toErrorRecord(error)).includes(TOKEN));
   });
 
-  it('applies the CC-18 and CC-34 reclassifications end to end', () => {
+  it('applies the CC-18 reclassification end to end', () => {
     assert.equal(
       errorFromResponse({ status: 403, headers: { 'x-failed-login-count': '5' } }).kind,
       'auth',
-    );
-    assert.equal(
-      errorFromResponse({ status: 404, apiRoot: 'agile' }).kind,
-      'unsupported',
     );
   });
 

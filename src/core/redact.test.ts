@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DEFAULT_PLACEHOLDER, createRedactor, stripCredentialShapes } from './redact.js';
+import {
+  DEFAULT_PLACEHOLDER,
+  MAX_DEPTH,
+  createRedactor,
+  stripCredentialShapes,
+} from './redact.js';
 
 const TOKEN = 'ATATT3xFfGF0-super-secret-token-value';
 
@@ -213,11 +218,59 @@ describe('createRedactor — deep values', () => {
   it('denies structures deeper than the depth cap', () => {
     const redactor = createRedactor();
     let deep: Record<string, unknown> = { token: TOKEN };
-    for (let i = 0; i < 20; i += 1) deep = { next: deep };
+    for (let i = 0; i < MAX_DEPTH + 8; i += 1) deep = { next: deep };
 
     const serialized = JSON.stringify(redactor.redact(deep));
     assert.ok(serialized.includes('[MAX_DEPTH]'));
     assert.ok(!serialized.includes(TOKEN));
+  });
+
+  it('carries a nested ADF document through unchanged', () => {
+    // The redactor is not only a log filter: `mcp/result.ts` runs it over
+    // every tool RESULT, so a depth cap tuned for log fields would silently
+    // amputate real data. This is what `jira_get_issue({ raw: true })` returns
+    // for a description holding a nested bulleted list with a link — twelve
+    // levels below the envelope root. // synthetic
+    const redactor = createRedactor({ secrets: [TOKEN] });
+    const text = (value: string, marks?: unknown[]): unknown =>
+      marks ? { type: 'text', text: value, marks } : { type: 'text', text: value };
+    const paragraph = (child: unknown): unknown => ({
+      type: 'paragraph',
+      content: [child],
+    });
+    const list = (child: unknown): unknown => ({
+      type: 'bulletList',
+      content: [{ type: 'listItem', content: [child] }],
+    });
+    const envelope = {
+      ok: true,
+      data: {
+        key: 'ABC-1',
+        fields: {
+          description: {
+            type: 'doc',
+            version: 1,
+            content: [
+              list(
+                list(
+                  paragraph(
+                    text('spec', [
+                      {
+                        type: 'link',
+                        attrs: { href: 'https://example.atlassian.net/wiki/x' },
+                      },
+                    ]),
+                  ),
+                ),
+              ),
+            ],
+          },
+        },
+      },
+    };
+
+    assert.deepEqual(redactor.redact(envelope), envelope);
+    assert.ok(!JSON.stringify(redactor.redact(envelope)).includes('[MAX_DEPTH]'));
   });
 
   it('projects an Error without its stack and keeps own fields', () => {

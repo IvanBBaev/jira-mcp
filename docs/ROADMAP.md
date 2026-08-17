@@ -5,25 +5,38 @@
 
 ## v1.5
 
-- **Markdown ↔ ADF subset**: headings, bullet/ordered lists, code fences with
-  language, inline code, bold/italic, links, mentions (`@name` resolved via user
-  search). Read side gains optional `format: "markdown"` on `jira_get_issue` /
-  `jira_get_comments`.
-- `jira_move_to_backlog`; sprint create/start/close (write tier standard).
-- `jira_list_filters` / `jira_get_filter` (saved JQL reuse).
+The original v1.5 block — markdown ↔ ADF subset with read-side
+`format: "markdown"`, backlog move + sprint create/start/close, saved-filter
+reads, comment edit — graduated into committed scope via D38 (2026-08-13) and
+shipped in Wave 6 (write-side `format` followed in the same wave, D44). One
+carve-out stays here:
+
+- `@name` mention **resolution** via user search on the markdown write path —
+  the converters are pure and network-free (D38), so resolving display names
+  to accountIds remains future scope.
+
+(Comment **delete**, excluded from v1 by D7, matured into the irreversible
+write tier — D45, Wave 7.)
 
 ## v2
+
+The offline-implementable slice — attachments, the irreversible write tier
+(issue/comment/worklog delete), watchers/votes, components/versions
+list/create/update and project role listing — graduated into committed scope
+via D45 (2026-08-13), Wave 7. What stays here needs live infrastructure, an
+owner decision, or a deliberate scope call:
 
 - **OAuth 2.0 (3LO) + PKCE** login CLI; `api.atlassian.com/ex/jira/{cloudId}`
   gateway support in the host layer; refresh rotation; multi-site cloudId
   discovery.
 - **Jira Data Center adapter**: PAT bearer auth, v2 REST (wiki-markup, not ADF),
   `JIRA_ALLOWED_HOSTS`-driven host policy. Separate api adapter, shared core.
-- **Attachments**: metadata list, download to `JIRA_MEDIA_DIR`, upload
-  (multipart, `X-Atlassian-Token: no-check`); size caps.
-- **Irreversible write tier**: issue/comment/worklog delete, bulk edit — gated by
-  plan_id + before-state diff (facebook-mcp write-gate design).
-- Watchers/votes, components/versions CRUD, project role listing.
+- **Bulk operations** (bulk edit / bulk delete) under the irreversible tier —
+  the tier shipped in Wave 7 (D45); bulk itself stays future scope.
+- **Component and version deletes** — deliberately absent from the `collab`
+  package, because Jira rewrites every issue that referenced the deleted value:
+  they belong to the irreversible tier, not to a package whose contract is that
+  nothing in it deletes anything (D50).
 
 ## Considered and parked
 

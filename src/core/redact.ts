@@ -38,11 +38,19 @@ const CIRCULAR = '[CIRCULAR]';
 const TOO_DEEP = '[MAX_DEPTH]';
 
 /**
- * Structures deeper than this are denied wholesale rather than walked. Log
- * fields are metadata (names, statuses, counts) — nothing legitimate is twelve
- * levels down, and an unbounded walk is a denial-of-service on the log sink.
+ * Structures deeper than this are denied wholesale rather than walked.
+ *
+ * The cap exists for STACK safety on hostile input — cycles are already caught
+ * by the visited set, and total size is bounded elsewhere (`JIRA_MAX_RESULT_CHARS`
+ * for results, the field set for logs). It must not be tuned as if this walker
+ * only saw log fields: `mcp/result.ts` runs the redactor over every tool RESULT
+ * and every planned body, where replacing a subtree with a marker is not
+ * defence, it is data corruption. The deepest thing this server legitimately
+ * carries is an ADF document (`api/adf.ts` §MAX_NODE_DEPTH = 64) nested under a
+ * result envelope, so the bound is twice that and still far below any recursion
+ * limit.
  */
-const MAX_DEPTH = 12;
+export const MAX_DEPTH = 128;
 
 /**
  * `Authorization: Basic …` / `"authorization": "Bearer …"` / `Cookie: …`

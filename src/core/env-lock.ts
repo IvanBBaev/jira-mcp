@@ -39,7 +39,26 @@
 //     longer than `staleMs` — is not closable with files alone; a long-running
 //     holder is expected to call {@link EnvLock.refresh} instead;
 //   - breaking is always reported through `onWarning`, because a broken lock is
-//     evidence of an earlier crash and should be visible in doctor output.
+//     evidence of an earlier crash and should be visible in doctor output;
+//   - a holder that was broken never touches the lock again. `refresh` and
+//     `release` first re-read the owner record and compare it byte-for-byte
+//     with the one they wrote. Without that check the residual race above does
+//     not merely allow a second writer, it cascades: the thawed holder's
+//     `release` would `rm` the *new* holder's lock directory and let a third
+//     writer straight in, and its `refresh` would stamp its own owner record
+//     over the new holder's (or, if nobody retook it, recreate the directory
+//     via `writeFileAtomic`'s `mkdir -p` and resurrect a lock with no holder).
+//     Losing the lock is reported through `onWarning` too, and the lock object
+//     goes inert — the same state as after `release`.
+//
+// Owner records in diagnostics. `<lock>/owner.json` is read back into warnings
+// and into the timeout error message, and nothing guarantees it still holds the
+// JSON we wrote: a crashed run of another version, an unrelated tool, or anyone
+// who can write the config directory can leave arbitrary bytes there. So it is
+// never echoed raw — {@link describeOwner} keeps the first line, drops control
+// characters (terminal escapes included) and caps the length, so a lock file
+// cannot inject newlines or escape sequences into doctor's stderr or into a
+// `JiraError` message that a model will read back.
 //
 // No timers and no ambient time: `setTimeout`/`Date.now` are banned outside the
 // clock seam [eslint], so waiting is `clock.sleep()` and every timestamp comes
@@ -149,6 +168,44 @@ function readOwnerRaw(lockPath: string): string | undefined {
   }
 }
 
+/** Longest owner record quoted in a diagnostic, in characters. */
+const OWNER_QUOTE_MAX = 200;
+
+/**
+ * First line of `raw` with control characters removed and length capped.
+ *
+ * Written as one pass rather than `split('\n')[0].replace(...)`: the indexed
+ * access and a `codePointAt` result both come back `| undefined` under
+ * `noUncheckedIndexedAccess`, and the `?? ''` / `?? 0` those need are arms no
+ * input can reach — dead branches bought for nothing. `charCodeAt` is typed
+ * `number`, and for a surrogate pair it returns the high surrogate (≥ 0x20), so
+ * the pair is kept whole: the loop appends `char`, not the code unit.
+ */
+function printableFirstLine(raw: string): string {
+  let clean = '';
+  for (const char of raw) {
+    if (char === '\n') break;
+    const code = char.charCodeAt(0);
+    // Drop C0 (incl. TAB/CR), DEL and C1 — the ranges that carry terminal
+    // escape sequences. Everything printable, including non-ASCII, survives.
+    if (code >= 0x20 && code !== 0x7f && !(code >= 0x80 && code <= 0x9f)) {
+      clean += char;
+    }
+  }
+  clean = clean.trim();
+  return clean.length > OWNER_QUOTE_MAX ? `${clean.slice(0, OWNER_QUOTE_MAX)}...` : clean;
+}
+
+/**
+ * Render an owner record for a human. The bytes are untrusted (see the header):
+ * quoting them raw would let a lock file inject escape sequences and newlines
+ * into diagnostics. `fallback` names the "no usable record" case.
+ */
+function describeOwner(raw: string | undefined, fallback: string): string {
+  const clean = printableFirstLine(raw ?? '');
+  return clean === '' ? fallback : clean;
+}
+
 /** Lock mtime in epoch ms, or `undefined` when the lock is not there. */
 function lockMtimeMs(lockPath: string): number | undefined {
   try {
@@ -241,12 +298,13 @@ export async function acquireEnvLock(
     options.signal?.throwIfAborted();
 
     const owner: EnvLockOwner = { pid, host, acquiredAt: clock.now() };
+    // The exact bytes on disk are our claim to the lock: `refresh`/`release`
+    // compare against them to notice a lock that was broken under us.
+    const record = `${JSON.stringify(owner)}\n`;
     try {
       mkdirSync(lockPath, { recursive: false, mode: SECRET_DIR_MODE });
-      writeFileAtomic(join(lockPath, OWNER_FILE), `${JSON.stringify(owner)}\n`, {
-        mode: SECRET_FILE_MODE,
-      });
-      return makeLock(lockPath, targetPath, owner);
+      writeFileAtomic(join(lockPath, OWNER_FILE), record, { mode: SECRET_FILE_MODE });
+      return makeLock(lockPath, targetPath, owner, record, options.onWarning);
     } catch (cause) {
       if (errnoCode(cause) !== 'EEXIST') throw cause;
     }
@@ -260,12 +318,17 @@ export async function acquireEnvLock(
       if (readOwnerRaw(lockPath) === before && lockMtimeMs(lockPath) === mtime) {
         brokenOnce = true;
         options.onWarning?.(
-          `Breaking stale lock ${lockPath} (untouched for ${String(clock.now() - mtime)}ms, owner ${before?.trim() ?? 'unknown'}). A previous run was probably killed.`,
+          `Breaking stale lock ${lockPath} (untouched for ${String(clock.now() - mtime)}ms, owner ${describeOwner(before, 'unknown')}). A previous run was probably killed.`,
         );
         try {
           rmSync(lockPath, { recursive: true, force: true });
         } catch {
-          // Lost the race to another breaker; the next mkdir attempt decides.
+          // NOT the "another breaker got there first" case — `force` already
+          // swallows a vanished directory. This is a removal that genuinely
+          // cannot happen (unwritable parent, or the directory held open on
+          // Windows/NFS). Swallow it: the lock is still there, so the next
+          // attempt sees it, `brokenOnce` stops a second break, and the wait
+          // ends in a timeout error that names the path.
         }
         continue;
       }
@@ -274,7 +337,7 @@ export async function acquireEnvLock(
     if (clock.now() >= deadline) {
       throw new JiraError({
         kind: 'timeout',
-        message: `Timed out after ${String(acquireTimeoutMs)}ms waiting for the env lock ${lockPath}, held by ${readOwnerRaw(lockPath)?.trim() ?? 'an unknown process'}.`,
+        message: `Timed out after ${String(acquireTimeoutMs)}ms waiting for the env lock ${lockPath}, held by ${describeOwner(readOwnerRaw(lockPath), 'an unknown process')}.`,
         retryable: true,
         remediation: `Wait for the other jira-mcp-ai process to finish. If none is running, remove ${lockPath} and retry.`,
       });
@@ -284,28 +347,65 @@ export async function acquireEnvLock(
   }
 }
 
-function makeLock(lockPath: string, targetPath: string, owner: EnvLockOwner): EnvLock {
+function makeLock(
+  lockPath: string,
+  targetPath: string,
+  owner: EnvLockOwner,
+  record: string,
+  onWarning?: (message: string) => void,
+): EnvLock {
   let released = false;
+
+  /**
+   * Still ours? The owner record we wrote is the claim. A mismatch means the
+   * lock was broken as stale while this process was stalled — and `undefined`
+   * (gone, unreadable) means the same thing. `refresh` rewrites the identical
+   * bytes, so refreshing never invalidates the claim.
+   */
+  const stillOurs = (): boolean => readOwnerRaw(lockPath) === record;
+
+  const warnLost = (action: string): void => {
+    onWarning?.(
+      `Not ${action} the env lock ${lockPath}: it is no longer ours (now ${describeOwner(readOwnerRaw(lockPath), 'unheld')}). It was broken as stale while this run was stalled — assume another process wrote ${targetPath}.`,
+    );
+  };
+
   return {
     path: lockPath,
     targetPath,
     owner,
     refresh(): void {
       if (released) return;
+      if (!stillOurs()) {
+        // `writeFileAtomic` would `mkdir -p` the lock directory back into
+        // existence, resurrecting a lock nobody holds — or overwrite the new
+        // holder's record with ours. Go inert instead.
+        released = true;
+        warnLost('refreshing');
+        return;
+      }
       // Rewriting the owner file bumps the lock directory's mtime, which is the
       // liveness signal other processes read.
-      writeFileAtomic(join(lockPath, OWNER_FILE), `${JSON.stringify(owner)}\n`, {
-        mode: SECRET_FILE_MODE,
-      });
+      writeFileAtomic(join(lockPath, OWNER_FILE), record, { mode: SECRET_FILE_MODE });
     },
     release(): void {
       if (released) return;
       released = true;
+      if (!stillOurs()) {
+        // Removing it here would delete the *new* holder's lock and hand the
+        // file to a third writer — the exact failure this module exists to
+        // prevent. The lock is gone or belongs to someone else; either way
+        // there is nothing of ours left to release.
+        warnLost('releasing');
+        return;
+      }
       try {
         rmSync(lockPath, { recursive: true, force: true });
       } catch {
-        // Already broken as stale, or the directory vanished with its parent:
-        // either way there is nothing left to release.
+        // `force` already swallows a directory that is simply gone, so this is
+        // a removal that cannot happen: an unwritable parent, or the directory
+        // held open (Windows/NFS). Nothing useful is left to do — the lock now
+        // ages out as stale, which is the documented recovery path.
       }
     },
   };

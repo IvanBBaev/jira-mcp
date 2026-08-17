@@ -118,15 +118,153 @@ function typeLabel(type: string): string {
 interface FlattenState {
   readonly depth: number;
   readonly listDepth: number;
+  /** `true` renders the markdown subset; `false` is the plain-text path. */
+  readonly markdown: boolean;
 }
 
 function deeper(state: FlattenState): FlattenState {
-  return { depth: state.depth + 1, listDepth: state.listDepth };
+  return { ...state, depth: state.depth + 1 };
 }
 
 function listIndent(listDepth: number): string {
   const levels = Math.min(Math.max(listDepth - 1, 0), MAX_LIST_INDENT_DEPTH);
   return LIST_INDENT_UNIT.repeat(levels);
+}
+
+// ---------------------------------------------------------------------------
+// Markdown dialect
+//
+// `adfToMarkdown` is `adfToText` with five differences and no others: headings
+// take their `#` prefix, `strong`/`em`/`code`/`link` marks become markup, text
+// is escaped so it cannot be re-read as markup, code fences widen around
+// embedded backticks, and paragraphs (plus top-level lists) are separated by a
+// blank line — without it markdown would fuse them. EVERYTHING else — tables,
+// panels, media, task lists, mentions, cards, unknown nodes, the depth caps —
+// renders exactly as the text path renders it (CC-06, CC-07, CC-09 parity),
+// because a converter with two sets of degradation rules has two sets of bugs.
+//
+// The emitted dialect is deliberately narrow: `**bold**`, `*italic*`, backtick
+// code spans, `[text](href)`, ATX headings, `-` bullets, `N.` ordered markers,
+// fenced code. `_` is never emphasis on output (so `customfield_10020` survives
+// unescaped) though the parser accepts nothing it does not emit.
+// ---------------------------------------------------------------------------
+
+/** Deepest heading markdown can express; ADF levels are clamped into 1..6. */
+const MAX_HEADING_LEVEL = 6;
+
+/**
+ * Schemes a `link` mark may keep as real `[text](href)` markup. Anything else —
+ * `javascript:`, `data:`, a scheme Atlassian adds next year — renders as its
+ * label text alone. THREAT-MODEL.md notes that the text path cannot smuggle
+ * markdown links out of tenant content; the markdown path can, so the payload a
+ * client would auto-render is restricted to the schemes a browser was going to
+ * open anyway.
+ */
+const SAFE_LINK_SCHEME = /^(?:https?:\/\/|mailto:)/i;
+
+/**
+ * Characters that would be re-read as inline markup if left bare. `]` is here
+ * for the same reason `[` is: a bare `]` inside a link label would close it
+ * early and turn the whole link back into literal text.
+ */
+const MARKDOWN_SPECIALS = new Set(['\\', '`', '*', '[', ']']);
+
+function escapeMarkdown(text: string): string {
+  let out = '';
+  for (const ch of text) out += MARKDOWN_SPECIALS.has(ch) ? `\\${ch}` : ch;
+  return out;
+}
+
+/** Length of the longest run of backticks in a string; 0 when there is none. */
+function longestBacktickRun(text: string): number {
+  let longest = 0;
+  for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return longest;
+}
+
+/**
+ * A code span whose fence is always longer than any backtick run inside it, and
+ * which pads by one space when the content starts or ends with a backtick or a
+ * space — the pair of rules that makes `` ` `` and leading spaces survive a
+ * round trip through a CommonMark reader.
+ *
+ * All-whitespace content takes no padding: a reader strips the pair of spaces
+ * only when what is left is not itself all whitespace, so padding `'  '` would
+ * hand back `'   '` — one space wider on every pass through the converter.
+ */
+function inlineCode(text: string): string {
+  const fence = '`'.repeat(longestBacktickRun(text) + 1);
+  const pad = text.trim() !== '' && /^[`\s]|[`\s]$/.test(text) ? ' ' : '';
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/** A link target safe to emit as markup, or `undefined` to drop the markup. */
+function markdownHref(href: string): string | undefined {
+  const clean = href.replace(/\s+/g, ' ').trim();
+  if (!SAFE_LINK_SCHEME.test(clean)) return undefined;
+  // Spaces and parentheses need the angle-bracket form; `<`/`>` cannot appear
+  // inside it, and a URL containing them was already malformed.
+  return /[\s()<>]/.test(clean) ? `<${clean.replace(/[<>]/g, '')}>` : clean;
+}
+
+/**
+ * Wrap a text node's content in the markup for the marks it carries. Order is
+ * innermost-first — code, then em, then strong, then link — so the result parses
+ * back to the same mark set. Marks outside the subset (strike, underline,
+ * textColor, subsup) are dropped exactly as the text path drops them.
+ */
+function applyMarks(text: string, node: AdfNode): string {
+  if (text === '') return '';
+  const marks: unknown[] = Array.isArray(node.marks) ? node.marks : [];
+
+  let code = false;
+  let strong = false;
+  let em = false;
+  let href: string | undefined;
+  for (const mark of marks) {
+    if (!isRecord(mark)) continue;
+    if (mark.type === 'code') code = true;
+    else if (mark.type === 'strong') strong = true;
+    else if (mark.type === 'em') em = true;
+    else if (mark.type === 'link') {
+      const target = isRecord(mark.attrs) ? mark.attrs.href : undefined;
+      if (typeof target === 'string') href = markdownHref(target) ?? href;
+    }
+  }
+
+  let out = code ? inlineCode(text) : escapeMarkdown(text);
+  if (em) out = `*${out}*`;
+  if (strong) out = `**${out}**`;
+  if (href !== undefined) out = `[${out}](${href})`;
+  return out;
+}
+
+/** `attrs.level` clamped into the range markdown can express (1..6). */
+function headingLevel(node: AdfNode): number {
+  const raw = node.attrs?.level;
+  const level = typeof raw === 'number' && Number.isFinite(raw) ? Math.trunc(raw) : 1;
+  return Math.min(Math.max(level, 1), MAX_HEADING_LEVEL);
+}
+
+/**
+ * Escape a line-leading block marker inside a paragraph, so text that merely
+ * begins with `- ` or `# ` does not come back as a list or a heading. Ordered
+ * markers take the backslash on the dot (`1\. `), because a digit is not
+ * escapable and `\1` would survive as a literal backslash.
+ *
+ * The `*`, `` ` `` and `[` markers need no case here: {@link escapeMarkdown}
+ * already escaped every one of them inside the text.
+ */
+function escapeBlockStart(line: string): string {
+  const ordered = ORDERED_START.exec(line);
+  if (ordered !== null) {
+    const head = ordered[1] ?? '';
+    return `${head}\\${line.slice(head.length)}`;
+  }
+  const match = MARKER_START.exec(line) ?? QUOTE_START.exec(line);
+  if (match === null) return line;
+  const indent = match[1] ?? '';
+  return `${indent}\\${line.slice(indent.length)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,9 +349,9 @@ function renderTaskItem(node: AdfNode, state: FlattenState): string {
   for (const child of children) {
     const type = nodeType(child);
     if (type === 'taskList' || type === 'bulletList' || type === 'orderedList') {
-      nested += flatten(child, { depth: state.depth + 1, listDepth: state.listDepth });
+      nested += flatten(child, deeper(state));
     } else {
-      lead += flatten(child, { depth: state.depth + 1, listDepth: state.listDepth });
+      lead += flatten(child, deeper(state));
     }
   }
 
@@ -236,9 +374,9 @@ function renderListItem(item: unknown, marker: string, state: FlattenState): str
   for (const child of children) {
     const type = nodeType(child);
     if (type === 'bulletList' || type === 'orderedList' || type === 'taskList') {
-      nested += flatten(child, { depth: state.depth + 1, listDepth: state.listDepth });
+      nested += flatten(child, deeper(state));
     } else {
-      lead += flatten(child, { depth: state.depth + 1, listDepth: state.listDepth });
+      lead += flatten(child, deeper(state));
     }
   }
 
@@ -265,6 +403,7 @@ function renderList(node: AdfNode, state: FlattenState): string {
 
   const items = Array.isArray(node.content) ? node.content : [];
   const childState: FlattenState = {
+    ...state,
     depth: state.depth + 1,
     listDepth: state.listDepth + 1,
   };
@@ -313,8 +452,12 @@ const BLOCK_CONTAINERS = new Set([
   'nestedExpand',
 ]);
 
-/** Blocks whose children are inline, so they terminate their own line. */
-const LEAF_BLOCKS = new Set(['paragraph', 'heading', 'mediaSingle', 'decisionItem']);
+/**
+ * Blocks whose children are inline, so they terminate their own line.
+ * `paragraph` and `heading` have their own cases — they are the two blocks the
+ * markdown dialect renders differently.
+ */
+const LEAF_BLOCKS = new Set(['mediaSingle', 'decisionItem']);
 
 function flatten(value: unknown, state: FlattenState): string {
   if (state.depth > MAX_NODE_DEPTH) return DEPTH_LIMIT_MARKER;
@@ -330,8 +473,10 @@ function flatten(value: unknown, state: FlattenState): string {
 
   switch (type) {
     // --- inline -----------------------------------------------------------
-    case 'text':
-      return typeof node.text === 'string' ? node.text : '';
+    case 'text': {
+      const text = typeof node.text === 'string' ? node.text : '';
+      return state.markdown ? applyMarks(text, node) : text;
+    }
     case 'hardBreak':
       return '\n';
     case 'mention':
@@ -354,11 +499,34 @@ function flatten(value: unknown, state: FlattenState): string {
       return renderMedia(node);
 
     // --- blocks -----------------------------------------------------------
+    case 'paragraph': {
+      const inner = flattenChildren(node, deeper(state));
+      if (!state.markdown) return `${inner}\n`;
+      // The blank line is what makes this a paragraph rather than more of the
+      // previous one: markdown joins consecutive lines, and CC-10 makes a bare
+      // newline a hardBreak in the other direction.
+      return `${inner.split('\n').map(escapeBlockStart).join('\n')}\n\n`;
+    }
+    case 'heading': {
+      const inner = flattenChildren(node, deeper(state));
+      if (!state.markdown) return `${inner}\n`;
+      const hashes = '#'.repeat(headingLevel(node));
+      return inner === '' ? `${hashes}\n` : `${hashes} ${inner}\n`;
+    }
     case 'rule':
       return '---\n';
     case 'codeBlock': {
       const language = attrString(node, 'language') ?? '';
-      return `\`\`\`${language}\n${flattenChildren(node, deeper(state))}\n\`\`\`\n`;
+      // Code is literal: its children render on the plain-text path even in
+      // markdown mode, or every `*` in the sample would come back escaped.
+      const body = flattenChildren(node, { ...deeper(state), markdown: false });
+      if (!state.markdown) return `\`\`\`${language}\n${body}\n\`\`\`\n`;
+      // A backtick fence's info string may hold no backticks and obviously no
+      // newline: a `language` carrying either would end the fence line early and
+      // let an attrs value forge document structure.
+      const info = language.replace(/[`\r\n]/g, '').trim();
+      const fence = '`'.repeat(Math.max(3, longestBacktickRun(body) + 1));
+      return `${fence}${info}\n${body}\n${fence}\n`;
     }
     case 'panel': {
       const panelType = attrString(node, 'panelType') ?? 'info';
@@ -373,10 +541,17 @@ function flatten(value: unknown, state: FlattenState): string {
       return parts.length === 0 ? '' : `${parts.join(' ')}\n`;
     }
     case 'bulletList':
-    case 'orderedList':
-      return renderList(node, state);
+    case 'orderedList': {
+      const list = renderList(node, state);
+      // A blank line after a top-level list stops the next paragraph from being
+      // read as a lazy continuation of the last item. Nested lists get none: a
+      // blank line inside a list would close every open list instead.
+      const separate = state.markdown && state.listDepth === 0 && list !== '';
+      return separate ? `${list}\n` : list;
+    }
     case 'taskList':
       return flattenChildren(node, {
+        ...state,
         depth: state.depth + 1,
         listDepth: state.listDepth + 1,
       });
@@ -412,7 +587,58 @@ function flatten(value: unknown, state: FlattenState): string {
  * description is `'hello'` and not `'hello\n'`.
  */
 export function adfToText(node: unknown): string {
-  return flatten(node, { depth: 0, listDepth: 0 }).trimEnd();
+  return flatten(node, { depth: 0, listDepth: 0, markdown: false }).trimEnd();
+}
+
+/**
+ * Flatten an ADF document to the markdown subset instead of plain text. Same
+ * guarantees as {@link adfToText} — never throws, same caps, same degradation
+ * for everything outside the subset — and the same right-trim, so a
+ * one-paragraph description is `'hello'`.
+ *
+ * This is opt-in per call (`format: 'markdown'`); plain text stays the default
+ * so existing clients keep byte-identical output.
+ */
+export function adfToMarkdown(node: unknown): string {
+  return flatten(node, { depth: 0, listDepth: 0, markdown: true }).trimEnd();
+}
+
+/**
+ * Depth cap for {@link renderAdfDocs}. Matches the shaping cap in
+ * `api/issues.ts`: a value nested deeper than this is passed through untouched,
+ * because it is either generated or hostile, and neither deserves a stack.
+ */
+const MAX_RENDER_DEPTH = 16;
+
+function renderDocsIn(
+  value: unknown,
+  render: (node: unknown) => string,
+  depth: number,
+): unknown {
+  if (depth >= MAX_RENDER_DEPTH) return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => renderDocsIn(entry, render, depth + 1));
+  }
+  if (!isRecord(value)) return value;
+  if (isAdfDoc(value)) return render(value);
+
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    out[key] = renderDocsIn(child, render, depth + 1);
+  }
+  return out;
+}
+
+/**
+ * Replace every ADF document inside an arbitrary JSON value with its rendered
+ * string, non-mutatingly. This is how the tool ring re-renders a payload it
+ * fetched raw: the *set* of fields that gets rendered is exactly the set
+ * {@link isAdfDoc} recognises, which is the same set the plain-text shaping
+ * path flattens, so `format: 'markdown'` cannot render a field that
+ * `format: 'text'` would have left alone.
+ */
+export function renderAdfDocs<T>(value: T, render: (node: unknown) => string): T {
+  return renderDocsIn(value, render, 0) as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +681,444 @@ export function adfFromText(text: string): AdfDoc {
     });
     return { type: 'paragraph', content: inline };
   });
+
+  return { type: 'doc', version: 1, content };
+}
+
+// ---------------------------------------------------------------------------
+// Markdown → ADF
+//
+// A hand-rolled, line-based parser for the same subset `adfToMarkdown` emits.
+// No dependency: a markdown library is a large, churning supply-chain surface
+// for a grammar we deliberately keep to eight constructs, and every one of them
+// fits in a screen of code with no lookahead.
+//
+// Two rules make it safe on hostile input: it never throws (anything it does
+// not recognise stays paragraph text — CC-06 in the other direction), and it
+// never resolves anything. In particular it creates NO mentions: a `mention`
+// node needs an accountId, the converter is pure and network-free, and a
+// fabricated id produces a comment that pings the wrong person. `@name` stays
+// literal text, which is exactly what Jira's own editor shows for an unresolved
+// handle. The read direction keeps rendering mentions (CC-07), so the mention
+// round trip is deliberately one-way.
+// ---------------------------------------------------------------------------
+
+/** Nesting cap for the inline scanner — `[[[[[…` must not own the stack. */
+const MAX_INLINE_DEPTH = 8;
+
+/** Deepest list nesting built; past it, items join the deepest open list. */
+const MAX_PARSE_LIST_DEPTH = 16;
+
+/** Bullet markers accepted on input. Only `-` is ever emitted. */
+const BULLET_MARKERS = new Set(['-', '+', '*']);
+
+/** What a backslash may escape (CommonMark's ASCII punctuation set). */
+const ESCAPABLE = new Set('\\`*_{}[]()#+-.!<>|~^$&\'"/:;,=?@%');
+
+/** A list item line: indent, marker, then the text (a bare marker is empty). */
+const LIST_ITEM = /^([ \t]*)([-+*]|\d{1,9}[.)])(?:[ \t]+(.*))?$/;
+
+/** An ATX heading. `###` alone is a heading with no text. */
+const HEADING = /^(#{1,6})(?:[ \t]+(.*))?$/;
+
+/**
+ * A fence line: three or more backticks, then an optional info string. The info
+ * string may hold no backtick (CommonMark's own rule), which is what keeps a
+ * line that merely STARTS with a long code span from opening a code block.
+ */
+const FENCE = /^[ \t]*(`{3,})[ \t]*([^`]*)$/;
+
+/** Line-start markers the renderer escapes so a paragraph stays a paragraph. */
+const ORDERED_START = /^([ \t]*\d{1,9})[.)](?=[ \t]|$)/;
+const MARKER_START = /^([ \t]*)(?:#{1,6}|[-+*])(?=[ \t]|$)/;
+const QUOTE_START = /^([ \t]*)>/;
+
+/** A list item under construction: its node plus the arrays we append to. */
+interface OpenItem {
+  readonly node: AdfNode;
+  readonly children: AdfNode[];
+  readonly inline: AdfNode[];
+}
+
+/** A list under construction, keyed by the indent of its markers. */
+interface OpenList {
+  readonly items: AdfNode[];
+  readonly ordered: boolean;
+  readonly indent: number;
+  item: OpenItem;
+}
+
+/** Leading-whitespace width; a tab counts as the two spaces we emit per level. */
+function indentWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    if (ch === ' ') width += 1;
+    else if (ch === '\t') width += 2;
+    else break;
+  }
+  return width;
+}
+
+/** How many times `ch` repeats starting at `start`. */
+function runLength(text: string, start: number, ch: string): number {
+  let n = 0;
+  while (text.charAt(start + n) === ch) n += 1;
+  return n;
+}
+
+/**
+ * Index of the delimiter that closes the one just consumed, or -1. A code span
+ * is stepped over rather than scanned: CommonMark binds code tighter than links
+ * and emphasis, so the `[` in `` `[x` `` is literal and must not be counted —
+ * counting it loses the link (or the emphasis) that wraps the span.
+ */
+function matchDelimiter(text: string, from: number, open: string, close: string): number {
+  let depth = 0;
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text.charAt(i);
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === '`') {
+      const span = readCodeSpan(text, i);
+      if (span !== undefined) {
+        i = span.next - 1;
+        continue;
+      }
+    }
+    if (ch === open) depth += 1;
+    else if (ch === close) {
+      if (depth === 0) return i;
+      depth -= 1;
+    }
+  }
+  return -1;
+}
+
+/** Index of the next unescaped `delim` outside a code span, or -1. */
+function findDelimiter(text: string, from: number, delim: string): number {
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text.charAt(i);
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === '`') {
+      const span = readCodeSpan(text, i);
+      if (span !== undefined) {
+        i = span.next - 1;
+        continue;
+      }
+    }
+    if (text.startsWith(delim, i)) return i;
+  }
+  return -1;
+}
+
+function readCodeSpan(
+  text: string,
+  start: number,
+): { readonly text: string; readonly next: number } | undefined {
+  const length = runLength(text, start, '`');
+  const fence = '`'.repeat(length);
+  let from = start + length;
+  while (from < text.length) {
+    const at = text.indexOf(fence, from);
+    if (at === -1) return undefined;
+    const found = runLength(text, at, '`');
+    if (found !== length) {
+      from = at + found;
+      continue;
+    }
+    let content = text.slice(start + length, at);
+    if (content === '') return undefined;
+    // CommonMark strips one space from each side when both are present, which
+    // is what lets a code span hold a leading backtick or space.
+    if (content.startsWith(' ') && content.endsWith(' ') && content.trim() !== '') {
+      content = content.slice(1, -1);
+    }
+    return { text: content, next: at + length };
+  }
+  return undefined;
+}
+
+function readLink(
+  text: string,
+  start: number,
+): { readonly label: string; readonly href: string; readonly next: number } | undefined {
+  const labelEnd = matchDelimiter(text, start + 1, '[', ']');
+  if (labelEnd === -1) return undefined;
+  if (text.charAt(labelEnd + 1) !== '(') return undefined;
+  const hrefEnd = matchDelimiter(text, labelEnd + 2, '(', ')');
+  if (hrefEnd === -1) return undefined;
+
+  const raw = text.slice(labelEnd + 2, hrefEnd).trim();
+  const href = raw.startsWith('<') && raw.endsWith('>') ? raw.slice(1, -1) : raw;
+  if (href === '') return undefined;
+  return { label: text.slice(start + 1, labelEnd), href, next: hrefEnd + 1 };
+}
+
+function readEmphasis(
+  text: string,
+  start: number,
+):
+  | {
+      readonly text: string;
+      readonly strong: boolean;
+      readonly em: boolean;
+      readonly next: number;
+    }
+  | undefined {
+  const run = Math.min(runLength(text, start, '*'), 3);
+  for (let length = run; length >= 1; length -= 1) {
+    const delim = '*'.repeat(length);
+    const at = findDelimiter(text, start + length, delim);
+    if (at === -1) continue;
+    const inner = text.slice(start + length, at);
+    if (inner === '') continue;
+    return { text: inner, strong: length >= 2, em: length !== 2, next: at + length };
+  }
+  return undefined;
+}
+
+/** Add a mark to every text node, skipping nodes that already carry it. */
+function addMark(nodes: readonly AdfNode[], mark: AdfNode): AdfNode[] {
+  return nodes.map((node) => {
+    if (node.type !== 'text') return node;
+    const existing: unknown[] = Array.isArray(node.marks) ? node.marks : [];
+    if (existing.some((m) => isRecord(m) && m.type === mark.type)) return node;
+    return { ...node, marks: [...existing, mark] };
+  });
+}
+
+/** One line of inline markdown → inline ADF nodes. Never throws. */
+function parseInline(text: string, depth: number): AdfNode[] {
+  const out: AdfNode[] = [];
+  let buffer = '';
+
+  const flush = (): void => {
+    if (buffer === '') return;
+    out.push({ type: 'text', text: buffer });
+    buffer = '';
+  };
+
+  let i = 0;
+  while (i < text.length) {
+    const ch = text.charAt(i);
+
+    if (ch === '\\' && ESCAPABLE.has(text.charAt(i + 1))) {
+      buffer += text.charAt(i + 1);
+      i += 2;
+      continue;
+    }
+
+    if (ch === '`') {
+      const span = readCodeSpan(text, i);
+      if (span !== undefined) {
+        flush();
+        out.push({ type: 'text', text: span.text, marks: [{ type: 'code' }] });
+        i = span.next;
+        continue;
+      }
+    }
+
+    if (ch === '[' && depth < MAX_INLINE_DEPTH) {
+      const link = readLink(text, i);
+      if (link !== undefined) {
+        flush();
+        const mark: AdfNode = { type: 'link', attrs: { href: link.href } };
+        out.push(...addMark(parseInline(link.label, depth + 1), mark));
+        i = link.next;
+        continue;
+      }
+    }
+
+    if (ch === '*' && depth < MAX_INLINE_DEPTH) {
+      const emphasis = readEmphasis(text, i);
+      if (emphasis !== undefined) {
+        flush();
+        let nodes = parseInline(emphasis.text, depth + 1);
+        if (emphasis.em) nodes = addMark(nodes, { type: 'em' });
+        if (emphasis.strong) nodes = addMark(nodes, { type: 'strong' });
+        out.push(...nodes);
+        i = emphasis.next;
+        continue;
+      }
+    }
+
+    buffer += ch;
+    i += 1;
+  }
+
+  flush();
+  return out;
+}
+
+/** Paragraph lines → one paragraph; a line break inside it is a hardBreak. */
+function paragraphNode(lines: readonly string[]): AdfNode {
+  const inline: AdfNode[] = [];
+  lines.forEach((line, index) => {
+    if (index > 0) inline.push({ type: 'hardBreak' });
+    inline.push(...parseInline(line, 0));
+  });
+  return { type: 'paragraph', content: inline };
+}
+
+function headingNode(level: number, text: string): AdfNode {
+  return { type: 'heading', attrs: { level }, content: parseInline(text, 0) };
+}
+
+function codeBlockNode(language: string, text: string): AdfNode {
+  const node: AdfNode = {
+    type: 'codeBlock',
+    content: text === '' ? [] : [{ type: 'text', text }],
+  };
+  if (language !== '') node.attrs = { language };
+  return node;
+}
+
+function itemNode(inline: AdfNode[]): OpenItem {
+  const children: AdfNode[] = [{ type: 'paragraph', content: inline }];
+  return { node: { type: 'listItem', content: children }, children, inline };
+}
+
+/** A closing fence is a bare run of backticks at least as long as the opener. */
+function isFenceClose(line: string, marker: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length >= marker.length && /^`+$/.test(trimmed);
+}
+
+/**
+ * Parse the markdown subset into an ADF document. The inverse of
+ * {@link adfToMarkdown} for everything the subset covers; anything else — block
+ * quotes, tables, images, reference links, setext headings, HTML — degrades to
+ * the paragraph text it was written as, never to an exception.
+ *
+ * CC-10 parity with {@link adfFromText} is deliberate: CRLF is normalised, a
+ * blank line starts a new paragraph, a single newline inside a paragraph is a
+ * `hardBreak`, and leading/trailing blank paragraphs are trimmed.
+ */
+export function adfFromMarkdown(text: string): AdfDoc {
+  const source = typeof text === 'string' ? text : '';
+  const lines = source.replace(/\r\n?/g, '\n').split('\n');
+
+  const content: AdfNode[] = [];
+  const stack: OpenList[] = [];
+  let paragraph: string[] = [];
+  let fence:
+    { readonly marker: string; readonly language: string; body: string[] } | undefined;
+
+  const flushParagraph = (): void => {
+    if (paragraph.length === 0) return;
+    content.push(paragraphNode(paragraph));
+    paragraph = [];
+  };
+
+  const openItem = (
+    lineIndent: number,
+    ordered: boolean,
+    start: number,
+    rest: string,
+  ): void => {
+    let indent = lineIndent;
+    // A shallower marker closes the deeper lists; an equal marker of the other
+    // kind closes this one and opens a sibling — a bullet list never turns into
+    // an ordered list mid-flight.
+    for (let top = stack.at(-1); top !== undefined; top = stack.at(-1)) {
+      if (indent < top.indent || (indent === top.indent && top.ordered !== ordered)) {
+        stack.pop();
+        continue;
+      }
+      break;
+    }
+
+    const deepest = stack.at(-1);
+    if (deepest !== undefined && stack.length >= MAX_PARSE_LIST_DEPTH) {
+      indent = Math.min(indent, deepest.indent);
+    }
+
+    const parent = stack.at(-1);
+    const item = itemNode(parseInline(rest, 0));
+    if (parent === undefined || indent > parent.indent) {
+      const items: AdfNode[] = [item.node];
+      const list: AdfNode = {
+        type: ordered ? 'orderedList' : 'bulletList',
+        content: items,
+      };
+      if (ordered && start !== 1) list.attrs = { order: start };
+      if (parent === undefined) content.push(list);
+      else parent.item.children.push(list);
+      stack.push({ items, ordered, indent, item });
+      return;
+    }
+    parent.items.push(item.node);
+    parent.item = item;
+  };
+
+  for (const line of lines) {
+    if (fence !== undefined) {
+      if (isFenceClose(line, fence.marker)) {
+        content.push(codeBlockNode(fence.language, fence.body.join('\n')));
+        fence = undefined;
+      } else fence.body.push(line);
+      continue;
+    }
+
+    const opening = FENCE.exec(line);
+    if (opening !== null) {
+      flushParagraph();
+      stack.length = 0;
+      fence = {
+        marker: opening[1] ?? '```',
+        language: (opening[2] ?? '').trim(),
+        body: [],
+      };
+      continue;
+    }
+
+    if (line.trim() === '') {
+      flushParagraph();
+      stack.length = 0;
+      continue;
+    }
+
+    const heading = HEADING.exec(line);
+    if (heading !== null) {
+      flushParagraph();
+      stack.length = 0;
+      content.push(headingNode((heading[1] ?? '#').length, heading[2] ?? ''));
+      continue;
+    }
+
+    const item = LIST_ITEM.exec(line);
+    if (item !== null) {
+      flushParagraph();
+      const marker = item[2] ?? '-';
+      const ordered = !BULLET_MARKERS.has(marker);
+      const start = ordered ? Number.parseInt(marker, 10) : 1;
+      openItem(indentWidth(item[1] ?? ''), ordered, start, item[3] ?? '');
+      continue;
+    }
+
+    // Inside a list, a more-indented plain line continues the current item
+    // rather than ending the list — that is what the renderer emits for an
+    // item whose text runs over one line.
+    const open = stack.at(-1);
+    if (open !== undefined && indentWidth(line) > open.indent) {
+      open.item.inline.push({ type: 'hardBreak' }, ...parseInline(line.trim(), 0));
+      continue;
+    }
+    stack.length = 0;
+    paragraph.push(line);
+  }
+
+  // An unterminated fence still yields its code block: dropping it would
+  // silently swallow the rest of the document.
+  if (fence !== undefined) {
+    content.push(codeBlockNode(fence.language, fence.body.join('\n')));
+  }
+  flushParagraph();
 
   return { type: 'doc', version: 1, content };
 }

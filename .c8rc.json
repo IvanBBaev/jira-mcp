@@ -1,5 +1,5 @@
 {
-  "//": "Coverage is measured over the COMPILED output, because that is what the test runner executes (`node --test build/**/*.test.js`). `excludeAfterRemap` makes the exclude patterns below apply to the ORIGINAL src/*.ts paths after source-map remapping, which is why they are written in src/ terms even though `src` points at build/. Thresholds are the Phase-0 starting levels from TESTING.md; IMPLEMENTATION-PLAN.md enforces them inside `npm run check` from Phase 3 on and raises them in Phase 5.",
+  "//": "Coverage is measured over the COMPILED output, because that is what the test runner executes (`node --test build/**/*.test.js`). `excludeAfterRemap` makes the exclude patterns below apply to the ORIGINAL src/*.ts paths after source-map remapping, which is why they are written in src/ terms even though `src` points at build/. Thresholds are the Phase-5 levels of TESTING.md §Coverage (the servicenow-mcp donor levels: lines 94 / branches 82 / functions 97); the donor pins no statements floor, so ours is set to the same value as lines, which is what tsc output makes it in practice. They sit a few points under the measured tree on purpose: a threshold is a floor that must not creep down, not a target to chase. `check-coverage` below makes any c8 run fail when one of them is missed, and `npm run check` runs the suite under c8 (`test:coverage`) — the gate enforces these floors; plain `npm run test` stays uninstrumented for quick loops.",
   "all": true,
   "src": ["build"],
   "excludeAfterRemap": true,
@@ -13,8 +13,8 @@
   "reporter": ["text", "text-summary", "lcov"],
   "reports-dir": "coverage",
   "check-coverage": true,
-  "lines": 70,
-  "branches": 60,
-  "functions": 75,
-  "statements": 70
+  "lines": 94,
+  "branches": 82,
+  "functions": 97,
+  "statements": 94
 }

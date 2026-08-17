@@ -1,0 +1,45 @@
+{
+  "scenario": "rate-limited-429",
+  "synthetic": true,
+  "recordedBy": "hand-crafted from docs/JIRA-API.md §Rate limiting and retries",
+  "recordedAt": "1970-01-01T00:00:00.000Z",
+  "site": "example.atlassian.net",
+  "note": "SYNTHETIC. A 429 cannot be triggered on demand against a scratch site, so TESTING.md §Fixtures sanctions hand-crafting this one from the documented shape. recordedAt is the fake clock's epoch, not a real moment - nothing here was on a wire. Only what JIRA-API.md guarantees is asserted: status 429 and a Retry-After in seconds. The response body is absent because Jira's 429 body is not documented and inventing one would be the fiction the [honor] rule bans; the recorder writes no body key for an empty body either. The request half is what api/search.ts really sends (POST /search/jql, default field list, CC-03) and what core/http.ts really puts on the wire, with authorization dropped exactly as scripts/record-fixture.mjs drops it - headersDropped is evidence of the drop, not a leak.",
+  "params": {
+    "jql": "project = EX ORDER BY updated DESC"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "body": {
+          "fields": [
+            "summary",
+            "status",
+            "assignee",
+            "priority",
+            "issuetype",
+            "updated"
+          ],
+          "jql": "project = EX ORDER BY updated DESC",
+          "maxResults": 25
+        },
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "headersDropped": [
+          "authorization"
+        ],
+        "method": "POST",
+        "url": "https://example.atlassian.net/rest/api/3/search/jql"
+      },
+      "response": {
+        "headers": {
+          "retry-after": "30"
+        },
+        "status": 429,
+        "statusText": "Too Many Requests"
+      }
+    }
+  ]
+}

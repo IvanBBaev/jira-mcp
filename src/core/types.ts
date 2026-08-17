@@ -334,6 +334,12 @@ export interface Settings {
   readonly packagesReadonly: readonly string[];
   /** `JIRA_WRITE_MODE` (default `plan`). */
   readonly writeMode: WriteMode;
+  /**
+   * `JIRA_ALLOW_IRREVERSIBLE` (default false). Opt-in for the irreversible
+   * write tier (deletes, D45): without it those tools refuse even under
+   * `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier.
+   */
+  readonly allowIrreversible: boolean;
 
   /** `JIRA_REQUEST_TIMEOUT_MS` (default 30000). */
   readonly requestTimeoutMs: number;
@@ -347,6 +353,12 @@ export interface Settings {
   readonly maxResultChars: number;
   /** `JIRA_MAX_PAGES` (default 20). Loop guard for `fetchAll`/`searchPages`. */
   readonly maxPages: number;
+  /**
+   * `JIRA_MEDIA_DIR`. Directory attachment downloads land in (and uploads are
+   * read from). Unset ⇒ the binary attachment tools refuse with a `config`
+   * error; metadata listing needs no directory (D45).
+   */
+  readonly mediaDir?: string;
 
   /** `JIRA_TRANSPORT` (default `stdio`). */
   readonly transport: TransportKind;
@@ -537,6 +549,44 @@ export type QueryParams = Readonly<Record<string, QueryValue | undefined>>;
 /** Response headers, lowercased by the client so lookups need no normalisation. */
 export type JiraResponseHeaders = Readonly<Record<string, string>>;
 
+/** How a successful response body is decoded. */
+export const JIRA_ACCEPT_MODES = ['json', 'binary'] as const;
+
+/**
+ * Response decoding for one request. `json` (the default) parses the body and
+ * hands the api ring `unknown`; `binary` skips parsing and hands back the raw
+ * bytes as a `Uint8Array`, read under a hard size cap (`MAX_ATTACHMENT_BYTES`).
+ *
+ * `binary` exists for exactly one route family — attachment content (WP-70) —
+ * and is opt-in per request, so every other call site keeps JSON semantics.
+ *
+ * Produced by: `api/attachments.ts`.
+ * Consumed by: `core/http.ts`.
+ */
+export type JiraAcceptMode = (typeof JIRA_ACCEPT_MODES)[number];
+
+/**
+ * One file part of a `multipart/form-data` request body.
+ *
+ * `bytes` is the WHOLE file in memory; what makes that safe is
+ * `MAX_ATTACHMENT_BYTES`, which the client enforces on the summed part sizes
+ * before it assembles anything. The client owns the boundary (it never sets
+ * `content-type` by hand) and the `X-Atlassian-Token: no-check` header Jira
+ * requires on uploads.
+ *
+ * Produced by: `api/attachments.ts` (WP-70).
+ * Consumed by: `core/http.ts`.
+ */
+export interface JiraMultipartFile {
+  /** Form field name — `file` for Jira's attachment endpoint. */
+  readonly field: string;
+  /** File name Jira records. The caller has already sanitized it (D45). */
+  readonly filename: string;
+  /** Part content type; defaults to `application/octet-stream`. */
+  readonly contentType?: string;
+  readonly bytes: Uint8Array;
+}
+
 /**
  * One outbound Jira request, as the api ring describes it. The client owns URL
  * assembly, auth, retries, the semaphore and the budget; the caller owns the
@@ -572,6 +622,20 @@ export interface JiraRequestSpec {
 
   /** JSON-serializable request body; ADF documents travel here. */
   readonly body?: unknown;
+
+  /**
+   * How to decode a successful body. Defaults to `json`; `binary` yields a
+   * `Uint8Array` in {@link JiraResponse.data} and is only honoured for reads.
+   */
+  readonly accept?: JiraAcceptMode;
+
+  /**
+   * `multipart/form-data` file parts. Mutually exclusive with `body`, POST
+   * only, and never empty — the client refuses all three with `kind=config`.
+   * A multipart request is an unsafe write by construction: it is never
+   * replayed on an ambiguous failure.
+   */
+  readonly multipart?: readonly JiraMultipartFile[];
 
   /**
    * Marks a request that is a pure READ despite its verb, so 502/503/504 and
@@ -615,7 +679,11 @@ export interface JiraRequestSpec {
 export interface JiraResponse<T = unknown> {
   readonly status: number;
   readonly headers: JiraResponseHeaders;
-  /** Parsed JSON body, or `undefined` for a 204. Enters the api ring as `unknown`. */
+  /**
+   * Parsed JSON body, or `undefined` for a 204. Enters the api ring as
+   * `unknown`. Under `accept: 'binary'` it is the raw body as a `Uint8Array`
+   * instead — empty rather than `undefined` when the body is empty.
+   */
   readonly data: T;
 }
 

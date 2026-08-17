@@ -18,6 +18,17 @@ export type {
 } from './fakeJiraRequest.js';
 export { createFakeJiraRequest, jiraErr, jiraOk, routeOf } from './fakeJiraRequest.js';
 
+export type { FixtureLoaderOptions } from './fixtures.js';
+export {
+  createFixtureLoader,
+  FIXTURES_DIR,
+  fixturesDirExists,
+  listFixtureFiles,
+  readFixtureJson,
+  REPO_ROOT,
+  repoFixtureLoader,
+} from './fixtures.js';
+
 export type { FakeRedactor } from './fakeRedactor.js';
 export { createFakeRedactor, FAKE_PLACEHOLDER } from './fakeRedactor.js';
 

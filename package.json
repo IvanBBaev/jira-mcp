@@ -3,14 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "mcpName": "io.github.IvanBBaev/jira-mcp-ai",
-  "description": "Local-first TypeScript MCP server for Jira Cloud: JQL search, issue read and write, transitions, comments, worklogs, project and field metadata, users, boards and sprints — headless API-token auth, read-only by default, plan-and-apply write safety, no telemetry.",
+  "description": "MCP server for Jira Cloud: JQL search, issue reads and gated writes, comments, worklogs, boards and sprints. API-token auth, plan/apply write safety, read-only by default, no telemetry.",
   "license": "MIT",
   "author": "Ivan Baev <ivanbbaev@gmail.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/IvanBBaev/jira-mcp.git"
   },
-  "homepage": "https://github.com/IvanBBaev/jira-mcp#readme",
+  "homepage": "https://ivanbbaev.github.io/jira-mcp/",
   "bugs": {
     "url": "https://github.com/IvanBBaev/jira-mcp/issues"
   },
@@ -19,9 +19,22 @@
     "jira-mcp-ai": "./bin/jira-mcp-ai.cjs"
   },
   "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "default": "./build/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     "bin",
     "build",
+    "CHANGELOG.md",
     "!build/**/*.map",
     "!build/**/*.test.js",
     "!build/**/*.test.d.ts",
@@ -39,11 +52,15 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node --import ./build/testing/network-fence.js --test \"build/**/*.test.js\"",
-    "coverage": "npm run build && c8 node --import ./build/testing/network-fence.js --test \"build/**/*.test.js\"",
+    "test:coverage": "c8 node --import ./build/testing/network-fence.js --test \"build/**/*.test.js\"",
+    "coverage": "npm run build && npm run test:coverage",
     "docs:lint": "node scripts/docs-lint.mjs",
+    "readme": "npm run build && node scripts/generate-readme.mjs",
+    "tarball": "node scripts/check-tarball.mjs",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run build && npm run test && npm run docs:lint && npm run audit:prod",
-    "prepublishOnly": "npm run check"
+    "check:publish": "npm run typecheck && npm run lint && npm run format:check && npm run build && npm run tarball && npm run test:coverage && npm run docs:lint",
+    "check": "npm run check:publish && npm run audit:prod",
+    "prepublishOnly": "npm run check:publish"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -71,6 +88,5 @@
     "issue-tracker",
     "llm",
     "ai"
-  ],
-  "trademark": "This is an independent, community-built project and is not affiliated with, endorsed by, or sponsored by Atlassian Pty Ltd. Jira, Atlassian and related marks are trademarks of Atlassian, used here only nominatively to indicate what this server connects to."
+  ]
 }

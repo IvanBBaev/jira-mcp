@@ -1,7 +1,8 @@
 # Configuration
 
-> Status: target-state spec (pre-code). This document owns **env var names and
-> defaults** — a default stated anywhere else is a pointer to this table.
+> Status: normative and implemented — this document and the code ship together;
+> drift is a bug. This document owns **env var names and defaults** — a default
+> stated anywhere else is a pointer to this table.
 
 All configuration is environment variables with the `JIRA_` prefix. `loadSettings()`
 returns `{ settings, report }`; `assertStartupOk(report)` fails closed on
@@ -60,6 +61,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_PACKAGES_DENY` | — | Deny list; wins over selection; `core` is force-re-added. |
 | `JIRA_PACKAGES_READONLY` | — | Packages whose write-tier tools are dropped. |
 | `JIRA_WRITE_MODE` | `plan` | `plan` = writes describe instead of execute; `apply` = writes execute when the call passes `apply: true`. Gate contract: THREAT-MODEL.md. |
+| `JIRA_ALLOW_IRREVERSIBLE` | `false` | Opt-in for the irreversible write tier (deletes, D45). Without it those tools refuse even under `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier. |
 
 ## HTTP behaviour
 
@@ -71,6 +73,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_RETRY_ATTEMPTS` | `3` | Max retry attempts (policy in JIRA-API.md). |
 | `JIRA_MAX_RESULT_CHARS` | `25000` | Truncation budget for tool results. |
 | `JIRA_MAX_PAGES` | `20` | Loop guard for `fetchAll`/`searchPages`. |
+| `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). |
 
 ## Transport
 
@@ -104,7 +107,7 @@ knows they are deliberately outside the runtime surface.
   "mcpServers": {
     "jira": {
       "command": "npx",
-      "args": ["-y", "jira-mcp-ai@0.1.0"],
+      "args": ["-y", "jira-mcp-ai@1.0.0"],
       "env": {
         "JIRA_SITE": "mycompany",
         "JIRA_EMAIL": "me@example.com",

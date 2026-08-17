@@ -1,0 +1,20 @@
+# Issue-form configuration.
+#
+# Blank issues are off: an untriageable "it does not work" costs more round trips
+# than the form costs to fill in. Everything that is NOT a bug or a feature gets
+# a link below instead — in particular security reports, which must never arrive
+# as a public issue, because opening one IS the disclosure.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability (do not open an issue)
+    url: https://github.com/IvanBBaev/jira-mcp/blob/main/SECURITY.md
+    about: Credential leakage, the host allowlist, or a write that escaped the gate — read the security policy and report it privately.
+
+  - name: Configuration and setup help
+    url: https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md
+    about: Every environment variable with its default, plus the env-file resolution order. `jira-mcp-ai doctor` answers most "why will it not connect" questions in one run.
+
+  - name: Is this intended behaviour?
+    url: https://github.com/IvanBBaev/jira-mcp/blob/main/docs/README.md
+    about: The spec corpus is normative — the tool catalog, the write-gate contract, the decision ledger and the corner-case catalog usually already answer it.

@@ -12,11 +12,16 @@
 //     (TESTING.md §Mocking tiers). A fake that answers `{}` to a route nobody
 //     programmed lets a guard "pass" against a response Jira never sends.
 //  2. **Canned bodies come from `test/fixtures/`, not from imagination.**
-//     Hand-authored fakes drift into the shape we wish Jira had. No fixtures
-//     exist yet (they are recorded against the scratch site in WP-41), so bodies
-//     are injected as plain objects for now and the loader is a documented HOOK:
-//     pass `loadFixture` and use `fake.fixture('name')`. Nothing about the call
-//     sites changes when the real loader arrives.
+//     Hand-authored fakes drift into the shape we wish Jira had. The loader for
+//     that corpus now exists — `createFixtureLoader` / `repoFixtureLoader` in
+//     `./fixtures.ts` — so a test that wants a real body writes
+//     `createFakeJiraRequest({ loadFixture: repoFixtureLoader }).fixture('name')`.
+//     It is still passed in rather than defaulted, for one reason: the corpus is
+//     nearly empty until a scratch site exists (Gate C / O-2), and a fake that
+//     silently reached for a corpus of two synthetic files would make "loaded
+//     from fixtures" look true across a suite where it is not. Injecting the
+//     loader keeps the claim per-test and honest. Flipping the default is a
+//     one-line change here once the minimum fixture set is recorded.
 
 import {
   JIRA_ROOT_PATHS,
@@ -84,14 +89,22 @@ export interface FakeJiraRequest {
 }
 
 /**
- * Resolves a fixture name (`'search/jql-page-1'`, no extension) to a parsed JSON
- * body. Implemented by the test setup once `test/fixtures/` exists (WP-41);
- * until then tests pass bodies inline.
+ * Resolves a fixture name (`'errors/rate-limited-429'`, corpus-relative, no
+ * extension) to a parsed JSON body. The repo's implementation over
+ * `test/fixtures/` is `createFixtureLoader()` in `./fixtures.ts`; a test may
+ * substitute any function, which is how the corpus-independent cases stay
+ * corpus-independent.
+ *
+ * Returning `undefined` means "not found" and the fake turns it into a failure;
+ * the repo loader throws first, with the corpus listing in the message.
  */
 export type FixtureLoader = (name: string) => unknown;
 
 export interface FakeJiraRequestOptions {
-  /** Hook for `test/fixtures/*.json`; see {@link FixtureLoader}. */
+  /**
+   * Hook for `test/fixtures/*.json`; see {@link FixtureLoader}. Pass
+   * `repoFixtureLoader` (`./fixtures.ts`) to read the committed corpus.
+   */
   readonly loadFixture?: FixtureLoader;
 }
 
@@ -195,8 +208,9 @@ export function createFakeJiraRequest(
       if (load === undefined) {
         throw new Error(
           `createFakeJiraRequest: no fixture loader configured, cannot load ` +
-            `"${name}". Pass { loadFixture } (TESTING.md §Fixtures) or supply ` +
-            'the body inline until test/fixtures/ exists.',
+            `"${name}". Pass { loadFixture: repoFixtureLoader } from ` +
+            "'core/fakes/fixtures.js' to read test/fixtures/ (TESTING.md " +
+            '§Fixtures), or supply the body inline.',
         );
       }
       const body = load(name);
