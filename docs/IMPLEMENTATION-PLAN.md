@@ -250,7 +250,8 @@ against the scratch site — Gate C.
 Exit: the full tool surface locked by the TOOLS.md catalog and manifest
 snapshot; write path proven on a real site in both plan and apply modes.
 **First half met** (snapshot test + generated README); the second half is
-Gate C, and it is the reason this project has not published.
+Gate C, which has still not run — which is why what published on 2026-08-17 is
+`0.9.0` and not `1.0.0` (D87).
 
 ## Phase 5 — Hardening & release
 
@@ -276,11 +277,12 @@ Gate C, and it is the reason this project has not published.
       map-free publish build and its tarball assertion (RELEASING.md §3.1),
       tarball-content assertion (`npm pack --dry-run` vs expected list, which
       also follows `exports`/`main`/`types`/`bin` since Wave 11), CHANGELOG
-      discipline, version 0.9.0 (D87). The name was still free on the registry
+      discipline, version 0.9.0 (D87). The name was free on the registry
       (`npm view jira-mcp-ai` → E404, checked 2026-08-17) and had been
       advertised on an indexed Pages site since 2026-08-12, so the squatting
-      risk was real and growing — publishing is what closes it, and a 403 on
-      the name is the one answer that still routes to the `@ivanbbaev/` scope.
+      risk was real and growing. Publishing closed it: `jira-mcp-ai` 0.9.0 is on
+      npm as of 2026-08-17, unscoped, with a provenance attestation — the
+      fallback `@ivanbbaev/` scope was never needed.
 - [x] Publish hardening (applies whether or not we publish publicly):
       `--provenance` on publish so the tarball carries a signed link back to the
       workflow run and commit that built it (free with OIDC trusted publishing,
@@ -387,7 +389,7 @@ here because the phase list alone would suggest the project stopped on
 | 13 | 2026-08-17 | Gate C stopped being a procedure and became one command that refuses to run against a site the operator has not named (D83), ends every run with an inventory of the five residue classes it leaves and a `--purge` for the removable ones, and is rehearsed offline over eleven passes instead of seven. Two fail-closed corrections: an environment value still holding a client's `${…}` placeholder is a failure rather than a credential (D84), and the redaction step now refuses a result it cannot re-read instead of falling back to the unredacted envelope (D85). The **stranger's-eye** audit of the install path found the flagship registration snippet was tagged `jsonc`, carried a U+2026 where the token goes, and could not be parsed by anything a user would paste it into; it is valid JSON in all four places now, and the two things that actually break a first run — Claude Desktop's minimal PATH, and where stderr goes — are written down for the first time. docs-lint grew check 8, so code may cite a corner case only if the ledger defines it. |
 
 **Snapshot, 2026-08-17.** Full suite green: 1483 tests across 63 files,
-coverage 98.12 statements / 93.09 branches / 98.46 functions / 98.12 lines
+coverage 98.12 statements / 93.07 branches / 98.46 functions / 98.12 lines
 against the D36 floors of 94 / 82 / 97 / 94; `scripts/docs-lint.mjs` reports 17
 files clean. These are measurements, not commitments: the counts move with every
 wave, and the floors — not the counts — are the thing the gate enforces. Treat a
@@ -399,11 +401,13 @@ claim with teeth.
 Nothing in the remaining work is blocked on a keyboard:
 
 - **Gate C (O-2)** — a scratch Jira Cloud site. Everything downstream of it is
-  written and rehearsed; none of it has ever spoken to Atlassian. This is the
-  honest reason the project has not published.
-- **O-9** — the decision to publish. The pipeline is inert by construction
-  (D37), so this is one repository variable and one tag, not an engineering
-  task.
+  written and rehearsed; none of it has ever spoken to Atlassian. It is the
+  honest reason the published version is pre-1.0, and it is the only thing
+  standing between 0.9.0 and 1.0.0 (D87).
+- ~~**O-9**~~ — resolved 2026-08-17: published. It cost one repository variable,
+  one environment and one tag, as the inert-by-construction design intended
+  (D37). What it left behind is the bootstrap token to retire (D86,
+  RELEASING.md §5).
 - **Repository settings** — enumerated with their measured values in
   RELEASING.md §1. Six of the eight are readable without a browser; changing
   any of them still is not.

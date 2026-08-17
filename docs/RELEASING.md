@@ -1,9 +1,10 @@
 # Releasing
 
 > Status: procedural — the publish-day runbook. Unlike the rest of this corpus
-> it does not describe shipped behaviour: every step below is an owner action
-> that has not been taken yet, and the pipeline it drives is deliberately inert
-> until it is (D37).
+> it does not describe shipped behaviour but owner actions, and it has now been
+> run once: `jira-mcp-ai` 0.9.0 was published from tag `v0.9.0` on 2026-08-17.
+> Every step below therefore describes both what to do and what happened the
+> first time.
 
 The release machinery was written, reviewed and dry-run long before the
 decision to publish. That was the point: on the day, nothing here should need a
@@ -11,9 +12,10 @@ workflow edit, a code change or a judgement call. This file is the list of
 things a file cannot do for you, in the order they have to happen.
 
 Prerequisite: **O-9** in [DECISIONS.md](DECISIONS.md) — the decision to publish
-at all — is still open. Nothing below applies until it is taken. **O-10** (repo
-visibility) is resolved: the repository is public, which is what lets npm
-provenance attest a public source.
+at all — is resolved (publish, 2026-08-17), and the first release under it is
+out. **O-10** (repo visibility) is resolved: the repository is public, which is
+what lets npm provenance attest a public source, and the published tarball
+carries a SLSA provenance attestation because of it.
 
 ## 1. Repository settings
 
@@ -33,11 +35,11 @@ than trusting the date.
 | Secret scanning + push protection | **both off** — `security_and_analysis.secret_scanning` and `…_push_protection` are `disabled` | This server's whole threat story is credential handling. Push protection is what stops an API token reaching a public commit in the first place — free on a public repo. |
 | Dependabot **security** updates | **off, and so is its prerequisite** — `automated-security-fixes` reports `enabled: false`, and `vulnerability-alerts` answers 404 (alerts themselves are off). Two toggles, in that order | `.github/dependabot.yml` configures *version* updates only. Security updates are a separate repository toggle, and they do nothing until Dependabot alerts are on — enabling only the second one looks done and changes nothing. |
 | CodeQL default setup — leave **off** | **correct as it stands** — `code-scanning/default-setup` reports `state: not-configured` | Analysis ships as an advanced-setup workflow (D67). Turning default setup on silently disables that file. Run one or the other, never both. This row is a guard, not a task: the only wrong action is acting. |
-| Environment `release` | **does not exist** — the repository has `github-pages` and `live` | `.github/workflows/publish.yml` declares it on the publishing job. It does not exist yet, so the first tagged run fails at job start — and it is the right place to hang a required reviewer. |
-| Variable `PUBLISH_ENABLED` | **unset** — `actions/variables` returns `total_count: 0` | Setting it to `true` is the go signal; nothing publishes while it is absent. O-9 is decided (publish — 2026-08-17), so this variable is now the only thing standing between a pushed tag and the registry. |
-| Secret `NPM_TOKEN` | **present** — created 2026-08-17, per `gh secret list` | The bootstrap credential for the **first** publish only (D86), because a trusted publisher cannot be configured for a package that does not exist. `publish.yml` uses it if it is there and OIDC if it is not. Deleting it after the first publish is a step in §5, not a cleanup task for later. `gh secret list` shows names and dates only — the value is not readable back, by design. |
+| Environment `release` | **exists** — created 2026-08-17; the repository now has `github-pages`, `live` and `release` | `.github/workflows/publish.yml` declares it on the publishing job, so until it existed a tagged run failed at job start. It carries no required reviewer today: the 0.9.0 run published without a human approval step, and adding one is the single edit that puts a person in front of every future release. |
+| Variable `PUBLISH_ENABLED` | **`true`** — set 2026-08-17 | It was the go signal, and it is now a standing one: with it set, any pushed `v*` tag whose version is not already on the registry publishes. Unsetting it is the fastest way to stop that without touching a file. |
+| Secret `NPM_TOKEN` | **present** — created 2026-08-17, per `gh secret list`; it published 0.9.0 and is now due for deletion | The bootstrap credential for the **first** publish only (D86), because a trusted publisher cannot be configured for a package that does not exist. `publish.yml` uses it if it is there and OIDC if it is not. That first publish has happened, so the deletion in §5 is no longer a future step — it is the oldest open one. `gh secret list` shows names and dates only — the value is not readable back, by design. |
 | GitHub Pages — deploy from `main`, `/docs` | **on and correctly wired** — `pages` reports `status: built`, source branch `main` path `/docs`, `public: true`, `https_enforced: true`, and its `html_url` equals `package.json`'s `homepage`. One human step remains: open it and confirm the page renders | No workflow builds the site, so this is a settings toggle like the rest of the table. `package.json` `homepage` is `https://ivanbbaev.github.io/jira-mcp/`, and that is the **Homepage** link npm renders on the package page — if Pages is off, the first thing a stranger clicks on a brand-new package 404s. `docs/robots.txt` and `docs/sitemap.xml` already advertise the URL. "Built" is GitHub's word for the last deploy, not a promise the HTML is right. |
-| npm trusted publisher | **not registrable yet, and unverifiable from here** — a trusted publisher is configured on a package's settings page on npmjs.com, and the package does not exist (`npm view jira-mcp-ai` → E404), so there is no page to configure and nothing to query. There is also no read-only public API for this state even once it does exist | This is why 0.9.0 goes out under `NPM_TOKEN` (D86) rather than OIDC. Register this repository and `publish.yml` — extension included, case-sensitive — as the trusted publisher **after** 0.9.0 lands, then delete the secret (§5). From the next release onward OIDC replaces the long-lived-token class of supply-chain risk entirely, which was D37's point and still is. |
+| npm trusted publisher | **registrable now, still not registered** — the package exists (`npm view jira-mcp-ai version` → `0.9.0`), so npmjs.com now has a settings page for it. There is no read-only public API for this state, so this row cannot be checked by a command, only by logging in and looking | Registering this repository and `publish.yml` — extension included, case-sensitive, allowed action `npm publish` — is what makes the `NPM_TOKEN` secret deletable (§5). Until that is done, releases keep going out on the bootstrap token, which is exactly the long-lived-credential class of risk D37 exists to remove. |
 
 ### 1.1 Re-reading the state
 
@@ -211,6 +213,13 @@ while an unpublish-and-retry burns the number and breaks anyone who was fast.
 
 ## 5. After the first publish
 
+The first publish happened on 2026-08-17: `jira-mcp-ai` 0.9.0, from tag `v0.9.0`,
+run 32059148620. The registry copy was installed into a scratch directory and
+answered `--version`, an offline `doctor` (exit 0) and a real MCP
+`initialize`/`tools/list` handshake listing 52 tools, and `npm view` reports
+103 files with a `https://slsa.dev/provenance/v1` attestation. What is checked
+off below is checked off against that run; the rest is still open.
+
 - **Retire the bootstrap token, in this order.** The package now has a settings
   page on npmjs.com, so register this repository and the workflow filename
   `publish.yml` as its trusted publisher (select at least one allowed action —
@@ -228,8 +237,13 @@ while an unpublish-and-retry burns the number and breaks anyone who was fast.
   right" and "the published package starts" are different claims. The §3
   rehearsal already answers the second one; what only the registry can answer is
   whether npm stored and served the same bytes, and `doctor` against a real site
-  is the part no local run reaches at all.
-- Verify the provenance attestation appears on the package page.
+  is the part no local run reaches at all. **Half done for 0.9.0:** the registry
+  copy was installed and started, but the real-site half is Gate C and has still
+  not happened.
+- Verify the provenance attestation appears on the package page. **Done for
+  0.9.0** — `npm view jira-mcp-ai --json` reports a `dist.attestations` entry
+  with predicate type `https://slsa.dev/provenance/v1`, which is the same claim
+  the page renders.
 - The Claude plugin manifest becomes functional at this moment and not before
   (D68) — installing it from a clone was never going to work.
 - Open a new issue once and confirm both issue forms render. GitHub validates
@@ -244,9 +258,11 @@ while an unpublish-and-retry burns the number and breaks anyone who was fast.
   release-day errand (CC-82). What stays deferred is named in
   `.github/dependabot.yml` with the event that unblocks it — `typescript` 7 and
   `@types/node` above the supported Node floor.
-- **Gate C** — verification against a live Jira site. It blocks the release in
-  the sense that publishing software that has never spoken to the real API is
-  not a thing this project does. What this file will not decide is *which* site
+- **Gate C** — verification against a live Jira site. It no longer blocks *a*
+  release: 0.9.0 shipped without it, deliberately and visibly, because a
+  pre-1.0 version number is how a project says "complete, unverified" in the one
+  place every consumer already reads (D87). It blocks **1.0.0**, and nothing
+  else will unblock it. What this file will not decide is *which* site
   and *when*; the procedure itself is no longer prose. It is one command,
   rehearsed offline against the fake before it is ever pointed at a tenant
   ([TESTING.md](TESTING.md), "Rehearsing the live gate"), and it is refused

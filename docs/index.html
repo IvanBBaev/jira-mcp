@@ -1438,7 +1438,7 @@
         <div class="wrap stack-lg">
           <div>
             <span class="eyebrow">Install</span>
-            <h2 id="h-install">Three steps, once it ships</h2>
+            <h2 id="h-install">Three steps</h2>
             <p class="sub">
               No developer app, no OAuth consent screen, no App Review — a Jira Cloud
               site and an API token are the whole setup. Node 22 or newer.
@@ -1446,13 +1446,12 @@
           </div>
 
           <p class="note warn">
-            <strong>Not on npm yet.</strong> The server is built and its offline gate is
-            green, but it is unpublished until it has been verified against a real Jira
-            site. The registration below is the contract the docs already guarantee — it
-            will resolve as-is once the first release is tagged. Until then,
-            <a href="https://github.com/IvanBBaev/jira-mcp">watch the repository</a> or
-            run it from a clone (<code>npm ci &amp;&amp; npm run build</code>, then point
-            the client at <code>bin/jira-mcp-ai.cjs</code>).
+            <strong>On npm as <code>jira-mcp-ai@0.9.0</code>, and pre-1.0 on
+            purpose.</strong> The surface is complete and the offline gate is green, but
+            no build has yet spoken to a real Jira site — every test in the suite answers
+            a fake. The version number says so, and it stays below 1.0.0 until that run
+            has happened. The registration below resolves as written; it installs the
+            published package, provenance and all.
           </p>
 
           <div class="steps">
