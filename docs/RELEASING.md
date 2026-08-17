@@ -34,9 +34,10 @@ than trusting the date.
 | Dependabot **security** updates | **off, and so is its prerequisite** — `automated-security-fixes` reports `enabled: false`, and `vulnerability-alerts` answers 404 (alerts themselves are off). Two toggles, in that order | `.github/dependabot.yml` configures *version* updates only. Security updates are a separate repository toggle, and they do nothing until Dependabot alerts are on — enabling only the second one looks done and changes nothing. |
 | CodeQL default setup — leave **off** | **correct as it stands** — `code-scanning/default-setup` reports `state: not-configured` | Analysis ships as an advanced-setup workflow (D67). Turning default setup on silently disables that file. Run one or the other, never both. This row is a guard, not a task: the only wrong action is acting. |
 | Environment `release` | **does not exist** — the repository has `github-pages` and `live` | `.github/workflows/publish.yml` declares it on the publishing job. It does not exist yet, so the first tagged run fails at job start — and it is the right place to hang a required reviewer. |
-| Variable `PUBLISH_ENABLED` | **unset** — `actions/variables` returns `total_count: 0` | Unset is the O-9 gate itself. Setting it to `true` is the go signal; nothing publishes while it is absent. |
+| Variable `PUBLISH_ENABLED` | **unset** — `actions/variables` returns `total_count: 0` | Setting it to `true` is the go signal; nothing publishes while it is absent. O-9 is decided (publish — 2026-08-17), so this variable is now the only thing standing between a pushed tag and the registry. |
+| Secret `NPM_TOKEN` | **present** — created 2026-08-17, per `gh secret list` | The bootstrap credential for the **first** publish only (D86), because a trusted publisher cannot be configured for a package that does not exist. `publish.yml` uses it if it is there and OIDC if it is not. Deleting it after 1.0.0 is a step in §5, not a cleanup task for later. `gh secret list` shows names and dates only — the value is not readable back, by design. |
 | GitHub Pages — deploy from `main`, `/docs` | **on and correctly wired** — `pages` reports `status: built`, source branch `main` path `/docs`, `public: true`, `https_enforced: true`, and its `html_url` equals `package.json`'s `homepage`. One human step remains: open it and confirm the page renders | No workflow builds the site, so this is a settings toggle like the rest of the table. `package.json` `homepage` is `https://ivanbbaev.github.io/jira-mcp/`, and that is the **Homepage** link npm renders on the package page — if Pages is off, the first thing a stranger clicks on a brand-new package 404s. `docs/robots.txt` and `docs/sitemap.xml` already advertise the URL. "Built" is GitHub's word for the last deploy, not a promise the HTML is right. |
-| npm trusted publisher | **unverifiable from here, and the only genuinely blind row** — trusted-publisher configuration is npmjs.com account state with no read-only public API, and the package does not exist yet (`npm view jira-mcp-ai` → E404), so there is nothing to query even in principle | Register this repository and `publish.yml` as a trusted publisher for the package name. There is no `NPM_TOKEN` anywhere in this repo and there must never be one — OIDC replaces the long-lived-token class of supply-chain risk entirely (D37). |
+| npm trusted publisher | **not registrable yet, and unverifiable from here** — a trusted publisher is configured on a package's settings page on npmjs.com, and the package does not exist (`npm view jira-mcp-ai` → E404), so there is no page to configure and nothing to query. There is also no read-only public API for this state even once it does exist | This is why 1.0.0 goes out under `NPM_TOKEN` (D86) rather than OIDC. Register this repository and `publish.yml` — extension included, case-sensitive — as the trusted publisher **after** 1.0.0 lands, then delete the secret (§5). From 1.0.1 onward OIDC replaces the long-lived-token class of supply-chain risk entirely, which was D37's point and still is. |
 
 ### 1.1 Re-reading the state
 
@@ -53,6 +54,7 @@ gh api repos/IvanBBaev/jira-mcp/code-scanning/default-setup --jq .state
 gh api repos/IvanBBaev/jira-mcp/environments --jq '.environments[].name'
 gh api repos/IvanBBaev/jira-mcp/actions/variables --jq '{total_count}'
 gh api repos/IvanBBaev/jira-mcp/pages --jq '{status, source, html_url}'
+gh secret list --repo IvanBBaev/jira-mcp
 ```
 
 Two of these read as absences rather than values, and an absence is easy to
@@ -209,6 +211,17 @@ while an unpublish-and-retry burns the number and breaks anyone who was fast.
 
 ## 5. After the first publish
 
+- **Retire the bootstrap token, in this order.** The package now has a settings
+  page on npmjs.com, so register this repository and the workflow filename
+  `publish.yml` as its trusted publisher (select at least one allowed action —
+  `npm publish`), *then* delete the `NPM_TOKEN` repository secret and revoke the
+  token itself on npmjs.com. Deleting the secret is what switches `publish.yml`
+  back to OIDC (D86); doing it before the publisher is registered leaves the
+  next release with no credential at all, and doing neither leaves a publishing
+  credential in the repository that nothing needs — the failure mode this whole
+  arrangement exists to make temporary. Deleting the secret is not revoking the
+  token: the secret is a copy, and the original stays valid on the account until
+  it is revoked there.
 - Install the published artifact into a scratch client from the registry — not
   from the working tree — and run `doctor` against a real site. The tarball's
   contents are gate-checked (`scripts/check-tarball.mjs`), but "the tarball is

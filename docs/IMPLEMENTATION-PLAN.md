@@ -263,19 +263,24 @@ Gate C, and it is the reason this project has not published.
       suite 10 checks them against CONFIGURATION.md and pins their four version
       fields to `package.json`'s, which is the half of the release runbook's
       version-bump set a file can enforce.
-- [ ] Decide npm publish (`jira-mcp-ai`) vs private — **still O-9, and the only
-      thing on this line that is not built.** Everything the decision would
-      need already exists and is inert (D37): `publish.yml` via npm **trusted
-      publishing** (GitHub OIDC — no `NPM_TOKEN` secret; classic tokens revoked
-      2025-12, granular tokens cap at 90 days; needs npm ≥ 11.5 → Node 24
-      release runner), `prepublishOnly` chaining `check:publish` (D62) plus the
+- [x] Decide npm publish (`jira-mcp-ai`) vs private — **O-9 resolved 2026-08-17:
+      publish.** Everything the decision needed was already built and inert
+      (D37): `publish.yml` via npm **trusted publishing** (GitHub OIDC; needs
+      npm ≥ 11.5 → Node 24 release runner), with one correction found on the way
+      out — a trusted publisher cannot be registered for a package that does not
+      exist, so 1.0.0 is bootstrapped with the `NPM_TOKEN` secret and the secret
+      is deleted immediately after (D86, RELEASING.md §5). Classic tokens were
+      revoked 2025-12 and granular tokens cap at 90 days, which is exactly why
+      the token is a one-run credential rather than the mechanism.
+      Also in place: `prepublishOnly` chaining `check:publish` (D62) plus the
       map-free publish build and its tarball assertion (RELEASING.md §3.1),
       tarball-content assertion (`npm pack --dry-run` vs expected list, which
       also follows `exports`/`main`/`types`/`bin` since Wave 11), CHANGELOG
-      discipline, version 1.0.0. The name is still free on the registry
-      (`npm view jira-mcp-ai` → E404, checked 2026-08-17) and has been
+      discipline, version 1.0.0. The name was still free on the registry
+      (`npm view jira-mcp-ai` → E404, checked 2026-08-17) and had been
       advertised on an indexed Pages site since 2026-08-12, so the squatting
-      risk is real and grows with delay.
+      risk was real and growing — publishing is what closes it, and a 403 on
+      the name is the one answer that still routes to the `@ivanbbaev/` scope.
 - [x] Publish hardening (applies whether or not we publish publicly):
       `--provenance` on publish so the tarball carries a signed link back to the
       workflow run and commit that built it (free with OIDC trusted publishing,
@@ -382,7 +387,7 @@ here because the phase list alone would suggest the project stopped on
 | 13 | 2026-08-17 | Gate C stopped being a procedure and became one command that refuses to run against a site the operator has not named (D83), ends every run with an inventory of the five residue classes it leaves and a `--purge` for the removable ones, and is rehearsed offline over eleven passes instead of seven. Two fail-closed corrections: an environment value still holding a client's `${…}` placeholder is a failure rather than a credential (D84), and the redaction step now refuses a result it cannot re-read instead of falling back to the unredacted envelope (D85). The **stranger's-eye** audit of the install path found the flagship registration snippet was tagged `jsonc`, carried a U+2026 where the token goes, and could not be parsed by anything a user would paste it into; it is valid JSON in all four places now, and the two things that actually break a first run — Claude Desktop's minimal PATH, and where stderr goes — are written down for the first time. docs-lint grew check 8, so code may cite a corner case only if the ledger defines it. |
 
 **Snapshot, 2026-08-17.** Full suite green: 1483 tests across 63 files,
-coverage 98.12 statements / 93.09 branches / 98.46 functions / 98.12 lines
+coverage 98.12 statements / 93.07 branches / 98.46 functions / 98.12 lines
 against the D36 floors of 94 / 82 / 97 / 94; `scripts/docs-lint.mjs` reports 17
 files clean. These are measurements, not commitments: the counts move with every
 wave, and the floors — not the counts — are the thing the gate enforces. Treat a

@@ -13,19 +13,26 @@
 #   3. `"private": true` must be removed from package.json. npm refuses to
 #      publish a package marked private, so the release fails loudly until the
 #      owner makes that edit on purpose.
-#   4. A trusted publisher must be registered on npmjs.com for this repository
-#      and for THIS workflow filename — `publish.yml`, extension included, and
-#      case-sensitive. Without it npm rejects the OIDC exchange.
+#   4. A publishing credential must exist — see the next paragraph, because for
+#      the FIRST release that cannot be the trusted publisher.
 #
-# Trusted publishing means GitHub OIDC and nothing else. There is no NPM_TOKEN
-# secret in this workflow, and there must never be one: classic tokens were
-# revoked in December 2025 and granular tokens cap at 90 days, so a token-based
-# release is a recurring rotation chore that also sits in the repo as a stealable
-# long-lived credential. Requirements as of npm's current docs: npm CLI >= 11.5.1
-# (hence the Node 24 runner and the explicit assertion below) and
-# `id-token: write` on the publishing job.
+# The steady state is trusted publishing: GitHub OIDC and nothing else, npm CLI
+# >= 11.5.1 (hence the Node 24 runner and the explicit assertion below), and
+# `id-token: write` on the publishing job. It is not reachable for a package that
+# does not exist yet: a trusted publisher is configured on a package's settings
+# page on npmjs.com, and there is no settings page until something has been
+# published. So the first release is published with a granular access token in
+# the `NPM_TOKEN` secret (D86), and every release after it is not.
 #
-# Two notes for whoever registers the trusted publisher:
+# The publish step below reads that secret if it is present and uses OIDC if it
+# is not, which makes the transition an act of deletion rather than an edit:
+# after 1.0.0 exists, register the trusted publisher, delete the secret, and this
+# file is back to token-free without a diff. Deleting it is the point — granular
+# tokens cap at 90 days, so a token kept past its one job is a rotation chore
+# that also sits in the repo as a stealable long-lived credential.
+#
+# Two notes for whoever registers the trusted publisher (for repository and for
+# THIS workflow filename — `publish.yml`, extension included, case-sensitive):
 #   - Configurations created after 2026-05-20 must explicitly select at least one
 #     allowed action; pick `npm publish`.
 #   - Provenance requires a PUBLIC repository and a public package. The repo is
@@ -73,7 +80,9 @@ jobs:
     environment: release
     permissions:
       contents: read
-      id-token: write # OIDC claim for npm trusted publishing. No NPM_TOKEN.
+      # OIDC claim. Trusted publishing needs it; so does `--provenance` under
+      # the bootstrap token, which is why it stays on either way.
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -85,9 +94,9 @@ jobs:
           node-version: 24.x
           registry-url: https://registry.npmjs.org
 
-      # A silent fallback to a token would be the one failure mode worth
-      # catching early, so assert the CLI version rather than discovering it in
-      # the publish step's error output.
+      # An npm too old to exchange the OIDC claim would fail in the publish
+      # step's error output at the worst moment, or — once the bootstrap token
+      # is gone — look like a credential problem. Assert the version up front.
       - name: Assert npm supports trusted publishing
         run: |
           version="$(npm --version)"
@@ -135,12 +144,26 @@ jobs:
 
       # Guard 2. Only a pushed `v*` tag gets here. `--provenance` is redundant
       # with current npm, which attests automatically under trusted publishing,
-      # and is kept explicit anyway: the day the default changes, this line is
-      # what says the signed link back to the workflow run and commit was asked
-      # for on purpose, not inherited.
+      # and is required to get an attestation at all under the bootstrap token —
+      # so it is explicit in both worlds, and the day the default changes this
+      # line is what says the signed link back to the workflow run and commit was
+      # asked for on purpose, not inherited.
+      #
+      # Which credential is used is decided by whether the secret exists, not by
+      # an edit here (see the header). Actions masks secrets in logs; the token
+      # is written to the runner's own npm config, never to a file in the repo.
       - name: Publish
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        run: npm publish --provenance --access public
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "::notice::Bootstrap publish using the NPM_TOKEN secret. Delete it once a trusted publisher is registered for this package."
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          else
+            echo "::notice::Trusted publishing: no NPM_TOKEN secret, so npm exchanges the GitHub OIDC claim."
+          fi
+          npm publish --provenance --access public
 
       - name: Rehearsal summary
         if: github.event_name == 'workflow_dispatch'
