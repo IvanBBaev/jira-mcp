@@ -110,7 +110,7 @@ arguments, not JSON.
   "mcpServers": {
     "jira": {
       "command": "npx",
-      "args": ["-y", "jira-mcp-ai@1.0.0"],
+      "args": ["-y", "jira-mcp-ai@0.9.0"],
       "env": {
         "JIRA_SITE": "mycompany",
         "JIRA_EMAIL": "me@example.com",

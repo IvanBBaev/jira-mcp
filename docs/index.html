@@ -1518,7 +1518,7 @@
   <span class="p">"mcpServers"</span>: {
     <span class="p">"jira"</span>: {
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@1.0.0"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.0"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -1551,7 +1551,7 @@
   <span class="p">"mcpServers"</span>: {
     <span class="p">"jira"</span>: {
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@1.0.0"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.0"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -1605,7 +1605,7 @@
     <span class="p">"jira"</span>: {
       <span class="p">"type"</span>: "stdio",
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@1.0.0"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.0"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -2454,16 +2454,25 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                   <td><span class="tag write">outstanding</span></td>
                   <td>
                     One run of the driver against a real scratch Jira site. Nothing here
-                    has spoken to Atlassian's API yet — this is the honest reason the
-                    project has not published.
+                    has spoken to Atlassian's API yet — every test in the suite answers a
+                    fake. This is why the published version is pre-1.0.
+                  </td>
+                </tr>
+                <tr>
+                  <td>0.9.0 on npm</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    Published from a tag with provenance, under a one-run bootstrap token
+                    because npm cannot register a trusted publisher for a package that
+                    does not exist yet.
                   </td>
                 </tr>
                 <tr>
                   <td>1.0.0 on npm</td>
                   <td><span class="tag">planned</span></td>
                   <td>
-                    A tag, once the run above is green: OIDC trusted publishing with
-                    provenance.
+                    The live run above, green, and the semver promise made: from then on
+                    OIDC trusted publishing, no token in the repository.
                   </td>
                 </tr>
               </tbody>

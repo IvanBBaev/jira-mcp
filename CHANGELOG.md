@@ -10,12 +10,17 @@ user reads before bumping the pin. Entries describe what changes for **them** �
 new or renamed tools, changed tool input/output shapes, changed defaults, changed
 env var names — not internal refactors.
 
-## [Unreleased] — 1.0.0 pending
+## [0.9.0] — 2026-08-17
 
-The surface below is implemented and is what 1.0.0 will contain. **Nothing has
-been published**: the package is still `private` at version `0.0.0`, and whether
-to publish at all is an open owner decision. There is no release to bump a pin
-to yet, so everything here is "added" relative to nothing.
+The first release. Everything below is "added" relative to nothing, so this
+entry is the whole surface rather than a diff — later entries will be diffs
+against it.
+
+It is `0.9.0` and not `1.0.0` deliberately. The surface is complete and the
+gate is green, but this build has never been run against a real Atlassian
+tenant — every test in it answers a fake. A pre-1.0 number is the honest way to
+say so, and it keeps the semver promise unspent until a live run has been made:
+under 1.0.0 the same discovery would have to arrive as a breaking major.
 
 ### Added
 
@@ -117,9 +122,10 @@ to yet, so everything here is "added" relative to nothing.
   are still read and validated, but the HTTP transport is deferred past 1.0:
   starting with `JIRA_TRANSPORT=http` fails immediately with a message saying
   so, rather than silently falling back to stdio.
-- Distribution manifests, all inert until publishing is decided: `server.json`
-  for the MCP registry, `.claude-plugin/` for Claude Code, and a release
-  workflow that publishes over GitHub OIDC with no npm token anywhere.
+- Distribution manifests: `server.json` for the MCP registry, `.claude-plugin/`
+  for Claude Code, and a release workflow that publishes with provenance — over
+  GitHub OIDC once a trusted publisher can be registered, which for a package's
+  own first version is not yet possible.
 - Repository furniture: build, lint, format, coverage and CI configuration; the
   `npm run check` gate; the docs consistency linter (`scripts/docs-lint.mjs`)
   and the tarball-content assertion (`scripts/check-tarball.mjs`).

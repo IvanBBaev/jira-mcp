@@ -26,9 +26,9 @@
 #
 # The publish step below reads that secret if it is present and uses OIDC if it
 # is not, which makes the transition an act of deletion rather than an edit:
-# after 1.0.0 exists, register the trusted publisher, delete the secret, and this
-# file is back to token-free without a diff. Deleting it is the point — granular
-# tokens cap at 90 days, so a token kept past its one job is a rotation chore
+# once a first version exists, register the trusted publisher, delete the secret,
+# and this file is token-free again without a diff. Deletion is the point —
+# granular tokens cap at 90 days, so a token kept past its one job is a chore
 # that also sits in the repo as a stealable long-lived credential.
 #
 # Two notes for whoever registers the trusted publisher (for repository and for

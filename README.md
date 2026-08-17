@@ -34,7 +34,7 @@ arguments, not JSON.
   "mcpServers": {
     "jira": {
       "command": "npx",
-      "args": ["-y", "jira-mcp-ai@1.0.0"],
+      "args": ["-y", "jira-mcp-ai@0.9.0"],
       "env": {
         "JIRA_SITE": "mycompany",
         "JIRA_EMAIL": "me@example.com",
@@ -51,7 +51,7 @@ newest at spawn time, so a fresh publish could start running new code inside an
 agent session with no review step. Bump the pin once you have read the changelog.
 
 Before wiring the server into a client, run
-`npx -y jira-mcp-ai@1.0.0 doctor` with the same environment variables set: it
+`npx -y jira-mcp-ai@0.9.0 doctor` with the same environment variables set: it
 runs the configuration and credential probes from a plain terminal and prints a
 report — the fastest way to learn whether the site, email and token actually
 work. `--help` and `--version` are also available.

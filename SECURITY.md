@@ -13,8 +13,8 @@ Security fixes go to the **latest released version**, and only there.
   Fixes are released as a new patch on that line; they are not backported to
   earlier minors, and an older minor is unsupported the moment a newer one
   ships.
-- Anything below `1.0.0` is pre-release. It gets fixes only by moving to the
-  current version.
+- Anything below `1.0.0` is pre-release, which is what ships today (`0.9.0`).
+  It gets fixes only by moving to the current version.
 - The published npm package and this repository are the same artifact. A fork,
   a vendored copy or a patched build is yours to maintain — report the issue
   here anyway if it is upstream, but the fix will land upstream only.
