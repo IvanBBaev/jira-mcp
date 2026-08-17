@@ -204,12 +204,14 @@ test('property: adfFromText always builds a document Jira accepts structurally',
             // An empty text node is invalid ADF; blank lines are separators.
             assert.equal(typeof leaf.text, 'string');
             assert.ok((leaf.text ?? '').length > 0);
+            // CRLF is normalised away before any text node is built (CC-10).
+            // Assert on the character, not on its JSON escape: a `\r` escape in
+            // the serialised doc is also what a literal backslash followed by
+            // `r` in the input produces, and that text must survive untouched.
+            assert.ok(!(leaf.text ?? '').includes('\r'));
           }
         }
       }
-
-      // CRLF is normalised away before any text node is built (CC-10).
-      assert.ok(!JSON.stringify(built).includes('\\r'));
     }),
     RUNS,
   );
