@@ -18,34 +18,78 @@ provenance attest a public source.
 ## 1. Repository settings
 
 None of these live in a file, so none of them are covered by the gate, by
-review, or by anything a contributor can check. All of them were off at the
-last audit (2026-08-15).
+review, or by anything a contributor can check. Most of them can nevertheless be
+*read* without opening a browser, and a state nobody measured is a state nobody
+knows — so the table carries the observed value and the read-only command that
+produced it. Changing any of them still needs a human in the settings UI; that
+asymmetry is the point of the last column.
 
-| Setting | Why it matters here |
-|---|---|
-| Private vulnerability reporting | [SECURITY.md](../SECURITY.md) names the **Report a vulnerability** button as the channel. Until this is on, that button does not exist and reporters fall through to the email fallback. |
-| Secret scanning + push protection | This server's whole threat story is credential handling. Push protection is what stops an API token reaching a public commit in the first place — free on a public repo. |
-| Dependabot **security** updates | `.github/dependabot.yml` configures *version* updates only. Security updates are a separate repository toggle. |
-| CodeQL default setup — leave **off** | Analysis ships as an advanced-setup workflow (D67). Turning default setup on silently disables that file. Run one or the other, never both. |
-| Environment `release` | `.github/workflows/publish.yml` declares it on the publishing job. It does not exist yet, so the first tagged run fails at job start — and it is the right place to hang a required reviewer. |
-| Variable `PUBLISH_ENABLED` | Unset, which is the O-9 gate itself. Setting it to `true` is the go signal; nothing publishes while it is absent. |
-| GitHub Pages — deploy from `main`, `/docs` | No workflow builds the site, so this is a settings toggle like the rest of the table. `package.json` `homepage` is `https://ivanbbaev.github.io/jira-mcp/`, and that is the **Homepage** link npm renders on the package page — if Pages is off, the first thing a stranger clicks on a brand-new package 404s. `docs/robots.txt` and `docs/sitemap.xml` already advertise the URL. Verify by loading it, not by assuming. |
-| npm trusted publisher | Register this repository and `publish.yml` as a trusted publisher for the package name. There is no `NPM_TOKEN` anywhere in this repo and there must never be one — OIDC replaces the long-lived-token class of supply-chain risk entirely (D37). |
+State column verified 2026-08-17 by the commands in §1.1. Re-run them rather
+than trusting the date.
+
+| Setting | State (2026-08-17) | Why it matters here |
+|---|---|---|
+| Private vulnerability reporting | **off** — `private-vulnerability-reporting` reports `enabled: false` | [SECURITY.md](../SECURITY.md) names the **Report a vulnerability** button as the channel. Until this is on, that button does not exist and reporters fall through to the email fallback. |
+| Secret scanning + push protection | **both off** — `security_and_analysis.secret_scanning` and `…_push_protection` are `disabled` | This server's whole threat story is credential handling. Push protection is what stops an API token reaching a public commit in the first place — free on a public repo. |
+| Dependabot **security** updates | **off, and so is its prerequisite** — `automated-security-fixes` reports `enabled: false`, and `vulnerability-alerts` answers 404 (alerts themselves are off). Two toggles, in that order | `.github/dependabot.yml` configures *version* updates only. Security updates are a separate repository toggle, and they do nothing until Dependabot alerts are on — enabling only the second one looks done and changes nothing. |
+| CodeQL default setup — leave **off** | **correct as it stands** — `code-scanning/default-setup` reports `state: not-configured` | Analysis ships as an advanced-setup workflow (D67). Turning default setup on silently disables that file. Run one or the other, never both. This row is a guard, not a task: the only wrong action is acting. |
+| Environment `release` | **does not exist** — the repository has `github-pages` and `live` | `.github/workflows/publish.yml` declares it on the publishing job. It does not exist yet, so the first tagged run fails at job start — and it is the right place to hang a required reviewer. |
+| Variable `PUBLISH_ENABLED` | **unset** — `actions/variables` returns `total_count: 0` | Unset is the O-9 gate itself. Setting it to `true` is the go signal; nothing publishes while it is absent. |
+| GitHub Pages — deploy from `main`, `/docs` | **on and correctly wired** — `pages` reports `status: built`, source branch `main` path `/docs`, `public: true`, `https_enforced: true`, and its `html_url` equals `package.json`'s `homepage`. One human step remains: open it and confirm the page renders | No workflow builds the site, so this is a settings toggle like the rest of the table. `package.json` `homepage` is `https://ivanbbaev.github.io/jira-mcp/`, and that is the **Homepage** link npm renders on the package page — if Pages is off, the first thing a stranger clicks on a brand-new package 404s. `docs/robots.txt` and `docs/sitemap.xml` already advertise the URL. "Built" is GitHub's word for the last deploy, not a promise the HTML is right. |
+| npm trusted publisher | **unverifiable from here, and the only genuinely blind row** — trusted-publisher configuration is npmjs.com account state with no read-only public API, and the package does not exist yet (`npm view jira-mcp-ai` → E404), so there is nothing to query even in principle | Register this repository and `publish.yml` as a trusted publisher for the package name. There is no `NPM_TOKEN` anywhere in this repo and there must never be one — OIDC replaces the long-lived-token class of supply-chain risk entirely (D37). |
+
+### 1.1 Re-reading the state
+
+Every row above except the npm one comes from a read-only call. None of them
+change anything, so run them freely — including on release day, as the last
+thing before the tag.
+
+```sh
+gh api repos/IvanBBaev/jira-mcp --jq '{visibility, security_and_analysis}'
+gh api repos/IvanBBaev/jira-mcp/private-vulnerability-reporting
+gh api repos/IvanBBaev/jira-mcp/automated-security-fixes
+gh api -i repos/IvanBBaev/jira-mcp/vulnerability-alerts | head -1   # 204 on, 404 off
+gh api repos/IvanBBaev/jira-mcp/code-scanning/default-setup --jq .state
+gh api repos/IvanBBaev/jira-mcp/environments --jq '.environments[].name'
+gh api repos/IvanBBaev/jira-mcp/actions/variables --jq '{total_count}'
+gh api repos/IvanBBaev/jira-mcp/pages --jq '{status, source, html_url}'
+```
+
+Two of these read as absences rather than values, and an absence is easy to
+misread. `vulnerability-alerts` has no response body at all: 204 means on, 404
+means off, which is why the `-i` flag is not optional. `actions/variables`
+returning an empty list is indistinguishable from a repository where the API
+call was scoped away — if the token in use cannot see variables, this row is
+unanswered rather than answered "unset".
+
+The npm side has no equivalent. Trusted publishing has to be confirmed by
+logging into npmjs.com and looking, both before the release (the publisher is
+registered) and after it (the run that published carries a provenance
+attestation).
 
 ## 2. The version bump is a set, not a field
 
-Nine places carry the version or a pin of it, and they move **together**. Five
-are manifests:
+Twelve places carry the version or a pin of it, and they move **together**. Five
+are manifest fields, in four files:
 
 - `package.json` — `version`
 - `server.json` — `version` **and** `packages[0].version` (two fields, one file)
 - `.claude-plugin/plugin.json` — `version`
 - `.claude-plugin/marketplace.json` — `plugins[0].version`
 
-Four are registration pins, and those are machine-checked: the canonical value
-lives in [CONFIGURATION.md](CONFIGURATION.md), and `scripts/docs-lint.mjs`
-check 5 asserts that `README.md`, the GitHub Pages page and
-`.claude-plugin/plugin.json` mirror it exactly (D61, D68). A drifted pin is a
+Those five fields are machine-checked as a set **[test: src/manifest-sync.test.ts]**:
+the distribution-manifest suite ([TESTING.md](TESTING.md) suite 10) asserts that
+all four manifest version fields equal `package.json`'s, so bumping some and
+forgetting the rest fails `npm run check` instead of reaching a registry. What it
+cannot tell you is whether the number is the *right* one — it checks agreement,
+not intent, and every field agreeing at `0.0.0` is exactly the state this
+document exists to get you out of.
+
+The other seven are registration pins — copy-pasteable `jira-mcp-ai@<version>`
+snippets — and those are machine-checked too: the canonical one lives in
+[CONFIGURATION.md](CONFIGURATION.md), and `scripts/docs-lint.mjs` check 5 asserts
+that the other six mirror it exactly (two in `README.md`, three on the GitHub
+Pages page, one in `.claude-plugin/plugin.json` — D61, D68). A drifted pin is a
 copy-pasteable snippet that 404s, which is the worst possible first-run
 experience — so the lint fails rather than the user.
 
@@ -71,6 +115,43 @@ unreleased section into a dated release entry.
    freshly disclosed CVE stops the release *before* anything irreversible
    (D62) — then publishes with provenance.
 
+### 3.1 The tarball is compiled by a different config
+
+`npm run build` and `npm run build:publish` produce different bytes, and the
+difference is deliberate.
+
+`tsconfig.json` emits source maps, because `.c8rc.json` measures coverage over
+the *compiled* output and remaps it back through those maps — without them the
+excludes (written in `src/` terms) stop matching and the floors stop meaning
+anything. But `files` in `package.json` excludes every map from the tarball: a
+map embeds absolute build paths and, with `sourcesContent`, the TypeScript
+source. tsc does not know that, so it writes a `sourceMappingURL` footer into
+every emitted file regardless — and the published package ends up with every
+single file pointing at a file nobody can fetch. Harmless at runtime, and still
+a dangling reference in every file of a release.
+
+`tsconfig.publish.json` turns the two map flags off, and only the publish path
+uses it: `prepublishOnly` runs `check:publish` (which builds *with* maps and
+measures coverage), then `build:publish`, then `tarball:publish`. That last one
+is `scripts/check-tarball.mjs --publish`, which fails if any shipped file still
+carries a footer — so the ordering cannot silently regress. Both modes of that
+script also assert `tsconfig.publish.json` still exists and still says what
+`--publish` depends on, which means deleting it fails the everyday gate instead
+of release day.
+
+Two consequences worth knowing before you hit them:
+
+- **After any `build:publish`, rebuild with `npm run build` before measuring
+  coverage again.** A map-free `build/` does not make c8 fail; it makes c8
+  report the wrong thing — test files and fakes counted as product code, against
+  floors that were never set for them.
+- **`removeComments` is deliberately not set.** It looks like free size on the
+  JS side, but it is one flag for both emits: turning it on also strips every
+  JSDoc block from the `.d.ts` files this package advertises through `types`,
+  which is the documentation a consumer sees on hover. The comments are also
+  what make a stack trace from a published build readable. Both audits so far
+  have reached the same answer; overturn it with a ledger entry, not a commit.
+
 ### Rehearsing the install before it is irreversible
 
 §5 says to install the published artifact and run `doctor` against it. The whole
@@ -79,12 +160,21 @@ and it is the only check that catches an entry point the allowlist excluded or a
 runtime file that was never emitted:
 
 ```sh
+npm run build:publish                         # §3.1 — `npm pack` never runs prepublishOnly
+npm run tarball:publish                       # no dangling sourceMappingURL footers
 npm pack --pack-destination /tmp/rehearse     # the real tarball, not a listing
 mkdir /tmp/rehearse/client && cd /tmp/rehearse/client && npm init -y
 npm install /tmp/rehearse/jira-mcp-ai-<version>.tgz
 ./node_modules/.bin/jira-mcp-ai --version
 ./node_modules/.bin/jira-mcp-ai doctor --offline    # expect exit 2 with no site
+npm run build                                 # restore the map-carrying dev build
 ```
+
+The first and last lines are the ones people skip. `npm pack` reads `build/` off
+disk and runs `prepack`/`postpack` — it never runs `prepublishOnly`, so nothing
+in the publish chain fires and you would otherwise be packing whatever the last
+`npm run build` left behind. The last line puts the source maps back before
+anyone measures coverage again (§3.1).
 
 Then drive one MCP `initialize` + `tools/list` over stdin and confirm the tool
 count. A binary that prints its version proves less than it looks: the version
@@ -135,10 +225,31 @@ while an unpublish-and-retry burns the number and breaks anyone who was fast.
 
 ## 6. Things this file deliberately does not decide
 
-- **zod 3 → 4** (O-14). It re-validates the emitted schema of every tool, and
-  that churn is free while nothing consumes them. The default answer is
-  "before 1.0.0", but it is an owner call.
+- **Deferred dependency majors.** No longer open: `zod` 4, `fast-check` 4 and
+  eslint 10 all landed before 1.0.0 (D82, closing O-14), and re-validating the
+  emitted schema of every tool is now the manifest snapshot's job rather than a
+  release-day errand (CC-82). What stays deferred is named in
+  `.github/dependabot.yml` with the event that unblocks it — `typescript` 7 and
+  `@types/node` above the supported Node floor.
 - **Gate C** — verification against a live Jira site. It blocks the release in
   the sense that publishing software that has never spoken to the real API is
-  not a thing this project does; the procedure lives with the scripts, not
-  here.
+  not a thing this project does. What this file will not decide is *which* site
+  and *when*; the procedure itself is no longer prose. It is one command,
+  rehearsed offline against the fake before it is ever pointed at a tenant
+  ([TESTING.md](TESTING.md), "Rehearsing the live gate"), and it is refused
+  outright unless the operator names the host it is about to write to:
+
+  ```sh
+  JIRA_SITE=https://<scratch>.atlassian.net JIRA_EMAIL=… JIRA_API_TOKEN=… \
+    node scripts/verify-live.mjs --project <KEY> --project2 <KEY2> \
+      --write --irreversible --confirm-site <scratch>.atlassian.net
+  ```
+
+  Run it against a **scratch** site. It creates issues, a version, a sprint and
+  an attachment, and every run ends by printing an inventory of what it left
+  behind together with the command that removes the removable part — see
+  `scripts/verify-live.mjs`, whose header is the authoritative safety contract.
+  Two artifacts (the version and the sprint) cannot be removed by any command,
+  because this server ships no delete for either and the gate does not get to
+  widen the product's write surface (D73); the inventory says so in as many
+  words rather than implying a cleanup that does not exist.

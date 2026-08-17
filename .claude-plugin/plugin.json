@@ -43,6 +43,11 @@
       "title": "Tool packages",
       "description": "Which tool packages to register: \"all\", \"reader\" (reads only), \"core\", or an explicit comma list.",
       "default": "all"
+    },
+    "jira_media_dir": {
+      "type": "string",
+      "title": "Attachment directory",
+      "description": "Absolute path to one directory the server may read and write attachment bytes in; it never touches anything outside it. Leave empty to keep attachment download and upload disabled — listing what is attached works either way."
     }
   },
   "mcpServers": {
@@ -54,7 +59,8 @@
         "JIRA_EMAIL": "${user_config.jira_email}",
         "JIRA_API_TOKEN": "${user_config.jira_api_token}",
         "JIRA_WRITE_MODE": "${user_config.jira_write_mode}",
-        "JIRA_TOOL_PACKAGES": "${user_config.jira_tool_packages}"
+        "JIRA_TOOL_PACKAGES": "${user_config.jira_tool_packages}",
+        "JIRA_MEDIA_DIR": "${user_config.jira_media_dir}"
       }
     }
   }

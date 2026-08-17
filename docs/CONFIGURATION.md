@@ -79,9 +79,9 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 
 | Variable | Default | Description |
 |---|---|---|
-| `JIRA_TRANSPORT` | `stdio` | `stdio` or `http`. |
-| `JIRA_HTTP_PORT` | `3334` | Loopback-only Streamable HTTP port. |
-| `JIRA_HTTP_TOKEN` | — | REQUIRED for http transport; server refuses to start without it. |
+| `JIRA_TRANSPORT` | `stdio` | Accepts `stdio` or `http`, but **only `stdio` runs**: `http` is parsed, then refused at startup with an error naming v1.5 (D19). |
+| `JIRA_HTTP_PORT` | `3334` | Loopback-only Streamable HTTP port. Parsed and validated; unused until the HTTP transport is reinstated. |
+| `JIRA_HTTP_TOKEN` | — | Required whenever `http` is selected — settings refuse that combination without it (CC-30) — though the transport itself is refused a step later regardless. |
 
 ## Diagnostics
 
@@ -101,8 +101,11 @@ knows they are deliberately outside the runtime surface.
 
 ## Claude Code registration (example)
 
-```jsonc
-// .mcp.json / claude mcp add
+Put this in `.mcp.json` (project scope), or paste the inner `"jira"` object
+into `claude mcp add-json jira '<object>'` — `claude mcp add` takes CLI
+arguments, not JSON.
+
+```json
 {
   "mcpServers": {
     "jira": {
@@ -111,7 +114,7 @@ knows they are deliberately outside the runtime surface.
       "env": {
         "JIRA_SITE": "mycompany",
         "JIRA_EMAIL": "me@example.com",
-        "JIRA_API_TOKEN": "…",
+        "JIRA_API_TOKEN": "<api-token>",
         "JIRA_WRITE_MODE": "plan"
       }
     }
@@ -124,3 +127,19 @@ whatever is newest at spawn time, which means a published package can start
 running new code inside an agent session with no review step — the same supply
 chain risk the files-allowlist and provenance items in Phase 5 address from the
 publishing side. Bump the pin when you have read the changelog.
+
+## When the client shows no server
+
+**It is almost always PATH.** Claude Desktop launches MCP servers from a minimal
+environment that does not include your shell's PATH, so a `node`/`npx` installed
+by nvm, Homebrew or fnm is invisible to it and the launch fails inside the
+client, before this server runs — you get the client's generic "server failed"
+message and nothing on this server's stderr, because there was no process. Fix it
+by giving an absolute path: `"command": "/usr/local/bin/npx"` (`which npx` prints
+yours). Claude Code, run from a terminal, inherits your PATH and is not affected.
+
+When the process *does* start, everything it says goes to **stderr** — stdout is
+the MCP protocol (D10). Claude Code keeps stderr in `~/.claude/logs/`; Claude
+Desktop in `~/Library/Logs/Claude/mcp*.log` (macOS) or `%APPDATA%\Claude\logs\`
+(Windows). The startup report, the `token_expiry_warning` and every
+error-severity finding from `assertStartupOk` land there.

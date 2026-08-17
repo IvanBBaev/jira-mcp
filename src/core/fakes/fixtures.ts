@@ -90,6 +90,7 @@ export function readFixtureJson(absolutePath: string): unknown {
       `core/fakes/fixtures: cannot read ${absolutePath}: ${String(
         error instanceof Error ? error.message : error,
       )}`,
+      { cause: error },
     );
   }
   try {
@@ -99,6 +100,7 @@ export function readFixtureJson(absolutePath: string): unknown {
       `core/fakes/fixtures: ${absolutePath} is not valid JSON: ${String(
         error instanceof Error ? error.message : error,
       )}`,
+      { cause: error },
     );
   }
 }

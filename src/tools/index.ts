@@ -1,12 +1,14 @@
 // ---------------------------------------------------------------------------
 // The tool manifest — ARCHITECTURE.md §Tool definition contract.
 //
-// `PACKAGES` is the SINGLE SOURCE OF TRUTH for the tool surface. Four consumers
+// `PACKAGES` is the SINGLE SOURCE OF TRUTH for the tool surface. Three consumers
 // read it and none of them keeps its own copy: server registration
 // (`mcp/registry.ts` applies the gating triple to it), the structural snapshot
-// test next door, the README generator (`scripts/generate-readme.mjs`), and —
-// once it lands — `server.json`. A tool that is not in this list does not exist;
-// a tool that is in it is documented, snapshotted and registered by construction.
+// test next door, and the README generator (`scripts/generate-readme.mjs`).
+// `server.json` is NOT one of them — it names no tools and is hand-maintained,
+// checked against `docs/CONFIGURATION.md` rather than generated (D78). A tool
+// that is not in this list does not exist; a tool that is in it is documented,
+// snapshotted and registered by construction.
 //
 // ORDER IS CONTRACT. Packages appear in TOOLS.md's package-table order, and
 // tools within a package in that package's table order. `tools/list`, the README
@@ -23,8 +25,8 @@
 //     the binding exists.
 //   - {@link PACKAGES} — the same manifest with the report deliberately
 //     UNBOUND. It is the structural constant: names, titles, packages, schemas,
-//     annotations — everything a snapshot, a README table or a `server.json`
-//     needs, none of which involves calling a handler. Calling
+//     annotations — everything a snapshot or a README table needs, none of
+//     which involves calling a handler. Calling
 //     `jira_capabilities` on it yields a `config` error envelope explaining the
 //     binding is missing, which is the honest answer and not a crash.
 //
@@ -171,8 +173,8 @@ function unboundReport(): never {
     retryable: false,
     remediation:
       'Register the server through main() (src/index.ts), which binds the report ' +
-      'with createPackages(); PACKAGES itself is for tooling — the snapshot test, ' +
-      'the README generator and server.json — not for serving calls.',
+      'with createPackages(); PACKAGES itself is for tooling — the snapshot test ' +
+      'and the README generator — not for serving calls.',
   });
 }
 

@@ -2,7 +2,7 @@
 /**
  * docs-lint — mechanical enforcement of the rules docs/README.md states in prose.
  *
- * Six checks:
+ * Eight checks:
  *   1. link      — every relative markdown link inside docs/** resolves, and a
  *                  `#anchor` names a heading that actually exists in the target.
  *   2. banner    — every spec doc carries a `> Status:` banner in its first lines,
@@ -19,6 +19,10 @@
  *   6. test-bound — every **[test]** claim is backed by a test that exists: an
  *                  inline tag names its test (`[test: CC-nn]` / `[test: path]`),
  *                  and every CC-nn defined is reached by a real test NAME.
+ *   7. status    — no document outside DECISIONS.md calls an owner decision
+ *                  open that DECISIONS.md has struck through as resolved.
+ *   8. cc-src    — the same as check 4, over `src/**` and `scripts/**`: code may
+ *                  cite a corner case only if the ledger defines it.
  *
  * Run standalone (`node scripts/docs-lint.mjs`) or as part of `npm run check`.
  * Exit code 1 with one `path:line: message` per finding; 0 when clean.
@@ -366,6 +370,54 @@ function checkCornerCaseRefs(files, defined) {
   }
 }
 
+// --- check 8: CC-nn references in code ------------------------------------
+
+/**
+ * Check 4 stops at `docs/**`, but the corner cases are cited far more often from
+ * the code that implements them and the tests that pin them — and a citation is
+ * a promise that the ledger explains the case. A wave that renumbers ids, or a
+ * comment written against the id a row was drafted under rather than the one it
+ * landed as, leaves a citation pointing at nothing and no check notices.
+ *
+ * Scanned as SOURCE, not markdown: `build/` is generated and `node_modules/` is
+ * not ours, so both are skipped, and the extension list is the two languages the
+ * repo actually has.
+ */
+const SOURCE_ROOTS = ['src', 'scripts'];
+const SOURCE_EXTS = ['.ts', '.mjs', '.cjs', '.js'];
+const SOURCE_SKIP_DIRS = new Set(['node_modules', 'build', 'coverage']);
+
+function listSource(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (SOURCE_SKIP_DIRS.has(entry.name)) continue;
+      out.push(...listSource(join(dir, entry.name)));
+    } else if (entry.isFile() && SOURCE_EXTS.some((e) => entry.name.endsWith(e))) {
+      out.push(join(dir, entry.name));
+    }
+  }
+  return out.sort();
+}
+
+function checkSourceCornerCaseRefs(defined) {
+  for (const root of SOURCE_ROOTS) {
+    const full = join(REPO_ROOT, root);
+    if (!existsSync(full)) continue;
+    for (const file of listSource(full)) {
+      const text = readFileSync(file, 'utf8');
+      for (const m of text.matchAll(CC_REF_RE)) {
+        if (defined.has(m[0])) continue;
+        report(
+          file,
+          lineOf(text, m.index),
+          `${m[0]} is cited here but not defined in CORNER-CASES.md`,
+        );
+      }
+    }
+  }
+}
+
 // --- check 5: version-pin mirrors ----------------------------------------
 
 /**
@@ -567,6 +619,74 @@ function checkCornerCaseBindings(defined) {
   }
 }
 
+// --- check 7: a resolved owner decision is never still "open" -------------
+
+/**
+ * DECISIONS.md owns decision status (docs/README.md §"Fact ownership"), and it
+ * marks a resolved owner decision by striking its id: `| ~~O-11~~ | … |`. Other
+ * documents may point at an O-row — that is a derived mention, not a copy — but
+ * a pointer that ALSO asserts the row is open copies the one fact this corpus
+ * already agreed nobody else owns, and it is the copy that rots first. The
+ * Wave-13 audit found ARCHITECTURE.md announcing "Status: O-11 open" long after
+ * D19 resolved it, and the plan listing O-1 among what was left after Gate A
+ * closed. Both read as current status; both were history.
+ *
+ * Deliberately narrow, because a status check that guesses is worse than none.
+ * It fires only when a struck id and an open-ish word sit in the SAME SENTENCE,
+ * and never when that sentence is visibly discussing the resolution (a
+ * strike-through, or the words `resolved` / `closed` / `superseded` /
+ * `no longer`). Recording that a decision *was* open stays legal; asserting
+ * that it still is does not. The sentence scope is not fussiness — a whole-line
+ * window turns "O-9 … is still open. … O-10 (repo visibility) is resolved" into
+ * a false alarm the moment O-10 is struck, and a check that cries wolf is a
+ * check somebody deletes.
+ */
+const DECISIONS_DOC = join(DOCS_DIR, 'DECISIONS.md');
+const RESOLVED_O_RE = /^\|\s*~~(O-\d+)~~\s*\|/gm;
+const O_REF_RE = /\bO-\d+\b/g;
+const OPEN_WORD_RE = /\b(?:open|unresolved|outstanding|pending)\b/i;
+const RESOLUTION_CONTEXT_RE = /~~|\b(?:resolved|closed|superseded|no longer)\b/i;
+/** Sentence end, in prose that is also markdown: `. `, `; `, `? `, `! `. */
+const SENTENCE_SPLIT_RE = /(?<=[.;!?])[*_`)\]]*\s+/;
+
+function resolvedOwnerDecisions() {
+  const text = readFileSync(DECISIONS_DOC, 'utf8');
+  return new Set([...text.matchAll(RESOLVED_O_RE)].map((m) => m[1]));
+}
+
+function checkResolvedStatus(files) {
+  const resolved = resolvedOwnerDecisions();
+  if (resolved.size === 0) {
+    report(
+      DECISIONS_DOC,
+      1,
+      'no `| ~~O-nn~~ |` rows found — has the resolved-decision format changed?',
+    );
+    return;
+  }
+  for (const file of files) {
+    if (isArchive(file) || file === DECISIONS_DOC) continue;
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (!OPEN_WORD_RE.test(line)) return;
+      for (const sentence of line.split(SENTENCE_SPLIT_RE)) {
+        if (!OPEN_WORD_RE.test(sentence) || RESOLUTION_CONTEXT_RE.test(sentence))
+          continue;
+        for (const m of sentence.matchAll(O_REF_RE)) {
+          if (!resolved.has(m[0])) continue;
+          report(
+            file,
+            i + 1,
+            `${m[0]} is resolved in DECISIONS.md, and this line still calls it ` +
+              'open — state what is true now, or point at the ledger instead of ' +
+              'restating the status it owns',
+          );
+        }
+      }
+    });
+  }
+}
+
 /** An allowlist entry that stopped matching is drift of its own. */
 function checkPendingTestClaims() {
   for (const pending of PENDING_TEST_CLAIMS) {
@@ -600,6 +720,8 @@ checkCornerCaseRefs(files, cornerCases);
 checkPinMirrors();
 checkCornerCaseBindings(cornerCases);
 checkPendingTestClaims();
+checkResolvedStatus(files);
+checkSourceCornerCaseRefs(cornerCases);
 
 const parked = OWNED_LITERALS.filter((r) => r.enabled === false).length;
 const pendingBindings =

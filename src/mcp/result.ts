@@ -204,7 +204,7 @@ function toJsonRecord(result: ToolResult<unknown>): JsonRecord {
   return parsed;
 }
 
-/** A negative or non-finite budget means "no budget"; the floor is 0. */
+/** A non-finite budget means "no budget"; a negative one clamps to the floor, 0. */
 function normalizeBudget(maxResultChars: number): number {
   if (!Number.isFinite(maxResultChars)) return Number.MAX_SAFE_INTEGER;
   return Math.max(0, Math.floor(maxResultChars));
@@ -261,8 +261,17 @@ interface StringLeaf {
  * Longest string anywhere under `data`. Only `data` is walked: `error`, `hints`
  * and the markers are the part of the envelope that must survive intact, so
  * they are never candidates for elision.
+ *
+ * `setRoot` writes the root back, for the case where `data` IS the string — a
+ * tool that answers with rendered text rather than a record. Without it that
+ * shape had no addressable leaf at all and fell straight to the floor, losing
+ * an answer that rung 3 could have kept a prefix of.
  */
-function longestStringLeaf(root: unknown, path: string): StringLeaf | undefined {
+function longestStringLeaf(
+  root: unknown,
+  path: string,
+  setRoot: (next: string) => void,
+): StringLeaf | undefined {
   let best: StringLeaf | undefined;
 
   const visit = (value: unknown, at: string, set: (next: string) => void): void => {
@@ -289,9 +298,7 @@ function longestStringLeaf(root: unknown, path: string): StringLeaf | undefined 
     }
   };
 
-  visit(root, path, () => {
-    /* the root of the walk is never a replaceable leaf on its own */
-  });
+  visit(root, path, setRoot);
   return best;
 }
 
@@ -335,7 +342,23 @@ export function truncateResult(
   const budget = normalizeBudget(maxResultChars);
   const rawEnvelope = toJsonRecord(result);
   const redacted: unknown = redact === undefined ? rawEnvelope : redact(rawEnvelope);
-  const envelope: JsonRecord = isRecord(redacted) ? redacted : rawEnvelope;
+  // FAIL CLOSED. `redact` is typed `(value: unknown) => unknown`, so a redactor
+  // is free to answer with something that is not an envelope — a depth marker,
+  // a string, nothing at all. Falling back to `rawEnvelope` here would put the
+  // UNREDACTED result on the wire precisely when the redaction step misbehaved,
+  // which is the one moment it must not. `registry.render` catches this and
+  // answers with a complete `ok: false` envelope instead (D85).
+  if (!isRecord(redacted)) {
+    throw new JiraError({
+      kind: 'unexpected_shape',
+      message: 'The redaction step did not return a result envelope.',
+      retryable: false,
+      remediation:
+        'A redactor must map an object to an object. Fix the redactor rather ' +
+        'than the result: the unredacted envelope is not an acceptable fallback.',
+    });
+  }
+  const envelope: JsonRecord = redacted;
 
   const full = serialize(envelope);
   if (full.length <= budget) {
@@ -387,7 +410,9 @@ export function truncateResult(
   if (collection !== undefined && total > 0) {
     collection.set(original.slice(0, 1));
   }
-  const leaf = longestStringLeaf(envelope['data'], 'data');
+  const leaf = longestStringLeaf(envelope['data'], 'data', (next) => {
+    envelope['data'] = next;
+  });
   if (leaf !== undefined && leaf.value.length > 0) {
     const size = leaf.value.length;
     const applyCut = (keep: number): void => {
@@ -457,12 +482,14 @@ export interface RenderedResult {
  * inside them are harmless on their own and are left alone. Astral code points
  * are skipped because a `\uXXXX` escape cannot express them — the delimiters
  * are BMP characters and a guard is cheaper than a surrogate encoder.
+ *
+ * String iteration yields whole code points, so an astral one arrives as a
+ * two-unit surrogate pair: `length === 1` IS the BMP test, and it also proves
+ * index 0 exists, which is why no `?? 0` fallback appears here or in
+ * {@link fenceEscape}.
  */
 const DELIMITER_CHARS: readonly string[] = [...new Set(TAINT_BEGIN + TAINT_END)].filter(
-  (char) => {
-    const code = char.codePointAt(0) ?? 0;
-    return code > 0x7f && code <= 0xffff;
-  },
+  (char) => char.length === 1 && char.charCodeAt(0) > 0x7f,
 );
 
 /**
@@ -479,7 +506,7 @@ const DELIMITER_CHARS: readonly string[] = [...new Set(TAINT_BEGIN + TAINT_END)]
 function fenceEscape(json: string): string {
   let escaped = json;
   for (const char of DELIMITER_CHARS) {
-    const code = (char.codePointAt(0) ?? 0).toString(16).padStart(4, '0');
+    const code = char.charCodeAt(0).toString(16).padStart(4, '0');
     escaped = escaped.replaceAll(char, `\\u${code}`);
   }
   return escaped;

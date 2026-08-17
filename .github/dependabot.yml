@@ -33,11 +33,15 @@ updates:
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
     groups:
-      # ESLint and its config package are one project released in lockstep:
-      # `@eslint/js@10` declares `peer eslint: ^10`, so bumping it alone leaves
-      # npm nesting a second copy and the repo linting with eslint 9 against
-      # eslint 10's ruleset. Listed before `minor-and-patch` so every eslint
-      # update — major or not — lands in one coordinated PR.
+      # ESLint and its config package are one project, and `@eslint/js@10`
+      # declares `peerOptional eslint: ^10`, so bumping it alone does not
+      # install at all — npm refuses the tree with ERESOLVE (measured; the
+      # earlier claim that it silently nests a second copy was wrong). Their
+      # version numbers also drift apart inside a major, because `@eslint/js` is
+      # republished only when the shipped configs change, so the pair moves to
+      # its own latests rather than to a matching number. Listed before
+      # `minor-and-patch` so every eslint update — major or not — lands in one
+      # coordinated PR.
       eslint:
         patterns:
           - 'eslint'

@@ -295,6 +295,77 @@ test('closing a server that closes its own transport still reports exactly one s
   );
 });
 
+// ---------------------------------------------------------------------------
+// A close that itself fails
+//
+// `close()` is wired into two event listeners — stdin's `end`/`close` and the
+// transport's `onclose` — and an event listener has no caller to hand a
+// rejection to. Both swallow, which is only defensible if the shutdown still
+// happened and the failure is still visible to whoever holds the handle.
+// ---------------------------------------------------------------------------
+
+/** A server whose `close()` always rejects, with an identifiable failure. */
+function unclosableServer(failure: Error): ConnectableServer {
+  return {
+    connect(transport: Transport): Promise<void> {
+      return transport.start();
+    },
+    close(): Promise<void> {
+      return Promise.reject(failure);
+    },
+  };
+}
+
+test('EOF still shuts the session down when the server refuses to close', async () => {
+  const stdin = new PassThrough();
+  const logger = createFakeLogger();
+  const failure = new Error('the server refused to close');
+  const handle = await connectTransport(unclosableServer(failure), {
+    settings: settingsOf(),
+    logger,
+    stdin,
+    stdout: new PassThrough(),
+  });
+
+  stdin.end();
+  await tick();
+  await tick();
+
+  // The listener swallowed the rejection — an unhandled one would take the
+  // process down, and there is no client left to answer anyway — but nothing
+  // else was lost: the shutdown was logged, the handle knows the session is
+  // gone, and a caller that still holds it is told what went wrong.
+  assert.deepEqual(
+    logger.eventsOf('shutdown').map((event) => (event.fields ?? {})['reason']),
+    ['stdin_eof'],
+  );
+  assert.equal(handle.closed, true);
+  await assert.rejects(handle.close('sigterm'), (error: unknown) => error === failure);
+});
+
+test('a transport that dies on its own reports fatal even if the close fails', async () => {
+  const logger = createFakeLogger();
+  const failure = new Error('the server refused to close');
+  const handle = await connectTransport(unclosableServer(failure), {
+    settings: settingsOf(),
+    logger,
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+  });
+
+  // The transport tearing itself down — what an oversized frame ends in, minus
+  // the 10 MiB. `onclose` is the only thing left to notice.
+  await handle.transport.close();
+  await tick();
+
+  assert.deepEqual(
+    logger.eventsOf('shutdown').map((event) => (event.fields ?? {})['reason']),
+    ['fatal'],
+  );
+  assert.equal(handle.closed, true);
+  await assert.rejects(handle.close('sigterm'), (error: unknown) => error === failure);
+});
+
 test('a shutdown log line is the only thing this module ever emits', async () => {
   const stdin = new PassThrough();
   const logger = createFakeLogger();

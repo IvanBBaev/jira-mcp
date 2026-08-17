@@ -362,7 +362,10 @@ const headingArb: fc.Arbitrary<AdfNode> = fc
 const codeBlockArb: fc.Arbitrary<AdfNode> = fc
   .tuple(
     fc.option(fc.constantFrom('js', 'python', 'text'), { nil: undefined }),
-    fc.stringOf(fc.constantFrom('a', 'b', ' ', '\n', '`', '*', '#'), { maxLength: 20 }),
+    fc.string({
+      unit: fc.constantFrom('a', 'b', ' ', '\n', '`', '*', '#'),
+      maxLength: 20,
+    }),
   )
   .map(([language, body]) => {
     const node: AdfNode = {
@@ -422,8 +425,8 @@ test('property: the subset survives adfToMarkdown → adfFromMarkdown', () => {
 });
 
 test('property: adfFromMarkdown is total and its markdown is a fixed point', () => {
-  const noisyArb = fc.stringOf(
-    fc.constantFrom(
+  const noisyArb = fc.string({
+    unit: fc.constantFrom(
       'a',
       ' ',
       '\n',
@@ -448,8 +451,8 @@ test('property: adfFromMarkdown is total and its markdown is a fixed point', () 
       ':',
       '/',
     ),
-    { maxLength: 40 },
-  );
+    maxLength: 40,
+  });
 
   fc.assert(
     fc.property(fc.oneof(noisyArb, fc.string()), (text) => {

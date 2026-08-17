@@ -1,0 +1,33 @@
+{
+  // Publish-time compiler settings. `npm run build:publish` uses this file;
+  // every other build — the dev loop, `npm run check`, CI — uses tsconfig.json.
+  //
+  // The only difference is the two map flags, and the reason is what `files` in
+  // package.json already says: `!build/**/*.map` keeps source maps out of the
+  // tarball, because a map embeds absolute build paths and, with
+  // sourcesContent, the TypeScript source (scripts/check-tarball.mjs states the
+  // rule). tsc does not know that, so it writes a `//# sourceMappingURL=`
+  // footer into every emitted `.js` and `.d.ts` anyway — leaving a published
+  // package in which every shipped file points at a file that was never
+  // published. Harmless at runtime (Node ignores it without
+  // `--enable-source-maps`, TypeScript falls back silently), and still a
+  // dangling reference in every file of a release.
+  //
+  // Turning the flags off HERE rather than in tsconfig.json is deliberate.
+  // `.c8rc.json` measures coverage over the compiled output with
+  // `excludeAfterRemap: true`, which remaps `build/*.js` back to `src/*.ts`
+  // through exactly these maps; without them the excludes (written in src/
+  // terms) stop matching, the test files and fakes are counted as product code,
+  // and the floors stop meaning anything. The development build keeps its maps;
+  // only the tarball loses them.
+  //
+  // `removeComments` is deliberately NOT set here: it is one flag for both
+  // outputs, so stripping comments from the emitted JS also strips every JSDoc
+  // block from the `.d.ts` files this package advertises through `types` —
+  // see docs/RELEASING.md §3.1.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declarationMap": false
+  }
+}

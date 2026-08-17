@@ -16,7 +16,7 @@
  * no credential reaches the media host, that the report and exit codes are what
  * the runbook says. It proves NOTHING about Jira. Where the fake had to take a
  * position on a wire detail that only Atlassian can settle, `fake-jira.mjs` says
- * so at the route and `docs/ai/gate-c.md` lists it as still needing Gate C. A
+ * so at the route and `docs/RELEASING.md` §6 lists it as still needing Gate C. A
  * green rehearsal is a statement about our code, never about theirs.
  *
  * HOW IT REACHES THE FAKE WITHOUT WEAKENING ANYTHING. The server refuses
@@ -129,10 +129,16 @@ dns.promises.lookup = async function lookup(hostname, options) {
  * @property {string} id
  * @property {string} title
  * @property {string[]} args        Flags handed to verify-live.mjs.
+ * @property {string[][]} [pre]     Driver runs to make first; their requests are
+ *                                  discarded, so `check` only ever sees the
+ *                                  measured run. Used to set up residue.
  * @property {object} [fake]        Extra options for startFakeJira.
  * @property {object[]} [faults]    Armed before the driver starts.
  * @property {boolean} [record]     Run with --record and audit the capture.
  * @property {number} [expectExit]  Expected process exit code.
+ * @property {false | string} [confirm]  Override --confirm-site: `false` omits it,
+ *                                  a string passes that host. Default: the fake's
+ *                                  host, so a destructive pass is confirmed.
  * @property {(ctx: object) => string[]} [check]  Extra assertions; returns failures.
  */
 
@@ -248,6 +254,43 @@ function agileWriteChecks({ requests, claims, state }) {
   return failures;
 }
 
+/**
+ * The residue tail, which every invocation now runs (C32).
+ *
+ * The inventory is the operator's only honest answer to "what did that just
+ * leave on my site", so a pass that stops producing it is a regression even when
+ * every other claim is green.
+ */
+function residueChecks({ claims, stderr }, expected = {}) {
+  const failures = [];
+  const c32 = claims.find((c) => c.id === 'C32');
+  if (c32 === undefined) failures.push('C32 did not run — the run left no inventory');
+  else if (c32.status !== 'PASS') failures.push(`C32 is ${c32.status}: ${c32.note}`);
+  else {
+    for (const [kind, count] of Object.entries(expected)) {
+      if (!new RegExp(`\\b${kind}=${String(count)}\\b`).test(c32.note)) {
+        failures.push(`C32 should report ${kind}=${String(count)}, said: ${c32.note}`);
+      }
+    }
+  }
+  // The inventory is printed on stderr, where diagnostics belong — stdout is
+  // the claim report. Both halves matter: an operator reads the rendering, and
+  // an empty class has to say so rather than vanish.
+  if (!stderr.includes('Residue — what this gate can still see on the site')) {
+    failures.push('the residue table was never rendered');
+  }
+  for (const title of [
+    'throwaway issues',
+    'project versions',
+    'project components',
+    'sprints',
+    'local files in JIRA_MEDIA_DIR',
+  ]) {
+    if (!stderr.includes(title)) failures.push(`the residue table omits "${title}"`);
+  }
+  return failures;
+}
+
 /** Every agile write claim SKIPped, with nothing having reached the wire. */
 function agileWriteSkipped(claims, why) {
   const failures = [];
@@ -269,7 +312,7 @@ const PASSES = [
     args: ['--write', '--irreversible'],
     record: true,
     expectExit: EXIT_OK,
-    check: ({ requests, claims, state }) => {
+    check: ({ requests, claims, state, stderr }) => {
       const failures = [];
       // Rule 3 in the driver's own header: writes touch only what it created.
       const wrote = requests.filter(
@@ -282,10 +325,26 @@ const PASSES = [
       );
       if (!deleted)
         failures.push('--irreversible ran but no issue DELETE reached the fake');
-      if (claims.length !== 30) {
-        failures.push(`expected 30 claims in the report, saw ${String(claims.length)}`);
+      if (claims.length !== 33) {
+        failures.push(`expected 33 claims in the report, saw ${String(claims.length)}`);
       }
+      const c00 = claims.find((c) => c.id === 'C00');
+      if (c00 === undefined) failures.push('C00 did not run — no doctor preflight');
+      else if (c00.status !== 'PASS') failures.push(`C00 is ${c00.status}: ${c00.note}`);
+      const c31 = claims.find((c) => c.id === 'C31');
+      if (c31 === undefined) failures.push('C31 did not run — --project2 is dead again');
+      else if (c31.status !== 'PASS') failures.push(`C31 is ${c31.status}: ${c31.note}`);
       failures.push(...agileWriteChecks({ requests, claims, state }));
+      // A full run deletes its issue but CANNOT delete the version or the
+      // sprint (D73), and it leaves the file it staged for the upload. Those
+      // three numbers are the gate's residue contract; if any of them moves,
+      // the runbook is lying to the owner.
+      failures.push(
+        ...residueChecks(
+          { claims, stderr },
+          { issues: 0, versions: 1, components: 0, sprints: 1, media: 1 },
+        ),
+      );
       // Recorded, not incidental: with the fake behaving the way real Jira
       // behaves (`redirect=false` answered with 200 and the bytes), the media
       // host is never contacted. C13 is named accordingly; pass B is the only
@@ -324,7 +383,10 @@ const PASSES = [
   {
     id: 'C',
     title: 'reads with a 429 and a 503 injected',
-    args: [],
+    // `--skip-doctor`: the preflight probes GET /myself, so it would swallow the
+    // injected 503 before the read phase ever saw it, and this pass would then
+    // assert the retry against the wrong request. Pass A covers C00.
+    args: ['--skip-doctor'],
     faults: [
       { method: 'GET', path: '/rest/api/3/myself', status: 503, times: 1 },
       {
@@ -427,8 +489,17 @@ const PASSES = [
     // A missing licence is a property of the site, not a defect in the code, so
     // the gate's evidence must not show it as red.
     expectExit: EXIT_OK,
-    check: ({ requests, claims }) => {
+    check: ({ requests, claims, stderr }) => {
       const failures = [];
+      // The residue table's blind spot, end to end: with the agile root 403ing,
+      // the inventory cannot enumerate sprints, and printing `sprints: none`
+      // there would tell the operator the site is clean when nobody looked.
+      if (!/sprints: UNKNOWN/.test(stderr)) {
+        failures.push('the residue table did not mark sprints as unread');
+      }
+      if (/\bsprints: none\b/.test(stderr)) {
+        failures.push('the residue table called an unreadable class clean');
+      }
       const c11 = claims.find((c) => c.id === 'C11');
       if (c11 === undefined) failures.push('C11 did not run');
       else if (c11.status !== 'SKIP') {
@@ -507,6 +578,145 @@ const PASSES = [
       return failures;
     },
   },
+  {
+    id: 'H',
+    title: 'residue inventory finds what an interrupted run left behind',
+    // The pre-run keeps its issue — the shape of a gate that was Ctrl-C'd, or
+    // that failed half way. The measured run is the READ-ONLY inventory, which
+    // is what an operator types when they want to know what is on their site.
+    pre: [['--write', '--keep']],
+    args: ['--residue'],
+    expectExit: EXIT_OK,
+    check: ({ requests, claims, stderr }) => {
+      const failures = [];
+      failures.push(
+        ...residueChecks(
+          { claims, stderr },
+          { issues: 1, versions: 1, components: 0, sprints: 1, media: 1 },
+        ),
+      );
+      // Read-only means read-only: --residue without --purge must not mutate.
+      const wrote = requests.filter((r) => ['POST', 'PUT', 'DELETE'].includes(r.method));
+      const mutating = wrote.filter((r) => r.path !== '/rest/api/3/search/jql');
+      if (mutating.length > 0) {
+        failures.push(
+          `--residue wrote to the site: ${[
+            ...new Set(mutating.map((r) => `${r.method} ${r.path}`)),
+          ].join(', ')}`,
+        );
+      }
+      // The claim phases must not run: this mode exists to be cheap and safe.
+      if (claims.some((c) => c.id !== 'C32')) {
+        failures.push(
+          `--residue ran claims other than C32: ${claims.map((c) => c.id).join(', ')}`,
+        );
+      }
+      // The narrowing goes on the WIRE, not just in the client — a project with
+      // 40k issues must not be paged in full to find three.
+      const jql = requests.filter((r) => r.path === '/rest/api/3/search/jql');
+      if (!jql.some((r) => /summary\s*~/.test(String(r.body?.jql)))) {
+        failures.push('the inventory paged the project instead of narrowing in JQL');
+      }
+      return failures;
+    },
+  },
+  {
+    id: 'I',
+    title: 'the documented cleanup command clears what it can',
+    // The exact command the driver prints in its own residue table. If this
+    // pass regresses, the runbook is telling the owner to type something that
+    // does not work.
+    pre: [['--write', '--keep']],
+    args: ['--residue', '--purge', '--irreversible'],
+    expectExit: EXIT_OK,
+    check: ({ requests, claims, stderr, state }) => {
+      const failures = [];
+      const c33 = claims.find((c) => c.id === 'C33');
+      if (c33 === undefined) failures.push('C33 did not run — nothing was purged');
+      else if (c33.status !== 'PASS') failures.push(`C33 is ${c33.status}: ${c33.note}`);
+      const deleted = requests.filter(
+        (r) => r.method === 'DELETE' && /^\/rest\/api\/3\/issue\/[^/]+$/.test(r.path),
+      );
+      if (deleted.length !== 1) {
+        failures.push(`expected 1 issue DELETE, saw ${String(deleted.length)}`);
+      }
+      const alive = [...state.issues.values()].filter(
+        (issue) => !issue.deleted && /^gate-c verify-live /.test(String(issue.summary)),
+      );
+      if (alive.length > 0) {
+        failures.push(`${String(alive.length)} gate-c issue(s) survived the purge`);
+      }
+      // C32 runs BEFORE the purge, so its note is the inventory that the purge
+      // then acted on — one issue and one staged file.
+      failures.push(
+        ...residueChecks(
+          { claims, stderr },
+          { issues: 1, versions: 1, components: 0, sprints: 1, media: 1 },
+        ),
+      );
+      // The table printed at the end is the post-purge truth: what it could
+      // clear is gone, and what it CANNOT clear is still named, or the operator
+      // will believe the site is clean when a version and a sprint are still
+      // on it.
+      for (const line of [
+        'throwaway issues: none',
+        'local files in JIRA_MEDIA_DIR: none',
+      ]) {
+        if (!stderr.includes(line)) {
+          failures.push(`after the purge the table should say "${line}"`);
+        }
+      }
+      for (const marker of ['Project settings → Releases', 'Backlog → the sprint']) {
+        if (!stderr.includes(marker)) {
+          failures.push(`the residue table stopped saying how to remove: ${marker}`);
+        }
+      }
+      return failures;
+    },
+  },
+  {
+    id: 'J',
+    title: 'a write with no --confirm-site never starts',
+    args: ['--write', '--irreversible'],
+    confirm: false,
+    expectExit: EXIT_CONFIG,
+    check: ({ requests, claims, stderr }) => {
+      const failures = [];
+      // The whole value of the guard is that it fires BEFORE the network.
+      if (requests.length > 0) {
+        failures.push(
+          `${String(requests.length)} request(s) reached the fake despite the refusal`,
+        );
+      }
+      if (claims.length > 0) failures.push('claims ran despite the refusal');
+      if (!/--confirm-site/.test(stderr)) {
+        failures.push('the refusal does not tell the operator what to type');
+      }
+      if (!stderr.includes(API_HOST)) {
+        failures.push('the refusal does not name the site it would have mutated');
+      }
+      return failures;
+    },
+  },
+  {
+    id: 'K',
+    title: 'a write confirming the WRONG site never starts',
+    args: ['--write'],
+    // The failure this exists for: a shell that still has last month's site
+    // exported, and an operator who pasted the right host from the runbook.
+    confirm: 'production.example.invalid',
+    expectExit: EXIT_CONFIG,
+    check: ({ requests, stderr }) => {
+      const failures = [];
+      if (requests.length > 0) {
+        failures.push(`${String(requests.length)} request(s) reached the fake`);
+      }
+      if (!stderr.includes('production.example.invalid') || !stderr.includes(API_HOST)) {
+        failures.push('the mismatch message does not name BOTH hosts');
+      }
+      return failures;
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -537,6 +747,35 @@ function parseClaims(stdout) {
 // Running one pass
 // ---------------------------------------------------------------------------
 
+/** The flags the driver refuses to honour without `--confirm-site` (CC-83). */
+const DESTRUCTIVE_FLAGS = ['--write', '--irreversible', '--purge'];
+
+/**
+ * Build one driver invocation.
+ *
+ * `--confirm-site` is added for a destructive pass rather than written into
+ * every pass's args, so that passes J and K — the ones that assert the guard
+ * FIRES — are the only places the value is spelled out, and a future pass cannot
+ * accidentally look confirmed because someone copied a flag list.
+ */
+function argvFor(pass, args, recordDir) {
+  const needsConfirm = args.some((arg) => DESTRUCTIVE_FLAGS.includes(arg));
+  const confirm =
+    pass.confirm === false || !needsConfirm
+      ? []
+      : ['--confirm-site', typeof pass.confirm === 'string' ? pass.confirm : API_HOST];
+  return [
+    DRIVER,
+    '--project',
+    PROJECT,
+    '--project2',
+    PROJECT2,
+    ...args,
+    ...confirm,
+    ...(recordDir === undefined ? [] : ['--record', recordDir]),
+  ];
+}
+
 /**
  * @param {Pass} pass
  * @param {object} context
@@ -556,15 +795,7 @@ async function runPass(pass, context) {
     for (const fault of pass.faults ?? []) fake.arm(fault);
 
     const recordDir = join(context.workdir, `record-${pass.id}`);
-    const args = [
-      DRIVER,
-      '--project',
-      PROJECT,
-      '--project2',
-      PROJECT2,
-      ...pass.args,
-      ...(pass.record === true ? ['--record', recordDir] : []),
-    ];
+    const args = argvFor(pass, pass.args, pass.record === true ? recordDir : undefined);
 
     const env = {
       ...process.env,
@@ -580,10 +811,23 @@ async function runPass(pass, context) {
     };
     await mkdir(env.JIRA_MEDIA_DIR, { recursive: true });
 
+    const failures = [];
+    // Set-up runs, if the pass needs a site that is already dirty. Their traffic
+    // is dropped afterwards so `check` only ever reasons about the measured run.
+    for (const preArgs of pass.pre ?? []) {
+      const pre = await spawnDriver(argvFor(pass, preArgs), env, context.verbose);
+      if (pre.exitCode !== EXIT_OK) {
+        failures.push(
+          `set-up run \`${preArgs.join(' ')}\` exited ${String(pre.exitCode)}, ` +
+            'so the pass never reached what it meant to test',
+        );
+      }
+      fake.clearRequests();
+    }
+
     const result = await spawnDriver(args, env, context.verbose);
     const claims = parseClaims(result.stdout);
 
-    const failures = [];
     if (pass.expectExit !== undefined && result.exitCode !== pass.expectExit) {
       failures.push(
         `exit code ${String(result.exitCode)}, expected ${String(pass.expectExit)}`,
@@ -591,7 +835,14 @@ async function runPass(pass, context) {
     }
     // `state` is the fake's own view of the world after the run — the only way
     // to assert an EFFECT (the sprint really is closed) rather than an intent.
-    const context_ = { requests: fake.requests, claims, recordDir, state: fake.state };
+    const context_ = {
+      requests: fake.requests,
+      claims,
+      recordDir,
+      state: fake.state,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
     failures.push(...universalChecks(context_));
     failures.push(...(pass.check?.(context_) ?? []));
 
@@ -700,7 +951,7 @@ async function main() {
   if (values.help === true) {
     process.stdout.write(
       'rehearse-live — run scripts/verify-live.mjs against scripts/fake-jira.mjs.\n\n' +
-        'Flags: --pass <A..G> (repeatable), --dump, --keep, --verbose, --help\n',
+        'Flags: --pass <A..K> (repeatable), --dump, --keep, --verbose, --help\n',
     );
     return EXIT_OK;
   }
@@ -801,7 +1052,7 @@ function summarise(results) {
   if (bad === 0) {
     process.stdout.write(
       '\nThe driver behaved. This says nothing about whether Jira agrees —\n' +
-        'see docs/ai/gate-c.md for what still needs a real tenant.\n',
+        'see docs/RELEASING.md §6 for what still needs a real tenant.\n',
     );
     return EXIT_OK;
   }

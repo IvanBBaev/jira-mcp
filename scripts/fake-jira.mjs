@@ -22,7 +22,7 @@
  *   - Nothing here is imported by `src/`, and `src/` is not modified to
  *     accommodate it. The server reaches this fake through its ordinary
  *     supported configuration (an allowlisted host in JIRA_ALLOWED_HOSTS),
- *     never through a test-only back door. See docs/ai/gate-c.md.
+ *     never through a test-only back door. See docs/RELEASING.md §6.
  *   - TLS, because `core/host.ts` forces `https:` on every site. The
  *     certificate is generated per run into a temp directory and trusted by the
  *     child through NODE_EXTRA_CA_CERTS.
@@ -119,6 +119,7 @@ export function ensureCertificate(dir) {
       'fake-jira: could not generate a TLS certificate with openssl. The ' +
         'rehearsal needs it because core/host.ts forces https: on every site.\n' +
         String(error),
+      { cause: error },
     );
   }
   return { keyFile, certFile, key: readFileSync(keyFile), cert: readFileSync(certFile) };
@@ -512,6 +513,31 @@ function parseMultipart(buffer, contentType) {
 function projectFromJql(jql) {
   const match = /\bproject\s*=\s*"?([A-Za-z][A-Za-z0-9_]*)"?/i.exec(String(jql ?? ''));
   return match?.[1];
+}
+
+/** `summary ~ "gate-c verify-live"` → `gate-c verify-live`. */
+function summaryTermFromJql(jql) {
+  const match = /\bsummary\s*~\s*"([^"]*)"/i.exec(String(jql ?? ''));
+  return match?.[1];
+}
+
+/**
+ * Jira's `~` is a text match, not a substring match, and the difference is the
+ * whole reason the residue filter re-checks its results client-side (CC-84).
+ * Real Jira stems, folds case and matches on WORDS, so `summary ~ "gate-c"`
+ * returns "Gate C rollout plan" as happily as it returns the gate's own issues.
+ * The fake reproduces that looseness on purpose: a fake that matched exactly
+ * would rehearse a filter safer than the one production gets.
+ */
+function matchesSummaryTerm(summary, term) {
+  if (term === undefined) return true;
+  const words = String(term)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter((word) => word !== '');
+  if (words.length === 0) return true;
+  const haystack = String(summary ?? '').toLowerCase();
+  return words.every((word) => haystack.includes(word));
 }
 
 function encodeToken(offset) {
@@ -1197,9 +1223,11 @@ function buildRoutes(server) {
             "Error in the JQL Query: Field 'NOT_A_FIELD' does not exist or you do not have permission to view it.",
           ]);
         }
+        const summaryTerm = summaryTermFromJql(body.jql);
         const rows = [...state.issues.values()]
           .filter((issue) => !issue.deleted)
           .filter((issue) => projectKey === undefined || issue.projectKey === projectKey)
+          .filter((issue) => matchesSummaryTerm(issue.summary, summaryTerm))
           .sort((left, right) => left.created.localeCompare(right.created));
 
         let offset = 0;

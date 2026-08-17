@@ -85,17 +85,31 @@ export const HTTP_TRANSPORT_REMEDIATION =
   'server. JIRA_HTTP_PORT and JIRA_HTTP_TOKEN keep being parsed so the ' +
   'configuration survives the v1.5 upgrade unchanged.';
 
-function unsupportedTransport(kind: string): JiraError {
-  const isHttp = kind === 'http';
+/**
+ * The refusal for every transport this build cannot serve, keyed by kind.
+ *
+ * A table rather than an `isHttp ? … : generic-fallback` pair, because the
+ * fallback was unreachable code: `TRANSPORT_KINDS` has exactly two members and
+ * `core/settings.ts` rejects anything outside it, so the only kind that ever
+ * reaches here is `http`. The `Record` keeps that honest at COMPILE time —
+ * adding a transport makes this table incomplete and breaks the build here,
+ * which is where the new kind's refusal belongs, instead of silently shipping a
+ * generic sentence no test ever exercised.
+ */
+const REFUSALS: Record<
+  Exclude<TransportKind, 'stdio'>,
+  { readonly message: string; readonly remediation: string }
+> = {
+  http: { message: HTTP_TRANSPORT_MESSAGE, remediation: HTTP_TRANSPORT_REMEDIATION },
+};
+
+function unsupportedTransport(kind: Exclude<TransportKind, 'stdio'>): JiraError {
+  const refusal = REFUSALS[kind];
   return new JiraError({
     kind: 'config',
-    message: isHttp
-      ? HTTP_TRANSPORT_MESSAGE
-      : `JIRA_TRANSPORT="${kind}" is not a transport this server knows.`,
+    message: refusal.message,
     retryable: false,
-    remediation: isHttp
-      ? HTTP_TRANSPORT_REMEDIATION
-      : 'Set JIRA_TRANSPORT=stdio (the default).',
+    remediation: refusal.remediation,
   });
 }
 

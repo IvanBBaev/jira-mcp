@@ -33,6 +33,15 @@
   startup; all logs, `JiraError` messages (redacted in constructor), and shaped
   results pass through it. Structural stripping of `Authorization` echoes and
   token-bearing query strings happens before value redaction.
+- Registered values are matched as **literal text**, so protection never depends
+  on a secret looking like a credential — but a placeholder token that is very
+  short, or that spells a word this server prints itself (`t`, `settings`), also
+  matches ordinary output and buries the transcript under placeholders. The
+  redactor registers it anyway: declining to protect a value the operator
+  believes is protected trades a usability problem for a disclosure one. Startup
+  validation raises a `warning`-severity finding naming the variable instead —
+  visible in doctor and in the startup report, and never blocking the run
+  [test: src/core/settings.test.ts].
 - **Scope note: redaction targets secrets, not PII.** Emails, display names and
   account ids in tool results are legitimate payload — minimizing them is a
   shaping-level concern (see Data handling below and the user-shaping contract
@@ -206,8 +215,9 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
 
 ## Data handling & acceptable use
 
-This section (mirrored in the README skeleton) states what the tool does with
-data, because an MCP server is a data conduit, not just a client:
+This section is the only place that states what the tool does with data — the
+README's *Data handling* section points here instead of restating it — and it
+exists because an MCP server is a data conduit, not just a client:
 
 - **Outbound flow**: every tool result — issue content, comments, user names —
   enters the MCP client's model context and is transmitted to the AI provider
@@ -233,8 +243,9 @@ data, because an MCP server is a data conduit, not just a client:
   now watcher/vote lists and project-role membership) can technically
   reconstruct colleague activity. Using it for workplace
   monitoring/surveillance of individuals is outside the intended use and, in
-  most jurisdictions, subject to labor/privacy law — the README says so
-  explicitly.
+  most jurisdictions, subject to labor/privacy law. This bullet is where that is
+  stated; the README carries no separate acceptable-use text, only a pointer to
+  this document.
 - **PII minimization**: user objects are shaped to
   `{ accountId, displayName, active? }`; email appears only when a tool is
   explicitly asked (`includeEmail: true`) — see TOOLS.md shaping contract. The
@@ -247,5 +258,7 @@ data, because an MCP server is a data conduit, not just a client:
 
 ## Reporting
 
-`SECURITY.md` at repo root (publish artifact) will carry the standard disclosure
-policy, mirroring servicenow-mcp.
+`SECURITY.md` at repo root (publish artifact) carries the disclosure policy:
+supported versions, private vulnerability reporting through GitHub rather than a
+public issue, and what to expect after a report. It is deliberately *not* a
+second threat model — it links back here for that.

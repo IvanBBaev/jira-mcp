@@ -156,13 +156,88 @@ function isPlainObject(value: object): boolean {
   return proto === Object.prototype || proto === null;
 }
 
+// ---------------------------------------------------------------------------
+// Needles that would shred the output they are meant to protect
+// ---------------------------------------------------------------------------
+
+/**
+ * Below this many characters a registered value stops being a needle and
+ * becomes a common substring: it matches inside base64 blobs, issue keys and
+ * ordinary prose. That is not only a log problem — `mcp/result.ts` runs the
+ * redactor over every tool RESULT, so the collateral is the tenant data the
+ * model was supposed to read. Eight is far shorter than any credential
+ * Atlassian issues, so a real secret cannot trip it.
+ */
+export const MIN_DISTINCTIVE_SECRET_LENGTH = 8;
+
+/**
+ * A sample of the text this server prints whatever it is talking to: log-line
+ * keys and event names (OBSERVABILITY.md), result-envelope keys, and the labels
+ * doctor writes on its report. A registered value that is a substring of THIS
+ * blanks output the operator needs however long it is — `settings` is eight
+ * characters and destroys doctor's own status lines.
+ *
+ * A heuristic, and deliberately not exhaustive: it only ever raises a warning,
+ * never refuses a secret and never skips a replacement, so a miss costs an
+ * unexplained wall of placeholders and never a leak.
+ */
+const OWN_OUTPUT_SPECIMEN = [
+  // Log envelope, levels, and the events a run cannot avoid emitting.
+  'ts level event cid fields debug info warn error',
+  'server_start settings_report tool_call http_request http_response shutdown',
+  // Result-envelope and error keys every tool answer carries.
+  'ok data error hints kind message remediation',
+  // Doctor's report: probe names and the words in its summary line.
+  'settings env-file host identity deployment search agile journal token-expiry',
+  'probe probes passed failed informational skipped skip fail',
+  // Identifiers that appear in nearly every line of output.
+  'jira-mcp-ai jira atlassian.net https rest api doctor issue project',
+].join(' ');
+
+/** Why a value is a bad literal needle. Not a claim about the value's shape. */
+export type RedactionRisk = 'too_short' | 'collides_with_own_output';
+
+/**
+ * Would registering `secret` destroy the output it is supposed to protect?
+ *
+ * Registration is literal substring matching, so `t` — or a placeholder like
+ * `settings`, a word this server prints on its own status line — matches
+ * everywhere and turns diagnostics into a wall of placeholders. The failure is
+ * safe (over-redaction, never under-redaction) but it is exactly what a
+ * first-time operator produces by pasting a dummy token, and the output that
+ * would have explained it is the output being shredded.
+ *
+ * The fix deliberately does NOT live in {@link createRedactor}, which goes on
+ * registering whatever it is handed. A redactor that quietly declined a needle
+ * would leave the operator believing a value is protected when it is not — a
+ * usability problem traded for a disclosure one, which is never the right
+ * trade here. So this is a PREDICATE, not a policy: `core/settings.ts` calls it
+ * during startup validation and raises a warning-severity finding, which
+ * doctor prints and which never blocks startup. Redaction stays maximal; the
+ * operator just gets told why the output looks like that.
+ *
+ * Not a credential-shape test either. The space of valid Atlassian credentials
+ * is not closed (current API tokens, older short ones, OAuth, PATs), so "this
+ * does not look like a token" is a false-alarm generator. Both branches below
+ * ask only about the blast radius of the needle itself.
+ */
+export function redactionRisk(secret: string): RedactionRisk | undefined {
+  if (secret === '') return undefined; // registration already ignores it
+  if (secret.length < MIN_DISTINCTIVE_SECRET_LENGTH) return 'too_short';
+  if (OWN_OUTPUT_SPECIMEN.includes(secret)) return 'collides_with_own_output';
+  return undefined;
+}
+
 /**
  * Create the redaction choke point.
  *
  * `secrets` are the values known at startup; `addSecret` registers the ones
  * discovered later (a profile token resolved on first use). An empty string is
  * ignored — it would match between every character and blank the output, which
- * is a broken log, not a safe one.
+ * is a broken log, not a safe one. Every other value is registered exactly as
+ * given, however short or however much of the output it happens to match;
+ * {@link redactionRisk} explains why complaining about such a value is startup
+ * validation's job and not this function's.
  */
 export function createRedactor(config: RedactorConfig = {}): Redactor {
   const placeholder = config.placeholder ?? DEFAULT_PLACEHOLDER;

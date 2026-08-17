@@ -83,6 +83,12 @@ in a log event.
   enough to diagnose "wrong site/wrong mode" from a support transcript alone.
 - Version observability: server version appears in `server_start`, in the
   startup line, and in `jira_capabilities` output.
+- A transcript that comes back as a wall of placeholders has a stated cause: a
+  registered secret that is very short, or that spells a word this server prints
+  itself, scrubs the diagnostics along with itself — including the
+  `settings_report` line above. Redaction is never weakened for it
+  (THREAT-MODEL.md §Credentials); startup validation adds a `warning`-severity
+  finding naming the variable to edit [test: src/core/settings.test.ts].
 
 ## Write journal
 

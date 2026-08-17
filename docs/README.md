@@ -15,7 +15,7 @@
 | [THREAT-MODEL.md](THREAT-MODEL.md) | Security posture; **normative write-gate contract**; data handling. |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | Log-event contract, never-log list, correlation ids, startup, call budget. |
 | [TESTING.md](TESTING.md) | Test tiers, fixtures, network fence, coverage, the `check` gate. |
-| [CORNER-CASES.md](CORNER-CASES.md) | CC-01…CC-75 — stable ids referenced by tests and the plan. |
+| [CORNER-CASES.md](CORNER-CASES.md) | Enumerated behaviours as stable `CC-nn` ids, referenced by test names and the plan. |
 | [DECISIONS.md](DECISIONS.md) | Decision ledger: accepted D-rows, open owner O-rows, gates A–C. |
 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | Phases 0–7 with exits and milestones. |
 | [WORK-PACKAGES.md](WORK-PACKAGES.md) | Parallel-execution overlay: agent-sized work packages in waves. |

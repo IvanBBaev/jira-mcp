@@ -138,6 +138,17 @@ interface AttemptFailure {
 }
 
 /**
+ * What one turn of the retry loop got: a response, or the reason there is none.
+ *
+ * A discriminated union rather than two `let`s, because "exactly one of the two
+ * is set" is an invariant the compiler can hold — the earlier shape needed a
+ * runtime guard against a state (`neither`) that `runAttempt` cannot produce.
+ */
+type AttemptOutcome =
+  | { readonly kind: 'result'; readonly result: AttemptResult }
+  | { readonly kind: 'failure'; readonly failure: AttemptFailure };
+
+/**
  * Where one `fetch` goes and what it carries. Normally there is exactly one per
  * attempt (the Jira route); a binary GET that Jira answers with a 303 produces
  * a second, deliberately credential-free one for the media host.
@@ -287,6 +298,10 @@ interface StatusMapping {
  * written for the model reading the tool result, so it names the next action,
  * not the failure; statuses without a bespoke text fall back to the kind's
  * `REMEDIATION` entry.
+ *
+ * 429 has no case here and must not grow one: the retry loop answers a 429
+ * itself — it either waits and retries, or throws `rate_limited` when the
+ * budget is spent — so this function is never called with one.
  */
 function describeStatus(status: number, headers: JiraResponseHeaders): StatusMapping {
   const kind = kindForStatus(status, { headers });
@@ -339,13 +354,6 @@ function describeStatus(status: number, headers: JiraResponseHeaders): StatusMap
         'The request was too large. Send fewer fields, or a smaller page size.',
     };
   }
-  if (status === 429) {
-    return {
-      kind,
-      remediation:
-        'Jira is rate limiting this site. Retry later, or reduce the call volume.',
-    };
-  }
   if (status >= 500 && kind === 'transport') {
     return {
       kind,
@@ -380,20 +388,25 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
   const clean = (text: string): string => options.redactor?.redactString(text) ?? text;
 
+  /**
+   * Every failure this module raises names the next action, so `remediation` is
+   * required here rather than optional: a JiraError from the wire tier without
+   * one is a gap the compiler should catch, not a runtime possibility.
+   */
   const fail = (init: {
     kind: JiraErrorKind;
     message: string;
     httpStatus?: number;
     jiraMessages?: readonly string[];
     retryable?: boolean;
-    remediation?: string;
+    remediation: string;
     detail?: string;
     cause?: unknown;
   }): JiraError =>
     new JiraError({
       ...init,
       message: clean(init.message),
-      remediation: init.remediation === undefined ? undefined : clean(init.remediation),
+      remediation: clean(init.remediation),
       detail: init.detail === undefined ? undefined : clean(init.detail),
       jiraMessages: init.jiraMessages?.map((entry) => clean(entry)),
     });
@@ -477,6 +490,17 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       if (body === null) {
         // No stream to meter (an empty body, or a fetch stub that returns
         // none): the buffer is already in memory, so just police its size.
+        //
+        // The over-cap arm below is NOT reachable through a conformant fetch
+        // and is kept anyway. Per the Fetch standard a null `body` means a
+        // bodiless response — 204/205/304, or one constructed with a null body
+        // — so "no stream" and "50 MiB of bytes" cannot both be true on the
+        // wire; CC-91 covers the reachable half (204 → zero bytes). Forcing the
+        // other half would take a Response with both `body` and `arrayBuffer`
+        // overridden, which tests the double rather than this code. It stays
+        // because the alternative to a wrong cap here is no cap at all: any
+        // future fetch that buffers instead of streaming would hand the process
+        // an unbounded allocation, and this line is what refuses it.
         const buffer = await guard.guard(response.arrayBuffer());
         if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
           throw tooLarge(buffer.byteLength, 'download');
@@ -608,6 +632,10 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
     /** Wait for a semaphore slot; queueing counts against the call budget. */
     const acquireSlot = async (): Promise<SlotRelease> => {
+      // Re-read the budget rather than trust the loop's check: the two reads are
+      // one synchronous run apart, so only a REAL clock can see them differ (and
+      // then by a millisecond). Kept because it is the only guard on this side
+      // of the seam — no test can force the window on the injected clock.
       if (remaining() <= 0) budgetExceeded();
       if (pool.queued(host) === 0 && pool.active(host) < concurrency) {
         return pool.acquire(host);
@@ -617,6 +645,10 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         return await pool.acquire(host, deadline.signal);
       } catch (error) {
         if (deadline.expired()) return budgetExceeded();
+        // Unreachable today: the pool rejects a queued waiter only through the
+        // signal it was handed, and that signal is this deadline. Kept as a
+        // rethrow rather than folded into the branch above, because reporting a
+        // future rejection as "the budget ran out" would be a lie.
         throw error;
       } finally {
         await deadline.cancel();
@@ -858,21 +890,25 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       const release = await acquireSlot();
       const guard = armAttempt(attemptTimeoutMs);
       const attemptStartedAt = clock.now();
-      let result: AttemptResult | undefined;
-      let failure: AttemptFailure | undefined;
+      // No initializer: the try assigns and so does every non-throwing path of
+      // the catch, which is what proves there is no third state to guard.
+      let outcome: AttemptOutcome;
 
       try {
-        result = await runAttempt(guard, attempt, attemptStartedAt);
+        outcome = {
+          kind: 'result',
+          result: await runAttempt(guard, attempt, attemptStartedAt),
+        };
       } catch (error) {
         if (error instanceof JiraError) throw error;
         const name = errorName(error);
-        if (name === 'TimeoutError') {
-          failure = { reason: 'timeout', cause: error };
-        } else if (name === 'AbortError') {
-          failure = { reason: 'aborted', cause: error };
-        } else {
-          failure = { reason: 'transport', cause: error };
-        }
+        const reason: FailureReason =
+          name === 'TimeoutError'
+            ? 'timeout'
+            : name === 'AbortError'
+              ? 'aborted'
+              : 'transport';
+        outcome = { kind: 'failure', failure: { reason, cause: error } };
       } finally {
         // The slot and the timeout cover the whole attempt, body included, and
         // both end HERE — before any backoff wait, so a sleeping retry never
@@ -881,7 +917,8 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         release();
       }
 
-      if (failure) {
+      if (outcome.kind === 'failure') {
+        const failure = outcome.failure;
         if (failure.reason === 'aborted') {
           // The caller cancelled; the outcome of an unsafe write is still
           // unknown, but this is not a failure we retry or dress up.
@@ -933,14 +970,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         });
       }
 
-      if (!result) {
-        // Unreachable: `runAttempt` either returns a result or throws.
-        throw fail({
-          kind: 'unexpected_shape',
-          message: `${method} ${route} produced no response.`,
-        });
-      }
-
+      const result = outcome.result;
       const { status, headers } = result;
 
       if (isRedirectStatus(status)) {

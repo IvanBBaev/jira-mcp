@@ -25,8 +25,11 @@ Two things shape the design:
 
 ## Registration
 
-```jsonc
-// .mcp.json / claude mcp add
+Put this in `.mcp.json` (project scope), or paste the inner `"jira"` object
+into `claude mcp add-json jira '<object>'` — `claude mcp add` takes CLI
+arguments, not JSON.
+
+```json
 {
   "mcpServers": {
     "jira": {
@@ -35,7 +38,7 @@ Two things shape the design:
       "env": {
         "JIRA_SITE": "mycompany",
         "JIRA_EMAIL": "me@example.com",
-        "JIRA_API_TOKEN": "…",
+        "JIRA_API_TOKEN": "<api-token>",
         "JIRA_WRITE_MODE": "plan"
       }
     }
@@ -52,6 +55,20 @@ Before wiring the server into a client, run
 runs the configuration and credential probes from a plain terminal and prints a
 report — the fastest way to learn whether the site, email and token actually
 work. `--help` and `--version` are also available.
+
+**If the server does not appear, it is almost always PATH.** Claude Desktop
+launches MCP servers from a minimal environment that does not include your
+shell's PATH, so a `node`/`npx` installed by nvm, Homebrew or fnm is invisible to
+it and the launch fails inside the client, before this server runs — you get the
+client's generic "server failed" message and nothing on this server's stderr,
+because there was no process. Fix it by giving an absolute path:
+`"command": "/usr/local/bin/npx"` (`which npx` prints yours). Claude Code, run
+from a terminal, inherits your PATH and is not affected.
+
+Every diagnostic this server writes goes to **stderr**, never stdout — stdout is
+the MCP protocol. Claude Code keeps it in `~/.claude/logs/`; Claude Desktop in
+`~/Library/Logs/Claude/mcp*.log` (macOS) or `%APPDATA%\Claude\logs\` (Windows).
+That is where the startup report and any `JIRA_*` configuration error will be.
 
 ## Configuration
 
@@ -210,7 +227,7 @@ To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 
 ```sh
 npm install
-npm run check   # typecheck, lint, format, build, test, docs-lint, prod audit
+npm run check   # typecheck, lint, format, build, tarball, test, docs-lint, prod audit
 ```
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) is the contributor entry point: the

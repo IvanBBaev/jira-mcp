@@ -47,6 +47,7 @@
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('build',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc",
+    "build:publish": "npm run clean && tsc -p tsconfig.publish.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -57,23 +58,24 @@
     "docs:lint": "node scripts/docs-lint.mjs",
     "readme": "npm run build && node scripts/generate-readme.mjs",
     "tarball": "node scripts/check-tarball.mjs",
+    "tarball:publish": "node scripts/check-tarball.mjs --publish",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "check:publish": "npm run typecheck && npm run lint && npm run format:check && npm run build && npm run tarball && npm run test:coverage && npm run docs:lint",
     "check": "npm run check:publish && npm run audit:prod",
-    "prepublishOnly": "npm run check:publish"
+    "prepublishOnly": "npm run check:publish && npm run build:publish && npm run tarball:publish"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.1",
     "c8": "^12.0.0",
-    "eslint": "^9.39.5",
+    "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import-x": "^4.17.1",
-    "fast-check": "^3.23.2",
+    "fast-check": "^4.9.0",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0"

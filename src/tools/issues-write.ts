@@ -151,7 +151,7 @@ const accountIdArg = z
  * document. The tool ring never builds ADF — `api/adf.ts` owns `toAdf`, including
  * the validation of a hand-written document.
  */
-const richTextArg = z.union([z.string(), z.record(z.unknown())]);
+const richTextArg = z.union([z.string(), z.record(z.string(), z.unknown())]);
 
 /**
  * D44: every rich-text write input reads its STRING form in one of two
@@ -171,7 +171,7 @@ const writeFormatArg = z
 const labelsArg = z.array(z.string().min(1));
 
 const fieldsArg = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .describe(
     'Raw field passthrough, keyed by Jira field id (customfield_10011). Values ' +
       'are sent as given; jira_get_create_meta shows the shape each field wants.',

@@ -127,8 +127,11 @@ minimum set is recorded.
 3. **MCP smoke** — build the server with fixture tools; list tools; call each
    registered tool against `fakeJiraRequest`; assert envelope shape and
    `structuredContent` mirroring.
-4. **Manifest snapshot** — the `PACKAGES` manifest serialized and locked;
-   README tool table generated and diffed (readme-sync test).
+4. **Manifest snapshot** — the `PACKAGES` manifest serialized and locked,
+   including the whole JSON Schema each tool emits with descriptions stripped at
+   every depth, so a converter swap under `toJsonSchemaCompat` shows up as a
+   reviewable diff rather than a silent contract change (CC-82); README tool
+   table generated and diffed (readme-sync test).
 5. **Property-based** (fast-check, small) — ADF flattener never throws on
    arbitrary node trees; truncation never produces invalid JSON.
 6. **Doctor** — probes against scripted fetch; exit codes.
@@ -158,21 +161,74 @@ minimum set is recorded.
    values. Scheduled **weekly** in CI (not per-PR: it needs a secret, it is slow,
    and a red build from someone else's outage teaches the team to ignore red).
    A failure opens an issue rather than blocking a merge.
+10. **Distribution manifests** [test: src/manifest-sync.test.ts] — the three files
+    that describe this server to somebody else's installer: `server.json`,
+    `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. None is
+    generated and none is imported by the code, so the test reads them: the
+    registry manifest must declare exactly the user-facing `JIRA_*` set
+    CONFIGURATION.md documents — same defaults, same requiredness, tokens marked
+    secret — with two exemptions that name their reasons in the test; the four
+    manifest version fields must equal `package.json`'s, which is the half of
+    RELEASING.md §2 a file can enforce; and the plugin manifest must inject only
+    documented variables, wire every field it prompts for, and never offer the
+    irreversible-delete gate as a tick-box (D45, D78). Suite 8 gates code against
+    the table, this one gates the shipped manifests against it.
 
 **Rehearsing the live gate.** The Gate C driver is itself driven offline:
 `scripts/rehearse-live.mjs` runs the real `verify-live.mjs` against the stateful
-`scripts/fake-jira.mjs` over seven passes, A–G: a full run (reads, writes and
+`scripts/fake-jira.mjs` over eleven passes, A–K: a full run (reads, writes and
 the delete phase), a forced media redirect, an injected 429/503, an unsafe write
 that must not be replayed, a withheld watcher roster (CC-47), a site without
-Jira Software (CC-34), and a board that already has an active sprint (CC-36).
-The last two are the agile degradations, and both run **with** `--write` —
-C27–C30 live in the write phase, so a read-only pass would never reach the
-surface those passes exist to degrade. It needs `openssl`
-and a current build, runs the seven passes in a few seconds, and touches no
-network, so it is **not** part
-of `npm run check`; it is nonetheless the only test `verify-live.mjs` has, and
-re-running it after any edit to that file is the rule (D72). A green rehearsal
-is a statement about this code, never about Jira's.
+Jira Software (CC-34), a board that already has an active sprint (CC-36), a
+read-only residue inventory of what a half-finished run left behind, the
+documented cleanup command clearing it, and two refusals — a destructive run
+with no `--confirm-site`, and one confirming the wrong host — each of which must
+end before a single request reaches the fake. F and G are the agile
+degradations, and both run **with** `--write` — C27–C30 live in the write phase,
+so a read-only pass would never reach the surface those passes exist to degrade.
+H and I run a `--write --keep` set-up pass first, so the run under test starts on
+a site that is already dirty, which is the state the inventory exists for.
+It needs `openssl` and a current build, runs the eleven passes in under a
+minute, and touches no network, so it is **not** part of `npm run check`; it is
+nonetheless the only whole-system test
+`verify-live.mjs` has, and re-running it after any edit to that file is the rule
+(D72). Its three pure safety helpers — the `--confirm-site` guard, the patterns
+that decide what the gate may delete, and the residue table — are additionally
+pinned by `src/testing/verify-live.test.ts`, which does run in `npm run check`
+and reaches the driver by the same repo-root dynamic `import()` the fixture
+recorder's suite uses (D75). A green rehearsal is a statement about this code,
+never about Jira's.
+
+The single command the rehearsal rehearses is the single command Gate C runs;
+on the day the only differences are the base URL and the credential. That is
+also the limit of what a rehearsal is worth, and the limit is worth writing
+down, because a green run against the fake is easy to mistake for a green run
+against Jira. Five claims stay unproven until Atlassian answers them, and no
+amount of rehearsal moves an item off this list:
+
+- **Auth.** The fake accepts any `Authorization` header it is given. Whether an
+  Atlassian API token is accepted at all, and what a wrong one looks like on the
+  wire, is untested until a real 401 arrives.
+- **ADF round-tripping.** The fake stores the document this server sends and
+  hands the same object back. Jira normalises ADF — it rewrites marks, drops
+  attributes it does not know and reorders nothing predictably — so "the
+  description survived" is a claim only the real API can make.
+- **Rate limiting.** Passes C and D inject a 429 and a 503 at a chosen request,
+  which proves the retry code runs and that an unsafe write is never replayed.
+  It proves nothing about Atlassian's real budgets, its `Retry-After` values, or
+  whether this server's backoff is polite enough to survive a burst.
+- **Permissions.** The fake's 403s are the ones the rehearsal asks for. A real
+  tenant refuses for reasons nobody scripted — a project role, a missing
+  Software licence, an admin-only field — and the hint text that turns those
+  into something an operator can act on is only exercised live.
+- **Pagination.** The search endpoint ([JIRA-API.md](JIRA-API.md)) is used with
+  `nextPageToken` only, and the fake pages the way this repo believes Atlassian
+  pages. Where the belief and the contract differ is exactly where the fake is
+  silent.
+
+Everything else the gate asserts — the claim wiring, the write/plan/apply gate,
+the residue inventory, the cleanup command and both scratch-site refusals — is
+settled offline and does not need a live site to stay settled.
 
 **Determinism knobs.** The runner pins `TZ=UTC` so a machine-local timezone can
 never make a date assertion pass locally and fail in CI. Because of that, the
@@ -183,16 +239,51 @@ is exactly the split D16 describes (Jira-user timezone ≠ host timezone).
 
 ## Coverage
 
-`.c8rc.json`, source-mapped over `src`, `all: true`. Initial thresholds
-(facebook-mcp levels): lines 70 / branches 60 / functions 75 / statements 70,
-excluding `src/index.ts`, `src/testing/**`, `src/core/fakes/**`. Raise toward
-servicenow-mcp levels (lines 94 / branches 82 / functions 97; the donor sets no
-statements threshold — decide then) once the surface stabilizes (Phase 5).
+`.c8rc.json`, `all: true`, measured over the compiled output the test runner
+actually executes (`src: ["build"]`) with `excludeAfterRemap: true`, which is why
+the excludes — `src/index.ts`, `src/**/*.test.ts`, `src/testing/**`,
+`src/core/fakes/**`, `**/*.d.ts` — are written in `src/` terms. Remapping means
+coverage **depends on source maps**, which is why the everyday build keeps them
+(see §Gate).
+
+Development scripts live outside `src`, so c8 reports one only when a test
+loads it. That is the right signal for `scripts/record-fixture.mjs` and
+`scripts/generate-readme.mjs`, which have suites meant to exercise them. The one
+exception is excluded by name: `scripts/verify-live.mjs` is exercised by the
+offline rehearsal, which is deliberately outside `npm run check`, while
+`src/testing/verify-live.test.ts` imports it to pin three pure safety helpers and
+nothing more — so the rest is unreachable from this suite by design, and letting
+a 2000-line Gate C driver set the floor for the shipped server would make the
+floor mean nothing.
+
+Thresholds reached their Phase-5 levels — the servicenow-mcp donor levels, lines
+94 / branches 82 / functions 97, plus a statements floor of 94 the donor does not
+pin — and `check-coverage: true` makes any c8 run fail when one is missed. They
+sit a few points under the measured tree on purpose: a floor is something that
+must not creep down, not a target to chase. `npm run check` runs the suite under
+c8 (`test:coverage`); plain `npm run test` stays uninstrumented for quick loops.
 
 ## Gate
 
-`npm run check` = `typecheck && lint && format:check && build && test` (+
-`npm audit --omit=dev --audit-level=high` + `node scripts/docs-lint.mjs` —
-the docs-regime checks from docs/README.md + the `npm pack --dry-run`
-tarball-content assertion). CI runs `check` on Node 22 and 24.
-Run before finishing any change; report the real result.
+`npm run check` = `check:publish && audit:prod`, where `check:publish` =
+`typecheck && lint && format:check && build && tarball && test:coverage &&
+docs:lint` and `audit:prod` is `npm audit --omit=dev --audit-level=high`.
+`tarball` is `scripts/check-tarball.mjs` over `npm pack --dry-run --json` — the
+tarball-content assertion — and `docs:lint` is the docs-regime checks from
+docs/README.md. CI runs `check` on Node 22 and 24. Run before finishing any
+change; report the real result.
+
+Two release-only steps sit outside `check` and run from `prepublishOnly`
+(`check:publish && build:publish && tarball:publish`): `build:publish` compiles
+with `tsconfig.publish.json`, which turns `sourceMap` and `declarationMap` off,
+and `tarball:publish` re-runs the checker in `--publish` mode, where a shipped
+file still carrying a `sourceMappingURL` footer is a failure. The everyday build
+keeps its maps on purpose — `.c8rc.json` remaps coverage through them — so the
+two modes are not interchangeable and `.github/workflows/publish.yml` calls the
+checker in its default mode (D80, RELEASING.md §3.1). The checker asserts
+`tsconfig.publish.json`'s shape in **both** modes, so losing that file fails the
+everyday gate rather than release day.
+
+**Beware:** `build` starts with `clean`, so `npm run build`, `npm run check` and
+`npm publish --dry-run` (which triggers `prepublishOnly`) all delete `build/`.
+`npx tsc` and `npm pack --dry-run --json` are the read-only forms.

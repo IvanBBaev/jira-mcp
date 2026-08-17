@@ -426,7 +426,10 @@ test('the issue snapshot names its fields — no wire object is spread (D41)', a
 test('CC-66: a thin issue degrades to the keys it really has', async () => {
   // Jira omits `status`/`issuetype` from a `fields` projection the caller has no
   // permission for, and a `subtasks` array can carry rows without a `key`. The
-  // snapshot must stay a valid object rather than invent an empty string.
+  // snapshot must stay a valid object rather than invent an empty string — and
+  // the rows it could not name still count (CC-87), so `subtaskCount` is 3
+  // against an empty key list rather than the 0 that would read as "no
+  // children" to whoever approves the delete.
   const fake = createFakeJiraRequest().on(
     ISSUE_ROUTE,
     // synthetic
@@ -451,9 +454,48 @@ test('CC-66: a thin issue degrades to the keys it really has', async () => {
     id: '10001',
     key: KEY,
     subtasks: [],
-    subtaskCount: 0,
+    subtaskCount: 3,
     deleteSubtasks: false,
   });
+});
+
+test('CC-87: a subtask row Jira did not name still COUNTS toward what is destroyed', async () => {
+  // CC-66 records the wire shape: `fields.subtasks` can carry rows without a
+  // readable `key`. Leaving such a row out of the KEY LIST is right — there is
+  // nothing to name. Leaving it out of `subtaskCount` is not: the count is the
+  // only number an approver of an irreversible `deleteSubtasks: true` reads,
+  // and deriving it from the keys we managed to parse turns "a child we could
+  // not name" into "no child at all". The count must describe the rows Jira
+  // reported, so the plan can only ever over-state what the apply destroys.
+  const fake = createFakeJiraRequest().on(
+    ISSUE_ROUTE,
+    // synthetic
+    jiraOk({
+      id: '10001',
+      key: KEY,
+      fields: {
+        summary: 'Retry policy',
+        subtasks: [
+          { id: '20000', self: 'https://example.atlassian.net/rest/api/3/issue/20000' },
+          { id: '20001', key: 'PROJ-2', fields: { summary: 'Subtask PROJ-2' } },
+        ],
+      },
+    }),
+  );
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(
+      callOf(deleteIssueTool, { issue: KEY, deleteSubtasks: true }, {}, fake.fn),
+    ),
+  );
+
+  assert.equal(before.subtaskCount, 2, 'both rows are children this delete takes');
+  assert.deepEqual(before.subtasks, ['PROJ-2'], 'only the named row can be listed');
 });
 
 test('a status and a type without a name drop out, and no subtasks key means none', async () => {
@@ -654,6 +696,10 @@ test('the author projection keeps the halves Jira actually sent', async () => {
   assert.deepEqual(await planWith({ accountId: ACCOUNT_ID }), {
     accountId: ACCOUNT_ID,
   });
+  // Both halves gone at once — GDPR-deleted *and* name withheld. The key is
+  // omitted rather than emitted empty: `"author": {}` in front of a human
+  // approving a delete answers nothing and reads as a bug.
+  assert.equal(await planWith({ accountId: '' }), undefined);
 });
 
 test('the worklog snapshot keeps the time and the started instant verbatim', async () => {

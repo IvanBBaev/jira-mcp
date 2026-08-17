@@ -29,10 +29,20 @@ import { defineTool, toolInput, writeToolInput, z } from './define.js';
 import { createRecentWrites, sessionRecentWrites } from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
 import { ok } from './result.js';
-import { JOURNAL_UNAVAILABLE_MESSAGE, buildServer } from './server.js';
+import {
+  JOURNAL_UNAVAILABLE_MESSAGE,
+  buildServer,
+  journalingGate,
+  recordingGate,
+} from './server.js';
 import type { BuildServerDeps } from './server.js';
 import type { PackageSpec, ToolResult } from './types.js';
-import { IRREVERSIBLE_ENV_VAR, noteBeforeState, planFingerprint } from './write-mode.js';
+import {
+  IRREVERSIBLE_ENV_VAR,
+  createWriteGate,
+  noteBeforeState,
+  planFingerprint,
+} from './write-mode.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -437,6 +447,20 @@ test('a failure comes back as an envelope with isError, not a protocol error', a
   });
 });
 
+test('a tools/call that omits arguments entirely is a call with no arguments', async () => {
+  const { deps } = makeHarness();
+  await withSession(deps, async ({ client }) => {
+    // MCP makes `params.arguments` optional, and a client calling a zero-argument
+    // tool may simply leave it out. The registry is handed an object either way —
+    // a bare `undefined` would be refused by the tool's schema, turning a legal
+    // request into a validation error.
+    const result = (await client.callTool({ name: 'jira_fx_ping' })) as CallToolResult;
+
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(dataOf(result), { pong: true });
+  });
+});
+
 test('an unknown tool name is an envelope, not a thrown McpError', async () => {
   const { deps } = makeHarness();
   await withSession(deps, async ({ client }) => {
@@ -627,6 +651,44 @@ test('a write that came back 4xx is journaled with ok:false and its status', asy
   });
 });
 
+test('a write that failed without a status is still journaled as attempted', async () => {
+  // Two ways a mutation that HAS left the process comes back without an HTTP
+  // status: a timeout (a JiraError whose status never arrived) and a rejection
+  // that is not a JiraError at all. The journal answers "was this attempted?",
+  // so both must produce a line — and neither may invent a status.
+  const failures: readonly Error[] = [
+    new JiraError({ kind: 'timeout', message: 'Jira did not answer', retryable: true }),
+    new Error('socket hang up'),
+  ];
+
+  for (const failure of failures) {
+    const { deps, jira, journal } = makeHarness({
+      journaling: true,
+      settings: { writeMode: 'apply' },
+    });
+    jira.on('POST /rest/api/3/issue', jiraErr(failure));
+
+    await withSession(deps, async ({ client }) => {
+      const args = { summary: 'S' };
+      const planId = await planIdFor(client, 'jira_fx_create', args);
+      const result = await callTool(client, 'jira_fx_create', {
+        ...args,
+        apply: true,
+        plan_id: planId,
+      });
+
+      assert.equal(envelopeOf(result).ok, false, failure.message);
+      assert.equal(journal.entries.length, 1, failure.message);
+      const entry = journal.entries[0];
+      assert.equal(entry?.ok, false);
+      assert.equal(entry?.tool, 'jira_fx_create');
+      // Absent, not `undefined`: the line is a record of what is known, and an
+      // empty status column would read as "the status was nothing".
+      assert.ok(entry !== undefined && !('httpStatus' in entry), failure.message);
+    });
+  }
+});
+
 test('a refused apply never reaches the journal', async () => {
   const { deps, jira, journal } = makeHarness({
     journaling: true,
@@ -715,6 +777,33 @@ test('without a journal the write path is unchanged', async () => {
     assert.deepEqual(dataOf(result), { key: 'ABC-4' });
     assert.deepEqual(envelopeOf(result).hints ?? [], []);
   });
+});
+
+test('the gate wrappers report the plans the gate holds, not their own idea of it', async () => {
+  // `outstandingPlans` is a diagnostic on the WriteGate contract, and the object
+  // that has to answer it is the outermost wrapper — the one `buildServer` hands
+  // the registry. Both wrappers therefore forward it live: a wrapper that
+  // answered for itself, or that snapshotted the number when it was built, would
+  // report an empty session while a plan was still outstanding.
+  const { deps, journal, recent } = makeHarness({
+    journaling: true,
+    settings: { writeMode: 'apply' },
+  });
+  const base = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const wrapped = recordingGate(journalingGate(base, { journal }), { recent });
+
+  assert.equal(wrapped.outstandingPlans, 0);
+
+  await withSession({ ...deps, gate: base }, async ({ client }) => {
+    await planIdFor(client, 'jira_fx_create', { summary: 'S' });
+  });
+
+  assert.equal(base.outstandingPlans, 1, 'the plan is outstanding in the real gate');
+  assert.equal(wrapped.outstandingPlans, 1);
 });
 
 // ---------------------------------------------------------------------------

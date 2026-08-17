@@ -12,7 +12,17 @@
             "idempotentHint": true,
             "openWorldHint": false
           },
-          "inputKeys": ["profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_myself",
@@ -22,7 +32,17 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -37,15 +57,62 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": [
-            "expand",
-            "fields",
-            "jql",
-            "maxResults",
-            "nextPageToken",
-            "profile",
-            "reconcileIssues"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expand": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "reconcileIssues": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  ]
+                }
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["jql"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_count",
@@ -55,7 +122,22 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["jql", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["jql"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_filters",
@@ -65,7 +147,35 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["accountId", "filterName", "maxResults", "profile", "startAt"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "filterName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_filter",
@@ -75,7 +185,31 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["filterId", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "filterId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["filterId"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -90,15 +224,50 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": [
-            "expand",
-            "fields",
-            "format",
-            "issue",
-            "profile",
-            "properties",
-            "raw"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "expand": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "properties": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "raw": {
+                "type": "boolean"
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_comments",
@@ -108,7 +277,40 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["format", "issue", "maxResults", "orderBy", "profile", "startAt"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "orderBy": {
+                "type": "string",
+                "enum": ["-created", "created", "-updated", "updated"]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_transitions",
@@ -118,7 +320,22 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["issue", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_changelog",
@@ -128,7 +345,32 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["issue", "maxResults", "profile", "startAt"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_worklogs",
@@ -138,7 +380,32 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["issue", "maxResults", "profile", "startAt"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -154,21 +421,67 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "assigneeAccountId",
-            "description",
-            "fields",
-            "format",
-            "issueType",
-            "labels",
-            "parent",
-            "plan_id",
-            "priority",
-            "profile",
-            "project",
-            "summary"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issueType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeAccountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "priority": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project", "issueType", "summary"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_update_issue",
@@ -179,23 +492,94 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "assigneeAccountId",
-            "description",
-            "fields",
-            "format",
-            "issue",
-            "labels",
-            "labelsAdd",
-            "labelsRemove",
-            "notifyUsers",
-            "parent",
-            "plan_id",
-            "priority",
-            "profile",
-            "summary"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeAccountId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "labelsAdd": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "labelsRemove": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "priority": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "notifyUsers": {
+                "type": "boolean"
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_transition_issue",
@@ -206,16 +590,58 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "comment",
-            "fields",
-            "format",
-            "issue",
-            "plan_id",
-            "profile",
-            "transition"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "transition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "transition"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_add_comment",
@@ -226,15 +652,62 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "body",
-            "format",
-            "issue",
-            "plan_id",
-            "profile",
-            "visibility"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "body": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "visibility": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["role", "group"]
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "value"],
+                "additionalProperties": false
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "body"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_update_comment",
@@ -245,16 +718,75 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "body",
-            "commentId",
-            "format",
-            "issue",
-            "plan_id",
-            "profile",
-            "visibility"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "commentId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "body": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "visibility": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["role", "group"]
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "value"],
+                "additionalProperties": false
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "commentId", "body"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_assign_issue",
@@ -265,7 +797,36 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["accountId", "apply", "issue", "plan_id", "profile", "unassign"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "unassign": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_add_worklog",
@@ -276,17 +837,60 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "comment",
-            "format",
-            "issue",
-            "plan_id",
-            "profile",
-            "started",
-            "timeSpent",
-            "timeSpentSeconds"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timeSpentSeconds": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "timeSpent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "started": {
+                "type": "string",
+                "pattern": "^(\\d{4}-\\d{2}-\\d{2})[T ]((?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?(?:\\.\\d{1,3})?)(Z|[+-]\\d{2}:?\\d{2})?$"
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_link_issues",
@@ -297,16 +901,55 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "comment",
-            "format",
-            "inwardIssue",
-            "linkType",
-            "outwardIssue",
-            "plan_id",
-            "profile"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "linkType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inwardIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outwardIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["linkType", "inwardIssue", "outwardIssue"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -322,7 +965,32 @@
             "openWorldHint": true
           },
           "writeTier": "irreversible",
-          "inputKeys": ["apply", "deleteSubtasks", "issue", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "deleteSubtasks": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_delete_comment",
@@ -333,7 +1001,33 @@
             "openWorldHint": true
           },
           "writeTier": "irreversible",
-          "inputKeys": ["apply", "commentId", "issue", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "commentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "commentId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_delete_worklog",
@@ -344,7 +1038,33 @@
             "openWorldHint": true
           },
           "writeTier": "irreversible",
-          "inputKeys": ["apply", "issue", "plan_id", "profile", "worklogId"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklogId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "worklogId"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -359,7 +1079,22 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["issue", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_download_attachment",
@@ -369,7 +1104,31 @@
             "idempotentHint": false,
             "openWorldHint": true
           },
-          "inputKeys": ["attachmentId", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "attachmentId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["attachmentId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_upload_attachment",
@@ -380,7 +1139,38 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "contentType", "issue", "name", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "contentType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "name"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -395,7 +1185,22 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["issue", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_add_watcher",
@@ -406,7 +1211,33 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["accountId", "apply", "issue", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "accountId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_remove_watcher",
@@ -417,7 +1248,33 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["accountId", "apply", "issue", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "accountId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_add_vote",
@@ -428,7 +1285,29 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "issue", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_remove_vote",
@@ -439,7 +1318,29 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "issue", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_components",
@@ -449,7 +1350,36 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["maxResults", "profile", "project", "query", "startAt"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_create_component",
@@ -460,16 +1390,46 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "assigneeType",
-            "description",
-            "leadAccountId",
-            "name",
-            "plan_id",
-            "profile",
-            "project"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "leadAccountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeType": {
+                "type": "string",
+                "enum": [
+                  "PROJECT_DEFAULT",
+                  "COMPONENT_LEAD",
+                  "PROJECT_LEAD",
+                  "UNASSIGNED"
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project", "name"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_update_component",
@@ -480,16 +1440,47 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "assigneeType",
-            "componentId",
-            "description",
-            "leadAccountId",
-            "name",
-            "plan_id",
-            "profile"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "componentId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "leadAccountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeType": {
+                "type": "string",
+                "enum": [
+                  "PROJECT_DEFAULT",
+                  "COMPONENT_LEAD",
+                  "PROJECT_LEAD",
+                  "UNASSIGNED"
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["componentId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_versions",
@@ -499,7 +1490,44 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["maxResults", "profile", "project", "query", "startAt", "status"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["released", "unreleased", "archived"]
+                }
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_create_version",
@@ -510,18 +1538,48 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "archived",
-            "description",
-            "name",
-            "plan_id",
-            "profile",
-            "projectId",
-            "releaseDate",
-            "released",
-            "startDate"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "releaseDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "released": {
+                "type": "boolean"
+              },
+              "archived": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["projectId", "name"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_update_version",
@@ -532,18 +1590,48 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "archived",
-            "description",
-            "name",
-            "plan_id",
-            "profile",
-            "releaseDate",
-            "released",
-            "startDate",
-            "versionId"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "releaseDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "released": {
+                "type": "boolean"
+              },
+              "archived": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["versionId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_project_roles",
@@ -553,7 +1641,27 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["profile", "project", "roleId"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "roleId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -568,7 +1676,21 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["profile", "query"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_project",
@@ -578,7 +1700,26 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["expand", "profile", "project"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expand": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_fields",
@@ -588,7 +1729,21 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["profile", "query"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_create_meta",
@@ -598,7 +1753,26 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["issueTypeId", "profile", "project"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issueTypeId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_statuses",
@@ -608,7 +1782,21 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["profile", "projectId"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_link_types",
@@ -618,7 +1806,17 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -633,15 +1831,43 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": [
-            "includeEmail",
-            "issue",
-            "maxResults",
-            "profile",
-            "project",
-            "query",
-            "startAt"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includeEmail": {
+                "type": "boolean"
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -656,7 +1882,35 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["maxResults", "profile", "projectKeyOrId", "startAt", "type"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "projectKeyOrId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": ["scrum", "kanban"]
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_list_sprints",
@@ -666,7 +1920,49 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["boardId", "maxResults", "profile", "startAt", "state"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "boardId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "state": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["active", "future", "closed"]
+                  },
+                  {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["active", "future", "closed"]
+                    }
+                  }
+                ]
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["boardId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_get_sprint_issues",
@@ -676,7 +1972,45 @@
             "idempotentHint": true,
             "openWorldHint": true
           },
-          "inputKeys": ["fields", "jql", "maxResults", "profile", "sprintId", "startAt"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "fields": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_move_to_sprint",
@@ -687,7 +2021,38 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "issues", "plan_id", "profile", "sprintId"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId", "issues"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_move_to_backlog",
@@ -698,7 +2063,33 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "issues", "plan_id", "profile"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_create_sprint",
@@ -709,16 +2100,46 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": [
-            "apply",
-            "endDate",
-            "goal",
-            "name",
-            "originBoardId",
-            "plan_id",
-            "profile",
-            "startDate"
-          ]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "originBoardId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "goal": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["name", "originBoardId"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_start_sprint",
@@ -729,7 +2150,38 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "endDate", "plan_id", "profile", "sprintId", "startDate"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId", "startDate", "endDate"],
+            "additionalProperties": false
+          }
         },
         {
           "name": "jira_close_sprint",
@@ -740,7 +2192,30 @@
             "openWorldHint": true
           },
           "writeTier": "standard",
-          "inputKeys": ["apply", "plan_id", "profile", "sprintId"]
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
         }
       ]
     }

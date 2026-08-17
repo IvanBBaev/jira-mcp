@@ -105,8 +105,13 @@ interface IssueBefore {
   readonly summary?: string;
   readonly status?: string;
   readonly issueType?: string;
-  /** Up to {@link SUBTASK_PREVIEW} keys; compare with {@link subtaskCount}. */
+  /**
+   * Up to {@link SUBTASK_PREVIEW} keys; compare with {@link subtaskCount}.
+   * Shorter than the count for two reasons — the preview cap, and a row Jira
+   * reported without a readable `key` (CC-66/CC-87).
+   */
   readonly subtasks: readonly string[];
+  /** How many subtask ROWS Jira reported: what `deleteSubtasks` would take. */
   readonly subtaskCount: number;
   /**
    * What the delete will do with those subtasks. It rides in the snapshot
@@ -152,10 +157,18 @@ function excerpt(text: string): { readonly text: string; readonly truncated: boo
 /** `{accountId?, displayName?}` from an already-projected user, or nothing. */
 function userBefore(user: IssueComment['author']): UserBefore | undefined {
   if (user === undefined) return undefined;
-  return {
+  const projected: UserBefore = {
     ...(user.accountId === '' ? {} : { accountId: user.accountId }),
     ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
   };
+  // Jira can send an author object both of whose halves we then drop — a user
+  // deleted under GDPR whose display name the tenant also withholds. Emitting
+  // `"author": {}` would put a key in front of the human approving the delete
+  // that answers nothing and reads as a bug; omitting it says the same thing
+  // truthfully, and is what this function's contract already promised.
+  return projected.accountId === undefined && projected.displayName === undefined
+    ? undefined
+    : projected;
 }
 
 /** `fields.status.name`, `fields.issuetype.name` — a record's `name`, if any. */
@@ -167,22 +180,42 @@ function nameOf(value: unknown): string | undefined {
   return typeof name === 'string' ? name : undefined;
 }
 
-/** The subtask keys, by construction — wire rows are read for `key` and dropped. */
-function subtaskKeys(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
+/** What Jira reported about the children: how many rows, and the named ones. */
+interface SubtaskSummary {
+  /** The keys of the rows Jira named, by construction — never empty strings. */
+  readonly keys: readonly string[];
+  /** How many ROWS Jira reported, named or not. */
+  readonly count: number;
+}
+
+/**
+ * Read `fields.subtasks` — counting ROWS, listing only the keys.
+ *
+ * CC-66 records that a `subtasks` array can carry a row without a readable
+ * `key`. Leaving that row out of the LIST is right: there is nothing to name.
+ * Leaving it out of the COUNT would be a lie in the one number an approver of
+ * `deleteSubtasks: true` reads, because a row we could not parse is still a
+ * child the delete destroys (CC-87). Counting rows means the plan can only ever
+ * over-state the damage, which is the safe direction for something Jira cannot
+ * undo. A `subtasks` that is not an array is Jira reporting no list at all, and
+ * that is the only shape that counts zero.
+ */
+function subtaskSummary(value: unknown): SubtaskSummary {
+  if (!Array.isArray(value)) return { keys: [], count: 0 };
+  const rows = value as readonly unknown[];
   const keys: string[] = [];
-  for (const row of value as readonly unknown[]) {
+  for (const row of rows) {
     if (typeof row !== 'object' || row === null) continue;
     const key = (row as { key?: unknown }).key;
     if (typeof key === 'string' && key !== '') keys.push(key);
   }
-  return keys;
+  return { keys, count: rows.length };
 }
 
 function issueBefore(detail: IssueDetail, deleteSubtasks: boolean): IssueBefore {
   const fields = detail.fields;
   const summary = fields.summary;
-  const keys = subtaskKeys(fields.subtasks);
+  const subtasks = subtaskSummary(fields.subtasks);
   const status = nameOf(fields.status);
   const issueType = nameOf(fields.issuetype);
   return {
@@ -192,8 +225,8 @@ function issueBefore(detail: IssueDetail, deleteSubtasks: boolean): IssueBefore 
     ...(typeof summary === 'string' ? { summary } : {}),
     ...(status === undefined ? {} : { status }),
     ...(issueType === undefined ? {} : { issueType }),
-    subtasks: keys.slice(0, SUBTASK_PREVIEW),
-    subtaskCount: keys.length,
+    subtasks: subtasks.keys.slice(0, SUBTASK_PREVIEW),
+    subtaskCount: subtasks.count,
     deleteSubtasks,
   };
 }

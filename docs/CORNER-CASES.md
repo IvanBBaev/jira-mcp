@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-75`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-94`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -322,7 +322,8 @@ with a note, and gaps stay gaps.
   `status`/`issuetype` from a projection the caller has no permission for, and
   a `subtasks` array can carry rows without a `key`. The snapshot drops the
   keys it cannot fill rather than inventing empty strings, and non-object
-  subtask rows are skipped.
+  subtask rows are skipped **from the list — they still count toward
+  `subtaskCount` (CC-87)**.
 
 ## Appended with the Wave-8 hardening (2026-08-14)
 
@@ -397,3 +398,181 @@ with a note, and gaps stay gaps.
   copied, map-free tree with a sentinel control case — without the sentinel the
   assertion would pass even if the read had silently succeeded, since the
   fallbacks equal the real package's own fields.
+- **CC-76** A placeholder credential destroys the diagnostics that would explain
+  it: registered secrets are matched as literal text, so `JIRA_API_TOKEN=t`
+  rewrites doctor's own report into
+  `se[REDACTED][REDACTED]ings: 5 JIRA_* variables presen[REDACTED]`, and a
+  longer placeholder is no protection — `settings` is eight characters and eats
+  the status label it collides with. Redaction is not weakened for either
+  (refusing to protect a value the operator believes is secret is the worse
+  failure); `core/settings.ts` raises a `warning`-severity `redaction_collision`
+  finding naming the variable, so the noise has a stated cause and startup still
+  proceeds. A realistic 192-character `ATATT…` token is unaffected, and the
+  predicate measures blast radius rather than credential shape, so an operator's
+  unusual-but-real token is never called fake (D79).
+- **CC-77** A `JIRA_*` variable is documented in CONFIGURATION.md and never added
+  to `server.json`, so it exists for anyone reading the docs and does not exist for
+  anyone installing from the MCP registry — the state the manifest shipped in for
+  `JIRA_ALLOW_IRREVERSIBLE` and `JIRA_MEDIA_DIR`. A test parses the same table
+  `src/env-docs-sync.test.ts` parses and asserts set equality with
+  `packages[0].environmentVariables` in both directions, minus two exemptions that
+  must each name their reason and must each still be a documented row; a parser
+  that matched nothing fails first. Defaults, requiredness and the `isSecret` flag
+  are compared per variable, and every failure names the variable, the side it is
+  missing from and the line that documents it. Verified by deleting the
+  `JIRA_ALLOW_IRREVERSIBLE` row and watching one test go red with that message
+  (D78).
+- **CC-78** `doctor --json` must stay parseable even when a registered secret also
+  occurs inside JSON syntax. Serializing the report and then running the string
+  redactor over the finished document corrupts it — with `JIRA_API_TOKEN=t`,
+  `"ok": true` becomes `"ok": [REDACTED]rue` and no parser will take it. The report
+  object is deep-redacted first and serialized second, and written straight to the
+  stream so the string pass never sees the document. The test asserts `JSON.parse`
+  succeeds _and_ that the output is still unreadable (probe ids come back
+  `[REDACTED]`): a placeholder credential destroys the diagnostics (CC-76) but must
+  never destroy the format (D79, D81).
+- **CC-79** Omitting `argv` means "no options", not a second read of `process.argv`.
+  `run()` defaulted to `process.argv.slice(2)`, but the bin dispatcher has already
+  consumed the `doctor` subcommand, so an in-process caller that passed no argv had
+  the whole process argv re-parsed and `jira-mcp-ai doctor` failed with
+  `Unexpected argument "doctor"`, exit 2. The default is now the empty list, and the
+  option's JSDoc states that it is post-subcommand argv.
+- **CC-80** A real env file on disk is loaded once, reported once, and its mode judged
+  once. `JIRA_ENV_FILE` pointing at a 0644 file must produce exactly one `0644`
+  mention in the report — `loadEnvFile` and the env-file probe both notice the
+  permissive mode, and the probe deduplicates against the startup finding instead of
+  saying it twice — and a 0600 file must produce no "readable beyond the owner"
+  wording at all. The test runs against a real temporary file with only `argv`,
+  `stdout` and `stderr` injected, so the default `env`, `homeDir`, `cwd`, `platform`,
+  `clock` and `fs` seams are the ones exercised.
+- **CC-81** A duplicated argument schema must be inlined, never shared. zod 3's
+  JSON-Schema converter deduplicated an identical property schema into an
+  intra-document `$ref` — `jira_update_issue.labelsAdd`/`labelsRemove` emitted
+  `{"$ref": "#/properties/labels", "description": "…"}` — and under draft-07, which
+  `$schema` declares, a `$ref`'s siblings are ignored, so those descriptions were
+  droppable by a conforming reader. A sibling `$ref` inside a tool `inputSchema` is
+  also a known interop hazard for LLM function-calling clients. zod 4 inlines
+  instead, and a test now fails on any `$ref` in any emitted schema: do not
+  "optimize" two identical arguments back into one reference (D82).
+- **CC-82** The manifest snapshot records the whole emitted JSON Schema, because a
+  key list cannot see a converter change. It used to record sorted property names
+  only, and `src/mcp/server.test.ts` checks `type`, property names and `required` —
+  so the zod 3 → 4 swap rewrote all 52 emitted schemas, 28 of them semantically
+  (added `maximum` and `propertyNames`, two `$ref`s inlined), with the whole gate
+  green. Descriptions are stripped at every depth before recording, so the snapshot
+  locks semantics without failing on a wording pass. Anything that moves under
+  `toJsonSchemaCompat` — a zod major, an SDK major, a converter option — now shows
+  up as a reviewable diff instead of a silent contract change (D82).
+
+## Appended in Wave 13 (2026-08-17)
+
+- **CC-83** A destructive Gate C run must name the site it is about to write to.
+  `scripts/verify-live.mjs` is the only procedure in this repo that mutates a real
+  Atlassian tenant, and the failure mode is not a typo — it is a `JIRA_SITE` left
+  exported from an earlier session, so the operator runs the gate believing it
+  points at the scratch site while it points at whatever the last shell touched.
+  `--write`, `--irreversible` and `--purge` therefore each require
+  `--confirm-site <host>`, matched against `JIRA_SITE` by host only: scheme,
+  trailing slash, case and port are noise, because rejecting a site the operator
+  named correctly in a different shape only teaches them to work around the guard.
+  A host that merely *contains* the confirmed one is a mismatch, and an
+  unparseable `JIRA_SITE` refuses rather than comparing nothing. Reads are never
+  blocked — making them need a flag would teach operators to always pass it. The
+  check runs before the first child process is spawned, so a refused run makes
+  zero requests (D83).
+- **CC-84** What the Gate C purge is allowed to call its own. `--purge` turns the
+  residue inventory into a delete list, and the inventory narrows on the wire with
+  `summary ~ "gate-c verify-live"` — but Jira's `~` is a fuzzy word match: it
+  stems, it ignores case, and it would happily return somebody's "Gate C rollout
+  plan" epic. Membership is therefore decided client-side by anchored patterns
+  only this script's own writes can produce: the issue summary, the
+  `gate-c-<runid>` version and sprint names, and the `gate-c-<runid>.txt` media
+  file it staged itself — a *downloaded* attachment is named by Jira and may be
+  something the operator wanted. `purgePhase` re-checks each candidate's summary a
+  second time immediately before the delete and aborts the run on a mismatch, so a
+  regression that widened the JQL would have to defeat both checks to touch a real
+  issue (D83).
+- **CC-85** The Gate C residue table is exhaustive, and honest about what it
+  cannot clear. A `--write` run leaves artifacts on a real site, and the
+  operator's only account of them is the table printed at the end of every run —
+  so the table is fixed and exhaustive rather than derived from what a particular
+  run happened to find: all five classes print, and an empty one prints `none`, so
+  that "the site is clean" is read rather than inferred from silence. Two
+  properties matter more than completeness. First, `removal` is a fact and not a
+  wish: only throwaway issues and local files can be removed by a command, while
+  versions, components and sprints say *manual* with a UI path, because this
+  server ships no delete for them and D73 refused to add one purely to service the
+  gate. Second, a class the inventory could not read prints `UNKNOWN — could not
+  read (…)` and never `none` — on a site whose token cannot see sprints,
+  `sprints: none` is a lie the operator has no way to catch. A partially-read
+  class prints `UNKNOWN` and still lists what it saw (D83).
+- **CC-86** A multipart upload's plan must summarize the parts, or there is nothing
+  to approve. `PlannedRequest` is `{method, path, query?, body?}` and
+  `jira_upload_attachment` sets no `body` — its whole meaning is in `multipart` — so
+  the plan for "upload screenshot.png" and for "upload salary-review.pdf" both
+  rendered as a bare `{"method":"POST","path":"/issue/PROJ-1/attachments"}`. The
+  capture now records field, filename (redacted like every other captured value),
+  content type and byte LENGTH. The length, never the payload: a plan envelope is
+  rendered back to the model, and the file the user asked to upload has no business
+  being echoed into it (D14).
+- **CC-87** A subtask row Jira did not name still counts toward what a delete
+  destroys. CC-66 records that `fields.subtasks` can carry rows without a readable
+  `key`; the before-state used to derive `subtaskCount` from the key LIST, so three
+  unnameable children planned as `subtaskCount: 0` and then died on apply. The count
+  is now rows, the list is still only the rows that could be named, and the two are
+  documented as deliberately different lengths. A plan for something Jira cannot undo
+  may over-state the damage; it may never under-state it (D45/D57).
+- **CC-88** A tool-package selection doctor calls green and the server refuses.
+  The three selection variables are split into tokens by `core/settings.ts` but
+  resolved against the vocabulary only in `mcp/registry.ts`, while building the
+  tool surface. Doctor printed the tokens as `info`, so `JIRA_TOOL_PACKAGES=bogus`
+  — or an unexpanded `${user_config.jira_tool_packages}` from a plugin manifest —
+  exited 0 while the server then exited 2, contradicting `assertStartupOk`'s own
+  remediation that doctor "prints the same report without starting the server".
+  Doctor now calls the real `expandSelection` and reports its `config` error as a
+  `fail`.
+- **CC-89** `process.exit()` truncates the diagnostic it exists to deliver. Under
+  an MCP client stderr is a pipe, and `process.exit()` tears the process down with
+  the write still buffered, cutting the message at the 64 KiB pipe buffer
+  (measured: 200 071 bytes written, 65 536 arrived). `bin/jira-mcp-ai.cjs` sets
+  `process.exitCode` and returns instead, on all three failure paths. The
+  defending test strips comments and single-quoted strings before scanning,
+  because the explanatory comment names `process.exit()` itself.
+- **CC-90** A plugin manifest with a misspelt field installs silently. Claude Code
+  ignores unrecognised top-level fields at runtime and only warns under
+  `claude plugin validate` (errors under `--strict`), and the MCPB/DXT manifests
+  people merge in spell the block `user_config`, not `userConfig`. Such a typo
+  installs, prompts for nothing, and hands the server six literal
+  `${user_config.…}` strings — the exact shape D84 exists to catch.
+  `src/manifest-sync.test.ts` pins the manifest's vocabulary: allowed top-level
+  names, field keys, field types, where interpolation may appear, which prompts
+  are `sensitive`, and that the launch command is this repo's package run with
+  `-y`.
+- **CC-91** A binary GET answered 204 yields zero bytes, not a stream error. The
+  byte-metering reader meters `Response.body`, and a 204 has none — `body` is
+  `null` — so the metering path has nothing to attach to. The read falls back to
+  the buffered form and still answers in bytes, because a binary read that
+  sometimes answers `undefined` would push the shape check into every caller.
+  The over-cap arm of that same buffered branch is unreachable through a
+  conformant fetch (a null body means a bodiless response) and is kept and
+  documented in place rather than forced: without it, a fetch that ever buffers
+  instead of streaming would hand the process an unbounded allocation.
+- **CC-92** An error body that cannot be read costs the snippet, not the verdict.
+  The status has already decided the outcome; a body stream that errors mid-read
+  — a connection reset after the headers arrived — must not turn a 503 into a
+  different failure. `readTextOrEmpty` therefore answers `''` and the request
+  still fails as `transport`/503 with `jiraMessages: []`. The same rule covers a
+  drained redirect body: content that cannot change the outcome may fail to
+  arrive without changing it.
+- **CC-93** A media 303 to a `Location` that no parser accepts is refused, not
+  guessed. A proxy that rewrites the signed media URL can emit something
+  unparseable, and the hop must end there: falling back to the site origin would
+  send the `Authorization` header to a URL nobody vouched for. The refusal is
+  `config`, nothing is sent, and the unparseable value is not quoted back at the
+  operator.
+- **CC-94** Aborting an unsafe write warns that the change may already have
+  landed. `AbortController.abort()` on an in-flight POST fails as `transport`
+  with `retryable: false`, and the remediation says the change may or may not
+  have been applied — never "call again". The bytes were already on the wire, so
+  cancellation says nothing about what Jira did with them; the caller must
+  verify, not re-send (the same rule as CC-59 for a timed-out multipart upload).

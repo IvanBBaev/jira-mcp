@@ -10,8 +10,9 @@
 //
 // Both failure directions matter and both name the offender:
 //   - a variable read by the code but absent from the docs is invisible to the
-//     user (and to the MCP registry manifest, which is generated from the same
-//     table);
+//     user, and — because `server.json` is checked against this same table by
+//     `src/manifest-sync.test.ts` (suite 10) rather than generated from it —
+//     invisible to anyone installing from the MCP registry too;
 //   - a documented variable no longer read anywhere is a promise the server
 //     stopped keeping.
 //

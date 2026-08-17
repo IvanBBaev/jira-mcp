@@ -2,7 +2,7 @@
 /**
  * verify-live — drive the BUILT server against a real Jira Cloud site.
  *
- * This is the automatable half of the Gate C runbook (docs/ai/gate-c.md). It is
+ * This is the automatable half of Gate C (docs/RELEASING.md §6). It is
  * a development script, not shipped code: it is absent from the `files`
  * allowlist and from the tarball assertion, and nothing under src/ imports it.
  *
@@ -24,17 +24,25 @@
  *   1. **No credentials, no run.** With JIRA_SITE / JIRA_EMAIL /
  *      JIRA_API_TOKEN absent the script prints the runbook pointer and exits 0.
  *      It can never wander onto a site by accident.
- *   2. **Reads by default.** The write phase needs `--write`, the delete phase
+ *   2. **A destructive run must NAME the site.** `--write`, `--irreversible` and
+ *      `--purge` all require `--confirm-site <host>`, and the host has to match
+ *      the one in JIRA_SITE. A stale export pointing at a production tenant is
+ *      the failure mode this exists for: the mismatch is caught before a single
+ *      child process is spawned, so nothing reaches the network (CC-83).
+ *   3. **Reads by default.** The write phase needs `--write`, the delete phase
  *      needs `--irreversible`. Neither is implied by the other.
- *   3. **Writes touch only what this script created.** The write phase creates
+ *   4. **Writes touch only what this script created.** The write phase creates
  *      one throwaway issue and confines every mutation to it. The exceptions are
- *      project- or board-scoped by Jira's own API: `jira_create_version` /
- *      `jira_create_component` (named with the run id, the version archived
- *      again on the way out) and `jira_create_sprint` (named with the run id,
- *      started and closed so it does not sit on the backlog). **The sprint
- *      cannot be removed** — this server ships no sprint delete, on purpose —
- *      so `--write` leaves one behind and the run says so at the end.
- *   4. **Deletes come last**, and only against the throwaway issue.
+ *      project- or board-scoped by Jira's own API: `jira_create_version` (named
+ *      with the run id, archived again on the way out) and `jira_create_sprint`
+ *      (named with the run id, started and closed so it does not sit on the
+ *      backlog). **Neither can be removed** — this server ships no version
+ *      delete and no sprint delete, on purpose — so a `--write` run leaves
+ *      exactly those two behind.
+ *   5. **Deletes come last**, and only against the throwaway issue.
+ *   6. **Every run ends with a residue inventory** (C32): the artifacts this
+ *      gate's naming convention can still find on the site, each with the way to
+ *      remove it. Nothing is guessed — the inventory is a read of the site.
  *
  * Write mode is a server setting, not a per-call one, so each phase gets its own
  * child server: plan, apply, apply-without-the-irreversible-opt-in, and
@@ -42,17 +50,26 @@
  * in-memory and dies with its process (D14), so a plan must be applied by the
  * same child that issued it.
  *
- * Usage:
- *   node scripts/verify-live.mjs --project SCRATCH
- *   node scripts/verify-live.mjs --project SCRATCH --write
- *   node scripts/verify-live.mjs --project SCRATCH --write --irreversible
+ * Usage — the gate is ONE command (D83):
+ *
+ *   node scripts/verify-live.mjs \
+ *     --project SCRATCH --project2 LEGACY \
+ *     --write --irreversible --confirm-site your-site.atlassian.net
+ *
+ * and the cleanup that goes with it, run whenever you want to see or clear what
+ * is left:
+ *
+ *   node scripts/verify-live.mjs --project SCRATCH --residue
+ *   node scripts/verify-live.mjs --project SCRATCH --residue --purge \
+ *     --irreversible --confirm-site your-site.atlassian.net
  *
  * Exit codes: 0 = no claim failed (skips are fine), 1 = at least one FAIL,
- * 2 = usage or setup error (no build, bad flags).
+ * 2 = usage or setup error (no build, bad flags, unconfirmed site).
  */
 
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,9 +78,10 @@ import { parseArgs } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const MODULE_PATH = fileURLToPath(import.meta.url);
+const REPO_ROOT = resolve(dirname(MODULE_PATH), '..');
 const SERVER_ENTRY = join(REPO_ROOT, 'build', 'index.js');
-const RUNBOOK = 'docs/ai/gate-c.md';
+const RUNBOOK = 'docs/RELEASING.md (section 6, "Gate C")';
 
 /** One tool call's ceiling. Generous: a cold Jira Cloud site is slow. */
 const CALL_TIMEOUT_MS = 90_000;
@@ -80,19 +98,30 @@ const USAGE = `verify-live — drive the built server against a real Jira Cloud 
 
 Usage: node scripts/verify-live.mjs [flags]
 
+The gate, as one command:
+  node scripts/verify-live.mjs --project SCRATCH --project2 LEGACY \\
+    --write --irreversible --confirm-site your-site.atlassian.net
+
 Flags:
   --project <KEY>     Project used for reads and for the throwaway issue.
-  --project2 <KEY>    Second project, of the other type, for read comparison.
+  --project2 <KEY>    Second project, of the OTHER type (C31 compares them).
   --issue <KEY>       Rich-ADF sample issue for the read claims.
                       Defaults to the first issue found in --project.
   --issue-type <NAME> Issue type for the throwaway issue (default: Task).
   --user2 <ID>        Second user's accountId, for watcher/assign claims.
                       Defaults to the authenticated user.
-  --write             Run the write phase (creates ONE throwaway issue, and
-                      ONE throwaway sprint that no tool here can delete).
-  --irreversible      Run the delete phase (deletes the throwaway issue).
+  --confirm-site <H>  The host you mean to write to. REQUIRED by --write,
+                      --irreversible and --purge, and it must match JIRA_SITE.
+  --write             Run the write phase (creates ONE throwaway issue, ONE
+                      version and ONE sprint; the last two are permanent).
+  --irreversible      Allow the delete tier (the throwaway issue; with --purge,
+                      the leftover gate-c issues).
+  --residue           Skip the claims and only inventory what past runs left.
+  --purge             With --residue and --irreversible: delete the gate-c
+                      issues found, and the gate-c files in JIRA_MEDIA_DIR.
   --record <DIR>      Write redacted per-claim result JSON into DIR.
   --keep              Do not delete the throwaway issue even with --irreversible.
+  --skip-doctor       Do not run the doctor preflight (C00).
   --help              Print this text.
 
 Environment (all three required, or the script exits 0 without doing anything):
@@ -102,23 +131,246 @@ Full runbook: ${RUNBOOK}
 `;
 
 /** @returns {{ values: Record<string, string | boolean | undefined> }} */
-function readFlags() {
+function readFlags(argv = process.argv.slice(2)) {
   return parseArgs({
-    args: process.argv.slice(2),
+    args: argv,
     options: {
       project: { type: 'string' },
       project2: { type: 'string' },
       issue: { type: 'string' },
       'issue-type': { type: 'string', default: 'Task' },
       user2: { type: 'string' },
+      'confirm-site': { type: 'string' },
       write: { type: 'boolean', default: false },
       irreversible: { type: 'boolean', default: false },
+      residue: { type: 'boolean', default: false },
+      purge: { type: 'boolean', default: false },
       record: { type: 'string' },
       keep: { type: 'boolean', default: false },
+      'skip-doctor': { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
     strict: true,
   });
+}
+
+// ---------------------------------------------------------------------------
+// The scratch-site guard (CC-83)
+// ---------------------------------------------------------------------------
+
+/**
+ * The host `JIRA_SITE` names, however it was written.
+ *
+ * The variable is documented as an origin (`https://x.atlassian.net`) but
+ * operators type bare hosts, trailing slashes and — on a rehearsal — a port. All
+ * four have to reduce to the same string, or the guard would reject a site the
+ * operator named correctly and teach them to work around it.
+ *
+ * @param {string | undefined} site
+ * @returns {string | undefined}
+ */
+export function siteHost(site) {
+  const raw = String(site ?? '').trim();
+  if (raw === '') return undefined;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const host = new URL(withScheme).hostname.toLowerCase();
+    return host === '' ? undefined : host;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Why a destructive run must not start, or `undefined` when it may.
+ *
+ * This is the "type the name of the thing you are about to destroy" pattern, and
+ * it is here because the gate's most likely accident is not a bug in the driver
+ * — it is a shell that still has last month's `JIRA_SITE` exported. Reads are
+ * left alone deliberately: a read against the wrong site is embarrassing, a
+ * write against the wrong site is an incident.
+ *
+ * @param {string | undefined} site        JIRA_SITE, as the environment has it.
+ * @param {string | undefined} confirm     The `--confirm-site` value.
+ * @param {boolean} destructive            Whether this run intends to mutate.
+ * @returns {string | undefined}
+ */
+export function confirmSiteError(site, confirm, destructive) {
+  if (!destructive) return undefined;
+  const actual = siteHost(site);
+  if (actual === undefined) {
+    return 'JIRA_SITE does not parse as a host, so --confirm-site cannot be checked.';
+  }
+  const named = siteHost(confirm);
+  if (named === undefined) {
+    return (
+      `--write / --irreversible / --purge need --confirm-site.\n` +
+      `This run would MUTATE ${actual}. If that is the scratch site, re-run with:\n` +
+      `  --confirm-site ${actual}`
+    );
+  }
+  if (named !== actual) {
+    return (
+      `--confirm-site names ${named}, but JIRA_SITE points at ${actual}.\n` +
+      'Refusing to write. One of the two is stale — check the environment before\n' +
+      'you change either of them.'
+    );
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// What this gate is allowed to call its own (CC-84)
+// ---------------------------------------------------------------------------
+
+/**
+ * The exact summary `writePhase` gives its throwaway issue, anchored.
+ *
+ * Anchored, and not a substring test, because this pattern is the only thing
+ * standing between `--purge` and somebody's real issue. A user story that
+ * happens to mention "gate-c" in its summary must not match; only a summary this
+ * script itself wrote can.
+ */
+export const GATE_C_ISSUE_SUMMARY = /^gate-c verify-live \d{1,14} \(safe to delete\)$/;
+
+/** The name every project-scoped artifact this gate creates carries. */
+export const GATE_C_ARTIFACT_NAME = /^gate-c-\d{1,14}(?: \(safe to delete\))?$/;
+
+/** The staged/downloaded files this gate is responsible for in JIRA_MEDIA_DIR. */
+export const GATE_C_MEDIA_FILE = /^gate-c-\d{1,14}\.txt$/;
+
+/** @param {unknown} summary */
+export function isGateCIssue(summary) {
+  return typeof summary === 'string' && GATE_C_ISSUE_SUMMARY.test(summary.trim());
+}
+
+/** @param {unknown} name */
+export function isGateCArtifact(name) {
+  return typeof name === 'string' && GATE_C_ARTIFACT_NAME.test(name.trim());
+}
+
+/** Placeholder used when the caller has no concrete flags to echo. */
+const PURGE_COMMAND_HINT =
+  'node scripts/verify-live.mjs --project <KEY> --residue --purge ' +
+  '--irreversible --confirm-site <host>';
+
+/**
+ * Every class of artifact a `--write` run can leave behind, in one table.
+ *
+ * The point is that the list is EXHAUSTIVE and fixed, not derived from what a
+ * particular run happened to find: a class with nothing in it still prints, so
+ * "the site is clean" is a statement the operator reads rather than infers from
+ * silence. `removal` is a three-way fact, not a wish:
+ *
+ *   - `command` — this script can remove it, and `how` is the command.
+ *   - `manual`  — no tool this SERVER ships can remove it, so the only route is
+ *     the Jira UI. That is not an oversight: D73 refused to add a delete tool
+ *     purely to service the gate, and the same reasoning covers versions.
+ *   - `local`   — it never left this machine.
+ *
+ * @param {object} inventory
+ * @param {{ key: string, summary: string }[]} [inventory.issues]
+ * @param {{ id: string, name: string, archived?: boolean }[]} [inventory.versions]
+ * @param {{ id: string, name: string }[]} [inventory.components]
+ * @param {{ id: number, name: string, state?: string }[]} [inventory.sprints]
+ * @param {string[]} [inventory.mediaFiles]
+ * @param {string} [inventory.purgeCommand]
+ * @param {{ kind: string, why: string }[]} [inventory.unavailable]
+ */
+export function residuePlan(inventory = {}) {
+  const purge = inventory.purgeCommand ?? PURGE_COMMAND_HINT;
+  /** Reasons a class could not be read, grouped by class. */
+  const blind = new Map();
+  for (const entry of inventory.unavailable ?? []) {
+    const kind = String(entry?.kind ?? 'unknown');
+    blind.set(kind, [
+      ...(blind.get(kind) ?? []),
+      String(entry?.why ?? 'no reason given'),
+    ]);
+  }
+  const rows = [
+    {
+      kind: 'issues',
+      title: 'throwaway issues',
+      items: (inventory.issues ?? []).map((row) => `${row.key}  ${row.summary}`),
+      removal: 'command',
+      how: purge,
+    },
+    {
+      kind: 'versions',
+      title: 'project versions',
+      items: (inventory.versions ?? []).map(
+        (row) => `${row.name} (id ${row.id}${row.archived === true ? ', archived' : ''})`,
+      ),
+      removal: 'manual',
+      how:
+        'Project settings → Releases → the version → ••• → Delete. This server ' +
+        'ships no version delete (D73: the gate does not widen the write surface).',
+    },
+    {
+      kind: 'components',
+      title: 'project components',
+      items: (inventory.components ?? []).map((row) => `${row.name} (id ${row.id})`),
+      removal: 'manual',
+      how:
+        'Project settings → Components → the component → ••• → Delete. This ' +
+        'server ships no component delete. No claim creates one — a row here ' +
+        'means a human did.',
+    },
+    {
+      kind: 'sprints',
+      title: 'sprints',
+      items: (inventory.sprints ?? []).map(
+        (row) =>
+          `${row.name} (id ${String(row.id)}${row.state === undefined ? '' : `, ${row.state}`})`,
+      ),
+      removal: 'manual',
+      how:
+        'Backlog → the sprint → ••• → Delete sprint. This server ships no ' +
+        'sprint delete (D73). One sprint per --write run is expected.',
+    },
+    {
+      kind: 'media',
+      title: 'local files in JIRA_MEDIA_DIR',
+      items: [...(inventory.mediaFiles ?? [])],
+      removal: 'local',
+      how: `${purge} — or delete them yourself; they never left this machine.`,
+    },
+  ];
+  return rows.map((row) => ({ ...row, unavailable: blind.get(row.kind) ?? [] }));
+}
+
+/**
+ * Render {@link residuePlan} for the end of a run.
+ *
+ * A class the inventory could not read prints as UNKNOWN with the reason, never
+ * as `none`: on a site where the token cannot see sprints, `sprints: none` is a
+ * lie the operator has no way to catch (CC-85).
+ */
+export function renderResidue(plan) {
+  const lines = ['', 'Residue — what this gate can still see on the site', ''];
+  for (const row of plan) {
+    const blind = row.unavailable ?? [];
+    if (blind.length > 0) {
+      lines.push(`  ${row.title}: UNKNOWN — could not read (${blind.join('; ')})`);
+      if (row.items.length === 0) continue;
+      // A partially-read class still lists what it did see; the marker above is
+      // what stops that list being mistaken for the whole truth.
+      lines.push(`    seen so far: ${String(row.items.length)}`);
+      for (const item of row.items) lines.push(`    - ${item}`);
+      lines.push(`    remove: ${row.how}`);
+      continue;
+    }
+    if (row.items.length === 0) {
+      lines.push(`  ${row.title}: none`);
+      continue;
+    }
+    lines.push(`  ${row.title}: ${String(row.items.length)}`);
+    for (const item of row.items) lines.push(`    - ${item}`);
+    lines.push(`    remove: ${row.how}`);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -544,7 +796,7 @@ async function writeRecording(dir, credentials) {
     $note:
       'Redacted scenario capture from scripts/verify-live.mjs. These are ' +
       'tool-level envelopes, NOT raw Jira responses — review before using ' +
-      'them as anything. See docs/ai/gate-c.md.',
+      'them as anything. See docs/RELEASING.md §6.',
     recordedAt: new Date().toISOString(),
     calls: redact(recorded),
   };
@@ -868,6 +1120,50 @@ async function readPhase(session, flags, credentials) {
     }
     return 'startup report on stderr, no token in it';
   });
+
+  // `--project2` used to be parsed, documented and read by nothing — the gate
+  // asked the operator to provision a second project type (runbook 1.2) and then
+  // never looked at it. C04 notices that SOME pair of styles exists on the site;
+  // only this claim proves the two projects the operator NAMED are the pair, and
+  // that createmeta answers for the company-managed one too, which is the shape
+  // most likely to differ.
+  await claim('C31', 'the two named projects are of different types', async () => {
+    if (flags.project === undefined) skip('no --project');
+    if (flags.project2 === undefined) {
+      skip('no --project2 — provision the second project type (runbook 1.2)');
+    }
+    const one = dataOf(
+      await call(session, 'jira_get_project', { project: flags.project }),
+      'jira_get_project (--project)',
+    );
+    const two = dataOf(
+      await call(session, 'jira_get_project', { project: flags.project2 }),
+      'jira_get_project (--project2)',
+    );
+    const first = one.project ?? {};
+    const second = two.project ?? {};
+    if (first.key === second.key) {
+      throw new Error('--project and --project2 name the same project');
+    }
+    if (first.simplified === undefined || second.simplified === undefined) {
+      skip('Jira reported no style/simplified for one of them — classify by hand');
+    }
+    if (first.simplified === second.simplified) {
+      const kind = first.simplified === true ? 'team' : 'company';
+      throw new Error(
+        `both projects are ${kind}-managed; Gate C needs one of each (runbook 1.2)`,
+      );
+    }
+    dataOf(
+      await call(session, 'jira_get_create_meta', { project: flags.project2 }),
+      'jira_get_create_meta (--project2)',
+    );
+    const label = (project) => (project.simplified === true ? 'team' : 'company');
+    return (
+      `${String(first.key)} is ${label(first)}-managed, ` +
+      `${String(second.key)} is ${label(second)}-managed`
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -883,11 +1179,14 @@ function runId() {
 /**
  * What this run made and is responsible for.
  *
- * `sprintId` is the odd one out: every other entry here is deletable by a tool
- * this server exposes, and the delete phase removes them. A sprint is not —
- * `src/api/agile.ts` deliberately ships no delete, so a sprint created by C27
- * OUTLIVES the run and has to be removed from the Jira UI by hand. The tail of
- * `run()` says so, loudly, with the name.
+ * Two entries are the odd ones out. The issue, its comment and its worklog are
+ * all deletable by a tool this server exposes, and the delete phase removes
+ * them. A **sprint** (C27) and a **version** (C22) are not: `src/api/agile.ts`
+ * ships no sprint delete and `src/api/collab.ts` ships no version delete, both
+ * on purpose, so each `--write` run adds one of each to the site permanently.
+ * The version was the quieter of the two — until this wave only the sprint was
+ * warned about — which is exactly why the tail of `run()` now enumerates the
+ * residue from a READ of the site instead of from this object.
  */
 const created = {
   issueKey: undefined,
@@ -896,6 +1195,9 @@ const created = {
   sprintId: undefined,
   sprintName: undefined,
   sprintStarted: false,
+  versionId: undefined,
+  versionName: undefined,
+  mediaFiles: [],
 };
 
 async function writePhase(session, flags) {
@@ -1009,6 +1311,11 @@ async function writePhase(session, flags) {
       });
       const versionId = applied.version?.id;
       if (versionId === undefined) throw new Error('create returned no version id');
+      // Recorded the moment it exists, not after the update: a failure between
+      // here and the archive still leaves the version on the project, and the
+      // residue inventory has to be able to name it.
+      created.versionId = String(versionId);
+      created.versionName = name;
       // Jira sends version ids back as strings; `jira_update_version` wants a
       // number. Getting this wrong is a validation error AFTER the version
       // already exists, which leaves named litter on the scratch project.
@@ -1033,6 +1340,7 @@ async function writePhase(session, flags) {
     // server never reads from anywhere else, so the script stages it there.
     const name = `gate-c-${runId()}.txt`;
     await writeFile(join(dir, name), `Gate C upload probe ${runId()}\n`);
+    created.mediaFiles.push(name);
     await planAndApply(session, 'jira_upload_attachment', { issue: key, name });
     const list = dataOf(
       await call(session, 'jira_list_attachments', { issue: key }),
@@ -1284,6 +1592,212 @@ async function deletePhase(session) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4 — the residue inventory (C32) and the cleanup that clears it (C33)
+// ---------------------------------------------------------------------------
+
+/** The cleanup command for THIS run's flags — no placeholders left to fill in. */
+function purgeCommand(flags, site) {
+  const project = flags.project === undefined ? '<KEY>' : String(flags.project);
+  const host = siteHost(site) ?? '<host>';
+  return (
+    `node scripts/verify-live.mjs --project ${project} ` +
+    `--residue --purge --irreversible --confirm-site ${host}`
+  );
+}
+
+/** What the last inventory saw, so the tail of `run()` can print it. */
+let residue;
+
+/**
+ * Read the site back and list everything this gate's naming convention owns.
+ *
+ * Read-only, and deliberately not derived from `created`: a run that crashed
+ * half way, or last week's run, leaves artifacts this process never knew about,
+ * and those are exactly the ones an operator cannot find by hand. A degraded
+ * surface (no Jira Software licence, a token without browse permission) is
+ * recorded as `unavailable` rather than as an empty list — "I could not look" and
+ * "there is nothing there" must never render the same. Each entry names the
+ * CLASS it belongs to, so the table can mark that class rather than printing a
+ * reassuring `none` under a query that never returned (CC-85).
+ */
+async function collectResidue(session, flags, site) {
+  const inventory = {
+    issues: [],
+    versions: [],
+    components: [],
+    sprints: [],
+    mediaFiles: [],
+    purgeCommand: purgeCommand(flags, site),
+    unavailable: [],
+  };
+
+  if (flags.project !== undefined) {
+    // The JQL narrows on the wire so a big project does not have to be paged in
+    // full; the ANCHORED re-check below is what actually decides. `~` is Jira's
+    // fuzzy text match — it stems, it ignores case, and it would happily return
+    // somebody's "Gate C rollout" epic. This list can become a delete list, so
+    // membership is decided by a pattern only this script's own writes produce
+    // (CC-84).
+    const jql =
+      `project = ${String(flags.project)} AND summary ~ "gate-c verify-live" ` +
+      'ORDER BY created ASC';
+    let token;
+    for (let page = 0; page < 20; page += 1) {
+      const envelope = await call(session, 'jira_search', {
+        jql,
+        maxResults: 50,
+        fields: ['summary'],
+        ...(token === undefined ? {} : { nextPageToken: token }),
+      });
+      if (envelope.ok !== true) {
+        inventory.unavailable.push({ kind: 'issues', why: String(envelope.error?.kind) });
+        break;
+      }
+      for (const row of envelope.data?.issues ?? []) {
+        const summary = row.fields?.summary;
+        if (isGateCIssue(summary)) {
+          inventory.issues.push({
+            key: String(row.key),
+            summary: String(summary).trim(),
+          });
+        }
+      }
+      if (envelope.data?.hasMore !== true) break;
+      if (typeof envelope.data.nextPageToken !== 'string') break;
+      token = envelope.data.nextPageToken;
+    }
+
+    for (const [tool, key, sink] of [
+      ['jira_list_versions', 'versions', inventory.versions],
+      ['jira_list_components', 'components', inventory.components],
+    ]) {
+      const envelope = await call(session, tool, { project: flags.project });
+      if (envelope.ok !== true) {
+        inventory.unavailable.push({ kind: key, why: String(envelope.error?.kind) });
+        continue;
+      }
+      for (const row of envelope.data?.[key] ?? []) {
+        if (!isGateCArtifact(row.name)) continue;
+        sink.push({
+          id: String(row.id),
+          name: String(row.name).trim(),
+          ...(key === 'versions' ? { archived: row.archived === true } : {}),
+        });
+      }
+    }
+  } else {
+    for (const kind of ['issues', 'versions', 'components']) {
+      inventory.unavailable.push({ kind, why: 'no --project was given' });
+    }
+  }
+
+  const boards = await call(session, 'jira_list_boards', {});
+  if (boards.ok !== true) {
+    // The overwhelmingly likely reason on a scratch site: no Jira Software
+    // licence, so `/rest/agile/1.0` 403s wholesale (CC-34). A sprint cannot
+    // exist on such a site either, but saying so is the inventory's job.
+    inventory.unavailable.push({ kind: 'sprints', why: String(boards.error?.kind) });
+  } else {
+    for (const board of boards.data?.boards ?? []) {
+      const sprints = await call(session, 'jira_list_sprints', { boardId: board.id });
+      if (sprints.ok !== true) {
+        inventory.unavailable.push({
+          kind: 'sprints',
+          why: `board ${String(board.id)}: ${String(sprints.error?.kind)}`,
+        });
+        continue;
+      }
+      for (const sprint of sprints.data?.sprints ?? []) {
+        if (!isGateCArtifact(sprint.name)) continue;
+        inventory.sprints.push({
+          id: sprint.id,
+          name: String(sprint.name).trim(),
+          state: sprint.state,
+          boardId: board.id,
+        });
+      }
+    }
+  }
+
+  const dir = mediaDir();
+  if (dir === undefined) {
+    inventory.unavailable.push({ kind: 'media', why: 'JIRA_MEDIA_DIR not set' });
+  } else {
+    try {
+      const entries = await readdir(dir);
+      // Only files this script itself staged. A downloaded attachment (C13) is
+      // named by Jira and may be something the operator wanted; deleting by
+      // prefix is the only rule that cannot eat it.
+      inventory.mediaFiles = entries
+        .filter((name) => GATE_C_MEDIA_FILE.test(name))
+        .sort();
+    } catch (error) {
+      inventory.unavailable.push({ kind: 'media', why: messageOf(error) });
+    }
+  }
+
+  return inventory;
+}
+
+async function residuePhase(session, flags, site) {
+  await claim(
+    'C32',
+    'residue inventory: the site is read back for leftovers',
+    async () => {
+      residue = await collectResidue(session, flags, site);
+      const counts = residuePlan(residue)
+        .map((row) => `${row.kind}=${String(row.items.length)}`)
+        .join(' ');
+      if (residue.unavailable.length > 0) {
+        const blind = residue.unavailable
+          .map((entry) => `${entry.kind}: ${entry.why}`)
+          .join('; ');
+        return `${counts} (not inspected: ${blind})`;
+      }
+      return counts;
+    },
+  );
+}
+
+/**
+ * The cleanup half. Only issues and local files are reachable from here: a
+ * version and a sprint have no delete tool, and D73's rule — the gate does not
+ * get to widen the product's write surface — is why one was not added for them.
+ */
+async function purgePhase(session) {
+  await claim('C33', 'residue purge: the deletable leftovers are removed', async () => {
+    if (residue === undefined) skip('the inventory did not run');
+    const targets = residue.issues;
+    const removedFiles = [];
+    for (const target of targets) {
+      // Belt and braces: the inventory already anchored this, and the delete
+      // path anchors it again. A regression that widened the JQL would have to
+      // get past both to touch an issue this gate did not create.
+      if (!isGateCIssue(target.summary)) {
+        throw new Error(`refusing to delete ${target.key}: "${target.summary}"`);
+      }
+      await planAndApply(session, 'jira_delete_issue', { issue: target.key });
+    }
+    const dir = mediaDir();
+    if (dir !== undefined) {
+      for (const name of residue.mediaFiles) {
+        await rm(join(dir, name), { force: true });
+        removedFiles.push(name);
+      }
+    }
+    residue = { ...residue, issues: [], mediaFiles: [] };
+    if (targets.length === 0 && removedFiles.length === 0) {
+      return 'nothing deletable was left';
+    }
+    return (
+      `deleted ${String(targets.length)} issue(s) ` +
+      `[${targets.map((row) => row.key).join(', ')}] and ` +
+      `${String(removedFiles.length)} local file(s)`
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 
@@ -1308,13 +1822,93 @@ function report() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 0 — the doctor preflight (C00)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the shipped `doctor --json` against the same credentials and parse it.
+ *
+ * This is a preflight, not a claim about the doctor: it exists because every
+ * later FAIL on a misconfigured site is noise, and the doctor already knows how
+ * to say "your token is wrong" in one line. `--json` is the only mode used —
+ * `--save` is the sole doctor path that prompts, so a spawned `--json` run can
+ * never block waiting for a human (src/cli/doctor.ts).
+ */
+async function doctorPreflight(credentials) {
+  const home = await mkdtemp(join(tmpdir(), 'jira-mcp-doctor-'));
+  try {
+    const child = spawn(process.execPath, [SERVER_ENTRY, 'doctor', '--json'], {
+      cwd: home,
+      env: childEnv(home, credentials, {}),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    const code = await withTimeout(
+      new Promise((resolve_, reject) => {
+        child.on('error', reject);
+        child.on('close', (exit) => {
+          resolve_(exit);
+        });
+      }),
+      CALL_TIMEOUT_MS,
+      'doctor --json',
+    );
+    let report;
+    try {
+      report = JSON.parse(stdout);
+    } catch {
+      throw new Error(
+        `doctor --json printed no JSON (exit ${String(code)}): ` +
+          `${(stdout + stderr).trim().slice(0, 300)}`,
+      );
+    }
+    return { report, code, stderr };
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+async function preflightPhase(credentials, flags) {
+  await claim(
+    'C00',
+    'doctor preflight: the site answers before any claim runs',
+    async () => {
+      if (flags['skip-doctor'] === true) skip('--skip-doctor');
+      const { report, code } = await doctorPreflight(credentials);
+      const summary = report.summary ?? {};
+      const shape =
+        `${String(report.host)} ok=${String(report.ok)} exit=${String(code)} ` +
+        Object.entries(summary)
+          .map(([key, value]) => `${key}=${String(value)}`)
+          .join(' ');
+      if (report.ok !== true) {
+        const failed = (report.probes ?? [])
+          .filter((probe) => probe.status === 'fail')
+          .map((probe) => probe.id);
+        throw new Error(
+          `doctor reports the site is not usable [${failed.join(', ')}]: ${shape}`,
+        );
+      }
+      return shape;
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Entry
 // ---------------------------------------------------------------------------
 
-async function run() {
+async function run(argv = process.argv.slice(2)) {
   let flags;
   try {
-    flags = readFlags().values;
+    flags = readFlags(argv).values;
   } catch (error) {
     console.error(`verify-live: ${messageOf(error)}\n\n${USAGE}`);
     return EXIT_CONFIG;
@@ -1323,6 +1917,19 @@ async function run() {
   if (flags.help === true) {
     console.log(USAGE);
     return EXIT_OK;
+  }
+
+  if (flags.purge === true && flags.residue !== true) {
+    console.error('verify-live: --purge only makes sense with --residue.\n');
+    return EXIT_CONFIG;
+  }
+  if (flags.purge === true && flags.irreversible !== true) {
+    console.error(
+      'verify-live: --purge deletes issues, so it needs --irreversible too.\n' +
+        'That is the same opt-in the delete tier uses; the gate does not get a\n' +
+        'quieter one.\n',
+    );
+    return EXIT_CONFIG;
   }
 
   // Named explicitly rather than derived from the keys: the env var is
@@ -1352,6 +1959,19 @@ async function run() {
     return EXIT_OK;
   }
 
+  const site = credentials.site;
+
+  // Before anything is spawned, and therefore before anything can reach the
+  // network: a run that intends to mutate has to name the site it is mutating
+  // (CC-83).
+  const destructive =
+    flags.write === true || flags.irreversible === true || flags.purge === true;
+  const refusal = confirmSiteError(site, flags['confirm-site'], destructive);
+  if (refusal !== undefined) {
+    console.error(`verify-live: ${refusal}\n`);
+    return EXIT_CONFIG;
+  }
+
   if (!existsSync(SERVER_ENTRY)) {
     console.error(
       'verify-live: build/index.js is missing. Run `npm run build` first — this\n' +
@@ -1360,62 +1980,71 @@ async function run() {
     return EXIT_CONFIG;
   }
 
-  const site = credentials.site;
+  const residueOnly = flags.residue === true;
   console.error(`verify-live: driving ${site} as ${credentials.email}`);
   console.error(
-    `verify-live: phases — read${flags.write === true ? ' + write' : ''}` +
-      `${flags.irreversible === true ? ' + delete' : ''}\n`,
+    residueOnly
+      ? `verify-live: phases — residue${flags.purge === true ? ' + purge' : ''}\n`
+      : `verify-live: phases — doctor + read${flags.write === true ? ' + write' : ''}` +
+          `${flags.irreversible === true ? ' + delete' : ''} + residue\n`,
   );
 
-  recordingFor = 'read';
-  await withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
-    readPhase(session, flags, credentials),
-  );
+  if (!residueOnly) {
+    recordingFor = 'preflight';
+    await preflightPhase(credentials, flags);
 
-  if (flags.write === true) {
-    recordingFor = 'write';
-    await withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
-      writePhase(session, flags),
+    recordingFor = 'read';
+    await withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
+      readPhase(session, flags, credentials),
     );
 
-    recordingFor = 'refusal';
-    // A separate child on purpose: the refusal must come from a server that was
-    // STARTED without the opt-in, which is the only configuration that proves it.
-    await withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
-      refusalPhase(session),
-    );
-
-    if (flags.irreversible === true && flags.keep !== true) {
-      recordingFor = 'delete';
-      await withServer(
-        credentials,
-        { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
-        (session) => deletePhase(session),
+    if (flags.write === true) {
+      recordingFor = 'write';
+      await withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
+        writePhase(session, flags),
       );
+
+      recordingFor = 'refusal';
+      // A separate child on purpose: the refusal must come from a server that was
+      // STARTED without the opt-in, which is the only configuration that proves it.
+      await withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
+        refusalPhase(session),
+      );
+
+      if (flags.irreversible === true && flags.keep !== true) {
+        recordingFor = 'delete';
+        await withServer(
+          credentials,
+          { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
+          (session) => deletePhase(session),
+        );
+      }
     }
+  }
+
+  // The tail runs on EVERY invocation, including a read-only one: an operator
+  // who has to remember a flag to find out what is on their site will not
+  // remember it. A plan-mode child is enough — the inventory only reads.
+  recordingFor = 'residue';
+  await withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
+    residuePhase(session, flags, site),
+  );
+
+  if (flags.purge === true) {
+    recordingFor = 'purge';
+    await withServer(
+      credentials,
+      { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
+      (session) => purgePhase(session),
+    );
   }
 
   const { text, failed } = report();
   console.log(text);
 
-  if (created.issueKey !== undefined) {
-    console.error(
-      `verify-live: the throwaway issue ${created.issueKey} was NOT deleted.\n` +
-        'Re-run with --irreversible, or delete it by hand.\n',
-    );
-  }
-
-  if (created.sprintId !== undefined) {
-    // Not conditional on --irreversible: no run of this script can clean this
-    // up. This server exposes no sprint delete, by design, so the only remedy
-    // is the Jira UI.
-    console.error(
-      `verify-live: sprint ${String(created.sprintId)} "${String(created.sprintName)}" is\n` +
-        'STILL ON THE SITE. No tool this server exposes can delete a sprint, so\n' +
-        '--irreversible does not remove it either. Delete it from the Jira UI:\n' +
-        'Backlog → the sprint → ••• → Delete sprint.\n',
-    );
-  }
+  console.error(
+    renderResidue(residuePlan(residue ?? { purgeCommand: purgeCommand(flags, site) })),
+  );
 
   if (typeof flags.record === 'string' && flags.record !== '') {
     const file = await writeRecording(flags.record, credentials);
@@ -1425,4 +2054,17 @@ async function run() {
   return failed > 0 ? EXIT_FAILURE : EXIT_OK;
 }
 
-process.exitCode = await run();
+/**
+ * Only drive a site when this file is the process's entry point.
+ *
+ * The colocated test imports the pure helpers above (the site guard, the
+ * ownership patterns, the residue table). Without this check that import would
+ * be a Gate C run — under a network fence, with no credentials, in the middle of
+ * the unit suite (D75).
+ */
+const invokedDirectly =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === MODULE_PATH;
+
+if (invokedDirectly) {
+  process.exitCode = await run();
+}

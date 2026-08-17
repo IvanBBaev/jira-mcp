@@ -98,7 +98,8 @@ Usage:
 
 With no subcommand the process speaks JSON-RPC on stdin/stdout and must be
 registered as a stdio MCP server; diagnostics always go to stderr.
-Configuration is environment-only (JIRA_*) — see CONFIGURATION.md.`;
+Configuration is environment-only (JIRA_*) — see
+https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md`;
 
 // ---------------------------------------------------------------------------
 // Bootstrap

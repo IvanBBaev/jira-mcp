@@ -1,5 +1,5 @@
 {
-  "//": "Coverage is measured over the COMPILED output, because that is what the test runner executes (`node --test build/**/*.test.js`). `excludeAfterRemap` makes the exclude patterns below apply to the ORIGINAL src/*.ts paths after source-map remapping, which is why they are written in src/ terms even though `src` points at build/. Thresholds are the Phase-5 levels of TESTING.md §Coverage (the servicenow-mcp donor levels: lines 94 / branches 82 / functions 97); the donor pins no statements floor, so ours is set to the same value as lines, which is what tsc output makes it in practice. They sit a few points under the measured tree on purpose: a threshold is a floor that must not creep down, not a target to chase. `check-coverage` below makes any c8 run fail when one of them is missed, and `npm run check` runs the suite under c8 (`test:coverage`) — the gate enforces these floors; plain `npm run test` stays uninstrumented for quick loops.",
+  "//": "Coverage is measured over the COMPILED output, because that is what the test runner executes (`node --test build/**/*.test.js`). `excludeAfterRemap` makes the exclude patterns below apply to the ORIGINAL src/*.ts paths after source-map remapping, which is why they are written in src/ terms even though `src` points at build/. Thresholds are the Phase-5 levels of TESTING.md §Coverage (the servicenow-mcp donor levels: lines 94 / branches 82 / functions 97); the donor pins no statements floor, so ours is set to the same value as lines, which is what tsc output makes it in practice. They sit a few points under the measured tree on purpose: a threshold is a floor that must not creep down, not a target to chase. `check-coverage` below makes any c8 run fail when one of them is missed, and `npm run check` runs the suite under c8 (`test:coverage`) — the gate enforces these floors; plain `npm run test` stays uninstrumented for quick loops. Development scripts under `scripts/` are not in `src`, so they are reported only when a test loads them — which is the honest signal for `record-fixture.mjs` and `generate-readme.mjs`, both of which have suites meant to exercise them. `scripts/verify-live.mjs` is the one exception and is excluded by name: it is the Gate C driver, and the thing that actually exercises it is the offline rehearsal (`scripts/rehearse-live.mjs`, deliberately outside `npm run check` — TESTING.md \"Rehearsing the live gate\"). `src/testing/verify-live.test.ts` imports it to pin three pure safety helpers and nothing else, so the remaining ~68% is unreachable by design rather than untested, and letting a 2000-line offline driver set the floor for the shipped server would make the floor mean nothing.",
   "all": true,
   "src": ["build"],
   "excludeAfterRemap": true,
@@ -8,6 +8,7 @@
     "src/**/*.test.ts",
     "src/testing/**",
     "src/core/fakes/**",
+    "scripts/verify-live.mjs",
     "**/*.d.ts"
   ],
   "reporter": ["text", "text-summary", "lcov"],

@@ -59,6 +59,12 @@ import type {
   Rng,
   Settings,
 } from '../core/types.js';
+// `cli/` is a composition root (eslint layer zones), so reaching up into `mcp/`
+// is allowed. `expandSelection` is imported rather than re-implemented on
+// purpose: doctor's contract is that it reports what the server would do, and a
+// second copy of the package vocabulary is exactly how the two came apart.
+// `mcp/registry.ts` pulls in no zod and no SDK, so the import stays cheap.
+import { expandSelection } from '../mcp/registry.js';
 
 // ---------------------------------------------------------------------------
 // Exit codes
@@ -175,7 +181,12 @@ export type DoctorPrompt = (
 
 /** Everything ambient, injectable. Defaults are the real host. */
 export interface DoctorOptions {
-  /** Arguments after the subcommand. Defaults to `process.argv.slice(2)`. */
+  /**
+   * Arguments after the subcommand — `['--json']`, not `['doctor', '--json']`.
+   * Defaults to none: the dispatcher (`src/index.ts`) has already split the
+   * subcommand off, and re-reading `process.argv` here would feed the word
+   * `doctor` back into the parser as an unexpected argument.
+   */
   readonly argv?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
   readonly homeDir?: string;
@@ -436,6 +447,97 @@ function fromError(
   };
 }
 
+/**
+ * The gating triple, checked the way the registry checks it (CC-88).
+ *
+ * `core/settings.ts` splits these three variables into token lists but never
+ * looks the tokens up — the vocabulary lives in `mcp/registry.ts`, and the
+ * server only meets it while building the tool surface. Doctor used to print the
+ * raw tokens as an `info` line, so a misspelt package (or an unexpanded
+ * `${user_config.…}` placeholder arriving from a plugin manifest) produced a
+ * green `doctor` and a server that then refused to start with exit 2 — the exact
+ * opposite of what `assertStartupOk`'s remediation promises about doctor.
+ *
+ * `expandSelection` is pure and throws a `config` `JiraError` naming the token
+ * and the vocabulary, so the finding carries the same words the server prints.
+ */
+function selectionProblems(settings: Settings): readonly DoctorFinding[] {
+  const findings: DoctorFinding[] = [];
+  const selections: readonly (readonly [string, readonly string[]])[] = [
+    ['JIRA_TOOL_PACKAGES', settings.toolPackages],
+    ['JIRA_PACKAGES_DENY', settings.packagesDeny],
+    ['JIRA_PACKAGES_READONLY', settings.packagesReadonly],
+  ];
+
+  for (const [envVar, tokens] of selections) {
+    try {
+      expandSelection(tokens, envVar);
+    } catch (error) {
+      const wrapped = toJiraError(error);
+      findings.push({
+        status: 'fail',
+        text: wrapped.message,
+        ...(wrapped.remediation !== undefined && wrapped.remediation !== ''
+          ? { remediation: wrapped.remediation }
+          : {}),
+      });
+    }
+  }
+  return findings;
+}
+
+/**
+ * A `${…}` a client was supposed to substitute and did not.
+ *
+ * Deliberately narrow: it matches the substitution syntaxes clients actually
+ * use — Claude Code's `${user_config.KEY}`, a plain `${VAR}`, VS Code's
+ * `${env:VAR}` / `${input:token}` — and nothing that a real value plausibly
+ * contains. `JIRA_ALLOWED_HOSTS` takes anchored regexes, and `$` followed by
+ * `{` is not a shape any of them has.
+ */
+const UNEXPANDED_PLACEHOLDER = /\$\{[A-Za-z_][A-Za-z0-9_.:-]*\}/;
+
+/**
+ * Variables still holding a literal placeholder (D84).
+ *
+ * A manifest that offers an optional field the operator leaves blank, or a
+ * client that does not implement the substitution at all, hands the server the
+ * placeholder text verbatim. Some variables catch that themselves — a
+ * `JIRA_WRITE_MODE` outside `plan | apply` is a settings error, a `JIRA_SITE`
+ * that is not a DNS name is a host error — but the free-text ones do not:
+ * `JIRA_MEDIA_DIR=${user_config.jira_media_dir}` is a perfectly good relative
+ * directory name, so it loaded clean and doctor went green while the attachment
+ * sandbox pointed at a directory of that literal name. `JIRA_API_TOKEN` and
+ * `JIRA_EMAIL` behave the same way offline.
+ *
+ * Variables that a startup finding already names are skipped: the operator gets
+ * one line per broken variable, and the more specific line is the one the
+ * loader wrote.
+ *
+ * Only the matched placeholder is printed, never the whole value — a value may
+ * be `${VAR}` glued to something secret.
+ */
+function placeholderProblems(ctx: DoctorContext): readonly DoctorFinding[] {
+  const alreadyNamed = new Set(
+    ctx.loaded.report.findings
+      .map((finding) => finding.field)
+      .filter((field): field is string => field !== undefined),
+  );
+  const findings: DoctorFinding[] = [];
+  for (const key of Object.keys(ctx.env).sort()) {
+    if (!key.startsWith('JIRA_') || alreadyNamed.has(key)) continue;
+    const value = ctx.env[key];
+    const match = value === undefined ? null : UNEXPANDED_PLACEHOLDER.exec(value);
+    if (match === null) continue;
+    findings.push({
+      status: 'fail',
+      text: `${key} still holds the literal placeholder ${match[0]}; whatever launched this server did not substitute it`,
+      remediation: `Give ${key} a real value in the client config or the env file, or remove the variable — this text is used verbatim, not resolved.`,
+    });
+  }
+  return findings;
+}
+
 /** Read a string field out of an `unknown` JSON body without an unsafe cast. */
 function readString(value: unknown, key: string): string | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
@@ -490,7 +592,10 @@ const PROBES: readonly Probe[] = [
     title: 'settings',
     network: false,
     run(ctx) {
-      const problems = ctx.findingsFor('settings').map(fromStartupFinding);
+      const problems = [
+        ...ctx.findingsFor('settings').map(fromStartupFinding),
+        ...placeholderProblems(ctx),
+      ];
       const count = Object.keys(ctx.env).filter((key) => key.startsWith('JIRA_')).length;
       const summary: DoctorFinding = {
         status: problems.length === 0 ? 'ok' : 'info',
@@ -505,34 +610,33 @@ const PROBES: readonly Probe[] = [
     network: false,
     run(ctx) {
       const problems = ctx.findingsFor('host').map(fromStartupFinding);
-      const findings: DoctorFinding[] = [];
       const host = ctx.host;
       if (host === undefined) {
-        findings.push({
-          status: problems.length === 0 ? 'fail' : 'info',
-          text: 'no usable site; every network probe is skipped',
-          ...(problems.length === 0
-            ? { remediation: 'Set JIRA_SITE to your site, e.g. mycompany.atlassian.net.' }
-            : {}),
-        });
-      } else {
-        const hostname = new URL(host.origin).hostname;
-        findings.push({
+        // `resolveHost` withholds the host ONLY after pushing an error-severity
+        // problem, and every code it can push is in HOST_CODES — so `problems`
+        // is never empty here. The cause is printed FIRST and this line second:
+        // an operator reading top-to-bottom must meet "JIRA_SITE is not set"
+        // before "every network probe is skipped", not the other way round.
+        return [
+          ...problems,
+          { status: 'info', text: 'no usable site; every network probe is skipped' },
+        ];
+      }
+      const hostname = new URL(host.origin).hostname;
+      // `host.pathPrefix` is `V1_PATH_PREFIX` — the empty string, and
+      // `core/host.ts` is its only producer. There is nothing to report about it
+      // until a deployment that needs a prefix (Data Center, v2) exists.
+      return [
+        {
           status: 'ok',
           text: `${host.origin} — ${
             isCanonicalCloudHost(hostname)
               ? 'canonical Atlassian Cloud host'
               : `allowed by JIRA_ALLOWED_HOSTS (${unit(ctx.settings.allowedHosts.length, 'entry', 'entries')})`
           }`,
-        });
-        if (host.pathPrefix !== '') {
-          findings.push({
-            status: 'info',
-            text: `path prefix ${quote(host.pathPrefix)}`,
-          });
-        }
-      }
-      return [...findings, ...problems];
+        },
+        ...problems,
+      ];
     },
   },
   {
@@ -545,14 +649,13 @@ const PROBES: readonly Probe[] = [
       const file = ctx.envFile;
 
       if (file.path === undefined) {
+        // `resolveEnvFileCandidates` always ends with the project `.env`, so the
+        // candidate list is never empty and "looked at …" always names a path.
         const where = file.candidates.map((candidate) => candidate.path);
         return [
           {
             status: 'info',
-            text:
-              where.length === 0
-                ? 'no env file in use (the environment was supplied directly)'
-                : `no env file found; looked at ${where.map(quote).join(', ')}`,
+            text: `no env file found; looked at ${where.map(quote).join(', ')}`,
           },
           ...findings,
         ];
@@ -825,6 +928,7 @@ const PROBES: readonly Probe[] = [
               : ''
           }`,
         },
+        ...selectionProblems(settings),
       ];
 
       findings.push(
@@ -902,15 +1006,32 @@ export function mergeEnvFile(
   return `${body}\n`;
 }
 
-/** The real prompt: one question per line on stdout, answer read from stdin. */
-const nodePrompt: DoctorPrompt = async (question) => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    return (await rl.question(question)).trim();
-  } finally {
-    rl.close();
-  }
-};
+/**
+ * The real prompt, over any stream pair: one question on `output`, one line read
+ * from `input`, surrounding whitespace trimmed off the answer.
+ *
+ * The streams are parameters rather than `process.stdin`/`process.stdout` hard-
+ * wired inside so the adapter itself is reachable from a test without owning the
+ * process's stdin — the readline lifecycle (an interface that is never closed
+ * hangs the CLI) is exactly the part worth pinning.
+ *
+ * `secret` is deliberately not honoured: there is no echo suppression here, and
+ * `--save` says so in its banner. Pretending otherwise would be worse than
+ * saying it plainly.
+ */
+export function createReadlinePrompt(
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+): DoctorPrompt {
+  return async (question) => {
+    const rl = createInterface({ input, output });
+    try {
+      return (await rl.question(question)).trim();
+    } finally {
+      rl.close();
+    }
+  };
+}
 
 // ---------------------------------------------------------------------------
 // The run
@@ -940,7 +1061,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
   const out = (text: string): void => writeOut(redactor.redactString(text));
   const err = (text: string): void => writeErr(redactor.redactString(text));
 
-  const parsed = parseArgs(options.argv ?? process.argv.slice(2));
+  const parsed = parseArgs(options.argv ?? []);
   if (!parsed.ok) {
     err(`${parsed.message}\n\n${doctorUsage()}`);
     return EXIT_CONFIG;
@@ -1096,8 +1217,18 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
       : { counters: telemetry.snapshot() }),
   };
 
-  if (flags.json) out(`${JSON.stringify(report, null, 2)}\n`);
-  else out(renderSummary(report));
+  if (flags.json) {
+    // Redact the OBJECT, then serialize — and write the result through
+    // `writeOut`, deliberately bypassing the string pass `out` applies.
+    //
+    // Serializing first and running `redactString` over the finished document
+    // corrupts it: the string redactor knows nothing about JSON, so a short
+    // secret also matches inside the syntax. With `JIRA_API_TOKEN=t`, `"ok":
+    // true` came out as `"ok": [REDACTED]rue` and no parser would take it.
+    // Deep-redacting the tree first is what `core/log.ts` does with its fields,
+    // and it reaches every string the report actually carries.
+    writeOut(`${JSON.stringify(redactor.redact(report), null, 2)}\n`);
+  } else out(renderSummary(report));
 
   return exitCode;
 }
@@ -1154,7 +1285,10 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
     );
     return EXIT_CONFIG;
   }
-  const ask = prompt ?? nodePrompt;
+  // Binding `process.stdin` here rather than at module load matters: touching
+  // that getter instantiates the stdin stream, and a doctor run that never
+  // prompts must not do that.
+  const ask = prompt ?? createReadlinePrompt(process.stdin, process.stdout);
 
   const target = loaded.envFile.path ?? preferredEnvFilePath(envOptions);
   out(`Writing credentials to ${quote(target)} (mode ${octal(SECRET_FILE_MODE)}).\n`);

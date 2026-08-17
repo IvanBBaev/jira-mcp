@@ -6,7 +6,7 @@
     <title>jira-mcp-ai — Jira Cloud MCP Server for AI assistants</title>
     <meta
       name="description"
-      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. TypeScript, MIT, Node 22+."
+      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. 52 tools, TypeScript, MIT, Node 22+."
     />
     <meta name="author" content="Ivan Baev" />
     <meta name="color-scheme" content="light dark" />
@@ -26,7 +26,7 @@
     <meta property="og:title" content="jira-mcp-ai — Jira Cloud MCP Server" />
     <meta
       property="og:description"
-      content="Drive Jira Cloud from your AI assistant. A local-first MCP server: JQL search, issue reads, transitions, comments, worklogs, boards and sprints — headless API-token auth, plan-and-apply write safety."
+      content="Drive Jira Cloud from your AI assistant. A local-first MCP server: JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints — headless API-token auth, plan-and-apply write safety."
     />
     <meta property="og:url" content="https://ivanbbaev.github.io/jira-mcp/" />
     <meta
@@ -46,7 +46,7 @@
     <meta name="twitter:title" content="jira-mcp-ai — Jira Cloud MCP Server" />
     <meta
       name="twitter:description"
-      content="Drive Jira Cloud from your AI assistant. A local-first MCP server: JQL search, issue reads, transitions, comments, worklogs, boards and sprints — headless API-token auth, plan-and-apply write safety."
+      content="Drive Jira Cloud from your AI assistant. A local-first MCP server: JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints — headless API-token auth, plan-and-apply write safety."
     />
     <meta
       name="twitter:image"
@@ -66,7 +66,7 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "MCP Server",
             "operatingSystem": "Cross-platform (Node.js 22+)",
-            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud: JQL search, issue reads, transitions, comments, worklogs, project and field metadata, boards and sprints — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write.",
+            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud: 52 tools across JQL search, issue reads and writes, transitions, comments, worklogs, attachments, watchers, components, versions, project and field metadata, boards and sprints — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write and a second opt-in for deletes.",
             "url": "https://ivanbbaev.github.io/jira-mcp/",
             "codeRepository": "https://github.com/IvanBBaev/jira-mcp",
             "license": "https://opensource.org/licenses/MIT",
@@ -115,7 +115,7 @@
                 "name": "Is it safe to let an AI assistant write to my Jira site?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. v1 has no delete, bulk or attachment tools at all, and a write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
+                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. The three deletes sit in a separate irreversible tier that needs a fourth thing, JIRA_ALLOW_IRREVERSIBLE=true, because blanket write mode must never cover them. There are no bulk operations at all, and a write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
                 }
               },
               {
@@ -123,7 +123,7 @@
                 "name": "What actually works today?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "This is a spec-first repository. The complete contract — all 27 tools, the write gate, the error catalog, the corner cases — is written down in docs/ and is normative. The core HTTP layer and the first typed API wrappers are implemented and covered by hermetic tests behind a network fence; the MCP layer and the tool surface are being built against that spec now. There is no tagged release and no npm package yet."
+                  "text": "The whole surface, offline. All 52 tools across 10 packages are implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,400+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. What has not happened yet is verification against a real Jira site and the first tagged release, so there is no npm package to install."
                 }
               },
               {
@@ -131,15 +131,15 @@
                 "name": "When will it be published to npm?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "In the release phase, after the full read surface and the write gate have been proven against a real Jira site. Publication is planned through npm trusted publishing (OIDC) with provenance attestation, so the artifact on npm is verifiably built from this repository. Until then there is nothing to install — watch the repository instead."
+                  "text": "Once it has been proven against a real Jira site. The code is complete and the offline gate is green; what is left is the live verification pass on a scratch site and the decision to publish. Publication goes through npm trusted publishing (OIDC) with provenance attestation, so the artifact on npm is verifiably built from this repository. Until then there is nothing to install — watch the repository instead."
                 }
               },
               {
                 "@type": "Question",
-                "name": "Which MCP clients will it work with?",
+                "name": "Which MCP clients does it work with?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Any client that speaks the Model Context Protocol over stdio — Claude Code, Claude Desktop, VS Code and Cursor among them. An optional loopback-only Streamable HTTP transport is specified for advanced setups; it binds 127.0.0.1 only and refuses to start without a bearer token."
+                  "text": "Any client that speaks the Model Context Protocol over stdio — Claude Code, Claude Desktop, VS Code and Cursor among them. stdio is the only transport v1 runs: a loopback-only Streamable HTTP transport is specified and its settings are validated, but selecting it is refused at startup with an error naming v1.5, so no port is ever bound."
                 }
               },
               {
@@ -1361,7 +1361,7 @@
             <span class="badge">MIT</span>
             <span class="badge">Node 22+</span>
             <span class="badge">Jira Cloud REST v3</span>
-            <span class="badge">27 tools · 7 packages</span>
+            <span class="badge">52 tools · 10 packages</span>
             <span class="badge warn">pre-1.0 · not on npm yet</span>
           </div>
 
@@ -1414,20 +1414,21 @@
           </div>
 
           <div class="stats">
-            <div><b>27</b><span>tools in 7 packages</span></div>
-            <div><b>19 / 8</b><span>read tools / write tools</span></div>
+            <div><b>52</b><span>tools in 10 packages</span></div>
+            <div><b>27 / 25</b><span>read tools / write tools</span></div>
             <div><b>1</b><span>host the process may reach</span></div>
             <div><b>0</b><span>telemetry calls, by design</span></div>
           </div>
 
           <p class="note warn" style="margin-top: 32px">
-            <strong>Status, honestly.</strong> This is a spec-first repository: the
-            complete contract — all 27 tools, the write gate, the error catalog, the
-            corner cases — is written down in <code>docs/</code> and is normative. The
-            core HTTP layer and the first typed API wrappers are implemented and covered
-            by hermetic tests behind a network fence; the MCP layer and the tool surface
-            are being built against that spec now. There is no tagged release and no npm
-            package yet.
+            <strong>Status, honestly.</strong> The surface is complete and green
+            offline: all 52 tools, the write gate, the error catalog and the corner
+            cases are implemented against the spec in <code>docs/</code>, which stays
+            normative — 1,400+ hermetic tests behind a network fence, with layering,
+            coverage floors and docs consistency enforced in CI. What has
+            <em>not</em> happened yet is a run against a real Jira site, so nothing here
+            has been confirmed by Atlassian's actual API. There is no tagged release and
+            no npm package yet.
           </p>
         </div>
       </section>
@@ -1445,10 +1446,13 @@
           </div>
 
           <p class="note warn">
-            <strong>Not on npm yet.</strong> jira-mcp-ai is pre-1.0 and unpublished. The
-            registration below is the target contract the docs already guarantee — it
+            <strong>Not on npm yet.</strong> The server is built and its offline gate is
+            green, but it is unpublished until it has been verified against a real Jira
+            site. The registration below is the contract the docs already guarantee — it
             will resolve as-is once the first release is tagged. Until then,
-            <a href="https://github.com/IvanBBaev/jira-mcp">watch the repository</a>.
+            <a href="https://github.com/IvanBBaev/jira-mcp">watch the repository</a> or
+            run it from a clone (<code>npm ci &amp;&amp; npm run build</code>, then point
+            the client at <code>bin/jira-mcp-ai.cjs</code>).
           </p>
 
           <div class="steps">
@@ -1562,6 +1566,26 @@
                     On Windows the file lives at
                     <code>%APPDATA%\Claude\claude_desktop_config.json</code>.
                   </p>
+                  <p class="sub" style="margin-top: 10px; font-size: 14px">
+                    <strong>If the server does not appear, it is almost always PATH.</strong>
+                    Claude Desktop launches MCP servers from a minimal environment that
+                    does not include your shell's PATH, so a <code>node</code>/<code>npx</code>
+                    installed by nvm, Homebrew or fnm is invisible to it and the launch
+                    fails inside the client, before this server runs — you get the
+                    client's generic "server failed" message and nothing on this server's
+                    stderr, because there was no process. Fix it by giving an absolute
+                    path: <code>"command": "/usr/local/bin/npx"</code> (<code>which npx</code>
+                    prints yours). Claude Code, run from a terminal, inherits your PATH
+                    and is not affected.
+                  </p>
+                  <p class="sub" style="margin-top: 10px; font-size: 14px">
+                    Everything this server writes goes to <strong>stderr</strong>, never
+                    stdout — stdout is the MCP protocol. Claude Desktop keeps it in
+                    <code>~/Library/Logs/Claude/mcp*.log</code> on macOS and
+                    <code>%APPDATA%\Claude\logs\</code> on Windows; Claude Code in
+                    <code>~/.claude/logs/</code>. The startup report and any
+                    <code>JIRA_*</code> configuration error will be there.
+                  </p>
                 </div>
 
                 <div
@@ -1585,7 +1609,8 @@
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
-        <span class="p">"JIRA_API_TOKEN"</span>: "&lt;api-token&gt;"
+        <span class="p">"JIRA_API_TOKEN"</span>: "&lt;api-token&gt;",
+        <span class="p">"JIRA_WRITE_MODE"</span>: "plan"
       }
     }
   }
@@ -1612,7 +1637,7 @@
                 <h3>Stay read-only until you mean it</h3>
                 <p class="sub">
                   Out of the box every write describes instead of executing. Narrow the
-                  surface further, or open the gate, with two variables:
+                  surface further, or open the gate, with three variables:
                 </p>
                 <div class="code">
                   <div class="code-head">
@@ -1621,7 +1646,8 @@
                   </div>
                   <pre id="c-modes">JIRA_WRITE_MODE=plan       <span class="c"># default — writes return a plan, nothing executes</span>
 JIRA_TOOL_PACKAGES=reader  <span class="c"># reads only — write tools are never registered</span>
-JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also passes apply:true</span></pre>
+JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also passes apply:true</span>
+JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three deletes; apply alone never does</span></pre>
                 </div>
               </div>
             </div>
@@ -1634,7 +1660,7 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
         <div class="wrap stack-lg">
           <div>
             <span class="eyebrow">Capabilities</span>
-            <h2 id="h-capabilities">Seven packages, 27 tools</h2>
+            <h2 id="h-capabilities">Ten packages, 52 tools</h2>
             <p class="sub">
               Packages are the unit of exposure: <code>JIRA_TOOL_PACKAGES</code> picks a
               profile (<code>core</code>, <code>reader</code>, <code>all</code> — the
@@ -1672,12 +1698,13 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                 </tr>
                 <tr>
                   <td><code>search</code></td>
-                  <td><span class="tag read">2 read</span></td>
+                  <td><span class="tag read">4 read</span></td>
                   <td>—</td>
                   <td>
                     JQL search and approximate count over the current
                     <code>/rest/api/3/search/jql</code> endpoint — the legacy search API
-                    Atlassian removed in 2025 is never called.
+                    Atlassian removed in 2025 is never called — plus the saved-filter
+                    reads that turn a filter into the JQL behind it.
                   </td>
                 </tr>
                 <tr>
@@ -1691,11 +1718,46 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                 </tr>
                 <tr>
                   <td><code>issues-write</code></td>
-                  <td><span class="tag write">7 write</span></td>
+                  <td><span class="tag write">8 write</span></td>
                   <td><code>plan</code></td>
                   <td>
-                    Create, update, transition, comment, assign, log work, link — every
-                    one behind the plan → apply gate.
+                    Create, update, transition, comment, edit a comment, assign, log
+                    work, link — every one behind the plan → apply gate.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>issues-delete</code></td>
+                  <td><span class="tag irr">3 irreversible</span></td>
+                  <td><code>plan</code> + opt-in</td>
+                  <td>
+                    Delete an issue, a comment or a worklog. The one package that is not
+                    covered by <code>JIRA_WRITE_MODE=apply</code> alone — it also needs
+                    <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, set on purpose.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>attachments</code></td>
+                  <td>
+                    <span class="tag read">2 read</span>
+                    <span class="tag write">1 write</span>
+                  </td>
+                  <td><code>plan</code></td>
+                  <td>
+                    List, download and upload attachments. Bytes only ever cross the
+                    boundary through <code>JIRA_MEDIA_DIR</code>; with no directory set
+                    the binary tools refuse, and file contents never enter a tool result.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>collab</code></td>
+                  <td>
+                    <span class="tag read">4 read</span>
+                    <span class="tag write">8 write</span>
+                  </td>
+                  <td><code>plan</code></td>
+                  <td>
+                    Watchers, votes, components, versions and project roles — the
+                    project-shaping surface around an issue rather than the issue itself.
                   </td>
                 </tr>
                 <tr>
@@ -1721,12 +1783,13 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                   <td><code>agile</code></td>
                   <td>
                     <span class="tag read">3 read</span>
-                    <span class="tag write">1 write</span>
+                    <span class="tag write">5 write</span>
                   </td>
                   <td><code>plan</code></td>
                   <td>
-                    Boards, sprints and sprint issues; moving issues into a sprint is the
-                    one write.
+                    Boards, sprints and sprint issues; the writes move issues into a
+                    sprint or the backlog and create, start and close a sprint. The one
+                    package that speaks the Agile API rather than the platform one.
                   </td>
                 </tr>
               </tbody>
@@ -1737,10 +1800,10 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <div class="card">
               <h3>What it deliberately does not do</h3>
               <p class="sub" style="font-size: 15px">
-                No deletes of any kind, no bulk operations, no attachment upload or
-                download — excluded by decision, not by omission. No Confluence, no Jira
-                Service Management, no Data Center. A tool that does not exist cannot be
-                talked into running.
+                No bulk operations, no deleting a project, a component, a version or a
+                sprint, no admin surface — excluded by decision, not by omission. No
+                Confluence, no Jira Service Management, no Data Center. A tool that does
+                not exist cannot be talked into running.
               </p>
             </div>
             <div class="card">
@@ -1756,7 +1819,7 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
           </div>
 
           <p class="sub">
-            The full 27-tool catalog — input schemas, hints and the error contract per
+            The full 52-tool catalog — input schemas, hints and the error contract per
             tool — lives in
             <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/TOOLS.md"
               >docs/TOOLS.md</a
@@ -1781,17 +1844,17 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <div class="tier">
               <div>
                 <h3>read</h3>
-                <span class="tag read">19 tools</span>
+                <span class="tag read">27 tools</span>
               </div>
               <p>Never mutates anything. Safe to expose first, and to leave on.</p>
             </div>
             <div class="tier">
               <div>
                 <h3>standard</h3>
-                <span class="tag write">8 tools</span>
+                <span class="tag write">22 tools</span>
               </div>
               <p>
-                Every write in v1. Governed by <code>JIRA_WRITE_MODE</code>: under
+                Every reversible write. Governed by <code>JIRA_WRITE_MODE</code>: under
                 <code>plan</code> — the default — the tool returns exactly what it would
                 have sent and performs zero network mutations; under
                 <code>apply</code> it executes, and only when the call itself also opts
@@ -1801,13 +1864,13 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <div class="tier">
               <div>
                 <h3>irreversible</h3>
-                <span class="tag irr">0 tools</span>
+                <span class="tag irr">3 tools</span>
               </div>
               <p>
-                Empty on purpose. Deletes, bulk edits and attachments are excluded from
-                v1 by decision — the tier exists so anything added later inherits rules
-                that are already written down, instead of negotiating them in a pull
-                request.
+                Deleting an issue, a comment or a worklog. These need a second, separate
+                switch — <code>JIRA_ALLOW_IRREVERSIBLE=true</code> — on top of everything
+                the standard tier already requires, because an operator who turned writes
+                on to move a ticket did not thereby agree to lose one.
               </p>
             </div>
           </div>
@@ -1892,10 +1955,18 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
               </li>
               <li>
                 <span
-                  ><strong>The HTTP transport fails closed.</strong> It binds loopback
-                  only, refuses to start without <code>JIRA_HTTP_TOKEN</code>, and checks
-                  <code>Origin</code> against DNS rebinding. stdio stays the
-                  default.</span
+                  ><strong>Attachment bytes stay out of the conversation.</strong>
+                  Downloads and uploads pass through <code>JIRA_MEDIA_DIR</code> and
+                  nowhere else; with no directory configured the binary tools refuse, and
+                  a file's contents never land in a tool result.</span
+                >
+              </li>
+              <li>
+                <span
+                  ><strong>One transport, and it is stdio.</strong> The loopback-only
+                  Streamable HTTP transport is specified and its settings are validated,
+                  but selecting it is refused at startup with an error naming v1.5 — v1
+                  binds no port at all.</span
                 >
               </li>
             </ul>
@@ -1945,8 +2016,9 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <div class="layer">
               <b>api</b>
               <span
-                >Typed wrappers over Jira REST, one module per domain — search, issues,
-                meta, users, agile. ADF flattening lives here.</span
+                >Typed wrappers over Jira REST, one module per domain — search, filters,
+                issues, meta, users, collab, attachments, agile. ADF flattening lives
+                here.</span
               >
             </div>
             <div class="layer">
@@ -2152,6 +2224,15 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                       </td>
                     </tr>
                     <tr>
+                      <td><code>JIRA_ALLOW_IRREVERSIBLE</code></td>
+                      <td><code>false</code></td>
+                      <td>
+                        Opt-in for the irreversible tier. Without it the three deletes
+                        refuse even under <code>apply</code> — blanket write mode never
+                        covers them.
+                      </td>
+                    </tr>
+                    <tr>
                       <td><code>JIRA_REQUEST_TIMEOUT_MS</code></td>
                       <td><code>30000</code></td>
                       <td>Per-request timeout.</td>
@@ -2191,24 +2272,38 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                       <td>Loop guard for paginated fetches.</td>
                     </tr>
                     <tr>
+                      <td><code>JIRA_MEDIA_DIR</code></td>
+                      <td>—</td>
+                      <td>
+                        Directory attachment downloads land in and uploads are read from.
+                        Unset, the binary attachment tools refuse; listing metadata needs
+                        no directory.
+                      </td>
+                    </tr>
+                    <tr>
                       <td><code>JIRA_TRANSPORT</code></td>
                       <td><code>stdio</code></td>
-                      <td><code>stdio</code> or <code>http</code>.</td>
+                      <td>
+                        Accepts <code>stdio</code> or <code>http</code>, but only
+                        <code>stdio</code> runs — <code>http</code> is parsed, then
+                        refused at startup with an error naming v1.5.
+                      </td>
                     </tr>
                     <tr>
                       <td><code>JIRA_HTTP_PORT</code></td>
                       <td><code>3334</code></td>
                       <td>
-                        TCP port for the <code>http</code> transport; the bind host is
-                        fixed to loopback.
+                        Loopback-only port for the future <code>http</code> transport.
+                        Parsed and validated; unused until it is reinstated.
                       </td>
                     </tr>
                     <tr>
                       <td><code>JIRA_HTTP_TOKEN</code></td>
                       <td>—</td>
                       <td>
-                        <strong>Secret.</strong> Bearer token required by the
-                        <code>http</code> transport; it fails closed without it.
+                        <strong>Secret.</strong> Bearer token required whenever
+                        <code>http</code> is selected — settings refuse that combination
+                        without it, though the transport is refused a step later anyway.
                       </td>
                     </tr>
                     <tr>
@@ -2254,8 +2349,8 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <h2 id="h-roadmap">Where it stands</h2>
             <p class="sub">
               The spec was written first, reviewed, and revised before serious code — so
-              the phases below are gates with exit criteria, not vibes. Two are done,
-              two are moving, four are queued.
+              the phases below are gates with exit criteria, not vibes. All eight are
+              closed. What is left before a release is not code.
             </p>
           </div>
 
@@ -2287,47 +2382,88 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                 </tr>
                 <tr>
                   <td>1 · Core</td>
-                  <td><span class="tag write">in progress</span></td>
+                  <td><span class="tag on">done</span></td>
                   <td>
-                    First runnable artifact: wire-tier HTTP policy tests green;
-                    <code>doctor</code> exits 0 against a real site.
+                    Config, host pinning, errors, redaction, logging and the one HTTP
+                    module; wire-tier policy tests green.
                   </td>
                 </tr>
                 <tr>
                   <td>2a · MCP layer + search</td>
-                  <td><span class="tag write">in progress</span></td>
+                  <td><span class="tag on">done</span></td>
                   <td>
-                    First usable build: registered in Claude Code, a real JQL search
-                    end-to-end.
+                    <code>defineTool</code>, the registry, the result envelope, taint
+                    marking — and JQL search over the current endpoint.
                   </td>
                 </tr>
                 <tr>
                   <td>2b · ADF + issue read</td>
-                  <td><span class="tag">planned</span></td>
+                  <td><span class="tag on">done</span></td>
                   <td>Issue reads with ADF flattening proven against recorded fixtures.</td>
                 </tr>
                 <tr>
                   <td>3 · Full read surface</td>
-                  <td><span class="tag">planned</span></td>
+                  <td><span class="tag on">done</span></td>
                   <td>
-                    Every read tool green against a live scratch site; coverage
-                    thresholds enforced from here on.
+                    Every read tool implemented; coverage floors enforced by the gate
+                    from here on.
                   </td>
                 </tr>
                 <tr>
                   <td>4 · Writes</td>
-                  <td><span class="tag">planned</span></td>
+                  <td><span class="tag on">done</span></td>
                   <td>
-                    The plan → apply gate proven end-to-end in both modes; write journal;
-                    the full 27-tool surface locked.
+                    The plan → apply gate proven in both modes, plan fingerprinting, the
+                    optional write journal.
                   </td>
                 </tr>
                 <tr>
-                  <td>5 · Hardening &amp; release</td>
+                  <td>5 · Hardening &amp; release prep</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    Every corner case traceable to a named test; the publish pipeline
+                    built and left inert by construction.
+                  </td>
+                </tr>
+                <tr>
+                  <td>6 · v1.5 pulled forward</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    Markdown ↔ ADF, the agile write surface, saved filters, comment
+                    editing.
+                  </td>
+                </tr>
+                <tr>
+                  <td>7 · v2 subset pulled forward</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    Attachments, the collaboration surface, and the irreversible tier
+                    with its own opt-in.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Hardening waves 8–13</td>
+                  <td><span class="tag on">done</span></td>
+                  <td>
+                    Adversarial passes over the shipped tarball rather than the source,
+                    release mechanics, and a live-verification driver rehearsed offline.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Live verification</td>
+                  <td><span class="tag write">outstanding</span></td>
+                  <td>
+                    One run of the driver against a real scratch Jira site. Nothing here
+                    has spoken to Atlassian's API yet — this is the honest reason the
+                    project has not published.
+                  </td>
+                </tr>
+                <tr>
+                  <td>1.0.0 on npm</td>
                   <td><span class="tag">planned</span></td>
                   <td>
-                    npm publish via OIDC trusted publishing with provenance; corner cases
-                    traceable to tests.
+                    A tag, once the run above is green: OIDC trusted publishing with
+                    provenance.
                   </td>
                 </tr>
               </tbody>
@@ -2339,7 +2475,8 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <a
               href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/IMPLEMENTATION-PLAN.md"
               >docs/IMPLEMENTATION-PLAN.md</a
-            >; the longer horizon is
+            >; the longer horizon — <code>@name</code> mention resolution, OAuth 3LO, a
+            Data Center adapter, bulk operations — is
             <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/ROADMAP.md"
               >docs/ROADMAP.md</a
             >.
@@ -2410,9 +2547,11 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
                 arguments.
               </p>
               <p>
-                v1 has no delete, bulk or attachment tools at all, and a write whose
-                outcome is unknowable — a timeout mid-flight — is never retried: the
-                server asks you to check state instead of guessing.
+                The three deletes sit in a separate irreversible tier that needs a
+                fourth thing, <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, because blanket
+                write mode must never cover them. There are no bulk operations at all,
+                and a write whose outcome is unknowable — a timeout mid-flight — is
+                never retried: the server asks you to check state instead of guessing.
               </p>
             </div>
           </details>
@@ -2421,17 +2560,20 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <summary>What actually works today?</summary>
             <div class="details-body">
               <p>
-                This is a spec-first repository. The complete contract — all 27 tools,
-                the write gate, the error catalog, the corner cases — is written down in
+                The whole surface, offline. All 52 tools across 10 packages are
+                implemented, along with the plan-and-apply write gate, the error catalog
+                and the corner cases — the spec in
                 <a href="https://github.com/IvanBBaev/jira-mcp/tree/main/docs"
                   ><code>docs/</code></a
                 >
-                and is normative. The core HTTP layer and the first typed API wrappers
-                are implemented and covered by hermetic tests behind a network fence;
-                the MCP layer and the tool surface are being built against that spec
-                now.
+                stays normative and the code is checked against it by 1,400+ hermetic
+                tests behind a network fence, with layering, coverage floors and docs
+                consistency all enforced in CI.
               </p>
-              <p>There is no tagged release and no npm package yet.</p>
+              <p>
+                What has not happened yet is verification against a real Jira site and
+                the first tagged release, so there is no npm package to install.
+              </p>
             </div>
           </details>
 
@@ -2439,8 +2581,9 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
             <summary>When will it be published to npm?</summary>
             <div class="details-body">
               <p>
-                In the release phase, after the full read surface and the write gate
-                have been proven against a real Jira site. Publication is planned
+                Once it has been proven against a real Jira site. The code is complete
+                and the offline gate is green; what is left is the live verification
+                pass on a scratch site and the decision to publish. Publication goes
                 through npm trusted publishing (OIDC) with provenance attestation, so
                 the artifact on npm is verifiably built from this repository. Until then
                 there is nothing to install —
@@ -2451,14 +2594,15 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
           </details>
 
           <details id="faq-clients">
-            <summary>Which MCP clients will it work with?</summary>
+            <summary>Which MCP clients does it work with?</summary>
             <div class="details-body">
               <p>
                 Any client that speaks the Model Context Protocol over stdio — Claude
-                Code, Claude Desktop, VS Code and Cursor among them. An optional
-                loopback-only Streamable HTTP transport is specified for advanced
-                setups; it binds <code>127.0.0.1</code> only and refuses to start
-                without a bearer token.
+                Code, Claude Desktop, VS Code and Cursor among them.
+                <code>stdio</code> is the only transport v1 runs: a loopback-only
+                Streamable HTTP transport is specified and its settings are validated,
+                but selecting it is refused at startup with an error naming v1.5, so no
+                port is ever bound.
               </p>
             </div>
           </details>
@@ -2523,7 +2667,11 @@ JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also pa
               <h3>Found a security problem?</h3>
               <p class="sub" style="font-size: 15px">
                 Please report it privately through GitHub's private vulnerability
-                reporting rather than in a public issue.
+                reporting rather than in a public issue — for a security problem,
+                opening the issue <em>is</em> the disclosure. If that button is not
+                there, email <code>ivanbbaev@gmail.com</code> with
+                <code>jira-mcp-ai security</code> in the subject; both routes reach the
+                same person.
               </p>
               <p style="margin-top: 12px">
                 <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/SECURITY.md"

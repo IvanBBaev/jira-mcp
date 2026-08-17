@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setImmediate as tick } from 'node:timers/promises';
 
+import { REMEDIATION } from './errors.js';
 import { JiraError } from './types.js';
 import type { HostRef, JiraRequestFn, JiraRequestSpec, LogEvent, Rng } from './types.js';
 import { createFakeClock } from './fakes/fakeClock.js';
@@ -22,7 +23,7 @@ import type { FetchMock } from '../testing/with-fetch.js';
 import { MAX_ATTACHMENT_BYTES } from './http-util.js';
 import { createJiraRequest } from './http.js';
 import type { JiraHttpOptions } from './http.js';
-import { createTelemetry } from './telemetry.js';
+import { UNKNOWN_ERROR_KIND, createTelemetry } from './telemetry.js';
 
 const SITE: HostRef = { origin: 'https://acme.atlassian.net', pathPrefix: '' };
 const TOKEN = 'super-secret-token';
@@ -1347,6 +1348,69 @@ test('a JSON GET still refuses the same 303 — only a binary read may hop', asy
   });
 });
 
+test('CC-93: a media 303 to a Location that is not a URL is refused, not guessed', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    // A proxy that rewrites the signed media URL can emit something no parser
+    // accepts; the hop must end here rather than fall back to the site origin,
+    // which is where the Authorization header lives.
+    mock.enqueue({ status: 303, headers: { location: 'http://[' } });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_CONTENT));
+
+    assert.equal(err.kind, 'config');
+    assert.equal(err.retryable, false);
+    assert.match(err.message, /unparseable location/);
+    assert.equal(mock.requests.length, 1, 'nothing is sent to a location we cannot read');
+  });
+});
+
+test('a 3xx with no Location at all is refused as a same-host redirect', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 302 });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'config');
+    assert.equal(err.httpStatus, 302);
+    assert.match(err.message, /302 redirect; redirects are never followed/);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('a 3xx whose Location is unparseable is refused without naming a host', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 302, headers: { location: 'http://[' } });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /302 redirect; redirects are never followed/);
+    assert.doesNotMatch(
+      err.message,
+      /redirect to "/,
+      'a host that could not be parsed must not be quoted back at the operator',
+    );
+  });
+});
+
+test('CC-91: a binary GET answered 204 yields zero bytes, not a stream error', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    // A 204 carries no body stream at all (`Response.body` is null), which is
+    // the one shape the byte-metering reader cannot meter.
+    mock.enqueue({ status: 204 });
+    const { request, clock } = harness();
+
+    const res = await settle(clock, request<Uint8Array>(GET_CONTENT));
+
+    assert.equal(res.status, 204);
+    assert.ok(res.data instanceof Uint8Array, 'a binary read always answers in bytes');
+    assert.equal(res.data.byteLength, 0);
+  });
+});
+
 test('CC-54: a download over the cap is aborted mid-stream, not buffered and rejected', async () => {
   const chunk = new Uint8Array(1024 * 1024);
   // Ten chunks more than the cap allows: the source is still open when the
@@ -1521,5 +1585,219 @@ test('CC-59: a multipart upload that times out is ambiguous and is NEVER replaye
     assert.equal(err.kind, 'ambiguous_write');
     assert.equal(mock.requests.length, 1, 'an upload is sent at most once');
     assert.equal(logger.eventsOf('ambiguous_write').length, 1);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * Status mapping, degenerate bodies and the counter boundary
+ * ------------------------------------------------------------------------- */
+
+test('a 409 is a validation error that tells the caller to re-read first', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 409, json: { errorMessages: ['Version mismatch'] } });
+    const { request, clock } = harness();
+
+    const err = await rejects(
+      clock,
+      request({ method: 'PUT', path: '/issue/ABC-1', body: { fields: {} } }),
+    );
+
+    assert.equal(err.kind, 'validation');
+    assert.equal(err.httpStatus, 409);
+    assert.deepEqual(err.jiraMessages, ['Version mismatch']);
+    assert.match(err.remediation ?? '', /changed underneath this call/);
+    assert.equal(mock.requests.length, 1, 'a conflict is not a retryable condition');
+  });
+});
+
+test('413 and 414 both come back as "the request was too large"', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 413 }).enqueue({ status: 414 });
+    const { request, clock } = harness();
+
+    const tooBigBody = await rejects(
+      clock,
+      request({ method: 'POST', path: '/search/jql', body: { jql: 'x' } }),
+    );
+    const tooLongUrl = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(tooBigBody.kind, 'validation');
+    assert.equal(tooBigBody.httpStatus, 413);
+    assert.match(tooBigBody.remediation ?? '', /too large/);
+    // 414 is not in the status table at all, so it also proves the >= 400
+    // fallback keeps a sane kind.
+    assert.equal(tooLongUrl.kind, 'validation');
+    assert.match(tooLongUrl.remediation ?? '', /smaller page size/);
+  });
+});
+
+test("a status with no bespoke text falls back to the kind's remediation", async () => {
+  await withFetch(async (mock: FetchMock) => {
+    // 422 maps to `validation` and has nothing status-specific to say, which is
+    // the arm that hands the caller the shared table entry instead.
+    mock.enqueue({ status: 422, json: { errorMessages: ['Field is required'] } });
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'validation');
+    assert.equal(err.httpStatus, 422);
+    assert.equal(err.remediation, REMEDIATION.validation);
+  });
+});
+
+test('a fetch that rejects with something other than an Error still fails as transport', async () => {
+  // Not undici's doing — a proxy agent or an injected fetch can reject with a
+  // bare value, and the classifier must not assume `error.name` exists.
+  const notAnError: unknown = 'connection refused';
+  const err = await withRawFetch(
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- rejecting with a non-Error is the entire subject of this test.
+    () => Promise.reject(notAnError),
+    async () => {
+      const { request, clock } = harness({ retryAttempts: 0 });
+      return await rejects(clock, request(GET_ISSUE));
+    },
+  );
+
+  assert.equal(err.kind, 'transport');
+  assert.match(err.message, /Could not reach Jira/);
+  assert.equal(err.cause, notAnError, 'the rejected value is kept as the cause');
+});
+
+/** A body that dies mid-read: the headers arrived, the bytes never will. */
+function failingBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(new Error('connection reset while reading the body'));
+    },
+  });
+}
+
+test('CC-92: an error body that cannot be read costs the snippet, not the verdict', async () => {
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(failingBody(), { status: 503 })),
+    async () => {
+      const { request, clock } = harness({ retryAttempts: 0 });
+      return await rejects(clock, request(GET_ISSUE));
+    },
+  );
+
+  // The status had already decided the outcome; a body that never arrived only
+  // costs the messages, and must not turn into a different failure.
+  assert.equal(err.kind, 'transport');
+  assert.equal(err.httpStatus, 503);
+  assert.deepEqual(err.jiraMessages, [], 'no messages survived the unreadable body');
+  assert.match(err.message, /Jira rejected GET .* with HTTP 503\./);
+});
+
+test('a runtime without a global fetch fails as config, before anything is sent', async () => {
+  const previous = globalThis.fetch;
+  (globalThis as { fetch?: typeof fetch }).fetch = undefined;
+  try {
+    const { request, clock } = harness();
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /no global fetch/);
+    assert.match(err.remediation ?? '', /Node 22/);
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test('CC-94: aborting an unsafe write warns that the change may already have landed', async () => {
+  const restore = installHangingFetch();
+  try {
+    const controller = new AbortController();
+    const { request, clock } = harness();
+    const promise = request({
+      method: 'POST',
+      path: '/issue',
+      body: { fields: { summary: 'x' } },
+      signal: controller.signal,
+    });
+
+    await tick();
+    controller.abort();
+
+    const err = await rejects(clock, promise);
+    assert.equal(err.kind, 'transport');
+    assert.equal(err.retryable, false);
+    assert.match(err.message, /cancelled by the caller/);
+    // The cancellation says nothing about what Jira did with the bytes already
+    // on the wire — the caller must verify, not re-send.
+    assert.match(err.remediation ?? '', /may or may not have been applied/);
+    assert.doesNotMatch(err.remediation ?? '', /Call again/);
+  } finally {
+    restore();
+  }
+});
+
+test('a transport failure is retried the same way without a telemetry set', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({ error: Object.assign(new Error('socket hang up'), { name: 'Error' }) })
+      .enqueue({ json: { key: 'ABC-1' } });
+    // No `telemetry` — counting is optional (D12) and the retry must not depend
+    // on someone being there to count it.
+    const { request, clock, logger } = harness();
+
+    const res = await settle(clock, request(GET_ISSUE));
+
+    assert.equal(res.status, 200);
+    assert.equal(mock.requests.length, 2);
+    assert.equal(fieldsOf(logger.eventsOf('http_retry')[0])['reason'], 'transport');
+  });
+});
+
+test('a retry after a transport failure is counted, like every other retry', async () => {
+  // The counterpart of the test above: the same socket failure, this time with
+  // someone counting. A retry costs the caller a request either way, and the
+  // three retry paths — 429, 5xx, transport — must all be visible in the same
+  // number, or the metric answers "how often do we retry?" with a figure that
+  // silently omits the network dropping out from under us.
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({ error: Object.assign(new Error('socket hang up'), { name: 'Error' }) })
+      .enqueue({ json: { key: 'ABC-1' } });
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({ telemetry });
+
+    const res = await settle(clock, request(GET_ISSUE));
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(telemetry.snapshot(), {
+      requests: 1,
+      retries: 1,
+      // A dead socket is not a rate limit — it must not inflate the wait count.
+      rateLimitWaits: 0,
+      errors: {},
+    });
+  });
+});
+
+test('a failure that is not a JiraError is still counted, under "unknown"', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({
+      telemetry,
+      credentials: () => {
+        throw new Error('the credential store is unreachable');
+      },
+    });
+
+    await assert.rejects(
+      () => settle(clock, request(GET_ISSUE)),
+      /credential store is unreachable/,
+    );
+
+    assert.deepEqual(telemetry.snapshot(), {
+      requests: 0,
+      retries: 0,
+      rateLimitWaits: 0,
+      errors: { [UNKNOWN_ERROR_KIND]: 1 },
+    });
+    assert.equal(mock.requests.length, 0);
   });
 });

@@ -7,6 +7,7 @@ import type { ErrorRecord } from '../core/types.js';
 import { TAINT_BEGIN, TAINT_END, untaintedBody } from './taint.js';
 import {
   ELLIPSIS,
+  UNTRUSTED_HINT_MESSAGE,
   err,
   normalizeHints,
   ok,
@@ -96,6 +97,32 @@ test('withHints() appends without disturbing the existing list', () => {
     ['clamped', 'discovery'],
   );
   assert.equal(base.hints?.length, 1, 'the input envelope is untouched');
+});
+
+test('withHints with nothing to add hands back the same envelope', () => {
+  const base = ok({ a: 1 });
+  assert.equal(withHints(base), base, 'no hints in, no new object out');
+});
+
+test('an untrusted failure is branded and warned about exactly once', () => {
+  // A failure can carry Jira-authored text too — an error message quoting the
+  // JQL the tenant wrote — so `err` brands as readily as `ok` does.
+  const branded = err(RECORD, { untrusted: true });
+  assert.equal(branded._untrusted, true);
+  assert.deepEqual(
+    branded.hints?.map((hint) => hint.code),
+    ['untrusted_content'],
+  );
+
+  // A caller that already added the hint itself must not get it twice: two
+  // copies of the same warning read as two different findings.
+  const explicit: Hint = { code: 'untrusted_content', message: UNTRUSTED_HINT_MESSAGE };
+  const twice = err(RECORD, { untrusted: true, hints: [explicit] });
+  assert.deepEqual(
+    twice.hints?.map((hint) => hint.code),
+    ['untrusted_content'],
+  );
+  assert.equal(twice._untrusted, true);
 });
 
 // ---------------------------------------------------------------------------
@@ -304,6 +331,122 @@ test('truncation never mutates the caller’s result', () => {
   assert.equal(data.issues.length, 40);
 });
 
+test('the ellipsized leaf can be an array element, not only an object field', () => {
+  // A list of strings — rendered rows, project keys, a field-name catalog — so
+  // the leaf the ladder cuts is addressed by index rather than by key. Nothing
+  // else in this suite reaches the array setter: every other over-budget leaf
+  // sits inside an object. // synthetic
+  const out = truncateResult(ok({ rows: ['A'.repeat(4_000)] }), 400);
+  const parsed = parse(out.json);
+  const marker = parsed['_truncation'] as Record<string, unknown>;
+
+  assert.equal(marker['reason'], 'item_too_large');
+  assert.equal(marker['field'], 'data.rows[0]', 'the path addresses the element');
+  assert.equal(marker['of'], 4_000);
+
+  const rows = (parsed['data'] as Record<string, unknown>)['rows'] as unknown[];
+  const kept = rows[0];
+  assert.ok(typeof kept === 'string', 'the element is still a string');
+  assert.ok(kept.endsWith(ELLIPSIS), 'the elision is visible in the value');
+  assert.equal(marker['dropped'], 4_000 - (kept.length - 1));
+  assert.ok(out.json.length <= 400);
+});
+
+test('a result whose data IS the string keeps a prefix instead of nothing', () => {
+  // `data` need not be a record: a tool that answers with rendered text hands
+  // back a bare string, and rung 3 of the ladder promises the item is KEPT and
+  // its longest string ellipsized. Before the root was writable this shape had
+  // no addressable leaf and fell to the floor — a total loss of an answer that
+  // fits in a prefix. // synthetic
+  const out = truncateResult(ok('R'.repeat(4_000)), 600);
+  const parsed = parse(out.json);
+  const marker = parsed['_truncation'] as Record<string, unknown>;
+
+  assert.equal(out.truncated, true);
+  assert.ok(out.json.length <= 600);
+  assert.equal(marker['reason'], 'item_too_large');
+  assert.equal(marker['field'], 'data');
+
+  const data = parsed['data'];
+  assert.ok(typeof data === 'string');
+  assert.ok(data.length > 1, 'something of the answer survived');
+  assert.ok(data.endsWith(ELLIPSIS));
+  assert.equal(data.slice(0, -1), 'R'.repeat(data.length - 1), 'a prefix, never a slice');
+});
+
+test('a non-finite budget means no budget; a negative one is the floor', () => {
+  const input = ok(page(40));
+
+  for (const budget of [Number.POSITIVE_INFINITY, Number.NaN]) {
+    const out = truncateResult(input, budget);
+    assert.equal(out.truncated, false, `budget ${String(budget)} must not cut`);
+    assert.deepEqual(out.result, input);
+  }
+
+  const floored = truncateResult(input, -1);
+  assert.equal(floored.truncated, true);
+  assert.equal('data' in floored.result, false, 'a negative budget is 0, not infinite');
+});
+
+// ---------------------------------------------------------------------------
+// Inputs the ladder refuses
+//
+// `truncateResult` is the last thing between a handler's return value and the
+// wire, and `createRegistry`'s `render` turns a throw here into a complete
+// `ok: false` envelope. So refusing loudly IS an answer; emitting half a result,
+// or one the caller cannot parse, is not.
+// ---------------------------------------------------------------------------
+
+test('a result that cannot be serialized is refused, not half-rendered', () => {
+  // The shape an accidental back-pointer produces — a parent link on a node
+  // that was meant to be plain data. // synthetic
+  const node: Record<string, unknown> = { key: 'PROJ-1' };
+  node['parent'] = node;
+
+  assert.throws(
+    () => truncateResult(ok(node), 10_000),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'unexpected_shape');
+      assert.equal(error.retryable, false);
+      assert.match(error.message, /cannot be serialized/);
+      assert.match(error.remediation ?? '', /no cycles/);
+      return true;
+    },
+  );
+});
+
+test('a result that does not serialize to a JSON object is refused too', () => {
+  const cases: { readonly what: string; readonly result: ToolResult<unknown> }[] = [
+    {
+      // `JSON.stringify(undefined)` is `undefined`, not a string: a handler
+      // that fell off the end of a branch returns exactly this.
+      what: 'a handler that returned nothing',
+      result: undefined as unknown as ToolResult<unknown>,
+    },
+    {
+      // A class instance whose `toJSON` collapses the envelope to a scalar.
+      what: 'a toJSON that answers with a scalar',
+      result: Object.assign(ok({ key: 'PROJ-1' }), { toJSON: () => 'PROJ-1' }),
+    },
+  ];
+
+  for (const { what, result } of cases) {
+    assert.throws(
+      () => truncateResult(result, 10_000),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'unexpected_shape' &&
+        /did not serialize to a JSON object/.test(error.message),
+      what,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Redaction
+// ---------------------------------------------------------------------------
+
 test('redaction runs before truncation, so a scrubbed result can fit', () => {
   const input = ok({ note: `token=${'s'.repeat(5_000)}` });
   const redact = (value: unknown): unknown => ({
@@ -316,4 +459,28 @@ test('redaction runs before truncation, so a scrubbed result can fit', () => {
   assert.equal(out.truncated, false, 'redaction shrank it below the budget first');
   assert.ok(out.json.includes('[redacted]'));
   assert.ok(!out.json.includes('sss'));
+});
+
+test('D85: a redactor that does not return an envelope fails the result closed', () => {
+  // The seam is typed `(value: unknown) => unknown`, so a redactor CAN answer
+  // with something that is not an envelope: a depth marker, a bare string, or
+  // nothing at all. Falling back to the unredacted envelope would emit the
+  // secret the redactor was called to remove, precisely in the case where it
+  // misbehaved — so this refuses instead, and `render` turns the refusal into a
+  // complete `ok: false` result. // synthetic
+  const input = ok({ note: 'token=hunter2' });
+
+  for (const answer of [undefined, null, '[MAX_DEPTH]', ['data'], 42]) {
+    assert.throws(
+      () => truncateResult(input, 10_000, () => answer),
+      (error: unknown) => {
+        assert.ok(error instanceof JiraError, `redactor answered ${String(answer)}`);
+        assert.equal(error.kind, 'unexpected_shape');
+        assert.equal(error.retryable, false);
+        assert.match(error.message, /redaction step/);
+        return true;
+      },
+      String(answer),
+    );
+  }
 });

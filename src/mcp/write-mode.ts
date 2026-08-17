@@ -36,6 +36,7 @@
 import { createHash } from 'node:crypto';
 
 import type {
+  JiraMultipartFile,
   JiraRequestFn,
   JiraRequestSpec,
   JiraResponse,
@@ -345,9 +346,34 @@ export function noteBeforeState(jira: JiraRequestFn, before: unknown): void {
   slot.value = before;
 }
 
+/**
+ * What a plan SHOWS about one multipart part: the metadata, never the payload.
+ *
+ * `bytes` is the part's SIZE, not its contents — the plan envelope is an
+ * approval surface rendered back to the model, and a file the user asked to
+ * upload has no business being echoed into it.
+ */
+export interface PlannedMultipartPart {
+  readonly field: string;
+  readonly filename: string;
+  readonly contentType?: string;
+  /** Byte length of the part. */
+  readonly bytes: number;
+}
+
+/**
+ * A captured request, plus the multipart summary `PlannedRequest` has no room
+ * for. Uploads (`POST /issue/{key}/attachments`) carry their whole meaning in
+ * `multipart` and set no `body`, so a plan built from method/path/query/body
+ * alone would describe them as a bare path — nothing to approve (CC-86).
+ */
+interface PlannedUpload extends PlannedRequest {
+  readonly multipart?: readonly PlannedMultipartPart[];
+}
+
 interface PlanCapture {
   readonly jira: JiraRequestFn;
-  readonly planned: PlannedRequest | undefined;
+  readonly planned: PlannedUpload | undefined;
   /** Filled by `noteBeforeState` while the handler runs. */
   readonly before: BeforeSlot;
 }
@@ -375,11 +401,31 @@ function plannedQuery(
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
+/**
+ * The multipart a plan should SHOW: which file, of what type, how big.
+ *
+ * The filename goes through the redactor because it is user-supplied text like
+ * any other; `bytes` is reduced to a length so the payload cannot ride into the
+ * envelope. An empty list becomes no `multipart` key at all.
+ */
+function plannedMultipart(
+  parts: readonly JiraMultipartFile[] | undefined,
+  redact: ((value: unknown) => unknown) | undefined,
+): readonly PlannedMultipartPart[] | undefined {
+  if (parts === undefined || parts.length === 0) return undefined;
+  return parts.map((part) => ({
+    field: part.field,
+    filename: redact === undefined ? part.filename : String(redact(part.filename)),
+    ...(part.contentType === undefined ? {} : { contentType: part.contentType }),
+    bytes: part.bytes.byteLength,
+  }));
+}
+
 function createPlanCapture(
   inner: JiraRequestFn,
   redact: ((value: unknown) => unknown) | undefined,
 ): PlanCapture {
-  let planned: PlannedRequest | undefined;
+  let planned: PlannedUpload | undefined;
   const before: BeforeSlot = { noted: false, value: undefined };
 
   const jira: JiraRequestFn = <T = unknown>(
@@ -390,10 +436,12 @@ function createPlanCapture(
     // second write must not be able to rewrite the plan the model approved.
     if (planned === undefined) {
       const query = plannedQuery(req.query, redact);
+      const multipart = plannedMultipart(req.multipart, redact);
       planned = {
         method: req.method,
         path: req.path,
         ...(query === undefined ? {} : { query }),
+        ...(multipart === undefined ? {} : { multipart }),
         ...(req.body === undefined
           ? {}
           : { body: redact === undefined ? req.body : redact(req.body) }),
@@ -409,7 +457,7 @@ function createPlanCapture(
   return {
     jira,
     before,
-    get planned(): PlannedRequest | undefined {
+    get planned(): PlannedUpload | undefined {
       return planned;
     },
   };

@@ -95,6 +95,13 @@
           "format": "string"
         },
         {
+          "name": "JIRA_ALLOW_IRREVERSIBLE",
+          "description": "Opt-in for the irreversible (delete) tier. Those tools refuse without it, even under apply.",
+          "isRequired": false,
+          "default": "false",
+          "format": "boolean"
+        },
+        {
           "name": "JIRA_REQUEST_TIMEOUT_MS",
           "description": "Per-request timeout in milliseconds.",
           "isRequired": false,
@@ -135,6 +142,12 @@
           "isRequired": false,
           "default": "20",
           "format": "number"
+        },
+        {
+          "name": "JIRA_MEDIA_DIR",
+          "description": "Directory attachment downloads land in and uploads are read from. Unset: those tools refuse.",
+          "isRequired": false,
+          "format": "filepath"
         },
         {
           "name": "JIRA_TRANSPORT",

@@ -444,6 +444,55 @@ describe('loadSettings — token expiry', () => {
   });
 });
 
+describe('loadSettings — placeholder credentials that shred the output', () => {
+  /** The shape and length of a token the API-token page actually hands out. */
+  const REALISTIC_TOKEN =
+    `ATATT${'3xFfGF0aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'.repeat(5)}`.slice(0, 192);
+
+  it('CC-76: warns on a one-character token and still registers it as a secret', () => {
+    const { report, secrets } = load({ ...VALID, JIRA_API_TOKEN: 't' });
+
+    assert.deepEqual(codes(report), ['redaction_collision']);
+    assert.equal(report.ok, true, 'a dummy token must not block startup');
+    assert.equal(report.warnings[0]?.field, 'JIRA_API_TOKEN');
+    assert.deepEqual(secrets, ['t'], 'the value still goes to the redactor');
+  });
+
+  it('CC-76: warns on a token the server prints itself, and keeps it registered', () => {
+    const { report, secrets } = load({ ...VALID, JIRA_API_TOKEN: 'settings' });
+
+    assert.deepEqual(codes(report), ['redaction_collision']);
+    assert.match(String(report.warnings[0]?.message), /substring of text this server/);
+    assert.deepEqual(secrets, ['settings']);
+  });
+
+  it('CC-76: stays silent for a realistic 192-character API token', () => {
+    const { report } = load({ ...VALID, JIRA_API_TOKEN: REALISTIC_TOKEN });
+    assert.deepEqual(report.findings, []);
+  });
+
+  it('names every affected variable, profile and transport tokens included', () => {
+    const { report } = load({
+      ...VALID,
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: 'dev',
+      [profileVar('work', 'API_TOKEN')]: 'x',
+    });
+
+    assert.deepEqual(codes(report), ['redaction_collision', 'redaction_collision']);
+    assert.deepEqual(
+      report.warnings.map((finding) => finding.field),
+      [profileVar('work', 'API_TOKEN'), 'JIRA_HTTP_TOKEN'],
+    );
+    assert.equal(report.ok, true);
+  });
+
+  it('describes the value without quoting it', () => {
+    const { report } = load({ ...VALID, JIRA_API_TOKEN: 'zq' });
+    assert.equal(report.warnings[0]?.message.includes('zq'), false);
+  });
+});
+
 describe('loadSettings — process.env path', () => {
   it('reads process.env by default and leaks nothing afterwards', async () => {
     await withEnv({ ...VALID, JIRA_ENV_FILE: undefined, JIRA_MAX_PAGES: '7' }, () => {

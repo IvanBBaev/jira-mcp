@@ -5,8 +5,10 @@
 // A tool is a plain object: name, title, description, package, the mandatory
 // annotation quadruple, a `.strict()` zod input schema and a handler. Nothing in
 // a `ToolSpec` reaches for a transport, a server or global state, which is what
-// lets the same array drive server registration, the manifest snapshot test,
-// README generation and `server.json` generation from ONE source.
+// lets the same array drive server registration, the manifest snapshot test and
+// README generation from ONE source. It does not drive `server.json`: the
+// registry schema carries no tool list, and the manifest is checked against
+// docs/CONFIGURATION.md by `src/manifest-sync.test.ts` rather than generated.
 //
 // `defineTool` is an identity function for the type system plus a set of
 // assertions. They are deliberately eager: a malformed spec is a programming
@@ -127,7 +129,7 @@ export const planIdArg = z.string().min(1).optional().describe(PLAN_ID_DESCRIPTI
  */
 export function toolInput<Shape extends z.ZodRawShape>(
   shape: Shape,
-): z.ZodObject<Shape & { profile: typeof profileArg }, 'strict'> {
+): z.ZodObject<Shape & { profile: typeof profileArg }, z.core.$strict> {
   return z.object({ ...shape, profile: profileArg }).strict();
 }
 
@@ -144,7 +146,7 @@ export function writeToolInput<Shape extends z.ZodRawShape>(
     plan_id: typeof planIdArg;
     profile: typeof profileArg;
   },
-  'strict'
+  z.core.$strict
 > {
   return z
     .object({ ...shape, apply: applyArg, plan_id: planIdArg, profile: profileArg })

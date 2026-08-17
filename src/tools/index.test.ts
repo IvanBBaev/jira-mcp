@@ -2,15 +2,18 @@
 // The manifest snapshot — the structural contract of the whole tool surface.
 //
 // WHAT IT LOCKS: package order, tool order, tool names, the full annotation
-// quadruple, `writeTier`, and the top-level key list of each input schema. Those
-// are the things a client's stored configuration, a prompt and a permission
-// policy are written against, so changing one silently is the failure this test
-// exists to prevent.
+// quadruple, `writeTier`, and the whole JSON Schema each tool emits. Those are
+// the things a client's stored configuration, a prompt and a permission policy
+// are written against, so changing one silently is the failure this test exists
+// to prevent. The schema is locked whole rather than as a key list because the
+// key list is blind to everything a converter swap actually changes — types,
+// enums, `additionalProperties`, formats, bounds, `$ref` (CC-82).
 //
 // WHAT IT DELIBERATELY DOES NOT LOCK: titles and descriptions. They are model
 // ergonomics, they get reworded often, and a snapshot that fails on every
 // wording pass gets regenerated without being read — which is how a snapshot
-// stops catching anything at all.
+// stops catching anything at all. Descriptions are therefore stripped out of the
+// recorded schema at every depth, so the diff carries semantics and no prose.
 //
 // REGENERATING IT (structure changed on purpose):
 //
@@ -71,8 +74,8 @@ interface ToolSnapshot {
   readonly name: string;
   readonly annotations: ToolAnnotations;
   readonly writeTier?: WriteTier;
-  /** Top-level properties of the JSON Schema a client actually receives. */
-  readonly inputKeys: readonly string[];
+  /** The JSON Schema a client actually receives, minus every `description`. */
+  readonly inputSchema: unknown;
 }
 
 interface PackageSnapshot {
@@ -86,17 +89,31 @@ interface ManifestSnapshot {
 }
 
 /**
- * The input keys as the SDK renders them, not as zod holds them: what a client
- * sees is the converted JSON Schema, and that conversion is where a schema the
- * SDK cannot express would quietly lose a field. Sorted, because the order of
- * object keys in a schema carries no meaning and an alphabetical list keeps a
- * harmless reordering out of the diff.
+ * Drop every `description` at every depth. Recursing rather than deleting the
+ * top-level keys matters: a property's description sits one level down, and a
+ * union member's two levels down, so a shallow strip would leave most of the
+ * prose in the snapshot and hand the wording churn back.
  */
-function inputKeysOf(spec: AnyToolSpec): readonly string[] {
-  const schema = toMcpTool(spec).inputSchema;
-  const properties: unknown = (schema as { properties?: unknown }).properties;
-  if (properties === null || typeof properties !== 'object') return [];
-  return Object.keys(properties).sort();
+function stripDescriptions(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripDescriptions);
+  if (value === null || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'description') continue;
+    out[key] = stripDescriptions(child);
+  }
+  return out;
+}
+
+/**
+ * The schema as the SDK renders it, not as zod holds it: what a client sees is
+ * the converted JSON Schema, and that conversion is where a schema the SDK
+ * cannot express would quietly lose a field — or gain a keyword. Recorded whole
+ * (minus prose) because the conversion is a dependency, and a dependency changes
+ * under a green gate unless something is watching the output (CC-82).
+ */
+function inputSchemaOf(spec: AnyToolSpec): unknown {
+  return stripDescriptions(toMcpTool(spec).inputSchema);
 }
 
 function toolSnapshot(spec: AnyToolSpec): ToolSnapshot {
@@ -104,7 +121,7 @@ function toolSnapshot(spec: AnyToolSpec): ToolSnapshot {
     name: spec.name,
     annotations: spec.annotations,
     ...(spec.writeTier === undefined ? {} : { writeTier: spec.writeTier }),
-    inputKeys: inputKeysOf(spec),
+    inputSchema: inputSchemaOf(spec),
   };
 }
 
@@ -189,7 +206,7 @@ async function callTool(
 // ---------------------------------------------------------------------------
 
 describe('the tool manifest', () => {
-  test('matches the committed structural snapshot', () => {
+  test('CC-82: matches the committed structural snapshot, schemas included', () => {
     const current = manifestSnapshot(PACKAGES);
 
     if (process.env['UPDATE_SNAPSHOT'] === '1') {
@@ -203,6 +220,18 @@ describe('the tool manifest', () => {
       committed,
       `The tool surface no longer matches src/tools/manifest.snapshot.json. If the change is intentional, regenerate it with:\n  ${REGENERATE}`,
     );
+  });
+
+  test('CC-81: no emitted schema references another part of itself', () => {
+    for (const pkg of PACKAGES) {
+      for (const tool of pkg.tools) {
+        const emitted = JSON.stringify(toMcpTool(tool).inputSchema);
+        assert.ok(
+          !emitted.includes('"$ref"'),
+          `${tool.name}: the emitted schema carries a $ref. Under draft-07 a $ref's siblings are ignored, so a deduplicated argument loses its description — and a sibling $ref inside an inputSchema is a known interop hazard for function-calling clients. Inline the shared shape instead.`,
+        );
+      }
+    }
   });
 
   test('lists the packages in TOOLS.md order, core first', () => {

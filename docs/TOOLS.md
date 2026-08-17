@@ -315,7 +315,7 @@ in. None of it is reachable through `jira_update_issue` — `watches`, `votes`
 and a project's component/version catalogs are not editable fields.
 
 **Nothing in this package deletes anything.** Two tools are spelled "remove"
-and one is a `DELETE` on the wire, but a watcher and a vote are links that the
+and both are `DELETE` on the wire, but a watcher and a vote are links that the
 matching `add` restores exactly; that is why all eight writes are standard tier
 and none is annotated destructive (D50). Component and version DELETES are
 genuinely destructive — Jira rewrites every issue that referenced them — and

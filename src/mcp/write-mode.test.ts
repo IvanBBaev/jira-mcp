@@ -591,6 +591,66 @@ test('the plan shows the WHOLE body, not a depth-capped summary of it', async ()
   assert.ok(!JSON.stringify(planned.body).includes('[MAX_DEPTH]'));
 });
 
+test('CC-86: the plan of a multipart upload names the file, without the bytes', async () => {
+  // `jira_upload_attachment` carries its payload in `multipart` and sets no
+  // `body` at all. A capture that reads only method/path/query/body renders
+  // the plan as `{"method":"POST","path":"/issue/ABC-1/attachments"}` — an
+  // approval surface that never says WHICH file leaves the host, so the
+  // operator approves an upload they were never shown.
+  const uploadTool = defineTool({
+    name: 'jira_test_write_upload',
+    title: 'Test upload',
+    description: 'Uploads a file.',
+    package: 'attachments',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    writeTier: 'standard',
+    input: writeToolInput({ issue: z.string() }),
+    async handler(args, ctx) {
+      await ctx.jira({
+        method: 'POST',
+        path: `/issue/${args.issue}/attachments`,
+        pathTemplate: '/issue/{key}/attachments',
+        multipart: [
+          {
+            field: 'file',
+            filename: 'salary-review.pdf',
+            contentType: 'application/pdf',
+            bytes: new Uint8Array([1, 2, 3, 4, 5]),
+          },
+        ],
+      });
+      return ok({ uploaded: true });
+    },
+  });
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(uploadTool, { issue: 'ABC-1' }, {}, createFakeJiraRequest().fn),
+  );
+
+  const planned = (result.data as { planned: Record<string, unknown> }).planned;
+  assert.deepEqual(planned.multipart, [
+    {
+      field: 'file',
+      filename: 'salary-review.pdf',
+      contentType: 'application/pdf',
+      bytes: 5,
+    },
+  ]);
+  // The metadata is the approval surface; the payload itself is not — a plan
+  // envelope must never carry the file contents.
+  assert.ok(!JSON.stringify(planned).includes('"0":1'), 'no raw bytes in the plan');
+});
+
 test('a handler that swallows the capture still yields a plan, not a fake success', async () => {
   const fake = createFakeJiraRequest();
   const gate = createWriteGate({

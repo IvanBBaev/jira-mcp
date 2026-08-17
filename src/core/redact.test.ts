@@ -4,11 +4,17 @@ import { describe, it } from 'node:test';
 import {
   DEFAULT_PLACEHOLDER,
   MAX_DEPTH,
+  MIN_DISTINCTIVE_SECRET_LENGTH,
   createRedactor,
+  redactionRisk,
   stripCredentialShapes,
 } from './redact.js';
 
 const TOKEN = 'ATATT3xFfGF0-super-secret-token-value';
+
+/** The shape and length of a token the API-token page actually hands out. */
+const REALISTIC_TOKEN =
+  `ATATT${'3xFfGF0aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'.repeat(5)}`.slice(0, 192);
 
 describe('createRedactor — registered secrets', () => {
   it('masks a registered secret in free text', () => {
@@ -103,6 +109,73 @@ describe('createRedactor — registered secrets', () => {
     const redactor = createRedactor({ secrets: [TOKEN] });
     const once = redactor.redactString(`Authorization: Basic ${TOKEN}`);
     assert.equal(redactor.redactString(once), once);
+  });
+});
+
+describe('redactionRisk — needles that shred the output they protect', () => {
+  it('CC-76: flags a one-character token, which is still redacted', () => {
+    // Reproduction: the installed CLI with JIRA_API_TOKEN=t printed
+    // `se[REDACTED][REDACTED]ings: 5 JIRA_* variables presen[REDACTED]`.
+    assert.equal(redactionRisk('t'), 'too_short');
+
+    const redactor = createRedactor({ secrets: ['t'] });
+    const output = redactor.redactString('settings: 5 JIRA_* variables present');
+    assert.ok(
+      !output.includes('t'),
+      'safety is not traded away: the short secret is still scrubbed',
+    );
+  });
+
+  it('CC-76: flags a token long enough to pass but printed by the server itself', () => {
+    const secret = 'settings';
+    assert.ok(
+      secret.length >= MIN_DISTINCTIVE_SECRET_LENGTH,
+      'precondition: long enough',
+    );
+    assert.equal(redactionRisk(secret), 'collides_with_own_output');
+
+    const redactor = createRedactor({ secrets: [secret] });
+    assert.equal(
+      redactor.redactString('[ ok ] settings: 5 JIRA_* variables present'),
+      `[ ok ] ${DEFAULT_PLACEHOLDER}: 5 JIRA_* variables present`,
+    );
+  });
+
+  it('CC-76: leaves a realistic 192-character API token unflagged', () => {
+    assert.equal(REALISTIC_TOKEN.length, 192);
+    assert.equal(redactionRisk(REALISTIC_TOKEN), undefined);
+
+    const redactor = createRedactor({ secrets: [REALISTIC_TOKEN] });
+    assert.equal(
+      redactor.redactString(`auth=${REALISTIC_TOKEN} sent`),
+      `auth=${DEFAULT_PLACEHOLDER} sent`,
+    );
+  });
+
+  it('measures blast radius, not credential shape', () => {
+    // A short dummy is flagged whatever it spells; a long value that never
+    // appears in this server's own output is not, however little it looks like
+    // an Atlassian token — the space of valid credentials is not closed.
+    assert.equal(redactionRisk('test'), 'too_short');
+    assert.equal(
+      redactionRisk('A'.repeat(MIN_DISTINCTIVE_SECRET_LENGTH - 1)),
+      'too_short',
+    );
+    assert.equal(redactionRisk('A'.repeat(MIN_DISTINCTIVE_SECRET_LENGTH)), undefined);
+    assert.equal(redactionRisk('correct horse battery staple'), undefined);
+  });
+
+  it('says nothing about the empty string, which registration drops anyway', () => {
+    assert.equal(redactionRisk(''), undefined);
+  });
+
+  it('never refuses a registration: a flagged value is redacted like any other', () => {
+    const redactor = createRedactor();
+    redactor.addSecret('t');
+    redactor.addSecret('settings');
+
+    assert.equal(redactor.redactString('t'), DEFAULT_PLACEHOLDER);
+    assert.equal(redactor.redactString('settings'), DEFAULT_PLACEHOLDER);
   });
 });
 

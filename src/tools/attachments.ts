@@ -133,6 +133,15 @@ export function createNodeMediaStore(dir: string): MediaStore {
             // report a truncated file as a completed download — and the name
             // would stay taken, so a later `read` would upload the stub to
             // Jira as if it were the whole attachment.
+            //
+            // NO TEST DRIVES THIS ARM (and none can, here): `write(2)` returns
+            // short only when the volume fills up mid-call, which cannot be
+            // staged deterministically from a unit test — there is no seam over
+            // `node:fs` in this store on purpose, since the store IS the
+            // filesystem code. It is kept because the failure it catches is
+            // silent, and because the `isJiraError` passthrough in
+            // {@link writeFailure} exists solely to let this diagnosis survive
+            // the catch below.
             if (bytesWritten !== bytes.byteLength) {
               throw createJiraError({
                 kind: 'config',
@@ -241,7 +250,19 @@ function variantOf(name: string, index: number): string {
   return `${stem}-${String(index)}${ext}`;
 }
 
-/** The `code` of a Node system error, without an `any` in sight. */
+/**
+ * The `code` of a Node system error, without an `any` in sight.
+ *
+ * NEITHER GUARD IS REACHABLE FROM THIS MODULE, and both are kept. The only
+ * callers are {@link writeFailure} and {@link readFailure}, both of which run
+ * inside a `catch` over `node:fs`, and every rejection from there is an `Error`
+ * carrying a string `code`. But a `catch` binding is `unknown`, `throw null` is
+ * legal JavaScript, and a diagnosis helper that itself throws a TypeError would
+ * replace the operator's real error with a worse one. Two branches nobody can
+ * exercise buy that this can never be the thing that fails — and the `''` arms
+ * of the two `failed (code)` messages below are the same unreachable case seen
+ * from the other end.
+ */
 function codeOf(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
   const code: unknown = (error as { code?: unknown }).code;
@@ -295,6 +316,12 @@ function readFailure(error: unknown, root: string, name: string): Error {
       cause: error,
     });
   }
+  // EISDIR is unreachable through `read`'s own path: the `isFile()` check
+  // answers a directory — and a symlink to one — with a validation error before
+  // a byte is read. It is kept for the one case that check cannot close: a name
+  // that was a regular file at `lstat` and is a directory by the time `readFile`
+  // runs. Deleting it would leave that race to the generic fallback below, and
+  // it is the guard above that makes this dead, not the impossibility of EISDIR.
   if (code === 'EISDIR') {
     return createJiraError({
       kind: 'validation',

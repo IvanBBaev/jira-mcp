@@ -23,16 +23,21 @@ TypeScript. It follows the house template established by its sibling repos:
    CI, and remote sessions — the primary reason not to use Atlassian's official
    remote MCP server.
 3. Be safe by default: read-only unless explicitly enabled, plan/apply gate for
-   writes, no destructive operations in v1.
+   writes, and a second gate in front of the irreversible tier — the three
+   deletes that shipped with D45. THREAT-MODEL.md owns both gate contracts.
 
 ## Non-goals (v1)
 
 - Jira Data Center / Server support (architecture keeps the door open via the host
   allowlist; auth for DC is a v2 item).
-- Attachment upload/download.
 - Confluence, JSM operations, Bitbucket, Compass.
-- Full markdown ↔ ADF fidelity (v1 ships plain-text conversion; a markdown subset
-  is v1.5 — see ROADMAP.md).
+- Full markdown ↔ ADF fidelity. A **subset** ships (headings, lists, code fences,
+  inline code, bold/italic, links, mentions — D38); anything outside it degrades
+  to plain text rather than round-tripping.
+
+Two entries that used to sit here graduated into committed scope and are gone
+from this list, not merely deferred: the markdown ↔ ADF subset above (D38, Wave
+6) and attachment metadata/download/upload (D45, Wave 7).
 
 ## Layering
 
@@ -44,13 +49,18 @@ core  ←  api  ←  mcp  ←  tools
   loading, host resolution, the HTTP client, errors, logging, redaction, clock,
   settings. The ONLY module allowed to touch the network is `core/http.ts`.
 - **`src/api/`** — typed wrappers over Jira REST endpoints, one module per domain
-  (`search.ts`, `issues.ts`, `meta.ts`, `users.ts`, `agile.ts`, `adf.ts`,
-  `shared.ts` for pagination helpers). No MCP concepts here.
-- **`src/mcp/`** — MCP plumbing: `define.ts`, `registry.ts`, `result.ts`,
-  `taint.ts`, `transport.ts`, `write-mode.ts`, `errors.ts`. No Jira endpoint
-  knowledge.
-- **`src/tools/`** — one file per package exporting `specs: ToolSpec[]`; thin glue
-  from validated input → api call → shaped result.
+  (`search.ts`, `issues.ts`, `collab.ts`, `attachments.ts`, `filters.ts`,
+  `meta.ts`, `users.ts`, `agile.ts`, `adf.ts`, `shared.ts` for pagination
+  helpers). No MCP concepts here.
+- **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
+  `result.ts`, `taint.ts`, `transport.ts`, `write-mode.ts`, `recent-writes.ts`,
+  `tool-helpers.ts`, `errors.ts`, `types.ts`. No Jira endpoint knowledge.
+- **`src/tools/`** — one file per package, each exporting a `PackageSpec`
+  (`searchPackage`, `issuesPackage`, …) that `index.ts` composes into
+  `PACKAGES`; thin glue from validated input → api call → shaped result. One
+  exception earns its size: `attachments.ts` also holds the media store, because
+  the rules that keep tenant-authored filenames inside one directory belong next
+  to the only tools that move bytes.
 
 Layering is enforced twice in `eslint.config.js` (copied from facebook-mcp):
 `import-x/no-restricted-paths` zones AND string-based `no-restricted-imports`
@@ -127,9 +137,13 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
 - the spec is `Object.freeze`d.
 
 The ordered `PACKAGES: PackageSpec[]` manifest in `src/tools/index.ts` is the
-**single source of truth** consumed by: server registration, the manifest snapshot
-test, README generation, and `server.json` generation. Empty packages are listed
-deliberately as visible roadmap holes.
+**single source of truth** consumed by exactly three readers: server registration
+(`src/index.ts` → `mcp/registry.ts`), the manifest snapshot test
+(`src/tools/index.test.ts`), and README generation
+(`scripts/generate-readme.mjs`). It does **not** generate the distribution
+manifests: `server.json` is hand-maintained and *checked* against
+docs/CONFIGURATION.md by `src/manifest-sync.test.ts` (D78). Empty packages are
+listed deliberately as visible roadmap holes.
 
 ## Result envelope
 
@@ -170,6 +184,16 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   the network. Tools stay identical in both modes; the "nothing hit the
   network" property is testable at the seam (CC-20).
 - **Fetch**: read off `globalThis` at call time — the test seam for `withFetch`.
+- **Filesystem**: the only bytes this server reads or writes on behalf of a tool
+  live under one directory (`JIRA_MEDIA_DIR`, CONFIGURATION.md), and the media
+  store in `tools/attachments.ts` is the single place that resolves a path
+  against it — sanitizing tenant-authored filenames, refusing symlinks that
+  escape, and never overwriting. Unset, the two byte-moving tools refuse before
+  any request is made. The write journal (`core/journal.ts`) is the other
+  filesystem writer and is append-only.
+- **Taint**: any result field that can carry text authored inside Jira is marked
+  by `mcp/taint.ts` as data rather than instructions, at one choke point rather
+  than per tool — so a new tool inherits the marking instead of remembering it.
 - **Redaction**: `core/redact.ts` registers secret values once; a single choke
   point strips them from logs, errors, and results. Additionally strips
   `Authorization` header echoes and any `os_authType`/token query substrings.
@@ -179,21 +203,27 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
 
 ## Transport
 
-- **stdio** (default). Shuts down cleanly on stdin EOF, SIGINT, SIGTERM.
-- **Streamable HTTP** (`JIRA_TRANSPORT=http`): binds **loopback only**, fails
-  closed without `JIRA_HTTP_TOKEN`, requires bearer + same-origin `Origin` check
-  (DNS-rebinding defense). Lifecycle: one MCP session per `Mcp-Session-Id`,
-  created on `initialize` and destroyed on `DELETE` or idle timeout (15 min);
-  session teardown aborts that session's in-flight requests via its
-  `AbortController` and clears its plan_id table, so a dropped client can never
-  leave an armed apply behind. SIGTERM stops accepting new sessions, drains
-  in-flight calls under the call budget, then exits. No `/healthz` — a
-  loopback-only, single-user server has no load balancer to answer to; doctor
-  is the health check.
+- **stdio** — the default, and the only transport v1 accepts. Shuts down cleanly
+  on stdin EOF, SIGINT, SIGTERM.
+- **Streamable HTTP** (`JIRA_TRANSPORT=http`) — **refused at startup**, with an
+  error naming v1.5. O-11 was resolved by its own default at the Phase-2a start
+  (D19): no concrete use case appeared, and the http path drags in a token gate,
+  loopback binding and session handling for zero current users. Two layers hold
+  the line: `core/settings.ts` still rejects `http` without `JIRA_HTTP_TOKEN`
+  (CC-30) and still parses `JIRA_HTTP_PORT`, so the configuration surface
+  survives the gap unchanged; `mcp/transport.ts` then refuses any transport
+  other than stdio outright, token or no token.
 
-  **Status: O-11 open.** The default is demotion to v1.5 unless a concrete use
-  case appears; the spec above exists so the decision is a scheduling call, not
-  a design one.
+  The v1.5 design is kept below so reinstating it stays a scheduling call rather
+  than a design one — **none of it exists in `src/` today**: bind loopback only,
+  fail closed without a bearer token, check `Origin` for same origin
+  (DNS-rebinding defense); one MCP session per `Mcp-Session-Id`, created on
+  `initialize` and destroyed on `DELETE` or idle timeout; session teardown
+  aborts that session's in-flight requests via its `AbortController` and clears
+  its plan_id table, so a dropped client can never leave an armed apply behind;
+  SIGTERM stops accepting new sessions, drains in-flight calls under the call
+  budget, then exits. No `/healthz` — a loopback-only, single-user server has no
+  load balancer to answer to; doctor is the health check.
 
 ## Package gating and write safety
 
@@ -202,13 +232,19 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   `JIRA_PACKAGES_READONLY` (drops write-tier tools).
 - `JIRA_WRITE_MODE=plan|apply` (default `plan`): in `plan` mode write tools
   return a description of what they would do; `apply` requires per-call
-  `apply: true`. Normative gate contract + tiers: THREAT-MODEL.md (single owner).
+  `apply: true`. The irreversible tier (the three deletes) sits above that gate
+  and needs `JIRA_ALLOW_IRREVERSIBLE` as well, because a blanket write mode set
+  for ordinary edits must never be read as consent to destroy. Normative gate
+  contract + tiers: THREAT-MODEL.md (single owner); the variables and their
+  defaults: CONFIGURATION.md.
 
 ## Decisions
 
-The decision ledger (accepted D1–D16, open owner decisions O-1…O-13 minus the
-resolved O-7, gates A–C) lives in **DECISIONS.md** — the single source of
-truth for decision status. Highlights shaping this architecture: custom server
+The decision ledger — accepted decisions (`D-nn`), owner decisions (`O-nn`) and
+gates A–C — lives in **DECISIONS.md**, the single source of truth for decision
+status. Which decisions exist, and which O-rows are still open, is stated there
+and deliberately not restated here, where it would rot.
+Highlights shaping this architecture: custom server
 over Atlassian Rovo (D1), Cloud-only Basic auth v1 (D2), port of
 servicenow-mcp's dark Jira client (D3), low-level `Server` (D5), `/search/jql`
 only (D6), `plan_id`-bound apply (D14).
