@@ -221,11 +221,26 @@ answered `--version`, an offline `doctor` (exit 0) and a real MCP
 103 files with a `https://slsa.dev/provenance/v1` attestation. What is checked
 off below is checked off against that run; the rest is still open.
 
+The second publish happened on 2026-08-18: 0.9.4, from tag `v0.9.4` on commit
+`bce8540`, run 32072816048 — every step green in 1m35s, still on the bootstrap
+`NPM_TOKEN` because the first bullet below is still open. It was verified from
+the registry rather than from the workflow's own report: `npm view` gives
+version 0.9.4 with `dist-tags.latest` pointing at it, a cold install into an
+empty directory produced a binary that answered `--version` with `0.9.4`, and
+the attestation endpoint serves a `https://slsa.dev/provenance/v1` predicate for
+that exact version. Two things are worth carrying forward from it. Nothing in
+this section needed a second pass — a repeat publish exercises the same pipeline
+and re-proves nothing new, so the open bullets stayed open for their own
+reasons, not for want of a run. And 0.9.1 through 0.9.3 do not exist: the jump
+was deliberate, one version per live defect that 0.9.4 carries, which is cheaper
+than explaining a gap later.
+
 - **Retire the bootstrap token, in this order.** The package now has a settings
   page on npmjs.com, so register this repository and the workflow filename
   `publish.yml` as its trusted publisher (select at least one allowed action —
   `npm publish`), *then* delete the `NPM_TOKEN` repository secret and revoke the
-  token itself on npmjs.com. Deleting the secret is what switches `publish.yml`
+  token itself on npmjs.com. It has now carried two releases, which is one more
+  than "bootstrap" was meant to mean. Deleting the secret is what switches `publish.yml`
   back to OIDC (D86); doing it before the publisher is registered leaves the
   next release with no credential at all, and doing neither leaves a publishing
   credential in the repository that nothing needs — the failure mode this whole
