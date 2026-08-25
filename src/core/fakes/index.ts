@@ -29,6 +29,12 @@ export {
   repoFixtureLoader,
 } from './fixtures.js';
 
+export {
+  FAKE_AUTH_SETTINGS,
+  FAKE_OAUTH_SETTINGS,
+  FAKE_OAUTH_TOKEN_FILE,
+} from './fakeSettings.js';
+
 export type { FakeRedactor } from './fakeRedactor.js';
 export { createFakeRedactor, FAKE_PLACEHOLDER } from './fakeRedactor.js';
 

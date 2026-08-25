@@ -12,6 +12,7 @@ import test from 'node:test';
 
 import { FAKE_PLACEHOLDER, createFakeRedactor } from '../core/fakes/fakeRedactor.js';
 import { createFakeClock } from '../core/fakes/fakeClock.js';
+import { FAKE_AUTH_SETTINGS } from '../core/fakes/fakeSettings.js';
 import { createFakeJiraRequest, jiraOk } from '../core/fakes/fakeJiraRequest.js';
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { currentCid } from '../core/log.js';
@@ -55,6 +56,7 @@ const BASE_SETTINGS: Settings = {
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',
+  ...FAKE_AUTH_SETTINGS,
 };
 
 function settingsOf(overrides: Partial<Settings> = {}): Settings {

@@ -15,10 +15,20 @@
 // an env var that has no row there is a build failure, which is why nothing in
 // `core` reads the environment outside this module and `core/config.ts`.
 
-import { loadEnvFile } from './config.js';
+import {
+  OAUTH_TOKEN_FILE_NAME,
+  defaultOAuthTokenFile,
+  loadEnvFile,
+  resolveConfigPath,
+} from './config.js';
 import type { EnvFileResult, EnvFileOptions } from './config.js';
 import { effectiveCredentials } from './credentials.js';
-import { resolveHost } from './host.js';
+import {
+  OAUTH_AUTH_HOST,
+  OAUTH_GATEWAY_HOST,
+  isValidCloudId,
+  resolveHost,
+} from './host.js';
 import type { HostProblem } from './host.js';
 import {
   DEFAULT_PLACEHOLDER,
@@ -26,10 +36,12 @@ import {
   redactionRisk,
 } from './redact.js';
 import {
+  AUTH_MODES,
   JiraError,
   LOG_LEVELS,
   TRANSPORT_KINDS,
   WRITE_MODES,
+  type AuthMode,
   type Clock,
   type HostRef,
   type LogLevel,
@@ -73,8 +85,90 @@ export const DEFAULT_LOG_LEVEL: LogLevel = 'info';
 export const DEFAULT_LOCK_PROFILE = true;
 /** Horizon at which `JIRA_TOKEN_EXPIRES` starts warning (OBSERVABILITY.md). */
 export const TOKEN_EXPIRY_WARNING_DAYS = 30;
+/** `JIRA_AUTH_MODE` default: v1's Basic auth, unchanged (D91). */
+export const DEFAULT_AUTH_MODE: AuthMode = 'basic';
+/**
+ * `JIRA_OAUTH_SCOPES` default — what `login` asks consent for.
+ *
+ * Deliberately mixed: the classic `*:jira-work` / `*:jira-user` scopes cover the
+ * platform half, but Jira Software (boards, sprints, epics) has no classic
+ * equivalent, so those tools need granular scopes. `offline_access` is what
+ * makes the refresh token appear; without it a session dies in an hour.
+ * `manage:jira-configuration` (global admin) and `delete:sprint:jira-software`
+ * are left out on purpose — the consent screen should not ask for power the tool
+ * surface does not exercise, and there is no sprint-delete tool at all.
+ *
+ * Changing this list after a successful `login` forces a re-consent: the stored
+ * grant is for the old set, and Atlassian will not widen it silently. That is
+ * why `write:board-scope:jira-software` is here even though only
+ * `jira_move_to_backlog` plausibly needs it and Atlassian publishes no
+ * scope-to-endpoint map for the Agile API (AUTH.md §Scopes, finding 1): paying
+ * for one inferred scope at first login is cheaper than making every user log in
+ * again on an upgrade.
+ */
+export const DEFAULT_OAUTH_SCOPES: readonly string[] = [
+  'read:jira-work',
+  'write:jira-work',
+  'read:jira-user',
+  'manage:jira-project',
+  'read:board-scope:jira-software',
+  'write:board-scope:jira-software',
+  'read:sprint:jira-software',
+  'write:sprint:jira-software',
+  'read:epic:jira-software',
+  'write:epic:jira-software',
+  'read:issue:jira-software',
+  'write:issue:jira-software',
+  'offline_access',
+];
+/** `JIRA_OAUTH_REDIRECT_PORT` default: the loopback port `login` listens on. */
+export const DEFAULT_OAUTH_REDIRECT_PORT = 8250;
+/** `JIRA_OAUTH_AUTH_ORIGIN` default: Atlassian's authorization server. */
+export const DEFAULT_OAUTH_AUTH_ORIGIN = `https://${OAUTH_AUTH_HOST}`;
+/** `JIRA_OAUTH_GATEWAY_ORIGIN` default: Atlassian's OAuth API gateway. */
+export const DEFAULT_OAUTH_GATEWAY_ORIGIN = `https://${OAUTH_GATEWAY_HOST}`;
+/**
+ * How CONFIGURATION.md spells the `JIRA_OAUTH_TOKEN_FILE` default. The real
+ * default is machine-specific (`core/config.ts` derives it from the config
+ * home), so the table documents the shape and the env ↔ docs sync test compares
+ * against this string rather than against a path that differs per checkout.
+ */
+export const DEFAULT_OAUTH_TOKEN_FILE_DOC = `<config dir>/${OAUTH_TOKEN_FILE_NAME}`;
 
 const MS_PER_DAY = 86400000;
+/** `JIRA_OAUTH_REDIRECT_PORT` range: unprivileged ports only — `login` binds it. */
+const MIN_OAUTH_REDIRECT_PORT = 1024;
+const MAX_PORT = 65535;
+
+/**
+ * An https origin and nothing else: scheme, host, optional port. Returns the
+ * normalised origin, or `undefined` when the value is not one.
+ *
+ * Rejecting a path, query, fragment or embedded credentials is not pedantry.
+ * These two variables are where the OAuth flow sends the client secret and
+ * where it fetches tokens from, so a value that carries anything beyond an
+ * origin is either a typo or somebody's redirect target; `URL` would happily
+ * accept it and the extra part would be silently dropped when the flow
+ * concatenates its own paths. `https` only, for the same reason.
+ */
+function parseHttpsOrigin(raw: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'https:') return undefined;
+  if (url.username !== '' || url.password !== '') return undefined;
+  if (url.search !== '' || url.hash !== '') return undefined;
+  if (url.pathname !== '/' && url.pathname !== '') return undefined;
+  return url.origin;
+}
+
+/** The hostname of an already-validated origin, for the egress allowlist. */
+function originHost(origin: string): string {
+  return new URL(origin).hostname;
+}
 
 // ---------------------------------------------------------------------------
 // The aggregated startup report
@@ -259,15 +353,106 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     return def;
   };
 
+  /**
+   * An https origin knob. Same contract as {@link int}: a bad value is an ERROR
+   * finding and the documented default is substituted so the report can finish.
+   */
+  const httpsOrigin = (key: string, def: string): string => {
+    const raw = str(key);
+    if (raw === undefined) return def;
+    const parsed = parseHttpsOrigin(raw);
+    if (parsed === undefined) {
+      add({
+        severity: 'error',
+        code: 'invalid_origin',
+        message: `${key} must be an https origin with no path, query, fragment or credentials (e.g. ${def}); got ${JSON.stringify(raw)}. Using the documented default ${def}.`,
+        field: key,
+      });
+      return def;
+    }
+    return parsed;
+  };
+
   // --- Credentials ---------------------------------------------------------
   const site = str('JIRA_SITE');
   const email = str('JIRA_EMAIL');
   const apiToken = str('JIRA_API_TOKEN');
   const tokenExpires = str('JIRA_TOKEN_EXPIRES');
-  const allowedHosts = (str('JIRA_ALLOWED_HOSTS') ?? '')
+  const configuredHosts = (str('JIRA_ALLOWED_HOSTS') ?? '')
     .split(',')
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+
+  // --- Auth mode and the OAuth block (D91) ---------------------------------
+  // Parsed unconditionally, in BOTH modes: `Settings.oauth` is always a complete
+  // value, so doctor can report a block an operator is halfway through filling
+  // in, and a typo in one of these knobs is an error wherever it appears — the
+  // house rule is that a malformed value never becomes a silent fallback. What
+  // the MODE decides is which variables are *required* (below, with the
+  // credentials) and whether the OAuth hosts join the egress allowlist (D97).
+  const authMode = enumOf<AuthMode>('JIRA_AUTH_MODE', AUTH_MODES, DEFAULT_AUTH_MODE);
+  const oauthClientId = str('JIRA_OAUTH_CLIENT_ID');
+  const oauthClientSecret = str('JIRA_OAUTH_CLIENT_SECRET');
+  const oauthScopes = csv('JIRA_OAUTH_SCOPES');
+  const oauthCloudId = str('JIRA_OAUTH_CLOUD_ID');
+  const oauthTokenFileRaw = str('JIRA_OAUTH_TOKEN_FILE');
+  const oauthTokenFile =
+    oauthTokenFileRaw === undefined
+      ? defaultOAuthTokenFile(options)
+      : resolveConfigPath(oauthTokenFileRaw, options);
+  const oauthRedirectPort = int(
+    'JIRA_OAUTH_REDIRECT_PORT',
+    DEFAULT_OAUTH_REDIRECT_PORT,
+    MIN_OAUTH_REDIRECT_PORT,
+    MAX_PORT,
+  );
+  // Both origins exist for ONE reason: the offline test harness points the flow
+  // at a local stand-in for Atlassian, because a test that must not touch the
+  // network still has to exercise the authorize → exchange → refresh sequence.
+  // Nothing in a real deployment sets them — they are a seam, not a knob — which
+  // is why the default is the real Atlassian origin and the validation is strict.
+  //
+  // Strict includes the scheme: a stand-in must serve https too (the harness
+  // uses `https://127.0.0.1:<port>`). There is deliberately no loopback
+  // exemption. The client secret and every refresh token are sent to the auth
+  // origin, and a validator that accepts cleartext for "just a test host" is one
+  // copied `.env` line away from doing it against a real tenant. A unit test
+  // that does not want to run a TLS listener should inject `AuthRequestFn`
+  // instead of reconfiguring the origin.
+  const oauthAuthOrigin = httpsOrigin(
+    'JIRA_OAUTH_AUTH_ORIGIN',
+    DEFAULT_OAUTH_AUTH_ORIGIN,
+  );
+  const oauthGatewayOrigin = httpsOrigin(
+    'JIRA_OAUTH_GATEWAY_ORIGIN',
+    DEFAULT_OAUTH_GATEWAY_ORIGIN,
+  );
+
+  // The cloudId is interpolated into every request path, so a value that is not
+  // path-safe is refused at startup rather than at the first call — using the
+  // same predicate as the request builder (CC-101), because two spellings of one
+  // rule is how a check ends up rejecting what the other accepts. It is a
+  // shape check, not a lookup: only the flow can say whether the id exists.
+  if (oauthCloudId !== undefined && !isValidCloudId(oauthCloudId)) {
+    add({
+      severity: 'error',
+      code: 'invalid_cloud_id',
+      message: `JIRA_OAUTH_CLOUD_ID ${JSON.stringify(oauthCloudId)} is not a cloud id — letters, digits and hyphens only. It is the id \`jira-mcp-ai login\` prints for the site, not the site URL; unset it to let login discover the site on every run instead.`,
+      field: 'JIRA_OAUTH_CLOUD_ID',
+    });
+  }
+
+  // D97: the two OAuth hosts are allowlisted ONLY in oauth mode, and only for
+  // the origins actually configured. `Settings.allowedHosts` is the EFFECTIVE
+  // list — assembled here, before `resolveHost` runs — so every consumer of it
+  // (the host resolver, the per-call resolver, `core/http.ts`) agrees on what
+  // egress is permitted. In basic mode the list is byte-identical to what the
+  // operator wrote: v1's egress surface does not change because a feature it
+  // does not use exists.
+  const allowedHosts =
+    authMode === 'oauth'
+      ? withOAuthHosts(configuredHosts, [oauthAuthOrigin, oauthGatewayOrigin])
+      : configuredHosts;
 
   // --- Profiles (v1: parsed and validated; per-call switching is locked) ----
   const profiles = parseProfiles(env, add);
@@ -304,29 +489,61 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   });
   const profileName = activeProfile?.name;
 
-  if (effectiveEmail === undefined) {
-    add({
-      severity: 'error',
-      code: 'missing_credential',
-      message: `${profileName === undefined ? 'JIRA_EMAIL' : profileVar(profileName, 'EMAIL')} is not set. Basic auth needs the Atlassian account email.`,
-      field: profileName === undefined ? 'JIRA_EMAIL' : 'JIRA_EMAIL',
-    });
-  } else if (!effectiveEmail.includes('@')) {
-    add({
-      severity: 'error',
-      code: 'invalid_email',
-      message: `JIRA_EMAIL ${JSON.stringify(effectiveEmail)} is not an email address. Basic auth sends email:token, so a login name will always 401.`,
-      field: 'JIRA_EMAIL',
-    });
-  }
+  // Which credentials are REQUIRED is the one thing the mode changes here.
+  // `JIRA_SITE` is required either way — oauth resolves the tenant through the
+  // gateway, but the operator still has to say which tenant — so its findings
+  // come from `resolveHost` below, outside this branch.
+  if (authMode === 'basic') {
+    if (effectiveEmail === undefined) {
+      add({
+        severity: 'error',
+        code: 'missing_credential',
+        message: `${profileName === undefined ? 'JIRA_EMAIL' : profileVar(profileName, 'EMAIL')} is not set. Basic auth needs the Atlassian account email.`,
+        field: profileName === undefined ? 'JIRA_EMAIL' : 'JIRA_EMAIL',
+      });
+    } else if (!effectiveEmail.includes('@')) {
+      add({
+        severity: 'error',
+        code: 'invalid_email',
+        message: `JIRA_EMAIL ${JSON.stringify(effectiveEmail)} is not an email address. Basic auth sends email:token, so a login name will always 401.`,
+        field: 'JIRA_EMAIL',
+      });
+    }
 
-  if (effectiveToken === undefined) {
-    add({
-      severity: 'error',
-      code: 'missing_credential',
-      message: `${profileName === undefined ? 'JIRA_API_TOKEN' : profileVar(profileName, 'API_TOKEN')} is not set. Create one at https://id.atlassian.com/manage-profile/security/api-tokens`,
-      field: 'JIRA_API_TOKEN',
-    });
+    if (effectiveToken === undefined) {
+      add({
+        severity: 'error',
+        code: 'missing_credential',
+        message: `${profileName === undefined ? 'JIRA_API_TOKEN' : profileVar(profileName, 'API_TOKEN')} is not set. Create one at https://id.atlassian.com/manage-profile/security/api-tokens`,
+        field: 'JIRA_API_TOKEN',
+      });
+    }
+  } else {
+    // In oauth mode the email/token pair signs nothing, so their absence is not
+    // a problem to report — sending an operator to fix `JIRA_API_TOKEN` when the
+    // server never reads it is how a config error becomes an hour of debugging.
+    // The app's own credentials take their place, and BOTH are required:
+    // Atlassian authenticates the client on the token endpoint for the code
+    // exchange and for every refresh, so there is no public-client shortcut here
+    // however much PKCE would suggest one.
+    if (oauthClientId === undefined) {
+      add({
+        severity: 'error',
+        code: 'missing_credential',
+        message:
+          'JIRA_AUTH_MODE=oauth needs JIRA_OAUTH_CLIENT_ID: it names the OAuth 2.0 (3LO) app the login flow asks consent for. Create the app at https://developer.atlassian.com/console/myapps/ and copy its client id.',
+        field: 'JIRA_OAUTH_CLIENT_ID',
+      });
+    }
+    if (oauthClientSecret === undefined) {
+      add({
+        severity: 'error',
+        code: 'missing_credential',
+        message:
+          'JIRA_AUTH_MODE=oauth needs JIRA_OAUTH_CLIENT_SECRET: Atlassian requires client authentication on the token endpoint, for the initial exchange and for every refresh. Copy it from the same app under Settings → Authentication details.',
+        field: 'JIRA_OAUTH_CLIENT_SECRET',
+      });
+    }
   }
 
   // --- Host ----------------------------------------------------------------
@@ -334,7 +551,19 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   for (const problem of resolution.problems) add(fromHostProblem(problem));
 
   // --- Token expiry horizon ------------------------------------------------
-  if (tokenExpires !== undefined) {
+  // The horizon describes the API token of Basic auth. In oauth mode there is no
+  // such token, so the variable is reported as inert rather than parsed: an
+  // operator who left it behind should hear "this does nothing now", not an
+  // `invalid_date` about a value that no longer has a meaning to be wrong about.
+  if (tokenExpires !== undefined && authMode === 'oauth') {
+    add({
+      severity: 'warning',
+      code: 'token_expires_ignored',
+      message:
+        'JIRA_TOKEN_EXPIRES describes the API token of basic auth, which JIRA_AUTH_MODE=oauth does not use; it is ignored. OAuth token lifetimes come from the token store that `jira-mcp-ai login` wrote, and doctor reports them. Unset the variable to silence this.',
+      field: 'JIRA_TOKEN_EXPIRES',
+    });
+  } else if (tokenExpires !== undefined) {
     const expiresAt = Date.parse(tokenExpires);
     if (Number.isNaN(expiresAt)) {
       add({
@@ -436,6 +665,17 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     email,
     apiToken,
     tokenExpires,
+    authMode,
+    oauth: {
+      ...(oauthClientId === undefined ? {} : { clientId: oauthClientId }),
+      ...(oauthClientSecret === undefined ? {} : { clientSecret: oauthClientSecret }),
+      scopes: oauthScopes.length > 0 ? oauthScopes : DEFAULT_OAUTH_SCOPES,
+      ...(oauthCloudId === undefined ? {} : { cloudId: oauthCloudId }),
+      tokenFile: oauthTokenFile,
+      redirectPort: oauthRedirectPort,
+      authOrigin: oauthAuthOrigin,
+      gatewayOrigin: oauthGatewayOrigin,
+    },
     allowedHosts,
     profiles,
     activeProfile: activeProfileRaw,
@@ -490,6 +730,23 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     ...(resolution.host === undefined ? {} : { host: resolution.host }),
     envFile,
   };
+}
+
+/**
+ * The operator's allowlist plus the hostnames of the given OAuth origins, in
+ * that order and deduplicated. Hostnames only: `compileAllowlist` matches hosts,
+ * and the port an origin may carry is not part of that decision.
+ */
+function withOAuthHosts(
+  configured: readonly string[],
+  origins: readonly string[],
+): string[] {
+  const out = [...configured];
+  for (const origin of origins) {
+    const hostname = originHost(origin);
+    if (!out.includes(hostname)) out.push(hostname);
+  }
+  return out;
 }
 
 /** `JIRA_PROFILE_<NAME>_<FIELD>`, built rather than spelled out. */
@@ -562,10 +819,15 @@ function parseProfiles(
 
 /**
  * Every secret value in the environment paired with the variable it came from —
- * the active token, the tokens of INACTIVE profiles, and `JIRA_HTTP_TOKEN`
- * (AUTH.md §Secret registration is exhaustive at startup). {@link collectSecrets}
- * is this list with the names dropped, so a diagnostic that names a variable and
- * the set actually handed to the redactor can never drift apart.
+ * the active token, the tokens of INACTIVE profiles, `JIRA_HTTP_TOKEN` and the
+ * OAuth client secret (AUTH.md §Secret registration is exhaustive at startup).
+ * {@link collectSecrets} is this list with the names dropped, so a diagnostic
+ * that names a variable and the set actually handed to the redactor can never
+ * drift apart.
+ *
+ * Registration ignores `authMode` on purpose: a client secret sitting in the
+ * environment of a server running basic auth is still a secret, and the mode is
+ * exactly the kind of thing that gets flipped between runs.
  */
 function secretVariables(settings: Settings): Array<{ field: string; value: string }> {
   const out: Array<{ field: string; value: string }> = [];
@@ -577,6 +839,7 @@ function secretVariables(settings: Settings): Array<{ field: string; value: stri
     push(profileVar(profile.name, 'API_TOKEN'), profile.apiToken);
   }
   push('JIRA_HTTP_TOKEN', settings.httpToken);
+  push('JIRA_OAUTH_CLIENT_SECRET', settings.oauth.clientSecret);
   return out;
 }
 

@@ -20,7 +20,7 @@
 // Layering: `core` is layer 0; type-only imports are the only ones present.
 // ---------------------------------------------------------------------------
 
-import type { CredentialResolver, JiraCredentials } from './http.js';
+import type { BasicCredentials } from './http.js';
 import type { HostResolution } from './host.js';
 import type { HostRef, ProfileConfig, Settings } from './types.js';
 
@@ -134,6 +134,18 @@ function profileHost(
 }
 
 /**
+ * What {@link buildCredentialResolver} returns: a `CredentialResolver` (the seam
+ * in `core/http.ts`) that is known to produce basic credentials, synchronously.
+ *
+ * The general seam is wider — it also covers the OAuth resolver, which returns a
+ * promise because a refresh may have to happen first — but narrowing here keeps
+ * the callers of *this* builder (the composition root, doctor, the tests) able to
+ * read `.email` off the result without a type assertion. Assignable to
+ * `CredentialResolver`, which is what `core/http.ts` actually asks for.
+ */
+export type BasicCredentialResolver = (profileName?: string) => BasicCredentials;
+
+/**
  * Turn settings into the per-call credential lookup `core/http.ts` asks for.
  *
  * INVENTED (WP-40): nothing in `core` built one — `loadSettings` resolves the
@@ -151,10 +163,10 @@ function profileHost(
  * eager because an unusable INACTIVE profile must not stop a server whose active
  * one is fine.
  */
-export function buildCredentialResolver(deps: CredentialDeps): CredentialResolver {
+export function buildCredentialResolver(deps: CredentialDeps): BasicCredentialResolver {
   const { settings } = deps;
 
-  return (profileName?: string): JiraCredentials => {
+  return (profileName?: string): BasicCredentials => {
     const requested = profileName ?? settings.activeProfile;
     const profile = profileOf(settings, requested);
 
@@ -172,15 +184,28 @@ export function buildCredentialResolver(deps: CredentialDeps): CredentialResolve
     const { email, apiToken } = effective;
 
     if (host === undefined || email === undefined || apiToken === undefined) {
+      // The default-credentials message names the three variables to fix, which
+      // is only true advice in basic mode: under `JIRA_AUTH_MODE=oauth` the
+      // credentials come from the token store `login` wrote, and sending that
+      // operator to `JIRA_API_TOKEN` would have them fix a variable this server
+      // never reads. (Reaching this branch in oauth mode means the composition
+      // root built the basic resolver for an oauth server — the message says the
+      // useful half regardless.)
+      const oauth = settings.authMode === 'oauth';
       throw configError(
-        requested === undefined
-          ? 'This server has no usable Jira credentials: JIRA_SITE, JIRA_EMAIL and JIRA_API_TOKEN must all be set.'
-          : `Profile "${requested}" has no usable credentials: site, email and API token must all resolve.`,
-        'Run `jira-mcp-ai doctor` — it reports which of the three is missing and ' +
-          'where it looked for the env file.',
+        requested !== undefined
+          ? `Profile "${requested}" has no usable credentials: site, email and API token must all resolve.`
+          : oauth
+            ? 'This server has no usable Jira credentials: JIRA_AUTH_MODE=oauth takes them from the OAuth token store, and no usable token was available.'
+            : 'This server has no usable Jira credentials: JIRA_SITE, JIRA_EMAIL and JIRA_API_TOKEN must all be set.',
+        oauth && requested === undefined
+          ? 'Run `jira-mcp-ai login` to authorize this server, then `jira-mcp-ai ' +
+              'doctor` — it reports whether a token store exists and which site it is for.'
+          : 'Run `jira-mcp-ai doctor` — it reports which of the three is missing and ' +
+              'where it looked for the env file.',
       );
     }
 
-    return { host, email, apiToken };
+    return { kind: 'basic', host, email, apiToken };
   };
 }

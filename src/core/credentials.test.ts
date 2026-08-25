@@ -26,6 +26,14 @@ const BASE_SETTINGS: Settings = {
   site: 'example.atlassian.net',
   email: 'default@example.com',
   apiToken: 'default-token',
+  authMode: 'basic',
+  oauth: {
+    scopes: [],
+    tokenFile: '/home/tester/.config/jira-mcp-ai/oauth.json',
+    redirectPort: 8250,
+    authOrigin: 'https://auth.atlassian.com',
+    gatewayOrigin: 'https://api.atlassian.com',
+  },
   allowedHosts: [],
   profiles: {},
   lockProfile: true,
@@ -218,6 +226,32 @@ describe('buildCredentialResolver', () => {
 
     assert.equal(resolve().email, 'eu@example.com');
     assert.throws(() => resolve('us'), /Profile "us" has no usable credentials/);
+  });
+
+  it('tags what it returns as basic credentials, so the signer can discriminate', () => {
+    const resolve = buildCredentialResolver({
+      settings: settingsOf(),
+      host: DEFAULT_HOST,
+      resolveHost: fakeResolveHost,
+    });
+
+    assert.equal(resolve().kind, 'basic');
+  });
+
+  it('does not send an oauth-mode operator to fix JIRA_API_TOKEN', () => {
+    const resolve = buildCredentialResolver({
+      settings: settingsOf({ authMode: 'oauth', email: undefined, apiToken: undefined }),
+      host: DEFAULT_HOST,
+      resolveHost: fakeResolveHost,
+    });
+
+    assert.throws(resolve, (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /JIRA_AUTH_MODE=oauth/);
+      assert.doesNotMatch(error.message, /JIRA_API_TOKEN/);
+      assert.match(String(Reflect.get(error, 'remediation')), /jira-mcp-ai login/);
+      return true;
+    });
   });
 });
 

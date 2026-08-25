@@ -13,6 +13,7 @@ import test from 'node:test';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
+import { FAKE_AUTH_SETTINGS } from '../core/fakes/fakeSettings.js';
 import { JiraError } from '../core/types.js';
 import type { Settings } from '../core/types.js';
 import {
@@ -40,6 +41,7 @@ const BASE_SETTINGS: Settings = {
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',
+  ...FAKE_AUTH_SETTINGS,
 };
 
 function settingsOf(overrides: Partial<Settings> = {}): Settings {

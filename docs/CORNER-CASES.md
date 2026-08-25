@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-94`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-104`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -596,3 +596,85 @@ with a note, and gaps stay gaps.
   advice rather than extending it. Keyed on Jira's message, not the status — a
   genuinely expired token reaches the same route with the same 401 and must keep
   saying so (D90).
+
+## Appended with Phase 8 — OAuth 2.0 (3LO) (2026-08-21)
+
+- **CC-97** A `state` mismatch on the callback aborts **before** the token
+  exchange. The loopback handler compares the returned `state` against the one
+  `login` generated, in constant time, and a mismatch ends the run with an exit
+  code and no request to the token endpoint — the authorization code is
+  discarded unspent. Atlassian documents `state` as "(required for security)"
+  and walks through the session-fixation attack it prevents: an attacker who can
+  get their own authorization code into somebody else's callback ends up with
+  the victim's client holding a session against the *attacker's* account, which
+  then quietly collects whatever the victim writes. Exchanging first and
+  checking after would be no defence at all, because the exchange is the step
+  that creates the session (D96).
+- **CC-98** N concurrent tool calls that all see an expired access token perform
+  exactly ONE refresh. The resolver keeps the in-flight refresh promise and
+  hands it to every caller that arrives while it is pending; the rest await it
+  rather than starting their own. Without this, a burst of parallel tool calls
+  — the normal shape of agent traffic — fires N refreshes against a rotating
+  grant, and N-1 of them present a refresh token that the first one has already
+  invalidated. Atlassian's documented 10-minute reuse leeway means such a race
+  is usually survivable, but a leeway is a safety net, not a licence: the design
+  is single-flight in-process plus the cross-process lock, and the leeway covers
+  only the window the design cannot (CC-99).
+- **CC-99** A rotated refresh token is persisted **before** it is used, and a
+  failed store write fails the refresh. The store is re-read inside the
+  cross-process lock, so a second process that refreshed first wins and this
+  process adopts its token instead of burning it. If the write itself fails, the
+  refresh reports failure even though Atlassian answered 200 — because a rotated
+  token held only in memory is a logout at the next restart, and the operator
+  would have no way to connect the two events. The 10-minute leeway is what
+  makes the surviving window (crash after Atlassian rotated, before we wrote)
+  recoverable rather than terminal.
+- **CC-100** A terminal token-endpoint error is **a set of error codes on 400 or
+  403**, not one documented string. Any response from the token endpoint whose
+  status is 400 or 403 and whose `error` is one of `invalid_grant`,
+  `unauthorized_client` or `invalid_client` is terminal: no retry, no backoff,
+  `kind=auth`, remediation "run `jira-mcp-ai login` again". The set is wider than
+  the single code it started as, because the documentation and the live endpoint
+  disagree — Atlassian documents exactly one error (403 `invalid_grant`, "Unknown
+  or invalid refresh token"), while the live endpoint answered 403
+  `unauthorized_client` for a bad refresh token and 400 `invalid_client` for an
+  unknown client. Matching the one documented string would have left the real
+  refresh failure looking retryable, which is a loop against an already-dead
+  token: every attempt fails identically, nothing recovers, and the one action
+  that would fix it is never suggested.
+- **CC-101** A cloudId containing `/`, `..`, a `?` or anything outside letters,
+  digits and hyphens is refused **before** a URL is built. The gateway path is
+  `/ex/jira/<cloudId>/<api path>`, so an unvalidated cloudId is a path-injection
+  primitive that can point an authenticated, bearer-carrying request at a
+  different Atlassian tenant's prefix or smuggle a query string into a URL the
+  caller believes is a path. The check is anchored, the failure is `config` with
+  the value not echoed back, and it runs at `gatewayHost` construction rather
+  than at request time so no code path can reach the network with an unchecked
+  id.
+- **CC-102** `JIRA_AUTH_MODE=oauth` with no token store is a **config** error
+  that names `jira-mcp-ai login` — not a 401 from Jira, and not a startup crash.
+  The resolver refuses locally, before any request, because there is no
+  credential to send and sending none produces an authentication failure whose
+  remediation (check your token, regenerate it) is advice for a different
+  problem entirely. The same shape covers a store that exists but holds no entry
+  for the requested profile: the error names the profile and the store path.
+- **CC-103** Accessible-resources returning several sites with no pin is an
+  ambiguity error that **lists them**. `selectSite` throws `config` naming each
+  candidate's site URL and name, so the operator can re-run `login --site` or
+  set `JIRA_OAUTH_CLOUD_ID`; picking the first entry silently would bind a
+  long-lived grant to whichever site Atlassian happened to order first. Two
+  properties of that response force the shape: Atlassian documents that the `id`
+  is **not unique across containers**, so it cannot be treated as a primary key
+  and `--site` matches on `url`/`name`; and the endpoint "won't tell you
+  anything about the user's permissions", so a site appearing in the list is not
+  a promise that any tool will work against it, and neither the error nor doctor
+  may imply otherwise.
+- **CC-104** The loopback callback binds `127.0.0.1` only and rejects a request
+  that carries no `code`. Binding the wildcard address would expose the callback
+  — and therefore the authorization code — to anything that can reach the host
+  on that port, which on a shared or containerised machine is not nobody. A
+  request to `/callback` without a `code` (a stray browser probe, a favicon
+  fetch, a scan) answers with a plain refusal and does **not** end the wait; an
+  Atlassian error redirect that carries `error` instead does end it, reporting
+  what Atlassian said. The server is torn down in a `finally`, so a failed or
+  timed-out login never leaves a listener behind.

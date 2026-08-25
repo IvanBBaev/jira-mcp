@@ -7,8 +7,12 @@ import { after, describe, it } from 'node:test';
 import { withEnv } from '../testing/with-env.js';
 import {
   CONFIG_DIR_NAME,
+  OAUTH_TOKEN_FILE_NAME,
+  defaultOAuthTokenFile,
   loadEnvFile,
   preferredEnvFilePath,
+  resolveConfigDir,
+  resolveConfigPath,
   resolveEnvFileCandidates,
   type EnvFileHost,
 } from './config.js';
@@ -83,6 +87,46 @@ describe('resolveEnvFileCandidates', () => {
       preferredEnvFilePath({ ...base, env: { JIRA_ENV_FILE: '/etc/jira.env' } }),
       '/etc/jira.env',
     );
+  });
+});
+
+describe('config dir and the OAuth token store', () => {
+  it('puts the token store beside the env file it belongs to', () => {
+    assert.equal(
+      resolveConfigDir({ ...base, env: {} }),
+      `/home/tester/.config/${CONFIG_DIR_NAME}`,
+    );
+    assert.equal(
+      defaultOAuthTokenFile({ ...base, env: {} }),
+      `/home/tester/.config/${CONFIG_DIR_NAME}/${OAUTH_TOKEN_FILE_NAME}`,
+    );
+  });
+
+  it('follows XDG_CONFIG_HOME, and ignores a relative one like the env file does', () => {
+    assert.equal(
+      defaultOAuthTokenFile({ ...base, env: { XDG_CONFIG_HOME: '/home/tester/xdg' } }),
+      `/home/tester/xdg/${CONFIG_DIR_NAME}/${OAUTH_TOKEN_FILE_NAME}`,
+    );
+    assert.equal(
+      defaultOAuthTokenFile({ ...base, env: { XDG_CONFIG_HOME: 'relative/config' } }),
+      `/home/tester/.config/${CONFIG_DIR_NAME}/${OAUTH_TOKEN_FILE_NAME}`,
+    );
+  });
+
+  it('falls back to the cwd when there is no home directory at all', () => {
+    assert.equal(
+      defaultOAuthTokenFile({ ...base, homeDir: '', env: {} }),
+      `/work/project/${CONFIG_DIR_NAME}/${OAUTH_TOKEN_FILE_NAME}`,
+    );
+  });
+
+  it('normalises an operator-supplied path the way JIRA_ENV_FILE is normalised', () => {
+    assert.equal(
+      resolveConfigPath('~/secrets/oauth.json', base),
+      '/home/tester/secrets/oauth.json',
+    );
+    assert.equal(resolveConfigPath('oauth.json', base), '/work/project/oauth.json');
+    assert.equal(resolveConfigPath('/var/lib/oauth.json', base), '/var/lib/oauth.json');
   });
 });
 

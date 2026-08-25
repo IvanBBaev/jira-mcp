@@ -97,13 +97,15 @@ export const LOG_EVENTS = [
   'ambiguous_write',
   'budget_exceeded',
   'auth_failure',
+  'oauth_token_refreshed',
+  'oauth_token_refresh_failed',
   'journal_write_failed',
   'upstream_degraded',
   'shutdown',
 ] as const;
 
 /**
- * One of the fifteen contract event names.
+ * One of the seventeen contract event names.
  *
  * Produced by: every layer that logs (WP-10…WP-25).
  * Consumed by: `core/log.ts` (WP-12) and the log-table test.
@@ -131,6 +133,8 @@ export const LOG_EVENT_LEVEL: Readonly<Record<LogEventName, LogLevel>> = Object.
   ambiguous_write: 'error',
   budget_exceeded: 'error',
   auth_failure: 'error',
+  oauth_token_refreshed: 'info',
+  oauth_token_refresh_failed: 'error',
   journal_write_failed: 'warn',
   upstream_degraded: 'warn',
   shutdown: 'info',
@@ -251,6 +255,60 @@ export const TRANSPORT_KINDS = ['stdio', 'http'] as const;
  */
 export type TransportKind = (typeof TRANSPORT_KINDS)[number];
 
+/** Value space of `JIRA_AUTH_MODE` (default `basic`). */
+export const AUTH_MODES = ['basic', 'oauth'] as const;
+
+/**
+ * Where a request's credentials come from (AUTH.md, D91).
+ *
+ * `basic` is v1's `Authorization: Basic base64(email:apiToken)` against the site
+ * host. `oauth` is the 3LO bearer token against the
+ * `api.atlassian.com/ex/jira/{cloudId}` gateway — a different origin AND a path
+ * prefix, which is why {@link HostRef} has always carried both.
+ *
+ * Produced by: `core/settings.ts`.
+ * Consumed by: `src/index.ts` and `cli/doctor.ts` when they choose which
+ * credential resolver to build.
+ */
+export type AuthMode = (typeof AUTH_MODES)[number];
+
+/**
+ * The `JIRA_OAUTH_*` block, nested rather than nine more flat `Settings` fields
+ * — in `basic` mode none of it applies, and a nested object says so.
+ *
+ * Every field still maps to exactly one CONFIGURATION.md row; the env ↔ docs
+ * sync test does not care about the shape, only that each name is documented.
+ *
+ * Produced by: `core/settings.ts`.
+ * Consumed by: `core/oauth.ts` (the resolver and the token store) and
+ * `cli/login.ts`.
+ */
+export interface OAuthSettings {
+  /** `JIRA_OAUTH_CLIENT_ID`. Required in oauth mode; not a secret. */
+  readonly clientId?: string;
+  /**
+   * `JIRA_OAUTH_CLIENT_SECRET`. Secret; registered with the redactor.
+   *
+   * Required whenever {@link Settings.authMode} is `oauth` — Atlassian documents
+   * no public-client mode, so PKCE supplements this secret rather than replacing
+   * it (D98). Optional in the type only because `basic` mode never reads it;
+   * `core/settings.ts` raises a finding when oauth mode leaves it unset.
+   */
+  readonly clientSecret?: string;
+  /** `JIRA_OAUTH_SCOPES`. Space-joined into the authorize request. */
+  readonly scopes: readonly string[];
+  /** `JIRA_OAUTH_CLOUD_ID`. Pins the site; otherwise discovery picks it. */
+  readonly cloudId?: string;
+  /** `JIRA_OAUTH_TOKEN_FILE`. The 0600 token store `login` writes. */
+  readonly tokenFile: string;
+  /** `JIRA_OAUTH_REDIRECT_PORT` (default 8250). The loopback callback port. */
+  readonly redirectPort: number;
+  /** `JIRA_OAUTH_AUTH_ORIGIN` (default `https://auth.atlassian.com`). */
+  readonly authOrigin: string;
+  /** `JIRA_OAUTH_GATEWAY_ORIGIN` (default `https://api.atlassian.com`). */
+  readonly gatewayOrigin: string;
+}
+
 /**
  * A named credential set from `JIRA_PROFILE_<NAME>_SITE` / `_EMAIL` /
  * `_API_TOKEN`. Per-call resolution flows through AsyncLocalStorage
@@ -311,6 +369,13 @@ export interface Settings {
   readonly apiToken?: string;
   /** `JIRA_TOKEN_EXPIRES`. ISO date; warns ≤ 30 days out (`token_expiry_warning`). */
   readonly tokenExpires?: string;
+  /**
+   * `JIRA_AUTH_MODE` (default `basic`). In `oauth` the email/token pair is not
+   * required and the bearer token comes from the store `login` wrote (D91).
+   */
+  readonly authMode: AuthMode;
+  /** `JIRA_OAUTH_*`. Meaningful only when `authMode` is `oauth`. */
+  readonly oauth: OAuthSettings;
   /** `JIRA_ALLOWED_HOSTS`. Extra exact hosts or anchored regexes; suffix match banned. */
   readonly allowedHosts: readonly string[];
 

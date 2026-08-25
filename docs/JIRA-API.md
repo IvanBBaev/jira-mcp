@@ -15,8 +15,11 @@ must encode these rules.
   (v3 = ADF bodies; v2 returns wiki-markup strings — we use **v3 only**).
 - Agile API: `https://<site>.atlassian.net/rest/agile/1.0/...` (boards, sprints,
   backlog). Separate root, same auth, classic pagination.
-- Auth (v1): HTTP Basic — `Authorization: Basic base64(email:apiToken)`.
+- Auth, basic mode: HTTP Basic — `Authorization: Basic base64(email:apiToken)`.
   API tokens are created at https://id.atlassian.com/manage-profile/security/api-tokens.
+- Auth, oauth mode: `Authorization: Bearer <access token>` **and a different
+  origin** — see §OAuth 2.0 (3LO) below. The paths above are unchanged; they are
+  prefixed, not replaced.
 
 ## Hosts
 
@@ -27,6 +30,76 @@ must encode these rules.
   banned: `evil-atlassian.net` ends with the donor's check string.
 - This is the wire rule; the env var that carries the opt-in is
   CONFIGURATION.md's.
+- The two Atlassian OAuth hosts, `auth.atlassian.com` and `api.atlassian.com`,
+  are **not** blanket-allowed. They are appended to the effective allowlist only
+  in oauth mode (D97), so a basic-mode deployment keeps exactly the egress it
+  has today. The auth primitive additionally refuses any URL whose origin is not
+  one of those two, and follows no redirects.
+
+## OAuth 2.0 (3LO)
+
+The credential lifecycle — login, scopes, storage, rotation, logout — belongs to
+AUTH.md. This section owns only the wire.
+
+| Purpose | URL |
+|---|---|
+| Authorization (browser) | `https://auth.atlassian.com/authorize` |
+| Token exchange **and** refresh (one URL) | `https://auth.atlassian.com/oauth/token` |
+| Accessible resources (cloudId discovery) | `https://api.atlassian.com/oauth/token/accessible-resources` |
+| API gateway | `https://api.atlassian.com/ex/jira/{cloudid}/{api}` |
+
+Both origins are overridable (`JIRA_OAUTH_AUTH_ORIGIN`,
+`JIRA_OAUTH_GATEWAY_ORIGIN` — CONFIGURATION.md) so the offline test fake is
+reachable; nothing else in the shape changes.
+
+- **The gateway is mandatory under 3LO**, not a preference. Verbatim: requests
+  that use OAuth 2.0 (3LO) are made via `api.atlassian.com`, not
+  `https://your-domain.atlassian.net`. A bearer token sent to the site host is
+  not a supported path. Hence `HostRef` carries a `pathPrefix` of
+  `/ex/jira/<cloudId>`: `…/ex/jira/<cloudId>/rest/api/3/project`. The cloudId is
+  validated (letters, digits, hyphens, anchored) before any URL is built — it is
+  a path segment, and an unvalidated one injects a path (CC-101).
+- Gateway headers are the ordinary ones plus `Authorization: Bearer …`.
+- **Authorization request parameters, all seven documented required**:
+  `audience` (literally `api.atlassian.com` — easy to forget, and required),
+  `client_id`, `scope` (space-separated), `redirect_uri`, `state`,
+  `response_type=code`, `prompt=consent`. We add `code_challenge` and
+  `code_challenge_method=S256`. Success redirects to the callback with `code` in
+  the query string; no other response parameter is documented.
+- **Token requests are JSON, not form-encoded.** Atlassian documents
+  `Content-Type: application/json` on `/oauth/token` for both the
+  authorization-code exchange and the refresh. This departs from RFC 6749, which
+  mandates form encoding; the documented shape wins. (A form-encoded body is
+  empirically also accepted, but that is undocumented and we do not rely on it —
+  the auth primitive sends JSON only.)
+- The documented 200 body is `{ "access_token", "expires_in", "scope" }`.
+  `refresh_token` appears only in the refresh example and is returned in
+  practice when `offline_access` was requested; parse it as optional but expect
+  it. **`token_type` appears in no documented response** on these pages even
+  though `Bearer` is used throughout — do not require it, do not switch on it.
+  **The access-token lifetime is NOT DOCUMENTED**: read `expires_in` at runtime
+  and never hardcode a number.
+- **Accessible-resources takes no parameters.** Its `id` values are **not unique
+  across containers** — two entries may repeat one — so it is not a primary key;
+  and it "won't tell you anything about the user's permissions", so a site
+  listed there is not a promise that any call will succeed. Atlassian's prose
+  names `auth.atlassian.com` for this call while every code example on the same
+  page uses `api.atlassian.com`; the examples are right.
+- **Token-endpoint errors.** The documentation lists exactly one — `403` with
+  `{"error": "invalid_grant"}`, "Unknown or invalid refresh token" — but the
+  live endpoint returns a wider set: `400 invalid_request` for a bad
+  authorization code, `400 invalid_client` for an unknown client or a missing
+  `grant_type`, and `403 unauthorized_client` for a bad refresh token. Matching
+  the single documented string would strand a caller in a retry loop against a
+  dead token, so the rule is: **any 400 or 403 whose `error` is
+  `invalid_grant`, `unauthorized_client` or `invalid_client` is terminal** —
+  re-authorize, never retry (CC-100).
+- **JQL under 3LO cannot refer to entity properties.** Atlassian: apps cannot
+  declare searchable entity properties, and an app using OAuth 2.0 (3LO) "won't
+  be able to refer to entity properties in JQL queries". This is a real
+  restriction on the search tools in oauth mode, and it is not something the
+  server can work around — a JQL string that names an entity property is passed
+  through verbatim and will fail at the endpoint.
 
 ## Search: the 2025 migration (critical)
 
@@ -56,6 +129,9 @@ Atlassian **removed** the legacy search endpoints (`GET/POST /rest/api/3/search`
     page token is invalid or expired". Disambiguate from a JQL-syntax 400 by
     that message substring; on token-400 restart the search from page one with
     a loop guard and surface hint `pagination_restarted`.
+- **In oauth mode, JQL may not refer to entity properties** — a documented 3LO
+  restriction, not a client limitation, and the one place where the same JQL
+  string behaves differently between the two auth modes. See §OAuth 2.0 (3LO).
 
 ## Two pagination models
 
@@ -372,6 +448,18 @@ Reference groups consulted 2026-08-13:
     (default 120 s) — retry waits and semaphore queueing count against it; on
     breach the call aborts with `kind=budget_exceeded` instead of queueing
     retries forever (contract: OBSERVABILITY.md §Call budget).
+- **The OAuth hosts sit outside all of the above.** Atlassian's rate-limiting
+  documentation covers the Jira REST API only; **rate limits on
+  `auth.atlassian.com` are NOT DOCUMENTED**. No 429 handling is documented for
+  it, so none is asserted here.
+- **A token POST is never replayed** (D94) — not on 429, not on 5xx, not on a
+  transport error. This is the same invariant as an unsafe write, for a sharper
+  reason: refresh tokens rotate, so a replay is indistinguishable on the wire
+  from a stolen-token replay, and burning a refresh token logs the operator out
+  of a server they cannot reach a browser from. Atlassian's own guidance points
+  the same way — retry only if the API is idempotent *and* the response carries
+  `Retry-After`. The accessible-resources **GET** is a plain read and retries
+  under the normal policy.
 
 ## Error response shapes
 

@@ -34,7 +34,7 @@ import { join } from 'node:path';
 import test, { describe } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { loadSettings } from './core/settings.js';
+import { DEFAULT_OAUTH_TOKEN_FILE_DOC, loadSettings } from './core/settings.js';
 import type { Settings } from './core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -257,6 +257,19 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_EMAIL', (s: Settings) => s.email],
   ['JIRA_API_TOKEN', (s: Settings) => s.apiToken],
   ['JIRA_TOKEN_EXPIRES', (s: Settings) => s.tokenExpires],
+  ['JIRA_AUTH_MODE', (s: Settings) => s.authMode],
+  ['JIRA_OAUTH_CLIENT_ID', (s: Settings) => s.oauth.clientId],
+  ['JIRA_OAUTH_CLIENT_SECRET', (s: Settings) => s.oauth.clientSecret],
+  ['JIRA_OAUTH_SCOPES', (s: Settings) => list(s.oauth.scopes)],
+  ['JIRA_OAUTH_CLOUD_ID', (s: Settings) => s.oauth.cloudId],
+  // The only probe that cannot read the loader: the resolved path embeds this
+  // machine's home directory, so the table documents the SHAPE and the loader
+  // exports the same placeholder. Comparing against `s.oauth.tokenFile` would
+  // assert that CI and a laptop have the same `$HOME`.
+  ['JIRA_OAUTH_TOKEN_FILE', () => DEFAULT_OAUTH_TOKEN_FILE_DOC],
+  ['JIRA_OAUTH_REDIRECT_PORT', (s: Settings) => String(s.oauth.redirectPort)],
+  ['JIRA_OAUTH_AUTH_ORIGIN', (s: Settings) => s.oauth.authOrigin],
+  ['JIRA_OAUTH_GATEWAY_ORIGIN', (s: Settings) => s.oauth.gatewayOrigin],
   ['JIRA_ALLOWED_HOSTS', (s: Settings) => list(s.allowedHosts)],
   [PROFILE_FAMILY, (s: Settings) => list(Object.keys(s.profiles))],
   ['JIRA_ACTIVE_PROFILE', (s: Settings) => s.activeProfile],

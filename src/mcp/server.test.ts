@@ -21,6 +21,7 @@ import { createFakeClock } from '../core/fakes/fakeClock.js';
 import { createFakeJiraRequest, jiraErr, jiraOk } from '../core/fakes/fakeJiraRequest.js';
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { createFakeRedactor } from '../core/fakes/fakeRedactor.js';
+import { FAKE_AUTH_SETTINGS } from '../core/fakes/fakeSettings.js';
 import { createMemoryJournal } from '../core/fakes/memoryJournal.js';
 import type { MemoryJournal } from '../core/fakes/memoryJournal.js';
 import { JiraError } from '../core/types.js';
@@ -74,6 +75,7 @@ const BASE_SETTINGS: Settings = {
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',
+  ...FAKE_AUTH_SETTINGS,
 };
 
 const READ_ANNOTATIONS = {

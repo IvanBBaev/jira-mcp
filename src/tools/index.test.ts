@@ -36,6 +36,7 @@ import test, { describe } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  FAKE_AUTH_SETTINGS,
   createFakeClock,
   createFakeJiraRequest,
   createFakeLogger,
@@ -163,6 +164,7 @@ const BASE_SETTINGS: Settings = {
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',
+  ...FAKE_AUTH_SETTINGS,
 };
 
 function settingsOf(overrides: Partial<Settings> = {}): Settings {

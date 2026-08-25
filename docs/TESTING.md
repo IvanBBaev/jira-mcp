@@ -173,6 +173,54 @@ minimum set is recorded.
     documented variables, wire every field it prompts for, and never offer the
     irreversible-delete gate as a tick-box (D45, D78). Suite 8 gates code against
     the table, this one gates the shipped manifests against it.
+11. **OAuth (offline, entirely)** — no test in this repo ever contacts
+    Atlassian's auth host, and the network fence guarantees it rather than
+    trusting it.
+    - *Pure logic, no seam needed*: the PKCE pair (verifier charset and length,
+      `challenge = base64url(sha256(verifier))`, method always `S256`),
+      `state`-nonce shape, authorize-URL construction (every required parameter
+      present, including the easily forgotten `audience`, scopes space-joined),
+      token-response parsing (`expires_in` honoured, `refresh_token` optional,
+      `token_type` never required), accessible-resources parsing and site
+      selection — including the two documented traps: duplicate `id` values, and
+      several sites with no pin producing an ambiguity error that lists them
+      (CC-103).
+    - *Wire tier* (`withFetch`): the token exchange and the refresh, asserted on
+      method, URL, JSON body shape and the **absence** of retries — a token POST
+      is never replayed on 429, 5xx or a transport error (D94). The terminal
+      error set is driven from a table of the real statuses and codes
+      (CC-100), and the negative case matters as much: a 500 with no `error`
+      field is not terminal.
+    - *Clock, not sleep*: expiry and the refresh-skew window are asserted with
+      the injected `Clock`, so "refreshes two minutes early" is a deterministic
+      assertion rather than a wall-clock race. The single-flight property
+      (CC-98) is tested by resolving N calls against one scripted response and
+      counting requests, which is a counting assertion, not a timing one.
+    - *Filesystem*: the token store is exercised against a temp directory —
+      round-trip, profile keying, `0600` mode, atomic replacement, and the
+      rule that a failed write fails the refresh (CC-99) rather than leaving a
+      rotated token in memory only.
+    - *CSPRNG as a seam*: `CryptoRandom` is injected, so PKCE and `state` values
+      are fixed in tests without seeding anything security-relevant in
+      production and without reaching for the jitter `rng` (D96).
+    - *The login CLI*: driven with the loopback listener on an ephemeral port
+      and a scripted callback request. The cases that matter are the refusals —
+      a mismatched `state` aborting **before** any exchange (CC-97), a callback
+      with no `code`, and a non-TTY run refusing instead of hanging — plus the
+      assertion that no token appears on stdout in any mode, `--json` included.
+    - *Config-shaped failures*: oauth mode with an empty token store is a
+      `config` error naming `login` rather than a 401 from Jira (CC-102), and a
+      malformed cloudId is refused before a URL exists (CC-101).
+
+**What the OAuth suite cannot prove.** The same honesty the live gate gets
+below. Every OAuth test asserts *this* code against a fake modelled on
+Atlassian's documentation, so it inherits that documentation's gaps: the access
+token lifetime is not documented and the fixtures simply pick one; the
+error/status pairs come from probing the live endpoint once, not from a contract;
+and above all, **nothing offline can prove that a loopback callback URL can be
+registered in the developer console at all** (AUTH.md). A green suite means the
+flow is correct if Atlassian behaves as documented. It is not a substitute for
+the first real login.
 
 **Rehearsing the live gate.** The Gate C driver is itself driven offline:
 `scripts/rehearse-live.mjs` runs the real `verify-live.mjs` against the stateful

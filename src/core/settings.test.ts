@@ -3,13 +3,20 @@ import { describe, it } from 'node:test';
 
 import { createFakeClock } from './fakes/index.js';
 import { withEnv } from '../testing/with-env.js';
+import { defaultOAuthTokenFile } from './config.js';
+import { OAUTH_AUTH_HOST, OAUTH_GATEWAY_HOST } from './host.js';
 import {
+  DEFAULT_AUTH_MODE,
   DEFAULT_CALL_BUDGET_MS,
   DEFAULT_HOST_CONCURRENCY,
   DEFAULT_HTTP_PORT,
   DEFAULT_LOG_LEVEL,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RESULT_CHARS,
+  DEFAULT_OAUTH_AUTH_ORIGIN,
+  DEFAULT_OAUTH_GATEWAY_ORIGIN,
+  DEFAULT_OAUTH_REDIRECT_PORT,
+  DEFAULT_OAUTH_SCOPES,
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_RETRY_ATTEMPTS,
   DEFAULT_TOOL_PACKAGES,
@@ -38,6 +45,17 @@ const VALID = {
   JIRA_EMAIL: 'me@example.com',
   JIRA_API_TOKEN: 'token-active',
 } as const;
+
+/** The oauth-mode counterpart: no email, no API token, an app instead. */
+const VALID_OAUTH = {
+  JIRA_SITE: 'mycompany',
+  JIRA_AUTH_MODE: 'oauth',
+  JIRA_OAUTH_CLIENT_ID: 'client-id-abc',
+  JIRA_OAUTH_CLIENT_SECRET: 'client-secret-value',
+} as const;
+
+/** Fixed home/cwd, so the token-store default is the same on every machine. */
+const PATHS = { homeDir: '/home/tester', cwd: '/work/project' } as const;
 
 function load(
   env: Record<string, string | undefined>,
@@ -170,6 +188,160 @@ describe('loadSettings — credentials', () => {
   it('rejects an email that is not an email address', () => {
     const { report } = load({ ...VALID, JIRA_EMAIL: 'admin' });
     assert.deepEqual(codes(report), ['invalid_email']);
+  });
+});
+
+describe('loadSettings — auth mode and the OAuth block', () => {
+  it('defaults to basic auth with a complete, documented OAuth block', () => {
+    const { settings, report } = load({ ...VALID }, PATHS);
+
+    assert.deepEqual(report.findings, []);
+    assert.equal(settings.authMode, DEFAULT_AUTH_MODE);
+    assert.deepEqual(settings.oauth, {
+      scopes: DEFAULT_OAUTH_SCOPES,
+      tokenFile: defaultOAuthTokenFile({ env: {}, ...PATHS }),
+      redirectPort: DEFAULT_OAUTH_REDIRECT_PORT,
+      authOrigin: DEFAULT_OAUTH_AUTH_ORIGIN,
+      gatewayOrigin: DEFAULT_OAUTH_GATEWAY_ORIGIN,
+    });
+  });
+
+  it('parses every JIRA_OAUTH_* variable', () => {
+    const { settings, report } = load(
+      {
+        ...VALID_OAUTH,
+        JIRA_OAUTH_SCOPES: 'read:jira-work, offline_access',
+        JIRA_OAUTH_CLOUD_ID: '0f2a1b3c-4d5e-6f70-8192-a3b4c5d6e7f8',
+        JIRA_OAUTH_TOKEN_FILE: '~/secrets/jira-oauth.json',
+        JIRA_OAUTH_REDIRECT_PORT: '9999',
+        JIRA_OAUTH_AUTH_ORIGIN: 'https://auth.localhost.test:8443',
+        JIRA_OAUTH_GATEWAY_ORIGIN: 'https://gateway.localhost.test:8443',
+      },
+      PATHS,
+    );
+
+    assert.deepEqual(report.findings, []);
+    assert.equal(settings.authMode, 'oauth');
+    assert.deepEqual(settings.oauth, {
+      clientId: 'client-id-abc',
+      clientSecret: 'client-secret-value',
+      scopes: ['read:jira-work', 'offline_access'],
+      cloudId: '0f2a1b3c-4d5e-6f70-8192-a3b4c5d6e7f8',
+      tokenFile: '/home/tester/secrets/jira-oauth.json',
+      redirectPort: 9999,
+      authOrigin: 'https://auth.localhost.test:8443',
+      gatewayOrigin: 'https://gateway.localhost.test:8443',
+    });
+  });
+
+  it('resolves a relative JIRA_OAUTH_TOKEN_FILE against the cwd', () => {
+    const { settings } = load(
+      { ...VALID, JIRA_OAUTH_TOKEN_FILE: 'state/oauth.json' },
+      PATHS,
+    );
+    assert.equal(settings.oauth.tokenFile, '/work/project/state/oauth.json');
+  });
+
+  it('reports an unknown JIRA_AUTH_MODE and keeps the documented default', () => {
+    const { settings, report } = load({ ...VALID, JIRA_AUTH_MODE: 'sso' });
+    assert.deepEqual(codes(report), ['invalid_enum']);
+    assert.equal(settings.authMode, DEFAULT_AUTH_MODE);
+  });
+
+  it('reports a redirect port outside the unprivileged range', () => {
+    for (const port of ['80', '70000', 'eight']) {
+      const { settings, report } = load({ ...VALID, JIRA_OAUTH_REDIRECT_PORT: port });
+      assert.deepEqual(codes(report), ['invalid_number'], port);
+      assert.equal(settings.oauth.redirectPort, DEFAULT_OAUTH_REDIRECT_PORT, port);
+    }
+  });
+
+  it('accepts only a bare https origin for the two OAuth endpoints', () => {
+    for (const value of [
+      'http://auth.localhost.test',
+      'https://auth.localhost.test/oauth',
+      'https://auth.localhost.test/?next=evil',
+      'https://user:pass@auth.localhost.test',
+      'auth.localhost.test',
+    ]) {
+      const { settings, report } = load({ ...VALID, JIRA_OAUTH_AUTH_ORIGIN: value });
+      assert.deepEqual(codes(report), ['invalid_origin'], value);
+      assert.equal(settings.oauth.authOrigin, DEFAULT_OAUTH_AUTH_ORIGIN, value);
+    }
+  });
+
+  it('refuses a JIRA_OAUTH_CLOUD_ID that cannot go in a path (a pasted site URL)', () => {
+    const { report } = load({
+      ...VALID_OAUTH,
+      JIRA_OAUTH_CLOUD_ID: 'https://mycompany.atlassian.net',
+    });
+    assert.deepEqual(codes(report), ['invalid_cloud_id']);
+  });
+
+  it('does not ask an oauth-mode operator for JIRA_EMAIL or JIRA_API_TOKEN', () => {
+    const { report } = load({ ...VALID_OAUTH });
+    assert.deepEqual(report.findings, []);
+  });
+
+  it('requires both halves of the app credentials in oauth mode', () => {
+    const { report } = load({ JIRA_SITE: 'mycompany', JIRA_AUTH_MODE: 'oauth' });
+    assert.deepEqual(codes(report), ['missing_credential', 'missing_credential']);
+    assert.deepEqual(
+      report.errors.map((finding) => finding.field),
+      ['JIRA_OAUTH_CLIENT_ID', 'JIRA_OAUTH_CLIENT_SECRET'],
+    );
+    for (const finding of report.errors) {
+      assert.doesNotMatch(finding.message, /JIRA_API_TOKEN/);
+    }
+  });
+
+  it('still requires JIRA_SITE in oauth mode', () => {
+    const { report, host } = load({ ...VALID_OAUTH, JIRA_SITE: undefined });
+    assert.equal(host, undefined);
+    assert.equal(report.ok, false);
+    assert.match(String(report.errors[0]?.message), /JIRA_SITE/);
+  });
+
+  it('registers the client secret with the redactor, in either mode', () => {
+    assert.deepEqual(load({ ...VALID_OAUTH }).secrets, ['client-secret-value']);
+    assert.deepEqual(
+      load({ ...VALID, JIRA_OAUTH_CLIENT_SECRET: 'client-secret-value' }).secrets,
+      ['token-active', 'client-secret-value'],
+    );
+  });
+});
+
+describe('loadSettings — OAuth egress (D97)', () => {
+  it('allowlists the OAuth hosts in oauth mode, appended to the operator’s list', () => {
+    const { settings, report } = load({
+      ...VALID_OAUTH,
+      JIRA_ALLOWED_HOSTS: 'jira.example.com',
+    });
+
+    assert.equal(report.ok, true);
+    assert.deepEqual(settings.allowedHosts, [
+      'jira.example.com',
+      OAUTH_AUTH_HOST,
+      OAUTH_GATEWAY_HOST,
+    ]);
+  });
+
+  it('leaves the basic-mode allowlist exactly as the operator wrote it', () => {
+    assert.deepEqual(load({ ...VALID }).settings.allowedHosts, []);
+    assert.deepEqual(
+      load({ ...VALID, JIRA_ALLOWED_HOSTS: 'jira.example.com' }).settings.allowedHosts,
+      ['jira.example.com'],
+    );
+  });
+
+  it('allowlists the CONFIGURED origins, not the Atlassian ones, when overridden', () => {
+    const { settings } = load({
+      ...VALID_OAUTH,
+      JIRA_OAUTH_AUTH_ORIGIN: 'https://127.0.0.1:8443',
+      JIRA_OAUTH_GATEWAY_ORIGIN: 'https://127.0.0.1:8443',
+    });
+
+    assert.deepEqual(settings.allowedHosts, ['127.0.0.1']);
   });
 });
 
@@ -441,6 +613,25 @@ describe('loadSettings — token expiry', () => {
   it('skips the horizon check when no clock is injected', () => {
     const { report } = load({ ...VALID, JIRA_TOKEN_EXPIRES: '2020-01-01' });
     assert.deepEqual(report.findings, []);
+  });
+
+  it('says the expiry does not apply in oauth mode instead of checking it', () => {
+    const { report } = load(
+      { ...VALID_OAUTH, JIRA_TOKEN_EXPIRES: '2020-01-01' },
+      { clock: createFakeClock(now) },
+    );
+
+    assert.deepEqual(codes(report), ['token_expires_ignored']);
+    assert.equal(report.ok, true, 'an inert variable must not block startup');
+    assert.equal(report.warnings[0]?.field, 'JIRA_TOKEN_EXPIRES');
+  });
+
+  it('does not also complain that an ignored expiry is unparseable', () => {
+    const { report } = load(
+      { ...VALID_OAUTH, JIRA_TOKEN_EXPIRES: 'next summer' },
+      { clock: createFakeClock(now) },
+    );
+    assert.deepEqual(codes(report), ['token_expires_ignored']);
   });
 });
 

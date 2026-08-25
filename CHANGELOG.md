@@ -12,7 +12,46 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **OAuth 2.0 (3LO) as an alternative to the API token.** Set
+  `JIRA_AUTH_MODE=oauth`, register a 3LO app in the Atlassian developer console,
+  and run `jira-mcp-ai login`; the server then authenticates with a rotating
+  access token through `https://api.atlassian.com/ex/jira/{cloudId}` instead of
+  sending your email and API token to the site host. `jira-mcp-ai logout`
+  removes the stored grant locally — it does **not** revoke it, and the command's
+  `--help` says so, because Atlassian documents no revocation endpoint.
+
+  Basic auth is unchanged and remains the default. If you set no `JIRA_OAUTH_*`
+  variable, nothing about your setup moves: the egress allowlist, the request
+  host and the credential path are byte-for-byte what they were.
+
+  Two things to know before switching. Each operator registers their own 3LO
+  app, because Atlassian authenticates the client on every token call and
+  publishes no public-client mode — the client secret is required, and PKCE
+  supplements it rather than replacing it. And the scope list is fixed at first
+  consent: widening `JIRA_OAUTH_SCOPES` later forces everyone to log in again,
+  which is why the default set is slightly wider than the tools strictly need.
+
+- Nine environment variables, all optional and all inert in `basic` mode:
+  `JIRA_AUTH_MODE`, `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET`,
+  `JIRA_OAUTH_SCOPES`, `JIRA_OAUTH_CLOUD_ID`, `JIRA_OAUTH_TOKEN_FILE`,
+  `JIRA_OAUTH_REDIRECT_PORT`, `JIRA_OAUTH_AUTH_ORIGIN`,
+  `JIRA_OAUTH_GATEWAY_ORIGIN`. CONFIGURATION.md documents each.
+
+- `jira-mcp-ai doctor` gained an eleventh probe, `oauth token store`, which
+  reports the stored grant's site, scopes and refresh horizon and warns when the
+  store is not `0600`. It makes no network call, so it runs under `--offline`,
+  and it prints nothing from which a token could be reconstructed.
+
+No tool changed. Same 52 tools, same packages, same inputs and outputs — this
+release adds a way to authenticate, not a way to do anything new.
+
+**Not yet proven against a real tenant.** The whole OAuth path is verified
+offline only. In particular the loopback redirect URI is an assumption: Atlassian
+documents no normative rule about registering one, so whether
+`http://127.0.0.1:8250/callback` is accepted by the developer console is
+untested. Treat `oauth` mode as unreleased until a version note says otherwise.
 
 ## [0.9.4] — 2026-08-18
 

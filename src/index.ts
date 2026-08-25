@@ -26,7 +26,8 @@
 // ---------------------------------------------------------------------------
 
 import { buildCredentialResolver, configError } from './core/credentials.js';
-import type { Clock, Journal, Logger, Redactor, Settings } from './core/types.js';
+import type { CredentialResolver } from './core/http.js';
+import type { Clock, Journal, Logger, Redactor, Rng, Settings } from './core/types.js';
 import type { ShutdownReason, TransportHandle } from './mcp/transport.js';
 import type { CapabilitiesInfo } from './tools/core.js';
 
@@ -93,6 +94,8 @@ const USAGE = `jira-mcp-ai — MCP server for Jira Cloud.
 Usage:
   jira-mcp-ai                 Serve the MCP protocol over stdio (default).
   jira-mcp-ai doctor [flags]  Check the configuration and probe the site.
+  jira-mcp-ai login [flags]   Authorize this machine through a browser (OAuth).
+  jira-mcp-ai logout [flags]  Forget the tokens stored on this machine.
   jira-mcp-ai --version       Print the server version.
   jira-mcp-ai --help          Print this message.
 
@@ -135,6 +138,19 @@ export async function main(options: MainOptions = {}): Promise<void> {
     if (command === 'doctor') {
       const { run } = await import('./cli/doctor.js');
       process.exitCode = await run({ argv: argv.slice(1) });
+      return;
+    }
+    // `login` and `logout` share a module — they are the two ends of one token
+    // store — but each gets its own entry function so the argument parsers never
+    // have to guess which command a flag belonged to.
+    if (command === 'login') {
+      const { run } = await import('./cli/login.js');
+      process.exitCode = await run({ argv: argv.slice(1) });
+      return;
+    }
+    if (command === 'logout') {
+      const { runLogout } = await import('./cli/login.js');
+      process.exitCode = await runLogout({ argv: argv.slice(1) });
       return;
     }
     if (command === 'help' || command === '--help' || command === '-h') {
@@ -235,12 +251,22 @@ async function serve(): Promise<void> {
     // them; they die with the server, which is the whole contract.
     const telemetry = createTelemetry();
 
+    // Which credential rule this server runs on. In basic mode it is the
+    // per-profile env override; in oauth mode it is the refreshing resolver over
+    // the token store `jira-mcp-ai login` wrote, and the two are mutually
+    // exclusive — `JIRA_API_TOKEN` signs nothing under oauth, and settings has
+    // already refused to start without the app's own client credentials.
+    const credentials: CredentialResolver =
+      settings.authMode === 'oauth'
+        ? await buildOAuthResolver({ settings, clock, rng, logger, redactor })
+        : buildCredentialResolver({
+            settings,
+            ...(loaded.host === undefined ? {} : { host: loaded.host }),
+            resolveHost,
+          });
+
     const jira = createJiraRequest({
-      credentials: buildCredentialResolver({
-        settings,
-        ...(loaded.host === undefined ? {} : { host: loaded.host }),
-        resolveHost,
-      }),
+      credentials,
       clock,
       rng,
       logger,
@@ -333,6 +359,54 @@ async function serve(): Promise<void> {
     process.stderr.write(`${redactor.redactString(describeFatal(error))}\n`);
     process.exitCode = exitCodeFor(error);
   }
+}
+
+/** Seams {@link buildOAuthResolver} needs, all already constructed. */
+interface OAuthDeps {
+  readonly settings: Settings;
+  readonly clock: Clock;
+  readonly rng: Rng;
+  readonly logger: Logger;
+  readonly redactor: Redactor;
+}
+
+/**
+ * The refreshing credential resolver for `JIRA_AUTH_MODE=oauth`.
+ *
+ * Imported on this branch only: a basic-auth server never loads the token store,
+ * the PKCE helpers or the auth-origin client, and the cost of oauth is therefore
+ * paid by the servers that chose it.
+ *
+ * Nothing here touches the network — `createAuthRequest` builds a function, and
+ * the first refresh happens on the first tool call. Startup stays offline
+ * (OBSERVABILITY.md §Startup), so an unreachable `auth.atlassian.com` is a
+ * failed call rather than a server that never finishes booting.
+ */
+async function buildOAuthResolver(deps: OAuthDeps): Promise<CredentialResolver> {
+  const { settings, clock, rng, logger, redactor } = deps;
+  const { createAuthRequest } = await import('./core/http.js');
+  const { createOAuthCredentialResolver, createTokenStore } =
+    await import('./core/oauth.js');
+  const oauth = settings.oauth;
+
+  return createOAuthCredentialResolver({
+    settings: oauth,
+    store: createTokenStore({ path: oauth.tokenFile, clock }),
+    authRequest: createAuthRequest({
+      clock,
+      logger,
+      redactor,
+      rng,
+      // The whole SSRF guard for the auth path: these two origins and nothing
+      // else, whatever a token response might try to redirect us towards.
+      allowedOrigins: [oauth.authOrigin, oauth.gatewayOrigin],
+      requestTimeoutMs: settings.requestTimeoutMs,
+    }),
+    clock,
+    logger,
+    redactor,
+    allowedHosts: settings.allowedHosts,
+  });
 }
 
 /** Options for {@link openJournal}, all already-constructed seams. */

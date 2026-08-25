@@ -30,6 +30,12 @@ import {
 import type { EnvFileHost } from '../core/config.js';
 import type { JiraHttpOptions } from '../core/http.js';
 import {
+  profileKey,
+  TOKEN_STORE_VERSION,
+  type StoredTokens,
+  type TokenStore,
+} from '../core/oauth.js';
+import {
   createReadlinePrompt,
   doctorUsage,
   EXIT_CONFIG,
@@ -242,7 +248,7 @@ test('CC-79: omitting argv means no options, not a second read of process.argv',
   const out = r.stdout();
   assert.equal(code, EXIT_OK, out);
   assert.doesNotMatch(r.stderr(), /Unexpected argument/);
-  assert.match(out, /10 probes: /);
+  assert.match(out, /11 probes: /);
 });
 
 test('with nothing injected the report goes to the real stdout and usage to the real stderr', async () => {
@@ -312,7 +318,7 @@ test('a healthy site passes every probe: exit 0', async () => {
   assert.match(out, /\[ ok \] deployment: Jira Cloud \(version 1001\.0\.0-SNAPSHOT\)/);
   assert.match(out, /\[ ok \] search: search\/jql returned 1 issue/);
   assert.match(out, /\[ ok \] agile: 1 board visible/);
-  assert.match(out, /10 probes: /);
+  assert.match(out, /11 probes: /);
   assert.deepEqual(r.jira.routes(), [
     'GET /rest/api/3/myself',
     'GET /rest/api/3/serverInfo',
@@ -842,6 +848,346 @@ test('gating: a locked profile is stated as locked', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// The OAuth token store (probe 11, AUTH.md §Doctor)
+//
+// Every case here runs `--offline`. That is not a shortcut: probe 11 is a LOCAL
+// probe by design, because "am I authorized at all" is the first question an
+// operator without a network answer needs settled, and running these offline is
+// the assertion that it stayed local.
+// ---------------------------------------------------------------------------
+
+const CLIENT_ID = 'a1B2c3D4e5F6g7H8i9J0';
+const CLIENT_SECRET = 'oauth-client-secret-value';
+const TOKEN_FILE = `${HOME}/.config/jira-mcp-ai/oauth.json`;
+const CLOUD_ID = '1324a887-45db-1bf4-1e99-ef0ff456d421';
+const ACCESS_TOKEN = 'oauth-access-token-value';
+const REFRESH_TOKEN = 'oauth-refresh-token-value';
+const MS_PER_MINUTE = 60000;
+
+function oauthEnv(extra: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
+  return {
+    JIRA_SITE: 'acme.atlassian.net',
+    JIRA_AUTH_MODE: 'oauth',
+    JIRA_OAUTH_CLIENT_ID: CLIENT_ID,
+    JIRA_OAUTH_CLIENT_SECRET: CLIENT_SECRET,
+    JIRA_OAUTH_TOKEN_FILE: TOKEN_FILE,
+    ...extra,
+  };
+}
+
+function grant(overrides: Partial<StoredTokens> = {}): StoredTokens {
+  return {
+    cloudId: CLOUD_ID,
+    site: 'https://acme.atlassian.net',
+    clientId: CLIENT_ID,
+    scopes: ['read:jira-work', 'offline_access'],
+    refreshToken: REFRESH_TOKEN,
+    accessToken: ACCESS_TOKEN,
+    expiresAt: START_MS + 45 * MS_PER_MINUTE,
+    obtainedAt: START_MS - MS_PER_MINUTE,
+    ...overrides,
+  };
+}
+
+interface FakeStore {
+  readonly store: TokenStore;
+  /** How many times doctor asked the store for an entry. */
+  reads(): number;
+}
+
+/**
+ * A token store doctor can only read.
+ *
+ * The write methods throw rather than record: doctor diagnoses, and a probe
+ * that quietly rewrote the file an operator is trying to understand would be a
+ * bug this fake should surface as a failure, not as a passing assertion.
+ */
+function fakeStore(
+  entries: Readonly<Record<string, StoredTokens>> = {},
+  setup: { readonly path?: string; readonly error?: Error } = {},
+): FakeStore {
+  let reads = 0;
+  const readOnly = (): never => {
+    throw new Error('doctor must never write to the OAuth token store');
+  };
+  const store: TokenStore = {
+    path: setup.path ?? TOKEN_FILE,
+    read: () => Promise.resolve({ version: TOKEN_STORE_VERSION, tokens: entries }),
+    get: (profile?: string) => {
+      reads += 1;
+      if (setup.error !== undefined) return Promise.reject(setup.error);
+      return Promise.resolve(entries[profileKey(profile)]);
+    },
+    put: readOnly,
+    remove: readOnly,
+    update: readOnly,
+  };
+  return { store, reads: () => reads };
+}
+
+test('basic mode names the mode instead of reporting on a store nothing reads', async () => {
+  const store = fakeStore({ default: grant() });
+  const r = rig({ extra: { tokenStore: store.store } });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(out, /\[info] oauth token store: auth mode is basic; the OAuth token/);
+  // The symptom of a half-configured OAuth app is a green basic-auth report, so
+  // the mode is stated — but the store itself is not even opened.
+  assert.equal(store.reads(), 0, 'basic mode must not read the store');
+});
+
+test('a stored grant is described by site, cloudId, scopes and horizon — never by token', async () => {
+  const store = fakeStore({ default: grant() });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    new RegExp(
+      `\\[ ok \\] oauth token store: auth mode is oauth, client id "${CLIENT_ID}"`,
+    ),
+  );
+  assert.match(
+    out,
+    new RegExp(`\\[ ok \\] oauth token store: store "${TOKEN_FILE}" \\(mode 0600\\)`),
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `\\[ ok \\] oauth token store: a grant for https://acme\\.atlassian\\.net \\(cloudId ${CLOUD_ID}\\) is stored under profile "default"`,
+    ),
+  );
+  assert.match(out, /granted scopes read:jira-work offline_access/);
+  assert.match(out, /\[ ok \] oauth token store: a refresh token is stored/);
+  assert.match(
+    out,
+    /\[ ok \] oauth token store: the OAuth access token expires in 45 minutes/,
+  );
+  // The whole point of the probe's wording (CC-103): a stored grant says which
+  // sites the authorization covers, never what the account may do on them.
+  assert.doesNotMatch(out, /oauth token store: [^\n]*permission/);
+  assert.equal(out.includes(ACCESS_TOKEN), false, 'no access token may reach stdout');
+  assert.equal(out.includes(REFRESH_TOKEN), false, 'no refresh token may reach stdout');
+  assert.equal(out.includes(CLIENT_SECRET), false);
+});
+
+test('oauth mode with no store fails the probe and names the login command', async () => {
+  const store = fakeStore();
+  const r = rig({ env: oauthEnv(), extra: { tokenStore: store.store } });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // Exit 1, not 2: the configuration is complete, the authorization is missing —
+  // and the remediation is a command, not a variable (CC-102).
+  assert.equal(code, EXIT_PROBE_FAILED, out);
+  assert.match(
+    out,
+    new RegExp(`\\[info] oauth token store: no store file at "${TOKEN_FILE}" yet`),
+  );
+  assert.match(
+    out,
+    /\[FAIL] oauth token store: no authorization is stored for profile "default"/,
+  );
+  assert.match(out, /→ Run `jira-mcp-ai login` once/);
+  assert.equal(store.reads(), 1, 'the store is read once per run, not once per probe');
+});
+
+test('the login hint carries the profile the missing grant belongs to', async () => {
+  const store = fakeStore({ default: grant() });
+  const r = rig({
+    env: oauthEnv({
+      JIRA_ACTIVE_PROFILE: 'work',
+      JIRA_PROFILE_WORK_SITE: 'acme.atlassian.net',
+    }),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // The default profile's grant is present and irrelevant: a per-profile store
+  // is keyed by profile, so "logged in" is a question with one answer per key.
+  assert.equal(code, EXIT_PROBE_FAILED, out);
+  assert.match(out, /no authorization is stored for profile "work"/);
+  assert.match(out, /→ Run `jira-mcp-ai login --profile work` once/);
+});
+
+test('a store readable beyond its owner warns with the exact chmod', async () => {
+  const store = fakeStore({ default: grant() });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o644 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // A refresh token is a long-lived credential; 0644 hands it to every account
+  // on the box. Same shape as the journal and env-file warnings.
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    new RegExp(`\\[warn] oauth token store: store "${TOKEN_FILE}" has mode 0644`),
+  );
+  assert.match(out, new RegExp(`→ chmod 600 ${TOKEN_FILE}`));
+});
+
+test('a damaged store is reported as damaged, and the rest of the report survives', async () => {
+  const damaged = createJiraError({
+    kind: 'config',
+    reason: `The OAuth token store ${TOKEN_FILE} has a damaged entry for profile "default": cloudId is missing or empty.`,
+    remediation: 'Delete it and run `jira-mcp-ai login` again.',
+  });
+  const store = fakeStore({}, { error: damaged });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // Exit 1: the settings loaded cleanly, so this is a probe finding a broken
+  // thing on disk, not doctor refusing the configuration it was handed.
+  assert.equal(code, EXIT_PROBE_FAILED, out);
+  assert.match(
+    out,
+    /\[FAIL] oauth token store: The OAuth token store .* has a damaged entry/,
+  );
+  // "The file is broken" and "you are not logged in" are different problems, so
+  // the missing-grant line must NOT also appear.
+  assert.doesNotMatch(out, /no authorization is stored/);
+  assert.match(out, /11 probes: /, 'the other probes still ran');
+});
+
+test('a grant belonging to another OAuth client is called out before it 401s', async () => {
+  const store = fakeStore({ default: grant({ clientId: 'an-older-client-id' }) });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // Rotating the app is exactly how this happens, and the refresh failure it
+  // produces upstream reads as "unknown client", which names nothing local.
+  assert.equal(code, EXIT_PROBE_FAILED, out);
+  assert.match(
+    out,
+    /\[FAIL] oauth token store: the stored grant belongs to a different OAuth client/,
+  );
+  assert.match(out, /→ Run `jira-mcp-ai login` once/);
+});
+
+test('oauth mode without a client id prints the cause before the consequence, exit 2', async () => {
+  const store = fakeStore();
+  const r = rig({
+    env: {
+      JIRA_SITE: 'acme.atlassian.net',
+      JIRA_AUTH_MODE: 'oauth',
+      JIRA_OAUTH_TOKEN_FILE: TOKEN_FILE,
+    },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_CONFIG, out);
+  const cause = out.indexOf('needs JIRA_OAUTH_CLIENT_ID');
+  const consequence = out.indexOf('auth mode is oauth, but no client id is configured');
+  assert.notEqual(cause, -1, out);
+  assert.notEqual(consequence, -1, out);
+  assert.ok(cause < consequence, 'the missing variable is named before its effect');
+  // The secret is missing too, and its finding belongs to the same heading
+  // rather than to the settings probe.
+  assert.match(out, /\[FAIL] oauth token store: .*needs JIRA_OAUTH_CLIENT_SECRET/s);
+});
+
+test('probe 9 reports the OAuth horizon in oauth mode, not the basic-auth variable', async () => {
+  const store = fakeStore({
+    default: grant({ expiresAt: START_MS + 30 * MS_PER_MINUTE }),
+  });
+  const r = rig({
+    env: oauthEnv({
+      JIRA_TOKEN_EXPIRES: new Date(START_MS + 9 * MS_PER_DAY).toISOString(),
+    }),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    /\[ ok \] token expiry: the OAuth access token expires in 30 minutes/,
+  );
+  // JIRA_TOKEN_EXPIRES describes a credential this mode never sends. Warning
+  // about its nine remaining days would be advice about a different server.
+  assert.doesNotMatch(out, /the API token expires/);
+  assert.equal(r.logger.has('token_expiry_warning'), false);
+  assert.match(out, /JIRA_TOKEN_EXPIRES describes the API token of basic auth/);
+});
+
+test('a stored grant with no access token yet is information, not a failure', async () => {
+  const store = fakeStore({
+    default: { ...grant(), accessToken: undefined, expiresAt: undefined },
+  });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // This is the normal state right after a refresh-token rotation was persisted:
+  // the grant is good, the access token is simply not fetched yet.
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    /only a refresh token is stored; the next call fetches an access token/,
+  );
+});
+
+test('an expired access token is not a failure either — the refresh is automatic', async () => {
+  const store = fakeStore({ default: grant({ expiresAt: START_MS - MS_PER_MINUTE }) });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    /the stored OAuth access token has expired; the next call refreshes it/,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Machine-readable output and redaction
 // ---------------------------------------------------------------------------
 
@@ -860,7 +1206,7 @@ test('--json emits one parseable report and nothing else', async () => {
   assert.equal(report.offline, false);
   assert.equal(report.ts, START_MS);
   assert.equal(report.host, 'https://acme.atlassian.net');
-  assert.equal(report.probes.length, 10);
+  assert.equal(report.probes.length, 11);
   assert.deepEqual(
     report.probes.map((probe) => probe.id),
     [
@@ -874,6 +1220,7 @@ test('--json emits one parseable report and nothing else', async () => {
       'journal',
       'token-expiry',
       'gating',
+      'oauth',
     ],
   );
   const identity = report.probes.find((probe) => probe.id === 'identity');
@@ -922,7 +1269,7 @@ test('CC-78: --json stays parseable when a secret also occurs inside JSON syntax
   assert.equal(code, EXIT_OK, text);
   assert.equal(report.ok, true, 'booleans survive redaction');
   assert.equal(report.exitCode, EXIT_OK);
-  assert.equal(report.probes.length, 10);
+  assert.equal(report.probes.length, 11);
   // The document is valid and unreadable, which is the honest outcome: every
   // string carrying the needle is blanked, ids included, so the probe can only
   // be found by position. The collision itself is reported — as a warning on
@@ -960,7 +1307,7 @@ test('the --json report is redacted too', async () => {
 
   assert.equal(r.stdout().includes(TOKEN), false);
   const report = JSON.parse(r.stdout()) as DoctorReport;
-  assert.equal(report.probes.length, 10);
+  assert.equal(report.probes.length, 11);
 });
 
 // ---------------------------------------------------------------------------

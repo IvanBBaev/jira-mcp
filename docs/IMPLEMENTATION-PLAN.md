@@ -1,9 +1,9 @@
 # Implementation plan
 
 > Status: normative and implemented — this document and the code ship together;
-> drift is a bug. Phases 0–7 with their exits are the milestone truth for this
+> drift is a bug. Phases 0–8 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished.
+> finished. Phases 0–7 are closed; Phase 8 is open.
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -400,14 +400,21 @@ it, not beside it), and the gate was green at 1265/1265 with the D36 coverage
 floors intact. That count is the reading on the day this exit was signed off,
 kept as the historical record; the current one is in the snapshot below.
 
-## After Phase 7 — hardening waves, not a Phase 8
+## After Phase 7 — hardening waves 8–15
 
-Phases 0–7 are closed. Everything since has been hardening on an
-implemented server, run as agent waves against the existing phases rather than
-as new ones, so there is deliberately no Phase 8 to open: nothing below adds
-scope, and a phase that adds no scope is bookkeeping. The waves are recorded
-here because the phase list alone would suggest the project stopped on
-2026-08-14, and this document is supposed to be the milestone truth.
+Phases 0–7 are closed. Waves 8–15 were hardening on an implemented server, run
+against the existing phases rather than as new ones, because none of them added
+scope and a phase that adds no scope is bookkeeping. They are recorded here
+because the phase list alone would suggest the project stopped on 2026-08-14,
+and this document is supposed to be the milestone truth.
+
+This section used to say there would deliberately never be a Phase 8. That held
+for as long as the remaining work was hardening. It stopped holding on
+2026-08-21, when OAuth 2.0 (3LO) graduated out of ROADMAP.md (D91): it adds an
+auth mode, a module, a CLI command, an env block and a second origin, which is
+scope by any reading. The rule was never "no more phases" — it was "no phase
+without scope", and Phase 8 below is what that rule looks like when the
+condition is finally met.
 
 | Wave | Date | What it closed |
 |---|---|---|
@@ -428,9 +435,10 @@ wave, and the floors — not the counts — are the thing the gate enforces. Tre
 mismatch here as this line being stale, and the floors in TESTING.md as the
 claim with teeth.
 
-### What is left, and why none of it is code
+### What is left outside Phase 8, and why none of it is code
 
-Nothing in the remaining work is blocked on a keyboard:
+Phase 8 is code and is tracked below. Everything else that is outstanding is
+blocked on an owner action rather than on a keyboard:
 
 - **Gate C (O-2)** — a scratch Jira Cloud site. Half of this is now done: the
   read phase ran green against a real tenant on 2026-08-17 (22 claims, exit 0),
@@ -455,6 +463,82 @@ Nothing in the remaining work is blocked on a keyboard:
   RELEASING.md §1. Six of the eight are readable without a browser; changing
   any of them still is not.
 
+## Phase 8 — OAuth 2.0 (3LO) (graduated by D91)
+
+Five work packages with disjoint file ownership, dispatched as parallel agents on
+2026-08-21. The ids are local to this phase: `docs/WORK-PACKAGES.md` decomposes
+the v1 phases and was not re-cut for this one, so do not go looking for WP-80
+there.
+
+- [x] WP-80: `core/oauth.ts` — the flow logic and nothing else. Authorize-URL
+      construction, PKCE S256 derived from `node:crypto` through the injected
+      `CryptoRandom` and never from `Rng` (D96), the code exchange and the
+      refresh as JSON bodies rather than form-encoded (JIRA-API.md §OAuth 2.0
+      (3LO)), refresh-token rotation on every use, expiry arithmetic on the
+      injected `Clock` with a skew margin, single-flight refresh under
+      concurrent tool calls (CC-98), the terminal/retryable split that keeps a
+      token POST from ever being replayed (D94, CC-100), and cloudId discovery
+      including the several-sites-no-pin case (CC-103). The module makes no
+      network call of its own — it goes through the injected `AuthRequestFn`
+      (D93), so `core/http.ts` stays the only fetch site.
+- [x] WP-81: `core/http.ts` and `core/host.ts` seams — one Authorization
+      producer switching on the `JiraCredentials` discriminated union (D92); the
+      gateway base URL in oauth mode, with a cloudId that is not a plain
+      identifier refused before it can become a path segment (CC-101); the two
+      OAuth origins added to the host allowlist only when the mode is oauth
+      (D97); no redirect following on the auth origin.
+- [x] WP-82: settings, credentials and config — the `JIRA_AUTH_MODE` switch and
+      the `JIRA_OAUTH_*` block, validated per mode so a half-configured oauth
+      profile fails as configuration at startup rather than as an auth error on
+      the first tool call (CC-102); the async `CredentialResolver` (D92) that
+      reads, refreshes and rewrites the token store; the store itself at 0600,
+      written atomically, and a rotated refresh token persisted before it is
+      used (D95, CC-99). CONFIGURATION.md and `.env.example` move with this
+      package — the env table is set-equal to the code by test, so it cannot
+      drift.
+- [x] WP-83: `login` / `logout`, doctor and dispatch — the loopback callback
+      bound to the loopback address only (CC-104), `state` compared before the
+      code is spent (CC-97), the browser hand-off, the refusals (wrong mode,
+      missing client id, port already bound), doctor probe 11 and the reworded
+      probe 9 (AUTH.md), and stdout kept protocol-pure in every mode, `--json`
+      included.
+- [x] WP-84: the documentation corpus — AUTH.md's OAuth narrative and the
+      per-tool-family scope map, D91…D99, CC-97…CC-104, the two token events in
+      OBSERVABILITY.md, the wire facts and the endpoint table in JIRA-API.md,
+      threat 9, the offline OAuth suite in TESTING.md, and this section.
+- [x] Integrator: cross-file wiring, `npm run check`, and the manifest snapshot
+      only if the tool surface moved — it should not, because OAuth adds an auth
+      mode, not a tool.
+
+Exit: `login` obtains a grant and stores it; every existing tool serves through
+the gateway with an access token; a rotated refresh token survives a restart; a
+terminal refresh failure ends the session with a remediation naming `login`
+instead of a retry storm; `core/http.ts` is still the only module that touches
+the network; `scripts/docs-lint.mjs` is clean, which now requires each of the
+eight new corner cases (CC-97…CC-104) to be carried by a test name; gate green
+with the D36 coverage floors intact.
+
+Deliberately **not** in that exit: proof against a real Atlassian tenant. Phase 8
+can be finished offline, but it cannot be *believed* offline — the redirect URI
+this design registers is unverified (D99), and Phase 1's risk row is the standing
+lesson about what an untested assumption costs when it is finally run. The live
+half belongs to Gate C, not to this phase's exit.
+
+Status 2026-08-21: **closed offline.** The integrator ran the gate on the merged
+tree: `npm run check` exits 0 — 1679 tests, 0 failures, 97.9 % statements /
+92.19 % branches / 97.79 % functions against the D36 floors, `docs-lint: 17
+file(s) clean` (so CC-97…CC-104 are each carried by a test name), and
+`npm audit --omit=dev` reports no vulnerabilities. The tool surface did not move,
+so the manifest snapshot was not re-taken; `server.json` gained the nine
+`JIRA_*` rows and nothing else.
+
+That closes the offline half and only the offline half. Nothing above has been
+run against Atlassian: no `login` has completed a real authorize → exchange, no
+access token has served a real tool call through the gateway, and the redirect
+URI (D99) is still the unverified assumption it was when this section was
+written. Until Gate C covers the OAuth path, every claim here is a claim about
+the suite, not about the product.
+
 ## Risks
 
 | Risk | Mitigation |
@@ -466,3 +550,5 @@ Nothing in the remaining work is blocked on a keyboard:
 | Scratch-site drift in fixtures | fixtures redacted + stable placeholders; record script versioned |
 | Scratch site absent when Phase 1 exit needs it | **Materialized, and it stayed the project's critical path until 2026-08-17.** The mitigation held only in the sense that the checklist exists and the work routed around the absence: seven phases were completed and the live driver was rehearsed offline instead. What it did not do is stop the gap from compounding — every phase since Phase 1 closed with a Gate-C clause outstanding, and when a tenant finally arrived the first two runs found four defects in a day (D88–D90 plus the gate's own sprint name). Now shrinking rather than compounding: 40 of 52 tools are proven live, and what is left is a permission grant, not a site. |
 | Multi-week pause (solo side project) | WORKLOG + plan checkboxes kept current every session; donor SHAs pinned; park only at phase exits |
+| The OAuth redirect URI may not be registrable as designed (D99) | Documented as **UNVERIFIED** in AUTH.md rather than asserted, and named there as the first thing to confirm by hand in the developer console. The port is a setting and the callback path is fixed, so a console that rejects the literal costs a configuration value, not the flow. |
+| The client secret is a second real secret on the operator's disk (oauth mode) | The server ships no client credentials of its own: the operator registers their own app and supplies both halves through the environment, so a leaked secret is scoped to one installation. It is redacted like every other credential and never reaches a log field or stdout. THREAT-MODEL.md §OAuth 2.0 (3LO) carries the full account. |

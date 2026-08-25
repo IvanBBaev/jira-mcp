@@ -184,6 +184,68 @@
           "description": "Optional JSONL journal of every write tool call: tool, args hash, result, timestamp.",
           "isRequired": false,
           "format": "filepath"
+        },
+        {
+          "name": "JIRA_AUTH_MODE",
+          "description": "Where credentials come from: basic (email + API token) or oauth (OAuth 2.0 3LO, via jira-mcp-ai login).",
+          "isRequired": false,
+          "default": "basic",
+          "choices": ["basic", "oauth"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_OAUTH_CLIENT_ID",
+          "description": "Client id of the OAuth 2.0 (3LO) app. Required in oauth mode, ignored in basic mode.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_OAUTH_CLIENT_SECRET",
+          "description": "Client secret of the OAuth 2.0 (3LO) app. Required in oauth mode: Atlassian authenticates the client on every token call, PKCE notwithstanding.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_OAUTH_SCOPES",
+          "description": "Comma list of scopes login asks consent for. Changing it after a successful login forces a re-consent.",
+          "isRequired": false,
+          "default": "read:jira-work,write:jira-work,read:jira-user,manage:jira-project,read:board-scope:jira-software,write:board-scope:jira-software,read:sprint:jira-software,write:sprint:jira-software,read:epic:jira-software,write:epic:jira-software,read:issue:jira-software,write:issue:jira-software,offline_access",
+          "format": "string"
+        },
+        {
+          "name": "JIRA_OAUTH_CLOUD_ID",
+          "description": "Pins the flow to one Jira Cloud site. Unset means the site is resolved from the accessible-resources endpoint on every run.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_OAUTH_TOKEN_FILE",
+          "description": "Where login writes the token store, mode 0600. Defaults to oauth.json beside the env file.",
+          "isRequired": false,
+          "default": "<config dir>/oauth.json",
+          "format": "filepath"
+        },
+        {
+          "name": "JIRA_OAUTH_REDIRECT_PORT",
+          "description": "Loopback port login binds for the redirect callback. Must match the callback URL registered on the app character for character.",
+          "isRequired": false,
+          "default": "8250",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_OAUTH_AUTH_ORIGIN",
+          "description": "Origin of the authorization server. Exists so the offline test harness can point the flow at a local fake.",
+          "isRequired": false,
+          "default": "https://auth.atlassian.com",
+          "format": "string"
+        },
+        {
+          "name": "JIRA_OAUTH_GATEWAY_ORIGIN",
+          "description": "Origin of the OAuth API gateway oauth-mode requests are routed through instead of the site host.",
+          "isRequired": false,
+          "default": "https://api.atlassian.com",
+          "format": "string"
         }
       ]
     }

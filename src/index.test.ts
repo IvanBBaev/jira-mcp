@@ -5,9 +5,11 @@
 //
 // The pure half covers the pieces of `main()` that have to be right before any
 // I/O happens: the Node-version guard (which must work on a runtime too old to
-// load the rest of the code) and the credential resolver (which decides, per
-// call, which site and token a request is signed with — including that a profile
-// cannot walk around JIRA_ALLOWED_HOSTS).
+// load the rest of the code), the credential resolver (which decides, per call,
+// which site and token a request is signed with — including that a profile
+// cannot walk around JIRA_ALLOWED_HOSTS), and subcommand dispatch, which is
+// exercised in-process so the lazy import chain behind each command is real
+// without a spawn per command.
 //
 // The smoke half runs the BUILT server as a real child process over real stdio.
 // It is the only test that proves the assembly as shipped: the bin entry, the
@@ -44,6 +46,7 @@ import {
   EXIT_OK,
   MIN_NODE_MAJOR,
   buildCredentialResolver,
+  main,
   nodeVersionProblem,
 } from './index.js';
 
@@ -53,10 +56,25 @@ import {
 
 const DEFAULT_HOST: HostRef = { origin: 'https://example.atlassian.net', pathPrefix: '' };
 
+/**
+ * The OAuth block is present in both auth modes — `core/settings.ts` always
+ * fills it in, and `basic` mode simply never reads it. Keeping it in the base
+ * fixture means an oauth case only has to flip `authMode`.
+ */
+const BASE_OAUTH = {
+  scopes: ['read:jira-work', 'offline_access'],
+  tokenFile: '/nowhere/oauth.json',
+  redirectPort: 8250,
+  authOrigin: 'https://auth.atlassian.invalid',
+  gatewayOrigin: 'https://api.atlassian.invalid',
+} as const;
+
 const BASE_SETTINGS: Settings = {
   site: 'example.atlassian.net',
   email: 'default@example.com',
   apiToken: 'default-token',
+  authMode: 'basic',
+  oauth: BASE_OAUTH,
   allowedHosts: [],
   profiles: {},
   lockProfile: true,
@@ -164,6 +182,7 @@ describe('buildCredentialResolver', () => {
   test('returns the top-level credentials when no profile is involved', () => {
     const credentials = resolverFor(BASE_SETTINGS)();
     assert.deepEqual(credentials, {
+      kind: 'basic',
       host: DEFAULT_HOST,
       email: 'default@example.com',
       apiToken: 'default-token',
@@ -250,6 +269,95 @@ describe('buildCredentialResolver', () => {
       assert.equal(record.retryable, false);
       assert.match(record.remediation ?? '', /doctor/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Subcommand dispatch
+//
+// Every case below asks a command for its `--help`, which each CLI answers
+// before it loads settings or touches a file. That keeps the tests hermetic
+// while still proving the part that can actually rot: that the command name
+// reaches the right entry function through the right dynamic import.
+// ---------------------------------------------------------------------------
+
+interface MainRun {
+  readonly code: number;
+  readonly out: string;
+  readonly err: string;
+}
+
+/**
+ * Run `main()` with both standard streams captured.
+ *
+ * `main` writes through `process.stdout` rather than an injected sink — that is
+ * the point of it, since the bin shim has nothing to inject with — so the only
+ * way to read what a command printed is to stand in front of the real streams
+ * and put them back afterwards. `process.exitCode` is restored too: a leftover
+ * non-zero value here would fail the whole test run.
+ */
+async function runMain(argv: readonly string[]): Promise<MainRun> {
+  const realOut = process.stdout.write.bind(process.stdout);
+  const realErr = process.stderr.write.bind(process.stderr);
+  const previousCode = process.exitCode;
+  let out = '';
+  let err = '';
+  const collect =
+    (append: (text: string) => void) =>
+    (chunk: string | Uint8Array): boolean => {
+      append(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    };
+
+  process.stdout.write = collect((text) => {
+    out += text;
+  });
+  process.stderr.write = collect((text) => {
+    err += text;
+  });
+  process.exitCode = 0;
+
+  try {
+    await main({ argv });
+    return { code: Number(process.exitCode ?? 0), out, err };
+  } finally {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+    process.exitCode = previousCode;
+  }
+}
+
+describe('subcommand dispatch', () => {
+  test('offers login and logout in the top-level usage', async () => {
+    const run = await runMain(['--help']);
+    assert.equal(run.code, EXIT_OK);
+    assert.match(run.out, /jira-mcp-ai login/);
+    assert.match(run.out, /jira-mcp-ai logout/);
+  });
+
+  test('routes login to the OAuth CLI', async () => {
+    const run = await runMain(['login', '--help']);
+    assert.equal(run.code, EXIT_OK);
+    assert.match(run.out, /Usage: jira-mcp-ai login/);
+    // The flag that has to match the developer console byte for byte is named in
+    // the help text, because getting it wrong is the flow's most common failure.
+    assert.match(run.out, /JIRA_OAUTH_REDIRECT_PORT/);
+    assert.equal(run.err, '');
+  });
+
+  test('routes logout to the same module, and says the removal is local', async () => {
+    const run = await runMain(['logout', '--help']);
+    assert.equal(run.code, EXIT_OK);
+    assert.match(run.out, /Usage: jira-mcp-ai logout/);
+    // An operator must not read "logout" as "the grant is revoked upstream".
+    assert.match(run.out, /does not\s+revoke/);
+  });
+
+  test('still refuses a command it does not know', async () => {
+    const run = await runMain(['lgoin']);
+    assert.equal(run.code, EXIT_CONFIG);
+    assert.match(run.err, /unknown command "lgoin"/);
+    assert.equal(run.out, '');
   });
 });
 

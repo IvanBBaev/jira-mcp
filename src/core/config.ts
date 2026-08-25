@@ -27,6 +27,13 @@ import { isAbsolute, join, resolve } from 'node:path';
 /** Directory name used under `$XDG_CONFIG_HOME` / `~/.config`. */
 export const CONFIG_DIR_NAME = 'jira-mcp-ai';
 
+/**
+ * File name of the OAuth token store inside {@link resolveConfigDir} (D95).
+ * Exported so `settings.ts` can spell the documented default
+ * `<config dir>/oauth.json` without a second copy of the literal.
+ */
+export const OAUTH_TOKEN_FILE_NAME = 'oauth.json';
+
 /** Which rule produced a candidate path. */
 export type EnvFileSource = 'explicit' | 'xdg' | 'project';
 
@@ -115,6 +122,63 @@ function expandTilde(path: string, homeDir: string): string {
 }
 
 /**
+ * The config home this server lives under, or `undefined` when the machine has
+ * no home directory to fall back on.
+ *
+ * A relative `XDG_CONFIG_HOME` is invalid per the XDG spec and must be ignored
+ * rather than resolved against the cwd — resolving it would make the config
+ * location depend on where the server happened to be started.
+ */
+function resolveConfigHome(env: NodeJS.ProcessEnv, homeDir: string): string | undefined {
+  const xdg = env.XDG_CONFIG_HOME?.trim();
+  if (xdg !== undefined && xdg.length > 0 && isAbsolute(expandTilde(xdg, homeDir))) {
+    return expandTilde(xdg, homeDir);
+  }
+  return homeDir.length > 0 ? join(homeDir, '.config') : undefined;
+}
+
+/**
+ * The directory this server owns: `$XDG_CONFIG_HOME/jira-mcp-ai` (default
+ * `~/.config/jira-mcp-ai`) — the same directory the env file's XDG candidate
+ * sits in, so everything the CLI writes stays in one place.
+ *
+ * With no home directory at all the fallback is a `jira-mcp-ai` directory under
+ * the cwd. That is not a good place for a token store, but it is a *reachable*
+ * one: the alternative is a path of `undefined` that every caller has to branch
+ * on, and the operator who runs without `$HOME` set has already accepted that
+ * state lands wherever the process was started.
+ */
+export function resolveConfigDir(options: EnvFileOptions = {}): string {
+  const env = options.env ?? process.env;
+  const homeDir = options.homeDir ?? homedir();
+  const cwd = options.cwd ?? process.cwd();
+  const configHome = resolveConfigHome(env, homeDir);
+  return configHome === undefined
+    ? resolve(cwd, CONFIG_DIR_NAME)
+    : join(configHome, CONFIG_DIR_NAME);
+}
+
+/**
+ * Where the OAuth token store lives when `JIRA_OAUTH_TOKEN_FILE` is unset
+ * (D95). Derived from {@link resolveConfigDir} rather than written out, so the
+ * store cannot drift away from the env file it sits beside.
+ */
+export function defaultOAuthTokenFile(options: EnvFileOptions = {}): string {
+  return join(resolveConfigDir(options), OAUTH_TOKEN_FILE_NAME);
+}
+
+/**
+ * Normalise an operator-supplied path the same way `JIRA_ENV_FILE` is: expand a
+ * leading `~` (env vars carry no shell expansion) and resolve a relative path
+ * against the cwd, so what is stored and reported is always absolute.
+ */
+export function resolveConfigPath(path: string, options: EnvFileOptions = {}): string {
+  const homeDir = options.homeDir ?? homedir();
+  const cwd = options.cwd ?? process.cwd();
+  return resolve(cwd, expandTilde(path, homeDir));
+}
+
+/**
  * The ordered candidate list. Exported because `doctor` reports where it looked
  * — "no env file found" is only actionable next to the paths that were tried.
  */
@@ -135,16 +199,7 @@ export function resolveEnvFileCandidates(
     });
   }
 
-  // A relative `XDG_CONFIG_HOME` is invalid per the XDG spec and must be
-  // ignored rather than resolved against the cwd — resolving it would make the
-  // config location depend on where the server happened to be started.
-  const xdg = env.XDG_CONFIG_HOME?.trim();
-  const configHome =
-    xdg !== undefined && xdg.length > 0 && isAbsolute(expandTilde(xdg, homeDir))
-      ? expandTilde(xdg, homeDir)
-      : homeDir.length > 0
-        ? join(homeDir, '.config')
-        : undefined;
+  const configHome = resolveConfigHome(env, homeDir);
   if (configHome !== undefined) {
     candidates.push({ source: 'xdg', path: join(configHome, CONFIG_DIR_NAME, '.env') });
   }

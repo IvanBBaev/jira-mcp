@@ -25,6 +25,10 @@
 7. **Irreversible data loss** — a delete the tenant cannot undo, reached either
    by a blanket `apply` mode or by a replay of an ambiguous failure.
 8. **Supply chain** — compromised dependencies.
+9. **OAuth credential theft and flow hijack** (oauth mode only) — the stored
+   refresh token read off disk, an authorization code intercepted on the
+   callback leg, or a forged callback binding the server to an account the
+   operator does not own.
 
 ## Defenses
 
@@ -48,8 +52,77 @@
   in TOOLS.md), not the redactor's job. Conflating the two would either break
   results or give false privacy assurance.
 - Basic-auth header built in `core/http.ts` only; `extraHeaders` rejects
-  `authorization`/`accept`/`content-type` overrides (ported rule).
+  `authorization`/`accept`/`content-type` overrides (ported rule). The bearer
+  header of oauth mode is built by the same function, switching on the
+  credential's `kind` — one Authorization producer, not two.
 - Env files 0600, atomic writes, cross-process lock.
+
+### OAuth 2.0 (3LO) — oauth mode only
+
+Nothing here applies to a basic-mode deployment; the mechanics are AUTH.md's,
+the exposure is this document's.
+
+- **The refresh token is the durable credential, and it lives in a file.**
+  `<config dir>/oauth.json` (or `JIRA_OAUTH_TOKEN_FILE`) is written `0600`,
+  atomically, under the same cross-process lock as the env file, and every token
+  read out of it is registered with the redactor before use. Treat it exactly
+  like the env file: anyone who can read it can act as the operator against the
+  granted scopes until the rolling 90-day inactivity window elapses. Backups,
+  synced home directories and container images copy it as readily as anything
+  else on disk.
+- **Local deletion is not containment.** `logout` removes the file's entry and
+  nothing more — this server never calls the revocation endpoint, which
+  Atlassian's OpenID metadata advertises but its 3LO documentation does not
+  mention (AUTH.md). A copy taken before logout keeps working. If you believe
+  the file was exposed, the real responses are removing the app's authorisation
+  from the Atlassian account and rotating the client secret in the developer
+  console; deleting the local file is housekeeping.
+- **The client secret is a second real secret.** It sits in the env file with
+  the same 0600 protection and is registered with the redactor at load. It is
+  required (D98) — there is no configuration of this server that authenticates
+  to Atlassian without it — so "we use PKCE" is never a reason to store it less
+  carefully.
+- **The callback leg.** The authorization code arrives over plain HTTP on a
+  loopback listener bound to `127.0.0.1` only, never `0.0.0.0`, and torn down in
+  a `finally` so a crashed login does not leave a port open (CC-104). Loopback
+  traffic does not cross a network, so the exposure is local: another process
+  running as the same user, which — being the same user — could equally read the
+  token file. The listener answers exactly one path, rejects a request with no
+  `code`, and exists only for the duration of the flow.
+- **`state`, and the attack it exists for.** Atlassian's 3LO page carries a full
+  session-fixation walkthrough, and it is worth stating in its own shape rather
+  than as "CSRF": the attacker begins a login of their own, obtains an
+  authorization code for **their** Atlassian account, and then induces the
+  victim's client to complete the flow with that code. Nothing is stolen at
+  that moment — instead the victim's server ends up holding a valid token for
+  the *attacker's* tenant, and every subsequent tool call reads and writes there.
+  A tenant the operator believes is theirs, that is not, is a data-exfiltration
+  channel the operator feeds by hand. The defence is a `state` nonce from
+  `node:crypto`, compared in **constant time**, with a mismatch aborting before
+  any token exchange happens (CC-97). It is generated per flow and never reused.
+- **What PKCE does and does not buy us.** It buys the binding of an
+  authorization code to the `code_verifier` that requested it, so a code
+  observed on the callback leg cannot be redeemed by whoever observed it. That
+  is genuine, and it costs nothing. What it does **not** buy: it is not a
+  substitute for the client secret and does not make this a public client
+  (D98) — the exchange already fails without the secret, which is why PKCE's
+  marginal value here is smaller than in the mobile-app case it was designed
+  for; it protects the code only, never the refresh token or the token file;
+  and it does nothing about a forged callback, which is `state`'s job. Any
+  wording that presents PKCE as the security story of this feature is wrong.
+- **Egress does not widen for basic-mode users.** `auth.atlassian.com` and
+  `api.atlassian.com` are appended to the effective allowlist only in oauth mode
+  (D97), and the auth primitive refuses any URL outside those two origins and
+  follows no redirects. A basic-mode deployment's reachable-host set is
+  byte-for-byte what it was before this feature existed.
+- **A cloudId is a path segment**, validated against an anchored
+  letters-digits-hyphens pattern before any URL is built (CC-101). It arrives
+  from an Atlassian response or from operator config, but the gateway URL is
+  concatenated, and an unvalidated segment containing `/` or `..` is a
+  path-injection primitive against `api.atlassian.com`, not a formatting bug.
+- **Refresh failures do not become retry storms.** A token POST is never
+  replayed (D94, JIRA-API.md), and the terminal error set ends the session with
+  a remediation instead of hammering the auth host with a dead token (CC-100).
 
 ### SSRF / egress
 - Default-deny host allowlist: the canonical Cloud suffix (JIRA-API.md §Hosts)
@@ -238,7 +311,9 @@ exists because an MCP server is a data conduit, not just a client:
   places data lands: the write journal, if enabled, whose content form is
   deliberately minimized (O-8), and files written by `jira_download_attachment`
   into `JIRA_MEDIA_DIR` — real tenant documents, at `0600`, kept until the
-  operator deletes them. Nothing else is written; there is no cache.
+  operator deletes them. In oauth mode the token store is a third file the
+  server writes, but it holds credentials and a site identifier, never tenant
+  content. Nothing else is written; there is no cache.
 - **Acceptable use**: the tool surface (worklogs, changelogs, user search, and
   now watcher/vote lists and project-role membership) can technically
   reconstruct colleague activity. Using it for workplace

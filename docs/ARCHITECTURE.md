@@ -47,7 +47,24 @@ core  ←  api  ←  mcp  ←  tools
 
 - **`src/core/`** — no Jira domain knowledge beyond the wire protocol. Config
   loading, host resolution, the HTTP client, errors, logging, redaction, clock,
-  settings. The ONLY module allowed to touch the network is `core/http.ts`.
+  settings, and — since Phase 8 — `oauth.ts`. The ONLY module allowed to touch
+  the network is `core/http.ts`.
+  - **`core/oauth.ts`** holds the 3LO logic: the PKCE pair and `state` nonce,
+    the authorize URL, parsing of token and accessible-resources responses, site
+    selection, the `0600` token store, and the credential resolver the server
+    installs in oauth mode. It performs no I/O of its own beyond that file: the
+    token exchange, the refresh and the accessible-resources call all go out
+    through the `AuthRequestFn` seam it is handed (D93).
+  - **The import direction is one-way: `core/oauth.ts` may import
+    `core/http.ts`; `core/http.ts` must never import `core/oauth.ts`.** They are
+    the same ring, so no eslint zone separates them — the other direction is a
+    cycle, and it would put the module that refreshes a token underneath the
+    module that spends it. `http.ts` therefore exposes `AuthRequestFn` as a
+    primitive and knows nothing about who calls it, while the credential
+    resolver is *injected* into the request path exactly as `jiraRequest` is
+    injected into `buildServer`.
+  - `core/credentials.ts` stays the dependency-free leaf it was; its only
+    Phase-8 change is returning the basic branch of the credential union.
 - **`src/api/`** — typed wrappers over Jira REST endpoints, one module per domain
   (`search.ts`, `issues.ts`, `collab.ts`, `attachments.ts`, `filters.ts`,
   `meta.ts`, `users.ts`, `agile.ts`, `adf.ts`, `shared.ts` for pagination
@@ -93,8 +110,10 @@ The entry concern splits into:
 - `main()` (`src/index.ts`) — the real bootstrap: `loadSettings()` → `collectSecrets` →
   `createRedactor` → `createLogger` → `createJiraRequest` → registry → transport.
   Guarded by `process.argv[1] === fileURLToPath(import.meta.url)` so importing the
-  module never boots the server. CLI subcommands (`doctor`, later `login`) are
-  dispatched before the server starts, lazily imported.
+  module never boots the server. CLI subcommands (`doctor`, `login`, `logout`)
+  are dispatched before the server starts, lazily imported — `login` in
+  particular pulls in a loopback HTTP listener that a server run must never
+  load.
 
 `main` is a **frozen export name**: under `npx`/`bin` the process argv[1] is the
 CJS launcher shim, so the self-run guard is false by construction and the shim
@@ -174,10 +193,28 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   explicit `AbortController` aborted by whichever side loses. `AbortSignal.timeout`
   is banned — it owns a real timer the fake clock cannot drive, which would make
   timeout tests wall-clock-bound.
-- **Host**: resolved once into `{ origin, pathPrefix }`, not a bare string.
-  v1 pathPrefix is empty; the v2 OAuth gateway
-  (`api.atlassian.com/ex/jira/{cloudId}`) is exactly a different origin plus a
-  prefix, so the shape keeps that door open without touching call sites.
+- **Host**: resolved once into `{ origin, pathPrefix }`, not a bare string. In
+  basic mode the prefix is empty; the OAuth gateway is exactly a different
+  origin plus a prefix (JIRA-API.md §OAuth 2.0 (3LO)). The door the v1 shape
+  kept open is now walked through: Phase 8 added a gateway host builder and
+  changed no call site, which is the whole return on having chosen a record over
+  a string.
+- **Credentials**: `CredentialResolver` is per-call and **may be async** (D92),
+  because an OAuth resolver refreshes. It returns a discriminated union — basic
+  or bearer, `kind` required — and one function turns that union into an
+  `Authorization` header. A resolver, not a field, is what lets a token rotate
+  underneath a running server without anything above `core/` noticing.
+- **`AuthRequestFn`**: the narrow primitive inside `core/http.ts` for the two
+  Atlassian OAuth endpoints. It exists because "only `core/http.ts` touches the
+  network" is a rule, and a rule with one exception has as many exceptions as
+  anyone wants (D93). It is deliberately smaller than `jiraRequest`: two
+  methods, an absolute URL checked against exactly two permitted origins, a JSON
+  body, no redirect following, no body logging, and no replay of a POST.
+- **CSPRNG**: PKCE verifiers and `state` nonces come from `node:crypto`,
+  injected as a `CryptoRandom` seam — **never** from the `rng` above, which is a
+  jitter source and is explicitly not a security primitive (D96). Two random
+  seams look redundant until you notice that one of them is seeded to make
+  backoff sequences reproducible.
 - **Plan mode**: the gate is a seam, not a branch inside every tool —
   `buildServer` receives a `jiraRequest` that, in `plan` mode, **captures** the
   method/path/body a write would have sent and returns it instead of calling

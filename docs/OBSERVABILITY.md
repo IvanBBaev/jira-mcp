@@ -45,6 +45,8 @@
 | `auth_failure` | error | status, pathTemplate |
 | `journal_write_failed` | warn | errorKind (journal failure is never a tool failure — surfaced as a hint) |
 | `upstream_degraded` | warn | consecutiveFailures, host (emitted on the 3rd consecutive 5xx/transport failure; see §No circuit breaker) |
+| `oauth_token_refreshed` | info | profile, expiresInMs, rotated |
+| `oauth_token_refresh_failed` | error | profile, status, code |
 | `shutdown` | info | reason (`stdin_eof` \| `sigint` \| `sigterm` \| `fatal`) |
 
 Notes:
@@ -52,6 +54,18 @@ Notes:
 - `pathTemplate` is the route with placeholders (`/rest/api/3/issue/{key}`),
   never the concrete path — issue keys and project keys are workspace data.
 - The table is complete: a new event = a new row here first, then code.
+- The two `oauth_*` events are the only visibility into a refresh, which happens
+  in the background with no tool call of its own to attribute it to. `rotated`
+  says whether the refresh token itself was replaced, which is what makes the
+  difference between "renewed" and "the old refresh token is now dead"
+  (AUTH.md §Refresh and rotation). `expiresInMs` is the reported horizon of the
+  new access token, not a constant we assume — the lifetime is not documented by
+  Atlassian. `code` on a failure is the token endpoint's `error` field
+  (`invalid_grant`, `unauthorized_client`, `invalid_client`, …), which is a
+  fixed vocabulary, never the `error_description` prose. **No token, no
+  `code_verifier`, no client secret ever appears in a field of either event** —
+  and a failure sits at `error` alongside `auth_failure` for the same reason: it
+  ends the session until a human runs `login` again.
 - The `tool` field above exists in **log events only**. The model-facing
   `ErrorRecord` (frozen contract, core/types.ts) has no `tool` field; for
   `budget_exceeded` and `ambiguous_write` the registry instead appends

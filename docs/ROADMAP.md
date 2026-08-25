@@ -29,12 +29,12 @@ write tier — D45, Wave 7.)
 The offline-implementable slice — attachments, the irreversible write tier
 (issue/comment/worklog delete), watchers/votes, components/versions
 list/create/update and project role listing — graduated into committed scope
-via D45 (2026-08-13), Wave 7. What stays here needs live infrastructure, an
-owner decision, or a deliberate scope call:
+via D45 (2026-08-13), Wave 7. **OAuth 2.0 (3LO)** followed: graduated by D91
+(2026-08-21) and built as Phase 8 — the login CLI, the gateway, refresh
+rotation and cloudId discovery are committed scope now, documented in AUTH.md.
+What stays here needs live infrastructure, an owner decision, or a deliberate
+scope call:
 
-- **OAuth 2.0 (3LO) + PKCE** login CLI; `api.atlassian.com/ex/jira/{cloudId}`
-  gateway support in the host layer; refresh rotation; multi-site cloudId
-  discovery.
 - **Jira Data Center adapter**: PAT bearer auth, v2 REST (wiki-markup, not ADF),
   `JIRA_ALLOWED_HOSTS`-driven host policy. Separate api adapter, shared core.
 - **Bulk operations** (bulk edit / bulk delete) under the irreversible tier —

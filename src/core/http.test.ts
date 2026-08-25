@@ -21,14 +21,24 @@ import { createFakeRedactor } from './fakes/fakeRedactor.js';
 import { withFetch } from '../testing/with-fetch.js';
 import type { FetchMock } from '../testing/with-fetch.js';
 import { MAX_ATTACHMENT_BYTES } from './http-util.js';
-import { createJiraRequest } from './http.js';
-import type { JiraHttpOptions } from './http.js';
+import { createAuthRequest, createJiraRequest } from './http.js';
+import type {
+  AuthRequestFn,
+  AuthRequestOptions,
+  BasicCredentials,
+  JiraHttpOptions,
+} from './http.js';
 import { UNKNOWN_ERROR_KIND, createTelemetry } from './telemetry.js';
 
 const SITE: HostRef = { origin: 'https://acme.atlassian.net', pathPrefix: '' };
 const TOKEN = 'super-secret-token';
 
-const CREDENTIALS = { host: SITE, email: 'me@example.com', apiToken: TOKEN };
+const CREDENTIALS: BasicCredentials = {
+  kind: 'basic',
+  host: SITE,
+  email: 'me@example.com',
+  apiToken: TOKEN,
+};
 
 interface Harness {
   readonly request: JiraRequestFn;
@@ -1061,6 +1071,7 @@ test('credentials are resolved per call, so a profile switch changes the host', 
       credentials: (profile?: string) =>
         profile === 'other'
           ? {
+              kind: 'basic',
               host: { origin: 'https://other.atlassian.net', pathPrefix: '' },
               email: 'b@x.io',
               apiToken: 'b',
@@ -1799,5 +1810,331 @@ test('a failure that is not a JiraError is still counted, under "unknown"', asyn
       errors: { [UNKNOWN_ERROR_KIND]: 1 },
     });
     assert.equal(mock.requests.length, 0);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * Credential kinds and the resolver (D92)
+ *
+ * The union exists so one function can produce both Authorization schemes and
+ * the compiler can prove there is no third. What these tests hold is the pair of
+ * properties that make that worth doing: the right header for each kind, and
+ * nothing of either secret anywhere near the log.
+ * ------------------------------------------------------------------------- */
+
+const ACCESS_TOKEN = 'access-token-Zm9vYmFy';
+const REFRESH_TOKEN = 'refresh-token-YmFyYmF6';
+
+const GATEWAY: HostRef = {
+  origin: 'https://api.atlassian.com',
+  pathPrefix: '/ex/jira/11223344-5566-7788-99aa-bbccddeeff00',
+};
+
+test('bearer credentials send an OAuth access token, never a Basic header', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ json: { key: 'ABC-1' } });
+    const { request, clock, logger } = harness({
+      credentials: {
+        kind: 'bearer',
+        host: GATEWAY,
+        accessToken: ACCESS_TOKEN,
+      },
+      allowedHosts: ['api.atlassian.com'],
+    });
+
+    await settle(clock, request(GET_ISSUE));
+
+    const sent = mock.lastRequest();
+    assert.equal(sent?.headers['authorization'], `Bearer ${ACCESS_TOKEN}`);
+    assert.equal(
+      sent?.url,
+      'https://api.atlassian.com/ex/jira/11223344-5566-7788-99aa-bbccddeeff00/rest/api/3/issue/ABC-1',
+    );
+    assert.equal(JSON.stringify(logger.events).includes(ACCESS_TOKEN), false);
+  });
+});
+
+test('a basic API token never reaches the log either', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 401, json: { errorMessages: ['Unauthorized'] } });
+    const { request, clock, logger } = harness();
+
+    await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(
+      mock.lastRequest()?.headers['authorization']?.startsWith('Basic '),
+      true,
+    );
+    assert.equal(JSON.stringify(logger.events).includes(TOKEN), false);
+    assert.equal(logger.eventsOf('auth_failure').length, 1);
+  });
+});
+
+test('an async credential resolver is awaited before the host is read', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ json: { ok: true } });
+    // The refresh this stands in for is a network round trip, so the host is not
+    // knowable until the promise settles — reading it a tick early would address
+    // the previous token's site.
+    const { request, clock } = harness({
+      credentials: async () => {
+        await tick();
+        return { kind: 'bearer', host: GATEWAY, accessToken: ACCESS_TOKEN } as const;
+      },
+      allowedHosts: ['api.atlassian.com'],
+    });
+
+    await settle(clock, request(GET_ISSUE));
+
+    assert.equal(
+      mock.lastRequest()?.url.startsWith('https://api.atlassian.com/ex/jira/'),
+      true,
+    );
+    assert.equal(mock.lastRequest()?.headers['authorization'], `Bearer ${ACCESS_TOKEN}`);
+  });
+});
+
+test('a resolver that rejects fails exactly like one that throws', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    const capture = async (h: Harness): Promise<Error> => {
+      try {
+        await settle(h.clock, h.request(GET_ISSUE));
+      } catch (error) {
+        assert.ok(error instanceof Error, `expected an Error, got ${String(error)}`);
+        return error;
+      }
+      assert.fail('expected the request to reject');
+    };
+
+    const thrown = await capture(
+      harness({
+        credentials: () => {
+          throw new Error('the credential store is unreachable');
+        },
+      }),
+    );
+    const rejected = await capture(
+      harness({
+        credentials: () =>
+          Promise.reject(new Error('the credential store is unreachable')),
+      }),
+    );
+
+    assert.equal(rejected.name, thrown.name);
+    assert.equal(rejected.message, thrown.message);
+    assert.equal(rejected instanceof JiraError, thrown instanceof JiraError);
+    assert.equal(mock.requests.length, 0);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * The OAuth primitive (D93/D94)
+ *
+ * `createAuthRequest` is the only route to Atlassian's OAuth endpoints, and the
+ * property that earns it a separate primitive is negative: a token POST is never
+ * sent twice. Everything else here guards the blast radius around that — the
+ * origin allowlist, no redirects, and a body that exists nowhere but the wire.
+ * ------------------------------------------------------------------------- */
+
+const AUTH_ORIGIN = 'https://auth.atlassian.com';
+const GATEWAY_ORIGIN = 'https://api.atlassian.com';
+const TOKEN_URL = `${AUTH_ORIGIN}/oauth/token`;
+const RESOURCES_URL = `${GATEWAY_ORIGIN}/oauth/token/accessible-resources`;
+
+interface AuthHarness {
+  readonly authRequest: AuthRequestFn;
+  readonly clock: FakeClock;
+  readonly logger: FakeLogger;
+}
+
+function authHarness(overrides: Partial<AuthRequestOptions> = {}): AuthHarness {
+  const clock = createFakeClock(1_700_000_000_000);
+  const logger = createFakeLogger({ clock });
+  const authRequest = createAuthRequest({
+    clock,
+    logger,
+    allowedOrigins: [AUTH_ORIGIN, GATEWAY_ORIGIN],
+    rng: scriptedRng(),
+    ...overrides,
+  });
+  return { authRequest, clock, logger };
+}
+
+const REFRESH_SPEC = {
+  method: 'POST',
+  url: TOKEN_URL,
+  json: { grant_type: 'refresh_token', refresh_token: REFRESH_TOKEN },
+} as const;
+
+test('a token POST is sent as JSON and neither body ever reaches the log', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ json: { access_token: ACCESS_TOKEN, expires_in: 3600 } });
+    const { authRequest, clock, logger } = authHarness();
+
+    const res = await settle(clock, authRequest(REFRESH_SPEC));
+
+    const sent = mock.lastRequest();
+    assert.equal(sent?.method, 'POST');
+    assert.equal(sent?.headers['content-type'], 'application/json');
+    assert.equal(sent?.headers['accept'], 'application/json');
+    assert.equal(sent?.body, JSON.stringify(REFRESH_SPEC.json));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json, { access_token: ACCESS_TOKEN, expires_in: 3600 });
+
+    const serialized = JSON.stringify(logger.events);
+    assert.equal(
+      serialized.includes(REFRESH_TOKEN),
+      false,
+      'the request body is never logged',
+    );
+    assert.equal(
+      serialized.includes(ACCESS_TOKEN),
+      false,
+      'the response body is never logged',
+    );
+    assert.equal(
+      fieldsOf(logger.eventsOf('http_request')[0])['pathTemplate'],
+      '/oauth/token',
+    );
+  });
+});
+
+test('a URL outside the declared OAuth origins never reaches fetch', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ json: {} });
+    const { authRequest, clock } = authHarness();
+
+    const err = await rejects(
+      clock,
+      // A host that a suffix check would wave through, which is exactly why the
+      // guard compares whole origins.
+      authRequest({
+        ...REFRESH_SPEC,
+        url: 'https://auth.atlassian.com.evil.example/oauth/token',
+      }),
+    );
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /not one of the OAuth origins/);
+    assert.equal(mock.requests.length, 0);
+  });
+});
+
+test('accessible-resources is reachable on the gateway origin, with a bearer token', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ json: [{ id: 'cid-1', url: 'https://acme.atlassian.net' }] });
+    const { authRequest, clock } = authHarness();
+
+    const res = await settle(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(mock.lastRequest()?.headers['authorization'], `Bearer ${ACCESS_TOKEN}`);
+    assert.equal(mock.lastRequest()?.headers['content-type'], undefined);
+  });
+});
+
+test('a token POST is never replayed, however the send fails (D94)', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ status: 503, json: { error: 'temporarily_unavailable' } });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'transport');
+    assert.equal(
+      mock.requests.length,
+      1,
+      'a rotating refresh token survives exactly one send',
+    );
+    assert.equal(logger.eventsOf('http_retry').length, 0);
+  });
+});
+
+test('a token POST is not replayed after a transport failure either', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ error: new Error('socket hang up') });
+    const { authRequest, clock } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'transport');
+    assert.match(err.remediation ?? '', /jira-mcp-ai login/);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('a 429 on the accessible-resources GET is retried, honouring Retry-After', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 429, headers: { 'retry-after': '2' } });
+    mock.enqueue({ json: [{ id: 'cid-1' }] });
+    const { authRequest, clock, logger } = authHarness();
+
+    const res = await settle(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(mock.requests.length, 2);
+    const retry = fieldsOf(logger.eventsOf('http_retry')[0]);
+    assert.equal(retry['reason'], '429');
+    assert.equal(retry['delayMs'], 2_000);
+  });
+});
+
+test('invalid_grant is an auth failure that names the login command', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      status: 400,
+      json: { error: 'invalid_grant', error_description: 'Refresh token is invalid' },
+    });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    // Not `validation`, which is where a bare 400 would land: the grant is gone,
+    // and the only thing that fixes it is authorizing again.
+    assert.equal(err.kind, 'auth');
+    assert.equal(err.httpStatus, 400);
+    assert.match(err.remediation ?? '', /jira-mcp-ai login/);
+    assert.match(err.detail ?? '', /invalid_grant/);
+    assert.equal(logger.eventsOf('auth_failure').length, 1);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('a redirect on the OAuth path is refused rather than followed', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 302, headers: { location: 'https://evil.example/token' } });
+    const { authRequest, clock } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /redirects are never followed/);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('the redactor covers the OAuth path too', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      status: 400,
+      json: {
+        error: 'invalid_grant',
+        error_description: `token ${REFRESH_TOKEN} is spent`,
+      },
+    });
+    const { authRequest, clock } = authHarness({
+      redactor: createFakeRedactor([REFRESH_TOKEN]),
+    });
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.detail?.includes(REFRESH_TOKEN), false);
+    assert.match(err.detail ?? '', /\[REDACTED\]/);
   });
 });

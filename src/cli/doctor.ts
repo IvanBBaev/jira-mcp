@@ -39,8 +39,23 @@ import {
 } from '../core/env-lock.js';
 import { toJiraError } from '../core/errors.js';
 import { isCanonicalCloudHost } from '../core/host.js';
-import { createJiraRequest, type JiraHttpOptions } from '../core/http.js';
+import {
+  createAuthRequest,
+  createJiraRequest,
+  type AuthRequestFn,
+  type CredentialResolver,
+  type JiraCredentials,
+  type JiraHttpOptions,
+} from '../core/http.js';
 import { createLogger, NO_CID } from '../core/log.js';
+import {
+  createOAuthCredentialResolver,
+  createTokenStore,
+  DEFAULT_PROFILE_KEY,
+  profileKey,
+  type StoredTokens,
+  type TokenStore,
+} from '../core/oauth.js';
 import { createRedactor } from '../core/redact.js';
 import { systemRng } from '../core/rng.js';
 import {
@@ -221,6 +236,18 @@ export interface DoctorOptions {
   readonly jiraRequest?: JiraRequestFn;
   /** Factory used when `jiraRequest` is absent. Defaults to `createJiraRequest`. */
   readonly createRequest?: (options: JiraHttpOptions) => JiraRequestFn;
+  /**
+   * The OAuth token store, read once per run (probes 9 and 11 share the answer).
+   * Defaults to the real 0600 file at `Settings.oauth.tokenFile`. Injected by
+   * tests so a store can be inspected without a temp directory per case.
+   */
+  readonly tokenStore?: TokenStore;
+  /**
+   * The auth-origin request function the oauth resolver refreshes through.
+   * Defaults to `createAuthRequest` over the two OAuth origins. Only ever used
+   * for a network run in oauth mode.
+   */
+  readonly authRequest?: AuthRequestFn;
   readonly fs?: DoctorFsHost;
   readonly prompt?: DoctorPrompt;
 }
@@ -389,6 +416,29 @@ function renderCounters(counters: Counters): string {
 // Probes
 // ---------------------------------------------------------------------------
 
+/**
+ * What one read of the OAuth token store found, taken once per run.
+ *
+ * Two probes need it — the horizon in probe 9 and the store itself in probe 11 —
+ * and the composition step above them needs it a third time, to decide whether a
+ * refreshing resolver can even be built. Reading the file three times would let
+ * the three disagree about a store that changed mid-run, which is a report an
+ * operator cannot act on.
+ *
+ * `error` holds a damaged or unreadable store: `createTokenStore` raises a
+ * `config` `JiraError` rather than returning junk, and losing that message would
+ * turn "your store is corrupt" into "you are not logged in".
+ */
+interface OAuthStoreSnapshot {
+  readonly path: string;
+  /** The key the entry lives under — the active profile, or `default`. */
+  readonly profile: string;
+  /** The file's permission bits, absent when there is no file yet. */
+  readonly mode?: number;
+  readonly entry?: StoredTokens;
+  readonly error?: unknown;
+}
+
 interface DoctorContext {
   readonly clock: Clock;
   readonly logger: Logger;
@@ -406,12 +456,14 @@ interface DoctorContext {
   findingsFor(probeId: string): readonly StartupFinding[];
   /** Absent when offline, or when the configuration cannot produce a client. */
   readonly request?: JiraRequestFn;
+  /** One read of the token store. Absent in basic mode: nothing consults it. */
+  readonly oauth?: OAuthStoreSnapshot;
 }
 
 interface Probe {
   readonly id: string;
   readonly title: string;
-  /** Network probes are the ones `--offline` skips (AUTH.md: local are 1–3, 8–10). */
+  /** Network probes are the ones `--offline` skips (AUTH.md: local are 1–3, 8–11). */
   readonly network: boolean;
   run(ctx: DoctorContext): readonly DoctorFinding[] | Promise<readonly DoctorFinding[]>;
 }
@@ -433,6 +485,11 @@ function probeOfFinding(finding: StartupFinding): string {
   if (finding.code.startsWith('env_file_')) return 'env-file';
   if (HOST_CODES.has(finding.code)) return 'host';
   if (finding.field === 'JIRA_TOKEN_EXPIRES') return 'token-expiry';
+  // A missing client id and a store with no grant are the same problem from two
+  // sides, so they belong under one heading. Routing by prefix rather than by
+  // naming the two variables keeps a later `JIRA_OAUTH_*` finding from silently
+  // landing in the settings probe.
+  if (finding.field?.startsWith('JIRA_OAUTH_') === true) return 'oauth';
   return 'settings';
 }
 
@@ -565,6 +622,24 @@ function readArrayLength(value: unknown, key: string): number | undefined {
 }
 
 const MS_PER_DAY = 86400000;
+const MS_PER_MINUTE = 60000;
+
+/**
+ * How long is left, in the largest unit that does not round the answer away.
+ *
+ * The API-token horizon is measured in days; an OAuth access token's is whatever
+ * `expires_in` said, and Atlassian does not document a value — so nothing here
+ * assumes one. "0 days" for a token that dies in forty minutes is the reading an
+ * operator acts on wrongly, so minutes are the floor and the unit grows from
+ * there.
+ */
+function horizon(ms: number): string {
+  const minutes = Math.floor(ms / MS_PER_MINUTE);
+  if (minutes < 90) return unit(minutes, 'minute', 'minutes');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return unit(hours, 'hour', 'hours');
+  return unit(Math.floor(ms / MS_PER_DAY), 'day', 'days');
+}
 
 /**
  * What to report about the env file.
@@ -596,6 +671,163 @@ function describeEnvFile(
     }
   }
   return { loaded: false, candidates, problems: [] };
+}
+
+/**
+ * The stored access token's remaining life.
+ *
+ * Shared by probes 9 and 11 because AUTH.md asks both of them for it — the
+ * horizon probe because that is its whole subject in oauth mode, the store probe
+ * because a report of the store that omits when it goes stale is half an answer.
+ * One function so the two can never disagree by a rounding rule.
+ *
+ * An expired access token is `info`, never a failure: it is the ordinary state
+ * of an idle server, and the refresh token beside it renews the pair on the next
+ * call without anyone being told to do anything.
+ */
+function oauthHorizon(ctx: DoctorContext): readonly DoctorFinding[] {
+  const entry = ctx.oauth?.entry;
+  if (entry === undefined) {
+    return [
+      {
+        status: 'info',
+        text: 'no stored authorization, so there is no OAuth token horizon to report',
+      },
+    ];
+  }
+  const { accessToken, expiresAt } = entry;
+  if (accessToken === undefined || expiresAt === undefined) {
+    return [
+      {
+        status: 'info',
+        text: 'only a refresh token is stored; the next call fetches an access token',
+      },
+    ];
+  }
+  const remaining = expiresAt - ctx.clock.now();
+  return [
+    remaining > 0
+      ? {
+          status: 'ok',
+          text: `the OAuth access token expires in ${horizon(remaining)}`,
+        }
+      : {
+          status: 'info',
+          text: 'the stored OAuth access token has expired; the next call refreshes it',
+        },
+  ];
+}
+
+/** The remediation CC-102 requires: name the command, and the profile it needs. */
+function loginHint(profile: string): string {
+  const target = profile === DEFAULT_PROFILE_KEY ? '' : ` --profile ${profile}`;
+  return `Run \`jira-mcp-ai login${target}\` once; after that the server refreshes the grant on its own.`;
+}
+
+/**
+ * Probe 11's body (AUTH.md §Doctor).
+ *
+ * What it must NOT say is as fixed as what it must: a stored grant names the
+ * sites the authorization covers and nothing about what the account may do on
+ * them — accessible-resources "won't tell you anything about the user's
+ * permissions" — so no line here may read as a promise that a tool will work
+ * (CC-103). And no line may carry anything a token could be reconstructed from:
+ * the site, the cloudId, the scopes and the clock, never a secret.
+ */
+function oauthStoreFindings(ctx: DoctorContext): readonly DoctorFinding[] {
+  const problems = ctx.findingsFor('oauth').map(fromStartupFinding);
+  const settings = ctx.settings;
+  const oauth = settings.oauth;
+
+  if (settings.authMode !== 'oauth') {
+    // The `JIRA_OAUTH_*` variables are parsed in both modes, so an operator who
+    // configured the app and forgot `JIRA_AUTH_MODE` has exactly one symptom: a
+    // green basic-auth report. Naming the mode here is that symptom's only cure.
+    return [
+      { status: 'info', text: 'auth mode is basic; the OAuth token store is not used' },
+      ...problems,
+    ];
+  }
+
+  const clientId = oauth.clientId;
+  const findings: DoctorFinding[] =
+    clientId === undefined
+      ? // `problems` is never empty here: settings raises an error-severity
+        // finding for a missing client id in oauth mode, and it routes to this
+        // probe. The cause is printed first, the consequence second.
+        [
+          ...problems,
+          { status: 'info', text: 'auth mode is oauth, but no client id is configured' },
+        ]
+      : [
+          { status: 'ok', text: `auth mode is oauth, client id ${quote(clientId)}` },
+          ...problems,
+        ];
+
+  const snapshot = ctx.oauth;
+  if (snapshot === undefined) return findings;
+
+  if (snapshot.error !== undefined) {
+    // A damaged store is not "you are not logged in": the file exists, holds
+    // something, and `createTokenStore` already wrote the sentence that says
+    // which part of it is wrong.
+    findings.push(fromError(snapshot.error, 'fail', ctx.redactor));
+    return findings;
+  }
+
+  const mode = snapshot.mode;
+  if (mode === undefined) {
+    findings.push({
+      status: 'info',
+      text: `no store file at ${quote(snapshot.path)} yet`,
+    });
+  } else if (ctx.platform === 'win32' || (mode & 0o077) === 0) {
+    findings.push({
+      status: 'ok',
+      text: `store ${quote(snapshot.path)}${ctx.platform === 'win32' ? '' : ` (mode ${octal(mode)})`}`,
+    });
+  } else {
+    findings.push({
+      status: 'warn',
+      text: `store ${quote(snapshot.path)} has mode ${octal(mode)}, readable beyond the owner`,
+      remediation: `chmod 600 ${snapshot.path}`,
+    });
+  }
+
+  const entry = snapshot.entry;
+  if (entry === undefined) {
+    findings.push({
+      status: 'fail',
+      text: `no authorization is stored for profile ${quote(snapshot.profile)}`,
+      remediation: loginHint(snapshot.profile),
+    });
+    return findings;
+  }
+
+  findings.push({
+    status: 'ok',
+    text: `a grant for ${entry.site} (cloudId ${entry.cloudId}) is stored under profile ${quote(snapshot.profile)}`,
+  });
+  findings.push({
+    status: 'info',
+    text:
+      entry.scopes.length === 0
+        ? 'the grant recorded no scopes'
+        : `granted scopes ${entry.scopes.join(' ')} — what the token may ask for, not what the account may do`,
+  });
+  if (clientId !== undefined && entry.clientId !== clientId) {
+    findings.push({
+      status: 'fail',
+      text: 'the stored grant belongs to a different OAuth client than JIRA_OAUTH_CLIENT_ID now names, so refreshing it would fail as an unknown client',
+      remediation: loginHint(snapshot.profile),
+    });
+  }
+  findings.push({
+    status: 'ok',
+    text: 'a refresh token is stored, so the server renews access without a browser',
+  });
+  findings.push(...oauthHorizon(ctx));
+  return findings;
 }
 
 const PROBES: readonly Probe[] = [
@@ -885,6 +1117,13 @@ const PROBES: readonly Probe[] = [
     network: false,
     run(ctx) {
       const problems = ctx.findingsFor('token-expiry').map(fromStartupFinding);
+      // In oauth mode `JIRA_TOKEN_EXPIRES` describes a token this server never
+      // sends (settings warns about that separately), so the horizon that
+      // belongs here is the stored access token's. The store's own health is
+      // probe 11's subject; this probe reports only the clock.
+      if (ctx.settings.authMode === 'oauth') {
+        return [...oauthHorizon(ctx), ...problems];
+      }
       const raw = ctx.settings.tokenExpires;
       if (raw === undefined) {
         return [
@@ -972,6 +1211,15 @@ const PROBES: readonly Probe[] = [
       return findings;
     },
   },
+  {
+    id: 'oauth',
+    title: 'oauth token store',
+    // Local, and therefore included under `--offline` (AUTH.md): the store is a
+    // file on this machine, and "am I authorized at all" is the first question
+    // an operator without a network answer needs settled.
+    network: false,
+    run: oauthStoreFindings,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1054,7 +1302,7 @@ export function createReadlinePrompt(
  *
  * Ordering: parse arguments, load settings once (never throwing — the report is
  * the point), register every secret with the redactor before a single byte is
- * written, then run all ten probes and print. `--save` short-circuits the probes
+ * written, then run all eleven probes and print. `--save` short-circuits the probes
  * on purpose: the values it writes reach the file, not this process's
  * environment, so probing after it would verify the OLD configuration.
  */
@@ -1126,23 +1374,81 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
   // resolver applies, from the same module (`core/credentials.ts`).
   const credentials = effectiveCredentials(loaded.settings);
   const host = loaded.host;
+  const oauthSettings = loaded.settings.oauth;
+  const oauthMode = loaded.settings.authMode === 'oauth';
+  // Read once, even offline: the store is a local file, and probes 9 and 11 must
+  // describe the same one.
+  const store = oauthMode
+    ? (options.tokenStore ?? createTokenStore({ path: oauthSettings.tokenFile, clock }))
+    : undefined;
+  const snapshot =
+    store === undefined
+      ? undefined
+      : await readTokenStore(store, loaded.settings.activeProfile, envFileHost);
+
   // Counted by `core/http.ts` itself, so an injected `jiraRequest` (below)
   // silently bypasses it — which is exactly why the report omits the counters
   // in that case.
   const telemetry = createTelemetry();
   const injectedRequest = options.jiraRequest;
+
+  // What the network probes would travel on. In oauth mode that is the very
+  // resolver the server installs — doctor's contract is to report what the
+  // server would do, and a second, simpler credential path here would be a path
+  // that cannot fail the way the real one does.
+  //
+  // Either source may be absent, and the reason is printed by the probe that
+  // owns it: a missing site or API token by probes 1–2, a store with no grant by
+  // probe 11. `runProbe` then skips the network probes rather than firing four
+  // requests that all fail the same way.
+  let source: JiraCredentials | CredentialResolver | undefined;
+  if (flags.offline) {
+    source = undefined;
+  } else if (oauthMode) {
+    source =
+      store === undefined ||
+      snapshot?.entry === undefined ||
+      oauthSettings.clientId === undefined ||
+      oauthSettings.clientSecret === undefined
+        ? undefined
+        : createOAuthCredentialResolver({
+            settings: oauthSettings,
+            store,
+            authRequest:
+              options.authRequest ??
+              createAuthRequest({
+                clock,
+                logger,
+                redactor,
+                rng,
+                allowedOrigins: [oauthSettings.authOrigin, oauthSettings.gatewayOrigin],
+                requestTimeoutMs: loaded.settings.requestTimeoutMs,
+              }),
+            clock,
+            logger,
+            redactor,
+            allowedHosts: loaded.settings.allowedHosts,
+          });
+  } else if (
+    host !== undefined &&
+    credentials.email !== undefined &&
+    credentials.apiToken !== undefined
+  ) {
+    source = {
+      kind: 'basic',
+      host,
+      email: credentials.email,
+      apiToken: credentials.apiToken,
+    };
+  }
+
   const request = flags.offline
     ? undefined
     : (injectedRequest ??
-      (host !== undefined &&
-      credentials.email !== undefined &&
-      credentials.apiToken !== undefined
-        ? (options.createRequest ?? createJiraRequest)({
-            credentials: {
-              host,
-              email: credentials.email,
-              apiToken: credentials.apiToken,
-            },
+      (source === undefined
+        ? undefined
+        : (options.createRequest ?? createJiraRequest)({
+            credentials: source,
             clock,
             rng,
             logger,
@@ -1153,8 +1459,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
             callBudgetMs: loaded.settings.callBudgetMs,
             hostConcurrency: loaded.settings.hostConcurrency,
             retryAttempts: loaded.settings.retryAttempts,
-          })
-        : undefined));
+          })));
 
   const routed = new Map<string, StartupFinding[]>();
   for (const finding of loaded.report.findings) {
@@ -1179,6 +1484,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
     offline: flags.offline,
     findingsFor: (probeId) => routed.get(probeId) ?? [],
     ...(request === undefined ? {} : { request }),
+    ...(snapshot === undefined ? {} : { oauth: snapshot }),
   };
 
   if (!flags.json) {
@@ -1243,6 +1549,36 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
   } else out(renderSummary(report));
 
   return exitCode;
+}
+
+/**
+ * One read of the OAuth token store, with its failure kept rather than thrown.
+ *
+ * A store that will not parse is a finding, not a reason for doctor to stop:
+ * everything else in the report is still true, and an operator staring at a
+ * corrupt file needs the rest of it more than usual.
+ *
+ * The file mode comes from the env-file host — the same seam that stats the env
+ * file — because "is it 0600" is a question about the file on disk, and
+ * `TokenStore` deliberately does not answer questions about permissions.
+ */
+async function readTokenStore(
+  store: TokenStore,
+  profile: string | undefined,
+  host: EnvFileHost,
+): Promise<OAuthStoreSnapshot> {
+  const mode = host.statFile(store.path);
+  const base = {
+    path: store.path,
+    profile: profileKey(profile),
+    ...(mode === undefined ? {} : { mode }),
+  };
+  try {
+    const entry = await store.get(profile);
+    return { ...base, ...(entry === undefined ? {} : { entry }) };
+  } catch (error) {
+    return { ...base, error };
+  }
 }
 
 /** One probe, with skipping and the per-probe failure boundary applied. */

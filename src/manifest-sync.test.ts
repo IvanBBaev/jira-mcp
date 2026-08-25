@@ -314,12 +314,17 @@ function expectedRows(): readonly DocRow[] {
 /**
  * Variables whose value is a credential. The registry renders `isSecret` as
  * "do not echo this into a shell history or a settings file", so the rule is
- * mechanical rather than a per-row judgement: a name ending in `_TOKEN` holds
- * one. `JIRA_TOKEN_EXPIRES` is a date ABOUT a token, which is why the test is
- * on the suffix and not on the substring.
+ * mechanical rather than a per-row judgement: a name ending in `_TOKEN` or
+ * `_SECRET` holds one. `JIRA_TOKEN_EXPIRES` is a date ABOUT a token, which is
+ * why the test is on the suffix and not on the substring.
+ *
+ * `_SECRET` joined the rule with the OAuth client secret (D98). Widening the
+ * suffix list rather than naming `JIRA_OAUTH_CLIENT_SECRET` keeps this a rule:
+ * the next credential to arrive is covered by being named like one, instead of
+ * shipping unmarked until somebody remembers to extend a literal set.
  */
 function shouldBeSecret(name: string): boolean {
-  return name.endsWith('_TOKEN');
+  return name.endsWith('_TOKEN') || name.endsWith('_SECRET');
 }
 
 /** The `format` vocabulary of the 2025-12-11 registry schema. */
