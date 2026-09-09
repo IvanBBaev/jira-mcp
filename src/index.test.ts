@@ -29,6 +29,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { createServer as createSocketServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { after, describe } from 'node:test';
@@ -701,6 +703,164 @@ test('redirects a dependency console.log to stderr (the console guard)', async (
       }),
     ]);
     if (!exited) child.kill('SIGKILL');
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// stdout purity under the http transport (CC-119)
+//
+// The tests above prove stdout carries nothing but frames when stdout IS the
+// protocol. Under `JIRA_TRANSPORT=http` the protocol rides the socket, so the
+// bar moves: stdout must stay byte-EMPTY for the whole life of the process —
+// startup, a served initialize, and a SIGTERM shutdown — while the diagnostics
+// stay on stderr as NDJSON, exactly as under stdio.
+// ---------------------------------------------------------------------------
+
+const HTTP_CHILD_TOKEN = 'http-bearer-not-real';
+
+/** A port nothing is listening on right now (suite-11's helper, same race). */
+function freePort(): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const probe = createSocketServer();
+    probe.once('error', reject);
+    probe.listen({ host: '127.0.0.1', port: 0 }, () => {
+      const address = probe.address();
+      const port = typeof address === 'object' && address !== null ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+/** POST an initialize to the child's /mcp endpoint, no SDK on this side. */
+function postInitialize(
+  port: number,
+): Promise<{ readonly status: number; readonly body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/mcp',
+        method: 'POST',
+        agent: false,
+        headers: {
+          authorization: `Bearer ${HTTP_CHILD_TOKEN}`,
+          'content-type': 'application/json',
+          // The SDK answers 406 unless BOTH types are accepted.
+          accept: 'application/json, text/event-stream',
+        },
+      },
+      (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        response.on('end', () => {
+          resolve({ status: response.statusCode ?? 0, body });
+        });
+      },
+    );
+    request.once('error', reject);
+    request.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'jira-mcp-http-probe', version: '0.0.0' },
+        },
+      }),
+    );
+  });
+}
+
+test('CC-119: under the http transport, stdout stays byte-empty for the whole process life', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'jira-mcp-http-'));
+  const port = await freePort();
+  const child = spawn(process.execPath, [SERVER_ENTRY], {
+    cwd: home,
+    env: {
+      ...childEnv(home),
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_PORT: String(port),
+      JIRA_HTTP_TOKEN: HTTP_CHILD_TOKEN,
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+
+  try {
+    // `server_start` is emitted after the listener is bound (WP-100), so it is
+    // the signal that the POST below cannot land on a closed port.
+    await new Promise<void>((resolve, reject) => {
+      const check = (): void => {
+        if (stderr.includes('"event":"server_start"')) {
+          clearTimeout(timer);
+          child.stderr.off('data', check);
+          resolve();
+        }
+      };
+      const timer = setTimeout(() => {
+        child.stderr.off('data', check);
+        reject(
+          new Error(`no server_start within 15 s.\nstdout: ${stdout}\nstderr: ${stderr}`),
+        );
+      }, 15_000);
+      child.stderr.on('data', check);
+      check();
+    });
+
+    // Every stderr line is NDJSON, and server_start names the http transport.
+    const startLine = stderr
+      .split('\n')
+      .find((line) => line.includes('"event":"server_start"'));
+    assert.ok(startLine, 'a server_start line must be on stderr');
+    const started = JSON.parse(startLine) as { fields?: { transport?: string } };
+    assert.equal(started.fields?.transport, 'http');
+
+    // The protocol rides the socket: a real initialize is served over HTTP.
+    const response = await postInitialize(port);
+    assert.equal(response.status, 200, `initialize answered:\n${response.body}`);
+    const frame = JSON.parse(response.body) as {
+      result?: { serverInfo?: { name?: string } };
+    };
+    assert.equal(frame.result?.serverInfo?.name, 'jira-mcp-ai');
+
+    // SIGTERM is a clean shutdown, exit code 0 (CC-118).
+    child.kill('SIGTERM');
+    const exited = await Promise.race([
+      once(child, 'exit').then((result) => result as [number | null, string | null]),
+      new Promise<undefined>((resolve) => {
+        setTimeout(() => resolve(undefined), 10_000).unref();
+      }),
+    ]);
+    assert.ok(
+      exited,
+      `the child did not exit within 10 s of SIGTERM.\nstderr: ${stderr}`,
+    );
+    const [code, signal] = exited;
+    assert.equal(signal, null, 'the child must exit on its own, not die on the signal');
+    assert.equal(code, EXIT_OK);
+
+    // The whole point: not one byte on stdout, ever — and no secret on stderr.
+    assert.equal(stdout, '');
+    assert.ok(!stderr.includes(HTTP_CHILD_TOKEN), 'the bearer token reached a log');
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await rm(home, { recursive: true, force: true });
   }
 });

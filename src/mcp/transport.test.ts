@@ -14,13 +14,8 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { FAKE_AUTH_SETTINGS } from '../core/fakes/fakeSettings.js';
-import { JiraError } from '../core/types.js';
 import type { Settings } from '../core/types.js';
-import {
-  HTTP_TRANSPORT_MESSAGE,
-  assertTransportSupported,
-  connectTransport,
-} from './transport.js';
+import { connectTransport } from './transport.js';
 import type { ConnectableServer } from './transport.js';
 
 const BASE_SETTINGS: Settings = {
@@ -80,47 +75,6 @@ function tick(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Selection
-// ---------------------------------------------------------------------------
-
-test('D19: the http transport is refused with a config error naming v1.5', () => {
-  assert.throws(
-    () => assertTransportSupported(settingsOf({ transport: 'http' })),
-    (error: unknown) => {
-      assert.ok(error instanceof JiraError);
-      assert.equal(error.kind, 'config');
-      assert.equal(error.retryable, false);
-      assert.equal(error.message, HTTP_TRANSPORT_MESSAGE);
-      assert.ok(error.message.includes('v1.5'));
-      assert.ok(error.remediation?.includes('JIRA_TRANSPORT=stdio'));
-      return true;
-    },
-  );
-});
-
-test('connectTransport refuses http before it touches the server', async () => {
-  const server = fakeServer();
-  const logger = createFakeLogger();
-
-  await assert.rejects(
-    connectTransport(server, {
-      settings: settingsOf({ transport: 'http' }),
-      logger,
-      stdin: new PassThrough(),
-      stdout: new PassThrough(),
-    }),
-    (error: unknown) => error instanceof JiraError && error.kind === 'config',
-  );
-
-  assert.deepEqual(server.connected, []);
-  assert.deepEqual(logger.events, []);
-});
-
-test('stdio is accepted', () => {
-  assert.doesNotThrow(() => assertTransportSupported(settingsOf()));
-});
-
-// ---------------------------------------------------------------------------
 // The stdio attachment
 // ---------------------------------------------------------------------------
 
@@ -136,11 +90,13 @@ test('connect hands the server a started stdio transport that parses frames', as
   });
 
   assert.equal(handle.kind, 'stdio');
-  assert.deepEqual(server.connected, [handle.transport]);
+  const transport = handle.transport;
+  assert.ok(transport, 'a stdio handle carries its connected transport');
+  assert.deepEqual(server.connected, [transport]);
   assert.equal(handle.closed, false);
 
   const received: unknown[] = [];
-  handle.transport.onmessage = (message): void => {
+  transport.onmessage = (message): void => {
     received.push(message);
   };
   stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })}\n`);
@@ -238,7 +194,9 @@ test('a frame that overruns the read buffer is a fatal shutdown, not a silently 
   });
 
   const errors: unknown[] = [];
-  handle.transport.onerror = (error): void => {
+  const transport = handle.transport;
+  assert.ok(transport, 'a stdio handle carries its connected transport');
+  transport.onerror = (error): void => {
     errors.push(error);
   };
 
@@ -357,7 +315,9 @@ test('a transport that dies on its own reports fatal even if the close fails', a
 
   // The transport tearing itself down — what an oversized frame ends in, minus
   // the 10 MiB. `onclose` is the only thing left to notice.
-  await handle.transport.close();
+  const transport = handle.transport;
+  assert.ok(transport, 'a stdio handle carries its connected transport');
+  await transport.close();
   await tick();
 
   assert.deepEqual(

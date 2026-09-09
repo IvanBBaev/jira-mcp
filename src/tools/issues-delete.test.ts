@@ -1,17 +1,23 @@
-// Tests for `tools/issues-delete.ts` (WP-72) — contract tier (TESTING.md).
+// Tests for `tools/issues-delete.ts` (WP-72, WP-111, WP-121) — contract tier
+// (TESTING.md).
 //
-// `api/issues.ts` already owns the wire shapes (the DELETE paths, the
-// `deleteSubtasks` query, the subtask 400), so nothing here re-asserts them.
+// `api/issues.ts`, `api/collab.ts`, `api/agile.ts` and `api/bulk.ts` already
+// own the wire shapes (the DELETE paths, the `deleteSubtasks` query, the
+// subtask 400, the removeAndSwap body, the sprint-state 400, the bulk submit
+// bodies and the derived `selectedActions`), so nothing here re-asserts them.
 // What is asserted is the half this ring owns, and it is unusual in exactly one
 // way: these tools are the only ones whose value to a caller is produced BEFORE
 // the mutation. So the file is mostly about the before-state — that it is built
 // by construction (D41), excerpted, projected free of PII, and that it reaches
-// BOTH the plan envelope and the apply receipt with the same content.
+// BOTH the plan envelope and the apply receipt with the same content. The two
+// bulk writes are the one exception this file proves on purpose: their
+// before-state is the request's own blast radius (a count and a capped echo of
+// the caller's list), fetched from nowhere (CC-129).
 //
 // The gate is real here rather than faked: `createWriteGate` is what turns a
 // handler into a plan, and the whole point of this package is what the gate does
 // with `writeTier: 'irreversible'`. `mcp/write-mode.test.ts` proves the tier
-// rules in isolation; this file proves the three tools are wired into them.
+// rules in isolation; this file proves the eight tools are wired into them.
 //
 // Response bodies are inline plain objects shaped after real Jira Cloud v3
 // payloads and marked `// synthetic`. The fake throws on a route nobody
@@ -35,8 +41,13 @@ import type { AnyToolSpec, PlannedRequest, ToolCtx, ToolResult } from '../mcp/ty
 import { createWriteGate } from '../mcp/write-mode.js';
 import type { WriteGate } from '../mcp/write-mode.js';
 import {
+  bulkDeleteIssuesTool,
+  bulkEditIssuesTool,
   deleteCommentTool,
+  deleteComponentTool,
   deleteIssueTool,
+  deleteSprintTool,
+  deleteVersionTool,
   deleteWorklogTool,
   issuesDeletePackage,
 } from './issues-delete.js';
@@ -45,6 +56,11 @@ const KEY = 'PROJ-1';
 const ACCOUNT_ID = '5b10a2844c20165700ede21g';
 const COMMENT_ID = '10100';
 const WORKLOG_ID = '40001';
+const COMPONENT_ID = 10500;
+const MOVE_COMPONENT_ID = 10501;
+const VERSION_ID = 10600;
+const SWAP_VERSION_ID = 10601;
+const SPRINT_ID = 42;
 
 /** Routes are method + path; the query string is asserted separately. */
 const ISSUE_ROUTE = `GET /rest/api/3/issue/${KEY}`;
@@ -53,6 +69,28 @@ const COMMENT_ROUTE = `GET /rest/api/3/issue/${KEY}/comment/${COMMENT_ID}`;
 const DELETE_COMMENT_ROUTE = `DELETE /rest/api/3/issue/${KEY}/comment/${COMMENT_ID}`;
 const WORKLOG_ROUTE = `GET /rest/api/3/issue/${KEY}/worklog/${WORKLOG_ID}`;
 const DELETE_WORKLOG_ROUTE = `DELETE /rest/api/3/issue/${KEY}/worklog/${WORKLOG_ID}`;
+const COMPONENT_ROUTE = `GET /rest/api/3/component/${COMPONENT_ID}`;
+const COMPONENT_COUNTS_ROUTE = `GET /rest/api/3/component/${COMPONENT_ID}/relatedIssueCounts`;
+const DELETE_COMPONENT_ROUTE = `DELETE /rest/api/3/component/${COMPONENT_ID}`;
+const VERSION_ROUTE = `GET /rest/api/3/version/${VERSION_ID}`;
+const VERSION_COUNTS_ROUTE = `GET /rest/api/3/version/${VERSION_ID}/relatedIssueCounts`;
+/** The version delete: the bare `DELETE /version/{id}` is deprecated (CC-122). */
+const REMOVE_AND_SWAP_ROUTE = `POST /rest/api/3/version/${VERSION_ID}/removeAndSwap`;
+const SPRINT_ROUTE = `GET /rest/agile/1.0/sprint/${SPRINT_ID}`;
+const DELETE_SPRINT_ROUTE = `DELETE /rest/agile/1.0/sprint/${SPRINT_ID}`;
+/** The two bulk submits — neither route is a string prefix of the other. */
+const BULK_DELETE_SUBMIT_ROUTE = 'POST /rest/api/3/bulk/issues/delete';
+const BULK_EDIT_SUBMIT_ROUTE = 'POST /rest/api/3/bulk/issues/fields';
+/** The bulk task id as both submits return it. // synthetic */
+const TASK_ID = '10321';
+
+/** `PROJ-1` … `PROJ-{count}` — distinct keys for the cap and echo tests. */
+function bulkKeys(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `PROJ-${index + 1}`);
+}
+
+/** The 201 both bulk submits answer with. // synthetic */
+const BULK_SUBMIT_RECEIPT = jiraOk({ taskId: TASK_ID }, { status: 201 });
 
 /** 2026-08-07T10:00:00.000Z — the instant every call in this file runs at. */
 const NOW = Date.UTC(2026, 7, 7, 10, 0, 0);
@@ -126,7 +164,63 @@ const WORKLOG_BODY = {
   updated: '2026-08-07T15:31:00.000+0530',
 };
 
-/** Jira's answer to all three DELETEs. */
+/** `GET /component/{id}`. // synthetic */
+const COMPONENT_BODY = {
+  self: `https://example.atlassian.net/rest/api/3/component/${COMPONENT_ID}`,
+  id: String(COMPONENT_ID),
+  name: 'Backend',
+  description: 'Everything server-side.',
+  lead: WIRE_USER,
+  assigneeType: 'PROJECT_LEAD',
+  isAssigneeTypeValid: true,
+  project: 'PROJ',
+  projectId: 10000,
+};
+
+/** `GET /component/{id}/relatedIssueCounts`. // synthetic */
+const COMPONENT_COUNTS_BODY = {
+  self: `https://example.atlassian.net/rest/api/3/component/${COMPONENT_ID}/relatedIssueCounts`,
+  issueCount: 7,
+};
+
+/** `GET /version/{id}`. // synthetic */
+const VERSION_BODY = {
+  self: `https://example.atlassian.net/rest/api/3/version/${VERSION_ID}`,
+  id: String(VERSION_ID),
+  name: '2.0.0',
+  description: 'The rewrite.',
+  archived: false,
+  released: true,
+  startDate: '2026-01-05',
+  releaseDate: '2026-06-30',
+  userStartDate: '05/Jan/26',
+  userReleaseDate: '30/Jun/26',
+  overdue: false,
+  projectId: 10000,
+};
+
+/** `GET /version/{id}/relatedIssueCounts`. // synthetic */
+const VERSION_COUNTS_BODY = {
+  self: `https://example.atlassian.net/rest/api/3/version/${VERSION_ID}/relatedIssueCounts`,
+  issuesFixedCount: 5,
+  issuesAffectedCount: 2,
+  issueCountWithCustomFieldsShowingVersion: 1,
+  customFieldUsage: [],
+};
+
+/** `GET /rest/agile/1.0/sprint/{sprintId}` for an ACTIVE sprint. // synthetic */
+const SPRINT_BODY = {
+  id: SPRINT_ID,
+  self: `https://example.atlassian.net/rest/agile/1.0/sprint/${SPRINT_ID}`,
+  state: 'active',
+  name: 'Sprint 7',
+  startDate: '2026-08-03T08:00:00.000Z',
+  endDate: '2026-08-17T08:00:00.000Z',
+  goal: 'Ship the retry policy.',
+  originBoardId: 17,
+};
+
+/** Jira's answer to every delete here, the removeAndSwap POST included. */
 const NO_CONTENT = jiraOk(undefined, { status: 204 });
 
 type FakeJira = ReturnType<typeof createFakeJiraRequest>;
@@ -200,11 +294,25 @@ const ALL_TOOLS: readonly AnyToolSpec[] = issuesDeletePackage.tools;
 // The package, its annotations and its schemas
 // ---------------------------------------------------------------------------
 
-test('the issues-delete package is the whole irreversible surface, and nothing else', () => {
+test('CC-120: the issues-delete package is the whole irreversible surface, and nothing else', () => {
+  // The ID is historical — it predates the non-issue deletes and stays so that
+  // an existing `JIRA_PACKAGES_DENY=issues-delete` keeps denying EVERYTHING
+  // irreversible after the upgrade; the title is what generalized. Phase 12
+  // repeated the same argument for the bulk writes (CC-126).
   assert.equal(issuesDeletePackage.id, 'issues-delete');
+  assert.equal(issuesDeletePackage.title, 'Deletes and bulk changes (irreversible)');
   assert.deepEqual(
     ALL_TOOLS.map((tool) => tool.name),
-    ['jira_delete_issue', 'jira_delete_comment', 'jira_delete_worklog'],
+    [
+      'jira_delete_issue',
+      'jira_delete_comment',
+      'jira_delete_worklog',
+      'jira_delete_component',
+      'jira_delete_version',
+      'jira_delete_sprint',
+      'jira_bulk_delete_issues',
+      'jira_bulk_edit_issues',
+    ],
   );
   // One deny token removes the surface, so every tool must live in this package.
   for (const tool of ALL_TOOLS) assert.equal(tool.package, 'issues-delete');
@@ -231,12 +339,21 @@ test('every delete tool warns about the opt-in and names an alternative', () => 
   }
   assert.match(deleteIssueTool.description, /closing the issue instead/);
   assert.match(deleteCommentTool.description, /jira_update_comment/);
+  assert.match(deleteComponentTool.description, /jira_update_component/);
+  assert.match(deleteVersionTool.description, /jira_update_version/);
+  assert.match(deleteSprintTool.description, /jira_close_sprint/);
+  // The one delete whose issues survive: the model must know they only move.
+  assert.match(deleteSprintTool.description, /backlog/);
+  // The bulk writes name the poller: a 201 receipt alone never says "done".
+  assert.match(bulkDeleteIssuesTool.description, /jira_get_bulk_status/);
+  assert.match(bulkEditIssuesTool.description, /jira_get_bulk_status/);
 });
 
 test('the schemas are strict, carry the control fields and nothing extra', () => {
   for (const tool of ALL_TOOLS) {
     const parsed = tool.input.safeParse({ issue: KEY, commentId: '1', worklogId: '1' });
-    // Each tool declares exactly one id argument, so the other two are unknown.
+    // Each tool declares at most one of these id arguments (the bulk writes
+    // declare none of them), so at least two of the keys are always unknown.
     assert.equal(parsed.success, false, `${tool.name} accepted a foreign id argument`);
 
     const control = tool.input.safeParse({
@@ -264,6 +381,35 @@ test('the schemas are strict, carry the control fields and nothing extra', () =>
     deleteWorklogTool.input.safeParse({ issue: KEY, worklogId: WORKLOG_ID }).success,
     true,
   );
+
+  // The project-entity deletes take NUMERIC ids (the collab/agile pattern) —
+  // the string spelling of the same id is refused, not coerced.
+  assert.equal(
+    deleteComponentTool.input.safeParse({ componentId: COMPONENT_ID }).success,
+    true,
+  );
+  assert.equal(
+    deleteComponentTool.input.safeParse({
+      componentId: COMPONENT_ID,
+      moveIssuesTo: MOVE_COMPONENT_ID,
+    }).success,
+    true,
+  );
+  assert.equal(
+    deleteComponentTool.input.safeParse({ componentId: String(COMPONENT_ID) }).success,
+    false,
+  );
+  assert.equal(
+    deleteVersionTool.input.safeParse({
+      versionId: VERSION_ID,
+      moveFixIssuesTo: SWAP_VERSION_ID,
+      moveAffectedIssuesTo: SWAP_VERSION_ID,
+    }).success,
+    true,
+  );
+  assert.equal(deleteVersionTool.input.safeParse({ versionId: 0 }).success, false);
+  assert.equal(deleteSprintTool.input.safeParse({ sprintId: SPRINT_ID }).success, true);
+  assert.equal(deleteSprintTool.input.safeParse({ sprintId: 1.5 }).success, false);
 });
 
 // ---------------------------------------------------------------------------
@@ -796,25 +942,657 @@ test('a worklog whose fields arrive in the wrong shape plans without inventing t
 });
 
 // ---------------------------------------------------------------------------
+// jira_delete_component
+// ---------------------------------------------------------------------------
+
+test('CC-121: the component plan shows the blast radius, and no DELETE escapes', async () => {
+  const fake = createFakeJiraRequest()
+    // Counts before the component: string rules match by PREFIX, and the
+    // component route is a prefix of its own /relatedIssueCounts.
+    .on(COMPONENT_COUNTS_ROUTE, jiraOk(COMPONENT_COUNTS_BODY))
+    .on(COMPONENT_ROUTE, jiraOk(COMPONENT_BODY));
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(
+      deleteComponentTool,
+      { componentId: COMPONENT_ID, moveIssuesTo: MOVE_COMPONENT_ID },
+      {},
+      fake.fn,
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  // Both reads happened; the DELETE did not — its route is not programmed, so a
+  // request that escaped would have thrown rather than silently succeeded.
+  assert.deepEqual(fake.routes(), [COMPONENT_ROUTE, COMPONENT_COUNTS_ROUTE]);
+  assert.deepEqual((result.data as { planned: unknown }).planned, {
+    method: 'DELETE',
+    path: `/component/${COMPONENT_ID}`,
+    query: { moveIssuesTo: '10501' },
+  });
+  // `issueCount` is the number the approver reads before saying yes (CC-121),
+  // and the reassignment target sits right beside it (CC-125).
+  assert.deepEqual(beforeOf(result), {
+    kind: 'component',
+    id: '10500',
+    name: 'Backend',
+    description: 'Everything server-side.',
+    descriptionTruncated: false,
+    lead: 'User One',
+    project: 'PROJ',
+    issueCount: 7,
+    moveIssuesTo: '10501',
+  });
+  // The lead survives as a display name only — no accountId, no email.
+  assert.equal(JSON.stringify(result).includes(ACCOUNT_ID), false);
+  assert.equal(JSON.stringify(result).includes('example.invalid'), false);
+  assert.equal(result._untrusted, true);
+});
+
+test('an applied component delete echoes the snapshot and the reassignment', async () => {
+  const fake = createFakeJiraRequest()
+    .on(DELETE_COMPONENT_ROUTE, NO_CONTENT)
+    // Counts before the component: string rules match by PREFIX, and the
+    // component route is a prefix of its own /relatedIssueCounts.
+    .on(COMPONENT_COUNTS_ROUTE, jiraOk(COMPONENT_COUNTS_BODY))
+    .on(COMPONENT_ROUTE, jiraOk(COMPONENT_BODY));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    deleteComponentTool,
+    { componentId: COMPONENT_ID, moveIssuesTo: MOVE_COMPONENT_ID },
+    fake,
+  );
+
+  assert.equal(applied.ok, true);
+  assert.deepEqual(applied.data, {
+    componentId: '10500',
+    deleted: true,
+    movedIssuesTo: '10501',
+    before: beforeOf(plan),
+  });
+  assert.equal(applied._untrusted, true, 'the receipt carries the same tenant prose');
+  assert.deepEqual(fake.routes(), [
+    COMPONENT_ROUTE,
+    COMPONENT_COUNTS_ROUTE,
+    COMPONENT_ROUTE,
+    COMPONENT_COUNTS_ROUTE,
+    DELETE_COMPONENT_ROUTE,
+  ]);
+  assert.deepEqual(fake.lastRequest()?.query, { moveIssuesTo: '10501' });
+  assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
+});
+
+test('a thin component and a countless answer degrade to what Jira sent (CC-66)', async () => {
+  const fake = createFakeJiraRequest()
+    // synthetic — the counts endpoint answered without a number. Registered
+    // before the component route, which is a string PREFIX of this one.
+    .on(COMPONENT_COUNTS_ROUTE, jiraOk({ self: COMPONENT_COUNTS_BODY.self }))
+    // synthetic — a stub component: no description, no lead, no project halves.
+    .on(COMPONENT_ROUTE, jiraOk({ id: '10500', name: 'Backend' }));
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(
+      callOf(deleteComponentTool, { componentId: COMPONENT_ID }, {}, fake.fn),
+    ),
+  );
+
+  // No `issueCount: 0` guess: a blast radius the plan cannot state is different
+  // from one it states as zero (CC-66).
+  assert.deepEqual(before, { kind: 'component', id: '10500', name: 'Backend' });
+});
+
+// ---------------------------------------------------------------------------
+// jira_delete_version
+// ---------------------------------------------------------------------------
+
+test('CC-123: the version plan carries all three related-issue counts', async () => {
+  const fake = createFakeJiraRequest()
+    // Counts before the version — the same prefix rule as the component's.
+    .on(VERSION_COUNTS_ROUTE, jiraOk(VERSION_COUNTS_BODY))
+    .on(VERSION_ROUTE, jiraOk(VERSION_BODY));
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(
+      deleteVersionTool,
+      {
+        versionId: VERSION_ID,
+        moveFixIssuesTo: SWAP_VERSION_ID,
+        moveAffectedIssuesTo: SWAP_VERSION_ID,
+      },
+      {},
+      fake.fn,
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.routes(), [VERSION_ROUTE, VERSION_COUNTS_ROUTE]);
+  // The delete is the removeAndSwap POST (CC-122) and the ids in its body are
+  // NUMBERS — the plan shows the request exactly as it would go out.
+  assert.deepEqual((result.data as { planned: unknown }).planned, {
+    method: 'POST',
+    path: `/version/${VERSION_ID}/removeAndSwap`,
+    body: { moveFixIssuesTo: SWAP_VERSION_ID, moveAffectedIssuesTo: SWAP_VERSION_ID },
+  });
+  // fixVersion, affectedVersion AND the custom-field pickers: three different
+  // blast radii, and an approver needs all three (CC-123). The swap targets
+  // sit beside them (CC-125).
+  assert.deepEqual(beforeOf(result), {
+    kind: 'version',
+    id: '10600',
+    name: '2.0.0',
+    description: 'The rewrite.',
+    descriptionTruncated: false,
+    archived: false,
+    released: true,
+    startDate: '2026-01-05',
+    releaseDate: '2026-06-30',
+    project: '10000',
+    issuesFixedCount: 5,
+    issuesAffectedCount: 2,
+    issueCountWithCustomFieldsShowingVersion: 1,
+    moveFixIssuesTo: '10601',
+    moveAffectedIssuesTo: '10601',
+  });
+  assert.equal(result._untrusted, true);
+});
+
+test('an applied version delete echoes the snapshot and both swap targets', async () => {
+  const fake = createFakeJiraRequest()
+    .on(REMOVE_AND_SWAP_ROUTE, NO_CONTENT)
+    // Counts before the version — the same prefix rule as the component's.
+    .on(VERSION_COUNTS_ROUTE, jiraOk(VERSION_COUNTS_BODY))
+    .on(VERSION_ROUTE, jiraOk(VERSION_BODY));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    deleteVersionTool,
+    {
+      versionId: VERSION_ID,
+      moveFixIssuesTo: SWAP_VERSION_ID,
+      moveAffectedIssuesTo: SWAP_VERSION_ID,
+    },
+    fake,
+  );
+
+  assert.equal(applied.ok, true);
+  assert.deepEqual(applied.data, {
+    versionId: '10600',
+    deleted: true,
+    movedFixIssuesTo: '10601',
+    movedAffectedIssuesTo: '10601',
+    before: beforeOf(plan),
+  });
+  assert.equal(applied._untrusted, true, 'the receipt carries the same tenant prose');
+  assert.deepEqual(fake.routes(), [
+    VERSION_ROUTE,
+    VERSION_COUNTS_ROUTE,
+    VERSION_ROUTE,
+    VERSION_COUNTS_ROUTE,
+    REMOVE_AND_SWAP_ROUTE,
+  ]);
+  assert.deepEqual(fake.lastRequest()?.body, {
+    moveFixIssuesTo: SWAP_VERSION_ID,
+    moveAffectedIssuesTo: SWAP_VERSION_ID,
+  });
+  assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
+});
+
+test('CC-125: an absent target reads as stripped or cleared, never as an error', async () => {
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  // Component: no target ⇒ no `moveIssuesTo` query key — `?moveIssuesTo=`
+  // would be a different request — and no before-state key either.
+  const componentFake = createFakeJiraRequest()
+    // Counts before the component: string rules match by PREFIX, and the
+    // component route is a prefix of its own /relatedIssueCounts.
+    .on(COMPONENT_COUNTS_ROUTE, jiraOk(COMPONENT_COUNTS_BODY))
+    .on(COMPONENT_ROUTE, jiraOk(COMPONENT_BODY));
+  const componentPlan = await gate.execute(
+    callOf(deleteComponentTool, { componentId: COMPONENT_ID }, {}, componentFake.fn),
+  );
+  assert.deepEqual((componentPlan.data as { planned: unknown }).planned, {
+    method: 'DELETE',
+    path: `/component/${COMPONENT_ID}`,
+  });
+  assert.equal(Object.hasOwn(beforeOf(componentPlan), 'moveIssuesTo'), false);
+
+  // Version: no targets ⇒ the swap body is `{}` — STILL SENT, because the
+  // route stays removeAndSwap (CC-122) — and the documented cleared outcome
+  // shows as absent swap keys in the snapshot.
+  const versionFake = createFakeJiraRequest()
+    // Counts before the version — the same prefix rule as the component's.
+    .on(VERSION_COUNTS_ROUTE, jiraOk(VERSION_COUNTS_BODY))
+    .on(VERSION_ROUTE, jiraOk(VERSION_BODY));
+  const versionPlan = await gate.execute(
+    callOf(deleteVersionTool, { versionId: VERSION_ID }, {}, versionFake.fn),
+  );
+  assert.deepEqual((versionPlan.data as { planned: unknown }).planned, {
+    method: 'POST',
+    path: `/version/${VERSION_ID}/removeAndSwap`,
+    body: {},
+  });
+  const versionSnapshot = beforeOf(versionPlan);
+  assert.equal(Object.hasOwn(versionSnapshot, 'moveFixIssuesTo'), false);
+  assert.equal(Object.hasOwn(versionSnapshot, 'moveAffectedIssuesTo'), false);
+});
+
+// ---------------------------------------------------------------------------
+// jira_delete_sprint
+// ---------------------------------------------------------------------------
+
+test('CC-124: the sprint snapshot records the state — an audit trail, not a guard', async () => {
+  // SPRINT_BODY is an ACTIVE sprint and the delete still goes through: Jira
+  // accepts the delete in any state, and the tool adds no client-side guard.
+  // What it adds is the `state` field in the before-state, so the plan is the
+  // record of what state the sprint was in when it was destroyed.
+  const fake = createFakeJiraRequest()
+    .on(DELETE_SPRINT_ROUTE, NO_CONTENT)
+    .on(SPRINT_ROUTE, jiraOk(SPRINT_BODY));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    deleteSprintTool,
+    { sprintId: SPRINT_ID },
+    fake,
+  );
+
+  assert.deepEqual(beforeOf(plan), {
+    kind: 'sprint',
+    id: SPRINT_ID,
+    name: 'Sprint 7',
+    state: 'active',
+    goal: 'Ship the retry policy.',
+    goalTruncated: false,
+    startDate: '2026-08-03T08:00:00.000Z',
+    endDate: '2026-08-17T08:00:00.000Z',
+    originBoardId: 17,
+  });
+  assert.deepEqual((plan.data as { planned: unknown }).planned, {
+    method: 'DELETE',
+    path: `/sprint/${SPRINT_ID}`,
+  });
+  assert.equal(applied.ok, true);
+  // `sprintId` is a NUMBER in the receipt — agile ids are numeric end to end.
+  assert.deepEqual(applied.data, {
+    sprintId: SPRINT_ID,
+    deleted: true,
+    before: beforeOf(plan),
+  });
+  assert.deepEqual(fake.routes(), [SPRINT_ROUTE, SPRINT_ROUTE, DELETE_SPRINT_ROUTE]);
+  assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
+});
+
+test('a sprint that is only an id and a name still plans honestly', async () => {
+  // A sprint that was never started has no dates, no goal, often no board
+  // echo; the snapshot then holds the identity and nothing invented.
+  const fake = createFakeJiraRequest().on(
+    SPRINT_ROUTE,
+    jiraOk({ id: SPRINT_ID, name: 'Sprint 7' }), // synthetic
+  );
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(callOf(deleteSprintTool, { sprintId: SPRINT_ID }, {}, fake.fn)),
+  );
+
+  assert.deepEqual(before, { kind: 'sprint', id: SPRINT_ID, name: 'Sprint 7' });
+});
+
+// ---------------------------------------------------------------------------
+// The bulk writes (D103) — jira_bulk_delete_issues / jira_bulk_edit_issues
+// ---------------------------------------------------------------------------
+
+test('CC-126: the bulk writes ship inside issues-delete, so one deny token still works', () => {
+  // Phase 12 repeats the D102 argument: an operator who set
+  // `JIRA_PACKAGES_DENY=issues-delete` before the bulk writes existed keeps
+  // denying the WHOLE irreversible surface after the upgrade, without edits.
+  for (const tool of [bulkDeleteIssuesTool, bulkEditIssuesTool]) {
+    assert.equal(tool.package, 'issues-delete', `${tool.name} package`);
+    assert.ok(ALL_TOOLS.includes(tool), `${tool.name} must be exported by the package`);
+  }
+});
+
+test('CC-127: a 201 means ENQUEUED — the receipt says to poll and never claims done', async () => {
+  const fake = createFakeJiraRequest().on(BULK_DELETE_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    bulkDeleteIssuesTool,
+    { issues: [KEY, 'PROJ-2'] },
+    fake,
+  );
+
+  assert.equal(applied.ok, true);
+  // The receipt is the taskId and the before-state — no completion claim.
+  assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
+  const hint = (applied.hints ?? [])[0];
+  assert.equal(hint?.code, 'discovery');
+  assert.match(hint?.message ?? '', /ENQUEUED/);
+  assert.match(hint?.message ?? '', /jira_get_bulk_status/);
+  assert.match(hint?.message ?? '', /never waits/);
+  assert.equal(applied._untrusted, true);
+  // One POST in the whole exchange: the plan sent nothing, and the tool did
+  // not block on the queue or poll it behind the caller's back.
+  assert.deepEqual(fake.routes(), [BULK_DELETE_SUBMIT_ROUTE]);
+  // A replayed submit would enqueue a SECOND task doing the same damage.
+  assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
+});
+
+test('CC-128: the 1000-issue cap is enforced in the schema, before anything is sent', () => {
+  // The registry parses input before any handler runs, so a failed parse IS
+  // "nothing was sent" — there is no request left to assert away.
+  assert.equal(
+    bulkDeleteIssuesTool.input.safeParse({ issues: bulkKeys(1000) }).success,
+    true,
+  );
+  assert.equal(
+    bulkDeleteIssuesTool.input.safeParse({ issues: bulkKeys(1001) }).success,
+    false,
+  );
+  assert.equal(bulkDeleteIssuesTool.input.safeParse({ issues: [] }).success, false);
+  assert.equal(
+    bulkEditIssuesTool.input.safeParse({ issues: bulkKeys(1000), priorityId: '2' })
+      .success,
+    true,
+  );
+  assert.equal(
+    bulkEditIssuesTool.input.safeParse({ issues: bulkKeys(1001), priorityId: '2' })
+      .success,
+    false,
+  );
+  assert.equal(
+    bulkEditIssuesTool.input.safeParse({ issues: [], priorityId: '2' }).success,
+    false,
+  );
+});
+
+test('CC-129: the bulk plan is the request itself — zero reads, a count and a capped echo', async () => {
+  // The other six tools fetch what would be lost; a bulk plan does NOT. Its
+  // blast radius is the caller's own list, and pre-fetching up to a thousand
+  // issues would spend rate limit restating the input. The before-state is
+  // the count plus the first-20 echo, built with no network at all.
+  const issues = bulkKeys(21);
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const plan = await gate.execute(callOf(bulkDeleteIssuesTool, { issues }, {}, fake.fn));
+
+  assert.equal(plan.ok, true);
+  assert.deepEqual(fake.routes(), [], 'the plan made no network call');
+  assert.deepEqual((plan.data as { planned: unknown }).planned, {
+    method: 'POST',
+    path: '/bulk/issues/delete',
+    body: { selectedIssueIdsOrKeys: issues },
+  });
+  assert.deepEqual(beforeOf(plan), {
+    kind: 'bulk-delete',
+    issueCount: 21,
+    issues: issues.slice(0, 20),
+    truncated: true,
+  });
+  assert.equal(plan._untrusted, true);
+  assert.equal((plan.hints ?? [])[0]?.code, 'plan');
+});
+
+test('a bulk plan of exactly twenty issues echoes them all and claims no truncation', async () => {
+  const issues = bulkKeys(20);
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(callOf(bulkDeleteIssuesTool, { issues }, {}, fake.fn)),
+  );
+
+  assert.deepEqual(before, { kind: 'bulk-delete', issueCount: 20, issues });
+  assert.equal(Object.hasOwn(before, 'truncated'), false);
+});
+
+test('CC-130: the edit posts to /bulk/issues/fields and DERIVES selectedActions itself', async () => {
+  const fake = createFakeJiraRequest().on(BULK_EDIT_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    bulkEditIssuesTool,
+    {
+      issues: [KEY, 'PROJ-2'],
+      labels: ['triaged'],
+      labelsAction: 'ADD',
+      priorityId: '2',
+    },
+    fake,
+  );
+
+  const planned = (plan.data as { planned: PlannedRequest }).planned;
+  assert.equal(planned.method, 'POST');
+  assert.equal(planned.path, '/bulk/issues/fields');
+  // The top-level wire envelope is this ring's concern; `editedFieldsInput`'s
+  // sub-shape is `api/bulk.test.ts`'s contract and is not re-asserted here.
+  const body = fake.lastRequest()?.body as Record<string, unknown>;
+  assert.deepEqual(Object.keys(body).sort(), [
+    'editedFieldsInput',
+    'selectedActions',
+    'selectedIssueIdsOrKeys',
+  ]);
+  assert.deepEqual(body['selectedActions'], ['labels', 'priority']);
+  assert.deepEqual(body['selectedIssueIdsOrKeys'], [KEY, 'PROJ-2']);
+  assert.deepEqual(beforeOf(plan), {
+    kind: 'bulk-edit',
+    issueCount: 2,
+    issues: [KEY, 'PROJ-2'],
+    edits: { labels: { action: 'ADD', values: ['triaged'] }, priorityId: '2' },
+  });
+  assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
+  // `selectedActions` is derived, never caller-supplied: the strict schema
+  // refuses the key rather than trusting a caller's account of their intent.
+  assert.equal(
+    bulkEditIssuesTool.input.safeParse({
+      issues: [KEY],
+      priorityId: '2',
+      selectedActions: ['labels'],
+    }).success,
+    false,
+  );
+  assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
+});
+
+test('CC-131: notifyUsers maps to sendBulkNotification, and absent means omitted', async () => {
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const muted = createFakeJiraRequest().on(BULK_DELETE_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
+  await planThenApply(
+    gate,
+    bulkDeleteIssuesTool,
+    { issues: [KEY], notifyUsers: false },
+    muted,
+  );
+  assert.deepEqual(muted.lastRequest()?.body, {
+    selectedIssueIdsOrKeys: [KEY],
+    sendBulkNotification: false,
+  });
+
+  // Absent means ABSENT on the wire — the tenant default decides, not a guess.
+  const defaulted = createFakeJiraRequest().on(
+    BULK_DELETE_SUBMIT_ROUTE,
+    BULK_SUBMIT_RECEIPT,
+  );
+  await planThenApply(gate, bulkDeleteIssuesTool, { issues: [KEY] }, defaulted);
+  assert.deepEqual(defaulted.lastRequest()?.body, { selectedIssueIdsOrKeys: [KEY] });
+
+  const edited = createFakeJiraRequest().on(BULK_EDIT_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
+  await planThenApply(
+    gate,
+    bulkEditIssuesTool,
+    { issues: [KEY], priorityId: '2' },
+    edited,
+  );
+  assert.equal(
+    Object.hasOwn(
+      edited.lastRequest()?.body as Record<string, unknown>,
+      'sendBulkNotification',
+    ),
+    false,
+  );
+});
+
+test('CC-133: a value without its action — or the reverse — is refused client-side', () => {
+  // Zod refinement, not Jira: the pairing is validated before anything is
+  // sent, so a half-stated intent cannot reach the queue and fail there.
+  const parses = (extra: Record<string, unknown>): boolean =>
+    bulkEditIssuesTool.input.safeParse({ issues: [KEY], ...extra }).success;
+
+  assert.equal(parses({ labels: ['triaged'] }), false, 'labels without labelsAction');
+  assert.equal(parses({ labelsAction: 'ADD' }), false, 'labelsAction without labels');
+  assert.equal(
+    parses({ labels: ['triaged'], labelsAction: 'REMOVE_ALL' }),
+    false,
+    'REMOVE_ALL takes no values',
+  );
+  assert.equal(
+    parses({ labels: [], labelsAction: 'ADD' }),
+    false,
+    'ADD with an empty list edits nothing',
+  );
+  assert.equal(parses({ fixVersionIds: ['10600'] }), false);
+  assert.equal(parses({ fixVersionIds: [], fixVersionsAction: 'REPLACE' }), false);
+  // No field at all is not an edit; notifyUsers alone states no intent either.
+  assert.equal(parses({}), false);
+  assert.equal(parses({ notifyUsers: false }), false);
+
+  assert.equal(parses({ labels: ['triaged'], labelsAction: 'ADD' }), true);
+  assert.equal(parses({ labels: [], labelsAction: 'REMOVE_ALL' }), true);
+  assert.equal(parses({ fixVersionIds: ['10600'], fixVersionsAction: 'REPLACE' }), true);
+  assert.equal(parses({ priorityId: '2' }), true);
+  assert.equal(parses({ assigneeAccountId: ACCOUNT_ID }), true);
+  assert.equal(parses({ assigneeAccountId: null }), true);
+});
+
+test('an explicit null assignee survives into the before-state as the unassign intent', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(
+      callOf(bulkEditIssuesTool, { issues: [KEY], assigneeAccountId: null }, {}, fake.fn),
+    ),
+  );
+
+  assert.deepEqual(before['edits'], { assigneeAccountId: null });
+});
+
+// ---------------------------------------------------------------------------
 // The tier, end to end through the tools
 // ---------------------------------------------------------------------------
 
 test('without the opt-in every delete plans and none of them applies', async () => {
-  const cases: readonly [AnyToolSpec, Record<string, unknown>, string][] = [
-    [deleteIssueTool, { issue: KEY }, ISSUE_ROUTE],
-    [deleteCommentTool, { issue: KEY, commentId: COMMENT_ID }, COMMENT_ROUTE],
-    [deleteWorklogTool, { issue: KEY, worklogId: WORKLOG_ID }, WORKLOG_ROUTE],
+  type Case = readonly [
+    AnyToolSpec,
+    Record<string, unknown>,
+    readonly (readonly [string, Record<string, unknown>])[],
   ];
-  const bodies: readonly Record<string, unknown>[] = [
-    issueBody([]),
-    COMMENT_BODY,
-    WORKLOG_BODY,
+  const cases: readonly Case[] = [
+    [deleteIssueTool, { issue: KEY }, [[ISSUE_ROUTE, issueBody([])]]],
+    [
+      deleteCommentTool,
+      { issue: KEY, commentId: COMMENT_ID },
+      [[COMMENT_ROUTE, COMMENT_BODY]],
+    ],
+    [
+      deleteWorklogTool,
+      { issue: KEY, worklogId: WORKLOG_ID },
+      [[WORKLOG_ROUTE, WORKLOG_BODY]],
+    ],
+    [
+      deleteComponentTool,
+      { componentId: COMPONENT_ID },
+      [
+        [COMPONENT_ROUTE, COMPONENT_BODY],
+        [COMPONENT_COUNTS_ROUTE, COMPONENT_COUNTS_BODY],
+      ],
+    ],
+    [
+      deleteVersionTool,
+      { versionId: VERSION_ID },
+      [
+        [VERSION_ROUTE, VERSION_BODY],
+        [VERSION_COUNTS_ROUTE, VERSION_COUNTS_BODY],
+      ],
+    ],
+    [deleteSprintTool, { sprintId: SPRINT_ID }, [[SPRINT_ROUTE, SPRINT_BODY]]],
+    // The bulk plans read nothing (CC-129), so their reads lists are empty.
+    [bulkDeleteIssuesTool, { issues: [KEY] }, []],
+    [bulkEditIssuesTool, { issues: [KEY], priorityId: '2' }, []],
   ];
 
-  for (const [index, [tool, args]] of cases.entries()) {
+  for (const [tool, args, reads] of cases) {
     const fake = createFakeJiraRequest();
-    // Only the READ is programmed: any DELETE that escaped would throw.
-    fake.on(cases[index]?.[2] ?? '', jiraOk(bodies[index]));
+    // Only the READs are programmed: any DELETE — or removeAndSwap/bulk-submit
+    // POST — that escaped would throw on its unprogrammed route.
+    for (const [route, body] of reads) fake.on(route, jiraOk(body));
     const gate = createWriteGate({
       writeMode: 'apply',
       allowIrreversible: false,
@@ -836,7 +1614,11 @@ test('without the opt-in every delete plans and none of them applies', async () 
     assert.equal(refused.ok, false, `${tool.name} must not apply`);
     assert.equal(refused.error?.kind, 'write_gated');
     assert.match(refused.error?.remediation ?? '', /JIRA_ALLOW_IRREVERSIBLE/);
-    assert.equal(fake.routes().length, 1, 'the refusal read nothing and sent nothing');
+    assert.equal(
+      fake.routes().length,
+      reads.length,
+      `${tool.name}: the refusal read nothing and sent nothing`,
+    );
   }
 });
 

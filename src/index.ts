@@ -233,13 +233,11 @@ async function serve(): Promise<void> {
       }
     }
 
-    // Both of these fail closed, before anything is constructed: an unusable
-    // configuration must not become a server that answers `tools/list` and then
-    // fails every call.
+    // Fails closed, before anything is constructed: an unusable configuration
+    // must not become a server that answers `tools/list` and then fails every
+    // call. This includes `JIRA_TRANSPORT=http` without its bearer token —
+    // settings reports `http_token_missing` (CC-30) and startup ends here.
     assertStartupOk(loaded.report);
-    const { assertTransportSupported, connectTransport } =
-      await import('./mcp/transport.js');
-    assertTransportSupported(settings);
 
     const { createJiraRequest } = await import('./core/http.js');
     const { resolveHost } = await import('./core/host.js');
@@ -323,7 +321,7 @@ async function serve(): Promise<void> {
     });
 
     const { buildServer } = await import('./mcp/server.js');
-    const server = buildServer({
+    const serverDeps = {
       settings,
       packages,
       serverName: SERVER_NAME,
@@ -334,9 +332,26 @@ async function serve(): Promise<void> {
       clock,
       rng,
       journal,
-    });
+    };
 
-    const handle = await connectTransport(server, { settings, logger });
+    // WHICH transport is this file's one branch on `settings.transport` (D101).
+    // stdio builds its single Server eagerly — one process, one session. http
+    // hands over the FACTORY instead: each MCP session gets its own `buildServer`
+    // product (plans and their write gate die with the session, CC-117), so no
+    // eager Server is constructed here.
+    let handle: TransportHandle;
+    if (settings.transport === 'http') {
+      const { connectHttpTransport } = await import('./mcp/transport-http.js');
+      handle = await connectHttpTransport({
+        settings,
+        logger,
+        clock,
+        createServer: () => buildServer(serverDeps),
+      });
+    } else {
+      const { connectTransport } = await import('./mcp/transport.js');
+      handle = await connectTransport(buildServer(serverDeps), { settings, logger });
+    }
     installShutdownHandlers(handle);
 
     logger.emit('server_start', {

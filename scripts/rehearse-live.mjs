@@ -233,7 +233,8 @@ function agileWriteChecks({ requests, claims, state }) {
   }
 
   // The fake's own view: the sprint the driver made really is closed, and it is
-  // still there, because nothing can delete it.
+  // still there — no claim in this pass deletes it; removal is a --purge run
+  // (jira_delete_sprint, D102).
   const created = state.sprints.filter((sprint) => /^gate-c-/.test(sprint.name));
   if (created.length !== 1) {
     failures.push(`expected 1 gate-c sprint on the fake, saw ${String(created.length)}`);
@@ -246,10 +247,10 @@ function agileWriteChecks({ requests, claims, state }) {
     if (row === undefined) failures.push(`${id} did not run`);
     else if (row.status !== 'PASS') failures.push(`${id} is ${row.status}: ${row.note}`);
   }
-  // C27's note is the only place a reader is told the sprint is permanent.
+  // C27's note is the only place a reader is told how the sprint is removed.
   const c27 = claims.find((c) => c.id === 'C27');
-  if (c27 !== undefined && !/DELETE A SPRINT/.test(c27.note)) {
-    failures.push('C27 stopped saying that the sprint it creates cannot be deleted');
+  if (c27 !== undefined && !/jira_delete_sprint, D102/.test(c27.note)) {
+    failures.push('C27 stopped pointing at the --purge removal path (D102)');
   }
   return failures;
 }
@@ -328,8 +329,8 @@ const PASSES = [
       // A full run is every claim the driver owns. The exact number is asserted
       // rather than a floor, so adding a claim without teaching the fake the
       // routes it needs is caught here instead of on a live tenant.
-      if (claims.length !== 41) {
-        failures.push(`expected 41 claims in the report, saw ${String(claims.length)}`);
+      if (claims.length !== 43) {
+        failures.push(`expected 43 claims in the report, saw ${String(claims.length)}`);
       }
       const c00 = claims.find((c) => c.id === 'C00');
       if (c00 === undefined) failures.push('C00 did not run — no doctor preflight');
@@ -337,11 +338,20 @@ const PASSES = [
       const c31 = claims.find((c) => c.id === 'C31');
       if (c31 === undefined) failures.push('C31 did not run — --project2 is dead again');
       else if (c31.status !== 'PASS') failures.push(`C31 is ${c31.status}: ${c31.note}`);
+      // The bulk claims must PASS here, not merely run: on the fake nothing can
+      // legitimately SKIP them, so a SKIP is a broken route wearing a calm face.
+      for (const id of ['C42', 'C43']) {
+        const row = claims.find((c) => c.id === id);
+        if (row === undefined) failures.push(`${id} did not run — no bulk coverage`);
+        else if (row.status !== 'PASS')
+          failures.push(`${id} is ${row.status}: ${row.note}`);
+      }
       failures.push(...agileWriteChecks({ requests, claims, state }));
-      // A full run deletes both its issues but CANNOT delete the version, the
-      // sprint or the component (D73), and it leaves the file it staged for the
-      // upload. Those four numbers are the gate's residue contract; if any of
-      // them moves, the runbook is lying to the owner.
+      // A full run deletes both its issues and leaves the version, the sprint,
+      // the component and the staged file behind ON PURPOSE — removal is a
+      // --purge run (D102), which this pass does not include. Those four
+      // numbers are the gate's residue contract; if any of them moves, the
+      // runbook is lying to the owner.
       failures.push(
         ...residueChecks(
           { claims, stderr },
@@ -659,26 +669,48 @@ const PASSES = [
           { issues: 2, versions: 1, components: 1, sprints: 1, media: 1 },
         ),
       );
-      // The table printed at the end is the post-purge truth: what it could
-      // clear is gone, and what it CANNOT clear is still named, or the operator
-      // will believe the site is clean when a version, a sprint and a component
-      // are still on it.
+      // The table printed at the end is the post-purge truth: since D102 the
+      // purge reaches every remote class, and this fake refuses nothing, so
+      // every class has to read clean — an operator who still sees a version,
+      // a sprint or a component named would rightly distrust the runbook.
       for (const line of [
         'throwaway issues: none',
+        'project versions: none',
+        'project components: none',
+        'sprints: none',
         'local files in JIRA_MEDIA_DIR: none',
       ]) {
         if (!stderr.includes(line)) {
           failures.push(`after the purge the table should say "${line}"`);
         }
       }
-      for (const marker of [
-        'Project settings → Releases',
-        'Backlog → the sprint',
-        'Project settings → Components',
-      ]) {
-        if (!stderr.includes(marker)) {
-          failures.push(`the residue table stopped saying how to remove: ${marker}`);
+      // The three routes D102 added, one hit each: the purge found exactly one
+      // artifact of each class and removed it with the tool, not a UI note.
+      const artifactDeletes = [
+        ['DELETE', /^\/rest\/api\/3\/component\/[^/]+$/, 'component delete'],
+        [
+          'POST',
+          /^\/rest\/api\/3\/version\/[^/]+\/removeAndSwap$/,
+          'version removeAndSwap',
+        ],
+        ['DELETE', /^\/rest\/agile\/1\.0\/sprint\/\d+$/, 'sprint delete'],
+      ];
+      for (const [method, pattern, label] of artifactDeletes) {
+        const hits = requests.filter((r) => r.method === method && pattern.test(r.path));
+        if (hits.length !== 1) {
+          failures.push(
+            `expected exactly 1 ${label} (${method}), saw ${String(hits.length)}`,
+          );
         }
+      }
+      // And the fake's own state agrees with the table.
+      const leftover = [
+        ...[...state.components.values()].map((row) => row.name),
+        ...[...state.versions.values()].map((row) => row.name),
+        ...state.sprints.map((row) => row.name),
+      ].filter((name) => /^gate-c-/.test(String(name)));
+      if (leftover.length > 0) {
+        failures.push(`gate-c artifact(s) survived the purge: ${leftover.join(', ')}`);
       }
       return failures;
     },

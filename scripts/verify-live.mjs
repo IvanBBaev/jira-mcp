@@ -115,13 +115,13 @@ Flags:
   --confirm-site <H>  The host you mean to write to. REQUIRED by --write,
                       --irreversible and --purge, and it must match JIRA_SITE.
   --write             Run the write phase (creates TWO throwaway issues, ONE
-                      version, ONE sprint and ONE component; the last three
-                      are permanent).
+                      version, ONE sprint and ONE component).
   --irreversible      Allow the delete tier (the throwaway issue; with --purge,
-                      the leftover gate-c issues).
+                      every leftover gate-c artifact).
   --residue           Skip the claims and only inventory what past runs left.
   --purge             With --residue and --irreversible: delete the gate-c
-                      issues found, and the gate-c files in JIRA_MEDIA_DIR.
+                      issues, versions, components and sprints found (D102),
+                      and the gate-c files in JIRA_MEDIA_DIR.
   --record <DIR>      Write redacted per-claim result JSON into DIR.
   --keep              Do not delete the throwaway issue even with --irreversible.
   --skip-doctor       Do not run the doctor preflight (C00).
@@ -265,10 +265,16 @@ const PURGE_COMMAND_HINT =
  * "the site is clean" is a statement the operator reads rather than infers from
  * silence. `removal` is a three-way fact, not a wish:
  *
- *   - `command` — this script can remove it, and `how` is the command.
- *   - `manual`  — no tool this SERVER ships can remove it, so the only route is
- *     the Jira UI. That is not an oversight: D73 refused to add a delete tool
- *     purely to service the gate, and the same reasoning covers versions.
+ *   - `command` — this script can remove it, and `how` is the command. Since
+ *     D102 shipped jira_delete_component, jira_delete_version and
+ *     jira_delete_sprint, every REMOTE class is in this bucket — though the
+ *     tenant keeps the last word: component and version deletes need project
+ *     admin, a sprint delete needs manage-sprints, and a refusal is reported,
+ *     never retried.
+ *   - `manual`  — no tool this SERVER ships can remove it, so the only route
+ *     is the Jira UI. Empty since D102 (D73 had parked versions, components
+ *     and sprints here); the category stays in the contract because "the UI"
+ *     may again be the honest answer for a future artifact class.
  *   - `local`   — it never left this machine.
  *
  * @param {object} inventory
@@ -305,20 +311,19 @@ export function residuePlan(inventory = {}) {
       items: (inventory.versions ?? []).map(
         (row) => `${row.name} (id ${row.id}${row.archived === true ? ', archived' : ''})`,
       ),
-      removal: 'manual',
+      removal: 'command',
       how:
-        'Project settings → Releases → the version → ••• → Delete. This server ' +
-        'ships no version delete (D73: the gate does not widen the write surface).',
+        `${purge} — jira_delete_version (D102) removes these; the tenant may ` +
+        'still refuse without project admin.',
     },
     {
       kind: 'components',
       title: 'project components',
       items: (inventory.components ?? []).map((row) => `${row.name} (id ${row.id})`),
-      removal: 'manual',
+      removal: 'command',
       how:
-        'Project settings → Components → the component → ••• → Delete. This ' +
-        'server ships no component delete (D73), so every --write run leaves ' +
-        'exactly one of these behind — expected, not a surprise.',
+        `${purge} — jira_delete_component (D102) removes these; the tenant ` +
+        'may still refuse without project admin.',
     },
     {
       kind: 'sprints',
@@ -327,10 +332,10 @@ export function residuePlan(inventory = {}) {
         (row) =>
           `${row.name} (id ${String(row.id)}${row.state === undefined ? '' : `, ${row.state}`})`,
       ),
-      removal: 'manual',
+      removal: 'command',
       how:
-        'Backlog → the sprint → ••• → Delete sprint. This server ships no ' +
-        'sprint delete (D73). One sprint per --write run is expected.',
+        `${purge} — jira_delete_sprint (D102) removes these; needs ` +
+        'manage-sprints on the board, and open issues fall back to the backlog.',
     },
     {
       kind: 'media',
@@ -667,6 +672,35 @@ async function planOnly(session, name, args) {
     throw new Error(`${name}: plan carried no 'planned' request preview`);
   }
   return plan;
+}
+
+/**
+ * Poll `jira_get_bulk_status` until the task settles, and insist it COMPLETEs.
+ *
+ * A 201 from a bulk submit only means ENQUEUED (CC-127): nothing has happened
+ * to any issue yet, so a claim that stopped at the taskId would have proven
+ * queueing, not the operation. The budget is generous for a one-or-two-issue
+ * task; a task still unfinished after it is evidence, not noise, so running
+ * out of budget throws instead of shrugging.
+ */
+async function pollBulkTask(session, taskId) {
+  let last;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    last = dataOf(
+      await call(session, 'jira_get_bulk_status', { taskId }),
+      'jira_get_bulk_status',
+    );
+    const status = String(last.status ?? '');
+    if (status === 'COMPLETE') return last;
+    if (status === 'FAILED' || status === 'DEAD' || status === 'CANCELLED') {
+      throw new Error(
+        `bulk task ${taskId} ended ${status} (failed=${String(last.failedCount)}, ` +
+          `invalid=${String(last.invalidOrInaccessibleIssueCount)})`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`bulk task ${taskId} still ${String(last?.status)} after 30 polls`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1307,13 +1341,13 @@ function runId() {
  * What this run made and is responsible for.
  *
  * Three entries are the odd ones out. Both issues, the comment and the worklog
- * are all deletable by a tool this server exposes, and the delete phase removes
- * them. A **sprint** (C27), a **version** (C22) and a **component** (C41) are
- * not: `src/api/agile.ts` ships no sprint delete and `src/api/collab.ts` ships
- * neither a version nor a component delete, all three on purpose, so each
- * `--write` run adds one of each to the site permanently. The version was the
- * quiet one — until this wave only the sprint was warned about — which is
- * exactly why the tail of `run()` now enumerates the residue from a READ of the
+ * are deleted by the gate's own delete phase; the **sprint** (C27), **version**
+ * (C22) and **component** (C41) are not — the claims leave them on the site,
+ * on purpose, so the residue inventory has something real to find and a later
+ * `--purge` run something real to remove (jira_delete_sprint /
+ * jira_delete_version / jira_delete_component, D102). The version was once the
+ * quiet one — until one wave only the sprint was warned about — which is
+ * exactly why the tail of `run()` enumerates the residue from a READ of the
  * site instead of from this object.
  */
 const created = {
@@ -1711,9 +1745,10 @@ async function writePhase(session, flags) {
       });
       const componentId = applied.component?.id;
       if (componentId === undefined) throw new Error('create returned no component id');
-      // Recorded before anything else can fail: from here on the component exists
-      // and no tool this server ships removes it (D73), so the residue inventory
-      // has to be able to name it.
+      // Recorded before anything else can fail: from here on the component
+      // exists, the claims will not remove it, and only a later --purge run
+      // (jira_delete_component, D102) will — so the residue inventory has to
+      // be able to name it.
       created.componentId = String(componentId);
       created.componentName = name;
       if (typeof componentId !== 'string') {
@@ -1740,8 +1775,8 @@ async function writePhase(session, flags) {
       }
       return (
         `component ${String(componentId)} created, then updated by numeric id — ` +
-        `NO TOOL HERE CAN DELETE A COMPONENT: "${name}" stays on the project until ` +
-        `you remove it by hand (Project settings → Components → Delete)`
+        `"${name}" stays on the project until a --purge run removes it ` +
+        `(jira_delete_component, D102; the tenant needs project admin)`
       );
     },
   );
@@ -1769,9 +1804,10 @@ async function writePhase(session, flags) {
  *   2. **State.** A board that already has an active sprint refuses a second
  *      one; a sprint that is not active cannot be closed. Both are HTTP 400 →
  *      `kind: validation` with a re-aimed remediation, and both SKIP.
- *   3. **No delete.** This server exposes no way to remove a sprint, on purpose.
- *      C27 therefore leaves one behind on the site, permanently, and says so in
- *      its own note as well as at the end of the run.
+ *   3. **Delete is a separate run.** jira_delete_sprint exists since D102, but
+ *      no claim here uses it: C27 leaves its sprint on the site so the residue
+ *      inventory has to find it, and a later --purge run removes it together
+ *      with the rest of the leftovers, in one place.
  */
 async function agileWriteClaims(session) {
   await claim(
@@ -1820,8 +1856,8 @@ async function agileWriteClaims(session) {
       created.sprintName = name;
       return (
         `sprint ${String(sprint.id)} on ${String(board.type ?? 'unknown-type')} board ` +
-        `${String(board.id)} — NO TOOL HERE CAN DELETE A SPRINT: "${name}" stays on the ` +
-        `site until you remove it by hand (Backlog → sprint → Delete)`
+        `${String(board.id)} — "${name}" stays on the site until a --purge run ` +
+        `removes it (jira_delete_sprint, D102)`
       );
     },
   );
@@ -1914,9 +1950,9 @@ async function agileWriteClaims(session) {
     if (applied.state !== 'closed') {
       throw new Error(`close reported state ${String(applied.state)}, expected closed`);
     }
-    // Closing is one-way: there is no reopen tool and no delete tool, so the
-    // sprint is now a permanent, harmless entry in the board's history.
-    return `sprint ${String(sprintId)} closed — terminal, and still not deletable from here`;
+    // Closing is one-way: there is no reopen tool, so the sprint is now a
+    // harmless entry in the board's history until a --purge run deletes it.
+    return `sprint ${String(sprintId)} closed — terminal; --purge can remove it (D102)`;
   });
 }
 
@@ -1964,7 +2000,70 @@ async function refusalPhase(session) {
   });
 }
 
-async function deletePhase(session) {
+async function deletePhase(session, flags) {
+  // The bulk claims run BEFORE C26 on purpose: C42 edits the throwaway issues
+  // C17/C39 made, so they have to still exist. Both sit in this phase, not the
+  // write phase, because bulk tools are irreversible-tier (D103) and this child
+  // is the one started with JIRA_ALLOW_IRREVERSIBLE.
+  await claim('C42', 'bulk edit: labels ADD lands on the throwaway issues', async () => {
+    const key = created.issueKey;
+    if (key === undefined) skip('no throwaway issue');
+    const issues = created.issueKey2 === undefined ? [key] : [key, created.issueKey2];
+    const { applied } = await planAndApplyOrSkip(
+      session,
+      'jira_bulk_edit_issues',
+      { issues, labels: ['gate-c-bulk'], labelsAction: 'ADD' },
+      // Bulk operations need the GLOBAL "Make bulk changes" permission on top
+      // of the per-project ones; a tenant that withholds it from the test
+      // account is a property of the site, not of the code.
+      ['permission'],
+    );
+    if (typeof applied.taskId !== 'string' || applied.taskId === '') {
+      throw new Error('apply returned no taskId');
+    }
+    const done = await pollBulkTask(session, applied.taskId);
+    const after = dataOf(
+      await call(session, 'jira_get_issue', { issue: key, fields: ['labels'] }),
+      'jira_get_issue',
+    );
+    const labels = after.fields?.labels;
+    if (!Array.isArray(labels) || !labels.includes('gate-c-bulk')) {
+      throw new Error(`the label never landed on ${key}: ${JSON.stringify(labels)}`);
+    }
+    return (
+      `task ${applied.taskId} COMPLETE ` +
+      `(${String(done.progressPercent)}%), label visible on ${key}`
+    );
+  });
+
+  await claim('C43', 'bulk delete: a dedicated throwaway is removed', async () => {
+    if (flags.project === undefined) skip('no --project');
+    // Its own issue, not C26's: this claim must be able to die without leaving
+    // C26 nothing to delete. The summary matches GATE_C_ISSUE_SUMMARY, so if
+    // the delete half never runs (a permission SKIP below included), the
+    // residue inventory owns the body and --purge clears it.
+    const { applied: made } = await planAndApply(session, 'jira_create_issue', {
+      project: flags.project,
+      issueType: flags['issue-type'],
+      summary: `gate-c verify-live ${runId()} (safe to delete)`,
+      description: 'Created by scripts/verify-live.mjs during Gate C. Safe to delete.',
+    });
+    if (typeof made.key !== 'string') throw new Error('setup create returned no key');
+    const { applied } = await planAndApplyOrSkip(
+      session,
+      'jira_bulk_delete_issues',
+      { issues: [made.key] },
+      ['permission'],
+    );
+    if (typeof applied.taskId !== 'string' || applied.taskId === '') {
+      throw new Error('apply returned no taskId');
+    }
+    await pollBulkTask(session, applied.taskId);
+    const gone = await call(session, 'jira_get_issue', { issue: made.key });
+    errorOf(gone, 'jira_get_issue', 'not_found');
+    return `created ${made.key}, bulk task COMPLETE, re-read is not_found`;
+  });
+
   await claim('C26', 'deletes execute with the opt-in on', async () => {
     const key = created.issueKey;
     if (key === undefined) skip('no throwaway issue');
@@ -2175,16 +2274,22 @@ async function residuePhase(session, flags, site) {
 }
 
 /**
- * The cleanup half. Only issues and local files are reachable from here: a
- * version and a sprint have no delete tool, and D73's rule — the gate does not
- * get to widen the product's write surface — is why one was not added for them.
+ * The cleanup half. Since D102 every remote class is reachable from here:
+ * `jira_delete_issue` for the throwaways, and `jira_delete_sprint` /
+ * `jira_delete_component` / `jira_delete_version` for the artifacts D73 used
+ * to strand. The tenant keeps the last word — component and version deletes
+ * need project admin, a sprint delete needs manage-sprints — so a refusal is
+ * recorded in the note and the artifact STAYS in the residue table; nothing is
+ * retried (unsafe writes are never replayed — JIRA-API.md's rule, not this
+ * script's to relax).
  */
 async function purgePhase(session) {
   await claim('C33', 'residue purge: the deletable leftovers are removed', async () => {
     if (residue === undefined) skip('the inventory did not run');
-    const targets = residue.issues;
-    const removedFiles = [];
-    for (const target of targets) {
+    const removed = [];
+    const refused = [];
+
+    for (const target of residue.issues) {
       // Belt and braces: the inventory already anchored this, and the delete
       // path anchors it again. A regression that widened the JQL would have to
       // get past both to touch an issue this gate did not create.
@@ -2192,7 +2297,77 @@ async function purgePhase(session) {
         throw new Error(`refusing to delete ${target.key}: "${target.summary}"`);
       }
       await planAndApply(session, 'jira_delete_issue', { issue: target.key });
+      removed.push(target.key);
     }
+
+    // The three classes D102 made deletable, issues first so nothing in the
+    // gate's own sprint or version is still referenced when they go. An error
+    // envelope here is the TENANT refusing (permissions, licence) — recorded,
+    // never retried, and the artifact keeps its row in the residue table. A
+    // plan that carries no plan_id is a defect of ours, not a refusal.
+    const attempt = async (tool, args, label) => {
+      const plan = await call(session, tool, args);
+      if (plan.ok !== true) {
+        refused.push(`${label} (${String(plan.error?.kind)})`);
+        return false;
+      }
+      const planId = plan.data?.plan_id;
+      if (typeof planId !== 'string' || planId === '') {
+        throw new Error(`${tool}: plan carried no plan_id`);
+      }
+      const applied = await call(session, tool, {
+        ...args,
+        apply: true,
+        plan_id: planId,
+      });
+      if (applied.ok !== true) {
+        refused.push(`${label} (${String(applied.error?.kind)})`);
+        return false;
+      }
+      removed.push(label);
+      return true;
+    };
+
+    const kept = { sprints: [], components: [], versions: [] };
+    for (const sprint of residue.sprints) {
+      if (!isGateCArtifact(sprint.name)) {
+        throw new Error(
+          `refusing to delete sprint ${String(sprint.id)}: "${sprint.name}"`,
+        );
+      }
+      const gone = await attempt(
+        'jira_delete_sprint',
+        { sprintId: sprint.id },
+        `sprint ${String(sprint.id)}`,
+      );
+      if (!gone) kept.sprints.push(sprint);
+    }
+    for (const component of residue.components) {
+      if (!isGateCArtifact(component.name)) {
+        throw new Error(
+          `refusing to delete component ${component.id}: "${component.name}"`,
+        );
+      }
+      const gone = await attempt(
+        'jira_delete_component',
+        { componentId: Number(component.id) },
+        `component ${component.id}`,
+      );
+      if (!gone) kept.components.push(component);
+    }
+    for (const version of residue.versions) {
+      if (!isGateCArtifact(version.name)) {
+        throw new Error(`refusing to delete version ${version.id}: "${version.name}"`);
+      }
+      const gone = await attempt(
+        'jira_delete_version',
+        { versionId: Number(version.id) },
+        `version ${version.id}`,
+      );
+      if (!gone) kept.versions.push(version);
+    }
+
+    const removedFiles = [];
     const dir = mediaDir();
     if (dir !== undefined) {
       for (const name of residue.mediaFiles) {
@@ -2200,15 +2375,23 @@ async function purgePhase(session) {
         removedFiles.push(name);
       }
     }
-    residue = { ...residue, issues: [], mediaFiles: [] };
-    if (targets.length === 0 && removedFiles.length === 0) {
+    residue = {
+      ...residue,
+      issues: [],
+      mediaFiles: [],
+      sprints: kept.sprints,
+      components: kept.components,
+      versions: kept.versions,
+    };
+    if (removed.length === 0 && removedFiles.length === 0 && refused.length === 0) {
       return 'nothing deletable was left';
     }
-    return (
-      `deleted ${String(targets.length)} issue(s) ` +
-      `[${targets.map((row) => row.key).join(', ')}] and ` +
-      `${String(removedFiles.length)} local file(s)`
-    );
+    const note =
+      `deleted ${String(removed.length)} leftover(s)` +
+      (removed.length === 0 ? '' : ` [${removed.join(', ')}]`) +
+      ` and ${String(removedFiles.length)} local file(s)`;
+    if (refused.length === 0) return note;
+    return `${note}; the tenant refused ${refused.join(', ')} — still in the residue table`;
   });
 }
 
@@ -2431,7 +2614,7 @@ async function run(argv = process.argv.slice(2)) {
         await withServer(
           credentials,
           { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
-          (session) => deletePhase(session),
+          (session) => deletePhase(session, flags),
         );
       }
     }

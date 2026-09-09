@@ -10,17 +10,20 @@
 // and the runtime guards that turn `unknown` wire data into typed rows.
 //
 // Scope is TOOLS.md §Package `agile`: list boards, list a board's sprints, read
-// a sprint's issues, move issues INTO a sprint or OUT to the backlog, and walk a
-// sprint through its lifecycle — create, start, close (WP-61). Deliberately
-// absent:
+// one sprint or a sprint's issues, move issues INTO a sprint or OUT to the
+// backlog, walk a sprint through its lifecycle — create, start, close (WP-61) —
+// and, since Phase 11 (D102), delete one. The delete PRIMITIVE lives here
+// because this module owns the agile root, but the TOOL that calls it belongs
+// to the irreversible `issues-delete` package behind JIRA_ALLOW_IRREVERSIBLE
+// (D50/CC-48) — the `agile` tool package itself still deletes nothing.
+// Deliberately absent:
 //
 //   * backlog read — deferred by O-4 (DECISIONS.md). The documented v1
 //     approximation is the JQL `sprint is EMPTY AND statusCategory != Done`
 //     through the search package, not an endpoint here;
-//   * sprint delete, and the board-scoped backlog move
-//     (`POST /backlog/{boardId}/issue`, which exists only to RANK while moving).
-//     Deleting a sprint is unrecoverable and no read here can preview it; the
-//     ranked move needs a rank vocabulary no tool asks for.
+//   * the board-scoped backlog move (`POST /backlog/{boardId}/issue`, which
+//     exists only to RANK while moving): the ranked move needs a rank
+//     vocabulary no tool asks for.
 //
 // This ring returns DATA + PAGINATION METADATA. Hints (`truncated`,
 // `fields_defaulted`), the result envelope and the plan/apply write gate belong
@@ -95,6 +98,9 @@ export const DEFAULT_SPRINT_ISSUE_FIELDS: readonly string[] = DEFAULT_SEARCH_FIE
  * oversized batch never reaches the wire as a half-applied write.
  */
 export const MAX_MOVE_ISSUES = 50;
+
+/** `pathTemplate` for the single-sprint routes — read, partial update, delete. */
+export const SPRINT_PATH_TEMPLATE = '/sprint/{sprintId}';
 
 /** The `state` filter vocabulary of the sprint list (TOOLS.md). */
 export const SPRINT_STATES = ['active', 'future', 'closed'] as const;
@@ -261,6 +267,22 @@ export type CloseSprintOptions = AgileBase & {
   readonly sprintId: number | string;
 } & BudgetGuard;
 
+/** Options for {@link getSprint}. */
+export type GetSprintOptions = AgileBase & {
+  readonly sprintId: number | string;
+} & BudgetGuard;
+
+/**
+ * Input of {@link deleteSprintRequest} — the pure builder half of the
+ * issues.ts §13 split, so the plan/apply gate shows exactly what it sends.
+ */
+export interface DeleteSprintInput {
+  readonly sprintId: number | string;
+}
+
+/** Options for {@link deleteSprint}. */
+export type DeleteSprintOptions = AgileBase & DeleteSprintInput & BudgetGuard;
+
 /** The two states this ring can drive a sprint into (`future` is the start). */
 export type SprintLifecycleState = Extract<SprintState, 'active' | 'closed'>;
 
@@ -309,6 +331,15 @@ export interface SprintStateResult {
    * without an id is worthless, so it narrows strictly.
    */
   readonly sprint?: AgileSprint;
+}
+
+/**
+ * The receipt of {@link deleteSprint}, built locally: Jira answers the DELETE
+ * with 204 and no body (CC-124).
+ */
+export interface DeleteSprintResult {
+  readonly sprintId: number;
+  readonly deleted: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +450,29 @@ export async function listSprintIssues(
   );
 
   return { ...page, fields, fieldsDefaulted };
+}
+
+/**
+ * Read one sprint — `GET /rest/agile/1.0/sprint/{sprintId}`.
+ *
+ * Exists so a delete plan can show the sprint before it is gone (the issues.ts
+ * §13 precedent: preview reads travel with the delete they serve), narrowed by
+ * the same {@link narrowSprint} the sprint list uses. {@link writeControls} is
+ * reused although this is a read — the helper is verb-agnostic, it only picks
+ * the signal/deadline pair off the options.
+ */
+export async function getSprint(options: GetSprintOptions): Promise<AgileSprint> {
+  const sprintId = agileId(options.sprintId, 'sprintId');
+  const response = await agileCall({ rootProbe: false }, () =>
+    options.jira({
+      method: 'GET',
+      root: 'agile',
+      path: `/sprint/${sprintId}`,
+      pathTemplate: SPRINT_PATH_TEMPLATE,
+      ...writeControls(options),
+    }),
+  );
+  return narrowSprint(response.data, 'GET /sprint/{sprintId}');
 }
 
 // ---------------------------------------------------------------------------
@@ -590,7 +644,7 @@ async function updateSprintState(
     method: 'POST',
     root: 'agile',
     path: `/sprint/${sprintId}`,
-    pathTemplate: '/sprint/{sprintId}',
+    pathTemplate: SPRINT_PATH_TEMPLATE,
     body,
     ...writeControls(options),
   };
@@ -610,6 +664,52 @@ async function updateSprintState(
     status: response.status,
     ...(sprint === undefined ? {} : { sprint }),
   };
+}
+
+/**
+ * Build the spec of a sprint delete — `DELETE /rest/agile/1.0/sprint/{sprintId}`
+ * (CC-124, Phase 11 / D102). Pure builder (issues.ts §13): the plan/apply gate
+ * calls it twice, so it validates and builds but never touches the wire.
+ *
+ * There is deliberately NO client-side state guard: which states Jira deletes
+ * from is Jira's rule, not this ring's, so the DELETE is always sent and a
+ * refusal comes back as Jira's 400 — re-aimed by {@link refusedSprintDelete}
+ * exactly as the lifecycle writes handle a stale state.
+ */
+export function deleteSprintRequest(input: DeleteSprintInput): JiraRequestSpec {
+  const sprintId = agileId(input.sprintId, 'sprintId');
+  return {
+    method: 'DELETE',
+    root: 'agile',
+    path: `/sprint/${sprintId}`,
+    pathTemplate: SPRINT_PATH_TEMPLATE,
+  };
+}
+
+/**
+ * Delete a sprint. Jira moves the sprint's remaining issues to the backlog and
+ * answers 204 with no body, so the receipt is built locally. No `safe` flag on
+ * the spec: an unsafe write is never replayed on an ambiguous failure
+ * (CC-12/13).
+ */
+export async function deleteSprint(
+  options: DeleteSprintOptions,
+): Promise<DeleteSprintResult> {
+  const sprintId = agileId(options.sprintId, 'sprintId');
+  const spec: JiraRequestSpec = {
+    ...deleteSprintRequest(options),
+    ...writeControls(options),
+  };
+
+  await agileCall({ rootProbe: false }, async () => {
+    try {
+      return await options.jira(spec);
+    } catch (error) {
+      throw refusedSprintDelete(error);
+    }
+  });
+
+  return { sprintId: Number(sprintId), deleted: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -932,7 +1032,7 @@ function unexpectedShape(message: string): JiraError {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Error shaping: the missing root (CC-34) and the stale sprint state
+// 8. Error shaping: the missing root (CC-34) and the refused sprint writes
 // ---------------------------------------------------------------------------
 
 /** Why a start was refused — the sprint's own state is the usual reason. */
@@ -949,6 +1049,14 @@ const SPRINT_CLOSE_REMEDIATION =
   'be reopened or updated through this API. Re-fetch the sprints with ' +
   'jira_list_sprints and act on the state Jira reports now; if it is already ' +
   'closed, the work is done — do not retry.';
+
+/** Why a delete was refused — the sprint's state, whose rules are Jira's own. */
+const SPRINT_DELETE_REMEDIATION =
+  'Jira refuses some sprint deletes based on the sprint state, and the deletable ' +
+  'states are not documented upstream. Re-fetch the sprint with jira_list_sprints ' +
+  'and act on the state Jira reports now — an active sprint is usually closed ' +
+  '(jira_close_sprint), not deleted. Retrying this call unchanged will fail the ' +
+  'same way.';
 
 /**
  * A 400 from a sprint state change, re-aimed — CC-21's shape applied to a sprint.
@@ -975,6 +1083,28 @@ function staleSprintState(error: unknown, state: SprintLifecycleState): unknown 
         `${said.length === 0 ? '' : `: ${said.join('; ')}`}`,
     ),
     remediation: state === 'active' ? SPRINT_START_REMEDIATION : SPRINT_CLOSE_REMEDIATION,
+    httpStatus: error.httpStatus,
+    ...(said.length === 0 ? {} : { jiraMessages: said }),
+    ...(error.detail === undefined ? {} : { detail: error.detail }),
+    cause: error,
+  });
+}
+
+/**
+ * A 400 from a sprint delete, re-aimed the same way {@link staleSprintState}
+ * re-aims the lifecycle writes (CC-124): Jira's own words travel through
+ * verbatim, only the remediation is replaced. Everything that is not a 400
+ * passes through untouched — a 403/404 belongs to {@link asAgileError}.
+ */
+function refusedSprintDelete(error: unknown): unknown {
+  if (!(error instanceof JiraError) || error.httpStatus !== 400) return error;
+  const said = error.jiraMessages ?? [];
+  return createJiraError({
+    kind: error.kind,
+    reason: sentence(
+      `Jira refused to delete this sprint${said.length === 0 ? '' : `: ${said.join('; ')}`}`,
+    ),
+    remediation: SPRINT_DELETE_REMEDIATION,
     httpStatus: error.httpStatus,
     ...(said.length === 0 ? {} : { jiraMessages: said }),
     ...(error.detail === undefined ? {} : { detail: error.detail }),

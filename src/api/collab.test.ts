@@ -34,18 +34,29 @@ import { JiraError } from '../core/types.js';
 import {
   COLLAB_PAGE_SIZE,
   COMPONENT_PATH_TEMPLATE,
+  COMPONENT_RELATED_COUNTS_PATH_TEMPLATE,
   PROJECT_COMPONENTS_PATH_TEMPLATE,
   PROJECT_ROLES_PATH_TEMPLATE,
   PROJECT_ROLE_PATH_TEMPLATE,
   PROJECT_VERSIONS_PATH_TEMPLATE,
   VERSION_PATH_TEMPLATE,
+  VERSION_RELATED_COUNTS_PATH_TEMPLATE,
+  VERSION_REMOVE_AND_SWAP_PATH_TEMPLATE,
   VOTES_PATH_TEMPLATE,
   WATCHERS_PATH_TEMPLATE,
   addVote,
   addWatcher,
   createComponent,
   createVersion,
+  deleteComponent,
+  deleteComponentRequest,
+  deleteVersion,
+  deleteVersionRequest,
+  getComponent,
+  getComponentRelatedIssueCounts,
   getProjectRole,
+  getVersion,
+  getVersionRelatedIssueCounts,
   listComponents,
   listProjectRoles,
   listVersions,
@@ -1136,4 +1147,336 @@ test('a role read failure names the project-administration permission', async ()
 
   assert.match(error.message, /Administer projects/);
   assert.match(error.message, /404/);
+});
+
+// ---------------------------------------------------------------------------
+// Single component and version reads (Phase 11)
+// ---------------------------------------------------------------------------
+
+test('getComponent maps one component through the same allowlist as the list', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk(componentRow(1)));
+
+  const component = await getComponent({ jira: jira.fn, componentId: 10101 });
+
+  assert.deepEqual(jira.routes(), ['GET /rest/api/3/component/10101']);
+  assert.equal(jira.lastRequest()?.pathTemplate, COMPONENT_PATH_TEMPLATE);
+  // Whole-object deepEqual: the allowlist holds on the single read too.
+  assert.deepEqual(component, {
+    id: '10101',
+    name: 'Component 1',
+    description: 'Owns area 1.',
+    project: 'ABC',
+    projectId: 10000,
+    lead: { accountId: ACCOUNT_ID, displayName: 'User One', active: true },
+    assigneeType: 'PROJECT_LEAD',
+    isAssigneeTypeValid: false,
+  });
+  const leaked = JSON.stringify(component);
+  for (const field of ['self', 'realAssignee', 'avatarUrls', 'emailAddress']) {
+    assert.doesNotMatch(leaked, new RegExp(field));
+  }
+});
+
+test('getComponent refuses a non-numeric id before any request exists', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() => getComponent({ jira: jira.fn, componentId: 'Payments' })),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /componentId must be a positive integer Jira id/);
+  assert.match(error.message, /jira_list_components/);
+  assert.deepEqual(jira.routes(), []);
+});
+
+test('getComponentRelatedIssueCounts hand-builds the count and drops the rest', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    // synthetic — GET /component/{id}/relatedIssueCounts
+    jiraOk({ self: `${SITE}/rest/api/3/component/10101`, issueCount: 23 }),
+  );
+
+  const counts = await getComponentRelatedIssueCounts({
+    jira: jira.fn,
+    componentId: '10101',
+  });
+
+  assert.deepEqual(jira.routes(), ['GET /rest/api/3/component/10101/relatedIssueCounts']);
+  assert.equal(jira.lastRequest()?.pathTemplate, COMPONENT_RELATED_COUNTS_PATH_TEMPLATE);
+  // Whole-object deepEqual: `self` must not ride along (D41).
+  assert.deepEqual(counts, { issueCount: 23 });
+});
+
+test('CC-66: a thin issue-count body maps to an empty object, not to a guess', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk({}), // synthetic — nothing usable in the body
+  );
+
+  const counts = await getComponentRelatedIssueCounts({
+    jira: jira.fn,
+    componentId: 10101,
+  });
+
+  assert.deepEqual(counts, {});
+});
+
+test('getVersion maps one version through the same allowlist as the list', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk(versionRow(1)));
+
+  const version = await getVersion({ jira: jira.fn, versionId: 10201 });
+
+  assert.deepEqual(jira.routes(), ['GET /rest/api/3/version/10201']);
+  assert.equal(jira.lastRequest()?.pathTemplate, VERSION_PATH_TEMPLATE);
+  // Whole-object deepEqual: no self, no locale dates, no operations bag.
+  assert.deepEqual(version, {
+    id: '10201',
+    name: '1.1.0',
+    description: 'Release 1.',
+    projectId: 10000,
+    archived: false,
+    released: true,
+    startDate: '2026-01-05',
+    releaseDate: '2026-03-31',
+    overdue: false,
+  });
+});
+
+test('getVersionRelatedIssueCounts keeps the three counts and drops the extras', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    // synthetic — GET /version/{id}/relatedIssueCounts
+    jiraOk({
+      self: `${SITE}/rest/api/3/version/10201`,
+      issuesFixedCount: 12,
+      issuesAffectedCount: 4,
+      issueCountWithCustomFieldsShowingVersion: 1,
+      customFieldUsage: [
+        {
+          fieldName: 'Found in',
+          customFieldId: 10016,
+          issueCountWithVersionInCustomField: 1,
+        },
+      ],
+    }),
+  );
+
+  const counts = await getVersionRelatedIssueCounts({ jira: jira.fn, versionId: 10201 });
+
+  assert.deepEqual(jira.routes(), ['GET /rest/api/3/version/10201/relatedIssueCounts']);
+  assert.equal(jira.lastRequest()?.pathTemplate, VERSION_RELATED_COUNTS_PATH_TEMPLATE);
+  // Whole-object deepEqual: `customFieldUsage` and `self` are dropped (D41).
+  assert.deepEqual(counts, {
+    issuesFixedCount: 12,
+    issuesAffectedCount: 4,
+    issueCountWithCustomFieldsShowingVersion: 1,
+  });
+});
+
+test('CC-66: a thin version-count body maps to an empty object', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk({})); // synthetic
+
+  const counts = await getVersionRelatedIssueCounts({ jira: jira.fn, versionId: 10201 });
+
+  assert.deepEqual(counts, {});
+});
+
+// ---------------------------------------------------------------------------
+// Component and version deletes (Phase 11, D102 — §9 of the module)
+// ---------------------------------------------------------------------------
+
+test('deleteComponentRequest builds the bare spec the plan shows', () => {
+  // Whole-spec deepEqual: a builder that stamped a signal, a deadline or a
+  // `safe` flag here would be doing the executor's job.
+  assert.deepEqual(deleteComponentRequest({ componentId: 10101 }), {
+    method: 'DELETE',
+    path: '/component/10101',
+    pathTemplate: COMPONENT_PATH_TEMPLATE,
+  });
+  assert.deepEqual(
+    deleteComponentRequest({ componentId: '10101', moveIssuesTo: 10102 }),
+    {
+      method: 'DELETE',
+      path: '/component/10101',
+      pathTemplate: COMPONENT_PATH_TEMPLATE,
+      query: { moveIssuesTo: '10102' },
+    },
+  );
+});
+
+test('deleteComponent sends the DELETE and synthesizes the receipt from a 204', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    // synthetic — Jira answers 204 with no body
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  const receipt = await deleteComponent({
+    jira: jira.fn,
+    componentId: 10101,
+    moveIssuesTo: '10102',
+  });
+
+  const spec = jira.lastRequest();
+  assert.deepEqual(jira.routes(), ['DELETE /rest/api/3/component/10101']);
+  assert.equal(spec?.pathTemplate, COMPONENT_PATH_TEMPLATE);
+  assert.deepEqual(spec?.query, { moveIssuesTo: '10102' });
+  assert.equal(spec?.body, undefined);
+  // CC-12/13: an unsafe write is never replayed, so `safe` must be absent —
+  // not `false`, absent: the retry matrix reads the property's presence.
+  assert.equal(spec?.safe, undefined);
+  assert.equal(Object.hasOwn(spec ?? {}, 'safe'), false);
+
+  assert.deepEqual(receipt, {
+    componentId: '10101',
+    deleted: true,
+    movedIssuesTo: '10102',
+  });
+});
+
+test('a component delete without a target strips the field rather than moving it', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk(undefined, { status: 204 }));
+
+  const receipt = await deleteComponent({ jira: jira.fn, componentId: '10101' });
+
+  // No target ⇒ no `query` key at all — `?moveIssuesTo=` would be a different
+  // request upstream, not a spelling of "strip the field".
+  assert.equal(jira.lastRequest()?.query, undefined);
+  assert.deepEqual(receipt, { componentId: '10101', deleted: true });
+  assert.equal(Object.hasOwn(receipt, 'movedIssuesTo'), false);
+});
+
+test('CC-122: the version delete is the removeAndSwap POST, never the deprecated DELETE', async () => {
+  // The builder first: plan mode shows exactly this spec.
+  const bare = deleteVersionRequest({ versionId: 10201 });
+  assert.equal(bare.method, 'POST');
+  assert.equal(bare.path, '/version/10201/removeAndSwap');
+  assert.equal(bare.pathTemplate, VERSION_REMOVE_AND_SWAP_PATH_TEMPLATE);
+  // An empty swap body is SENT, not refused: `{}` means "clear this version
+  // from every fixVersion/affectedVersion field", which is exactly what a
+  // delete without targets asks for — clear semantics, not a failure.
+  assert.deepEqual(bare.body, {});
+
+  const jira = createFakeJiraRequest().enqueue(
+    // synthetic — Jira answers 204 with no body
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  const receipt = await deleteVersion({ jira: jira.fn, versionId: 10201 });
+
+  assert.deepEqual(jira.routes(), ['POST /rest/api/3/version/10201/removeAndSwap']);
+  assert.equal(jira.lastRequest()?.method, 'POST');
+  assert.deepEqual(jira.lastRequest()?.body, {});
+  // CC-12/13: an unsafe write is never replayed, so `safe` must be absent.
+  assert.equal(jira.lastRequest()?.safe, undefined);
+  assert.deepEqual(receipt, { versionId: '10201', deleted: true });
+});
+
+test('deleteVersion sends the swap targets as the numeric ids Jira documents', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk(undefined, { status: 204 }));
+
+  const receipt = await deleteVersion({
+    jira: jira.fn,
+    versionId: '10201',
+    moveFixIssuesTo: '10202',
+    moveAffectedIssuesTo: 10203,
+  });
+
+  // NUMBERS on the wire (the same coercion createVersion applies to projectId),
+  // whole-body deepEqual so nothing else rides along.
+  assert.deepEqual(jira.lastRequest()?.body, {
+    moveFixIssuesTo: 10202,
+    moveAffectedIssuesTo: 10203,
+  });
+  assert.deepEqual(receipt, {
+    versionId: '10201',
+    deleted: true,
+    movedFixIssuesTo: '10202',
+    movedAffectedIssuesTo: '10203',
+  });
+});
+
+test('a single swap target travels alone', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk(undefined, { status: 204 }));
+
+  const receipt = await deleteVersion({
+    jira: jira.fn,
+    versionId: 10201,
+    moveFixIssuesTo: 10202,
+  });
+
+  assert.deepEqual(jira.lastRequest()?.body, { moveFixIssuesTo: 10202 });
+  assert.deepEqual(receipt, {
+    versionId: '10201',
+    deleted: true,
+    movedFixIssuesTo: '10202',
+  });
+});
+
+test('both deletes refuse a malformed id or target before any request exists', async () => {
+  const jira = createFakeJiraRequest();
+
+  for (const bad of ['', '0', 'abc', '12x', '-3', '1.5']) {
+    const componentError = asJiraError(
+      await caught(() => deleteComponent({ jira: jira.fn, componentId: bad })),
+    );
+    assert.equal(componentError.kind, 'validation');
+    assert.match(componentError.message, /componentId must be a positive integer/);
+
+    const versionError = asJiraError(
+      await caught(() => deleteVersion({ jira: jira.fn, versionId: bad })),
+    );
+    assert.equal(versionError.kind, 'validation');
+    assert.match(versionError.message, /versionId must be a positive integer/);
+  }
+
+  // A bad TARGET is refused just as hard — half of a delete must not happen.
+  const badMove = asJiraError(
+    await caught(() =>
+      deleteComponent({ jira: jira.fn, componentId: 10101, moveIssuesTo: 'Payments' }),
+    ),
+  );
+  assert.match(badMove.message, /moveIssuesTo must be a positive integer/);
+  const badSwap = asJiraError(
+    await caught(() =>
+      deleteVersion({ jira: jira.fn, versionId: 10201, moveAffectedIssuesTo: 'v2' }),
+    ),
+  );
+  assert.match(badSwap.message, /moveAffectedIssuesTo must be a positive integer/);
+
+  assert.deepEqual(jira.routes(), []);
+});
+
+test('a refused delete names the project-administration permission', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraErr(
+      createJiraError({
+        kind: 'not_found',
+        reason: 'Jira could not find component 10101.',
+        httpStatus: 404,
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => deleteComponent({ jira: jira.fn, componentId: 10101 })),
+  );
+
+  assert.equal(error.kind, 'not_found');
+  assert.match(error.message, /Administer projects/);
+  // The hint names the delete verb too since Phase 11.
+  assert.match(error.message, /deleting/);
+});
+
+test('the deletes carry the caller signal and deadline onto the wire', async () => {
+  const controller = new AbortController();
+  const jira = createFakeJiraRequest().enqueue(jiraOk(undefined, { status: 204 }));
+
+  await deleteComponent({
+    jira: jira.fn,
+    componentId: 10101,
+    signal: controller.signal,
+    clock: createFakeClock(0),
+    deadlineAt: 5_000,
+  });
+
+  assert.equal(jira.lastRequest()?.signal, controller.signal);
+  assert.equal(jira.lastRequest()?.deadlineAt, 5_000);
 });

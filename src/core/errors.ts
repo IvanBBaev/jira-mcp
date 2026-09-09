@@ -278,6 +278,7 @@ export function createJiraError(options: JiraErrorOptions): JiraError {
     jiraMessages: jiraMessages && jiraMessages.length > 0 ? jiraMessages : undefined,
     retryable: options.retryable,
     remediation: remediation === '' ? undefined : scrub(remediation, redactor),
+    reason,
     detail: options.detail === undefined ? undefined : scrub(options.detail, redactor),
     cause: options.cause,
   });

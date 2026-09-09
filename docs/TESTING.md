@@ -211,6 +211,62 @@ minimum set is recorded.
     - *Config-shaped failures*: oauth mode with an empty token store is a
       `config` error naming `login` rather than a 401 from Jira (CC-102), and a
       malformed cloudId is refused before a URL exists (CC-101).
+12. **Mention resolution (D100, offline)** — one suite per ring. The `@[name]`
+    grammar — extraction and conversion sharing one scanner, code spans,
+    fences and escapes staying inert, the no-map output byte-identical to the
+    pre-feature converter — in `src/api/adf.test.ts` (CC-108, CC-109, CC-110);
+    `resolveMentionNames` against a faked `JiraRequestFn` — zero-match,
+    ambiguity with the candidate list, the exact-displayName tiebreak, the
+    active/non-app filter and the distinct-name cap — in
+    `src/api/users.test.ts` (CC-106, CC-107, CC-112, CC-113); the tool-ring
+    gating — `resolveMentions` × `format` refusal, the `mentions_skipped`
+    hint, plan-time resolution — in `src/tools/issues-write.test.ts` (CC-105,
+    CC-111). No network anywhere: every accountId in a fixture is synthetic.
+13. **HTTP transport (D101, offline)** — one suite,
+    `src/mcp/transport-http.test.ts`: a real loopback listener on an
+    ephemeral port, driven with raw `http.request` the way the login-CLI
+    suite drives its callback listener;
+    the network fence stays untouched because it guards `fetch`, and this
+    suite makes no outbound call at all. The guard pipeline is asserted per
+    branch — bearer (CC-114: missing, wrong, wrong-length, and the 401 body
+    never echoing the token), bind (CC-115: loopback accepts, other local
+    addresses refuse, the closed port accepts nothing), Host/Origin (CC-116) —
+    and the session lifecycle end to end: initialize hands back an
+    `Mcp-Session-Id`, `tools/list` serves the full surface over it, DELETE and
+    the idle sweep destroy it, and a plan armed in a deleted session is an
+    unknown plan_id in the next one (CC-117). Idling is driven by the fake
+    clock — real sockets, fake time. Shutdown resolves, closes the port and
+    emits `shutdown` exactly once (CC-118). CC-119 — stdout byte-empty under
+    http — is the child-process half and lives in suite 7
+    (`src/index.test.ts`).
+14. **The project-entity deletes (D102, offline)** — spans three extended
+    files rather than owning one, because the tools extend existing rings. The
+    api specs live with their families: the component and version delete
+    builders — `removeAndSwap` as the only version wire, the deprecated bare
+    `DELETE /version/{id}` never constructed, an empty swap body sent as
+    "clear", the `relatedIssueCounts` reads — in `src/api/collab.test.ts`
+    (CC-122); the sprint delete builder and the single-sprint read in
+    `src/api/agile.test.ts` (CC-124's wire half). The tool ring — tier gating
+    shared with the D45 deletes, before-state assembly including the thin-entity
+    drop rule and the three version counts, reassignment targets riding in
+    `before`, the state-guard absence with Jira's refusal re-aimed — in
+    `src/tools/issues-delete.test.ts` (CC-120, CC-121, CC-123, CC-124,
+    CC-125). Everything runs against fakes behind the fence, which is worth
+    saying plainly: none of the three has ever been run against a real Jira
+    site — they are part of the 17 unproven writes the live gate still owes.
+15. **Bulk operations (D103, offline)** — the same extended-files pattern as
+    suite 14. The submit tools — tier gating shared with the deletes, the
+    package placement and title generalization, the 1000-issue schema cap, the
+    edit-action pairing refusals, the blast-radius before-state, the ENQUEUED
+    result hint, the `notifyUsers` absence rule and the `/bulk/issues/fields`
+    wire path with derived `selectedActions` — in
+    `src/tools/issues-delete.test.ts` (CC-126, CC-127, CC-128, CC-129, CC-130,
+    CC-131, CC-133); the queue read's placement outside the irreversible
+    surface and its pass-through result in `src/tools/issues.test.ts`
+    (CC-132). Offline like suite 14, and the same honesty applies: none of the
+    three bulk tools has ever run against a real Jira site — they join the
+    unproven writes above, and both submits additionally need the global Bulk
+    Change permission no fake can prove a tenant grants.
 
 **What the OAuth suite cannot prove.** The same honesty the live gate gets
 below. Every OAuth test asserts *this* code against a fake modelled on

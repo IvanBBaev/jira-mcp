@@ -146,7 +146,10 @@ function listIndent(listDepth: number): string {
 // The emitted dialect is deliberately narrow: `**bold**`, `*italic*`, backtick
 // code spans, `[text](href)`, ATX headings, `-` bullets, `N.` ordered markers,
 // fenced code. `_` is never emphasis on output (so `customfield_10020` survives
-// unescaped) though the parser accepts nothing it does not emit.
+// unescaped) and the parser accepts nothing this renderer does not emit, with
+// one deliberate exception: `@[name]` mention tokens (D100). The renderer never
+// produces that bracketed form — mentions render as `@Display Name` (CC-110) —
+// so read output fed back to the write path cannot re-resolve.
 // ---------------------------------------------------------------------------
 
 /** Deepest heading markdown can express; ADF levels are clamped into 1..6. */
@@ -695,12 +698,16 @@ export function adfFromText(text: string): AdfDoc {
 //
 // Two rules make it safe on hostile input: it never throws (anything it does
 // not recognise stays paragraph text — CC-06 in the other direction), and it
-// never resolves anything. In particular it creates NO mentions: a `mention`
-// node needs an accountId, the converter is pure and network-free, and a
-// fabricated id produces a comment that pings the wrong person. `@name` stays
-// literal text, which is exactly what Jira's own editor shows for an unresolved
-// handle. The read direction keeps rendering mentions (CC-07), so the mention
-// round trip is deliberately one-way.
+// never resolves anything itself. A `mention` node needs an accountId, the
+// converter is pure and network-free, and a fabricated id produces a comment
+// that pings the wrong person — so the only mention nodes it emits come from a
+// caller-supplied resolution map of live-directory ids (D100, CC-108): a
+// `@[name]` token with a map entry becomes that entry's node; with no map, or
+// no entry, it stays literal text, byte-identical to the option-less call.
+// Bare `@name` is never a token, which is exactly what Jira's own editor shows
+// for an unresolved handle. The read direction keeps rendering mentions as
+// `@Display Name`, never `@[...]` (CC-07, CC-110), so a read→write round trip
+// cannot re-resolve.
 // ---------------------------------------------------------------------------
 
 /** Nesting cap for the inline scanner — `[[[[[…` must not own the stack. */
@@ -714,6 +721,9 @@ const BULLET_MARKERS = new Set(['-', '+', '*']);
 
 /** What a backslash may escape (CommonMark's ASCII punctuation set). */
 const ESCAPABLE = new Set('\\`*_{}[]()#+-.!<>|~^$&\'"/:;,=?@%');
+
+/** Longest name a `@[name]` token may carry; anything longer stays literal. */
+const MAX_MENTION_NAME_LENGTH = 255;
 
 /** A list item line: indent, marker, then the text (a bare marker is empty). */
 const LIST_ITEM = /^([ \t]*)([-+*]|\d{1,9}[.)])(?:[ \t]+(.*))?$/;
@@ -882,6 +892,51 @@ function readEmphasis(
   return undefined;
 }
 
+/** Target for one resolved `@[name]` token. `text` includes the leading `@`. */
+export interface MentionTarget {
+  /** accountId from a live directory response — never fabricated (CC-108). */
+  readonly id: string;
+  /** `@` + displayName, for plan readability; omitted when unknown. */
+  readonly text?: string;
+}
+
+/**
+ * One grammar, two sinks (CC-109): resolution parses with `mentions` and emits
+ * a node per map hit; extraction parses with `collect` and records every valid
+ * token. Both flow through the same `@[` branch of {@link parseInline}, so the
+ * two modes cannot disagree about what is a token. No sink at all is the
+ * pre-feature scanner, byte for byte (CC-108).
+ */
+interface MentionSink {
+  readonly mentions?: ReadonlyMap<string, MentionTarget>;
+  readonly collect?: (name: string) => void;
+}
+
+/**
+ * The `@[name]` token at `start` (which must point at the `@`), or `undefined`
+ * when it must stay literal: unterminated, empty, or longer than
+ * {@link MAX_MENTION_NAME_LENGTH}. The name is verbatim — no trim, no escape
+ * processing, no nesting — because it is the resolution-map key (D100), and a
+ * key that mutates in transit cannot match the map the resolver built from it.
+ */
+function readMention(
+  text: string,
+  start: number,
+): { readonly name: string; readonly next: number } | undefined {
+  const close = text.indexOf(']', start + 2);
+  if (close === -1) return undefined;
+  const name = text.slice(start + 2, close);
+  if (name === '' || name.length > MAX_MENTION_NAME_LENGTH) return undefined;
+  return { name, next: close + 1 };
+}
+
+/** The emitted node (D100): the map's id verbatim, `text` only when non-empty. */
+function mentionNode(target: MentionTarget): AdfNode {
+  const attrs: Record<string, unknown> = { id: target.id };
+  if (target.text !== undefined && target.text !== '') attrs.text = target.text;
+  return { type: 'mention', attrs };
+}
+
 /** Add a mark to every text node, skipping nodes that already carry it. */
 function addMark(nodes: readonly AdfNode[], mark: AdfNode): AdfNode[] {
   return nodes.map((node) => {
@@ -893,7 +948,7 @@ function addMark(nodes: readonly AdfNode[], mark: AdfNode): AdfNode[] {
 }
 
 /** One line of inline markdown → inline ADF nodes. Never throws. */
-function parseInline(text: string, depth: number): AdfNode[] {
+function parseInline(text: string, depth: number, sink?: MentionSink): AdfNode[] {
   const out: AdfNode[] = [];
   let buffer = '';
 
@@ -923,12 +978,33 @@ function parseInline(text: string, depth: number): AdfNode[] {
       }
     }
 
+    // `@[name]` mention token (D100). Only a sink activates the branch, so the
+    // sink-less scan stays byte-identical to the pre-feature converter
+    // (CC-108). The collector consumes every valid token — exactly the
+    // positions resolution consumes when every token is in the map, which the
+    // resolver guarantees by refusing the call otherwise (CC-109).
+    if (ch === '@' && text.charAt(i + 1) === '[' && sink !== undefined) {
+      const token = readMention(text, i);
+      if (token !== undefined) {
+        sink.collect?.(token.name);
+        const target = sink.mentions?.get(token.name);
+        if (target !== undefined || sink.collect !== undefined) {
+          flush();
+          if (target !== undefined) out.push(mentionNode(target));
+          i = token.next;
+          continue;
+        }
+        // Resolution-map miss: fall through, so the literal text scans exactly
+        // as the sink-less converter scans it (CC-108).
+      }
+    }
+
     if (ch === '[' && depth < MAX_INLINE_DEPTH) {
       const link = readLink(text, i);
       if (link !== undefined) {
         flush();
         const mark: AdfNode = { type: 'link', attrs: { href: link.href } };
-        out.push(...addMark(parseInline(link.label, depth + 1), mark));
+        out.push(...addMark(parseInline(link.label, depth + 1, sink), mark));
         i = link.next;
         continue;
       }
@@ -938,7 +1014,7 @@ function parseInline(text: string, depth: number): AdfNode[] {
       const emphasis = readEmphasis(text, i);
       if (emphasis !== undefined) {
         flush();
-        let nodes = parseInline(emphasis.text, depth + 1);
+        let nodes = parseInline(emphasis.text, depth + 1, sink);
         if (emphasis.em) nodes = addMark(nodes, { type: 'em' });
         if (emphasis.strong) nodes = addMark(nodes, { type: 'strong' });
         out.push(...nodes);
@@ -956,17 +1032,17 @@ function parseInline(text: string, depth: number): AdfNode[] {
 }
 
 /** Paragraph lines → one paragraph; a line break inside it is a hardBreak. */
-function paragraphNode(lines: readonly string[]): AdfNode {
+function paragraphNode(lines: readonly string[], sink?: MentionSink): AdfNode {
   const inline: AdfNode[] = [];
   lines.forEach((line, index) => {
     if (index > 0) inline.push({ type: 'hardBreak' });
-    inline.push(...parseInline(line, 0));
+    inline.push(...parseInline(line, 0, sink));
   });
   return { type: 'paragraph', content: inline };
 }
 
-function headingNode(level: number, text: string): AdfNode {
-  return { type: 'heading', attrs: { level }, content: parseInline(text, 0) };
+function headingNode(level: number, text: string, sink?: MentionSink): AdfNode {
+  return { type: 'heading', attrs: { level }, content: parseInline(text, 0, sink) };
 }
 
 function codeBlockNode(language: string, text: string): AdfNode {
@@ -989,17 +1065,9 @@ function isFenceClose(line: string, marker: string): boolean {
   return trimmed.length >= marker.length && /^`+$/.test(trimmed);
 }
 
-/**
- * Parse the markdown subset into an ADF document. The inverse of
- * {@link adfToMarkdown} for everything the subset covers; anything else — block
- * quotes, tables, images, reference links, setext headings, HTML — degrades to
- * the paragraph text it was written as, never to an exception.
- *
- * CC-10 parity with {@link adfFromText} is deliberate: CRLF is normalised, a
- * blank line starts a new paragraph, a single newline inside a paragraph is a
- * `hardBreak`, and leading/trailing blank paragraphs are trimmed.
- */
-export function adfFromMarkdown(text: string): AdfDoc {
+/** The block-level parse behind {@link adfFromMarkdown} and
+    {@link extractMentions} — one grammar for both modes (CC-109). */
+function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
   const source = typeof text === 'string' ? text : '';
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
 
@@ -1011,7 +1079,7 @@ export function adfFromMarkdown(text: string): AdfDoc {
 
   const flushParagraph = (): void => {
     if (paragraph.length === 0) return;
-    content.push(paragraphNode(paragraph));
+    content.push(paragraphNode(paragraph, sink));
     paragraph = [];
   };
 
@@ -1039,7 +1107,7 @@ export function adfFromMarkdown(text: string): AdfDoc {
     }
 
     const parent = stack.at(-1);
-    const item = itemNode(parseInline(rest, 0));
+    const item = itemNode(parseInline(rest, 0, sink));
     if (parent === undefined || indent > parent.indent) {
       const items: AdfNode[] = [item.node];
       const list: AdfNode = {
@@ -1087,7 +1155,7 @@ export function adfFromMarkdown(text: string): AdfDoc {
     if (heading !== null) {
       flushParagraph();
       stack.length = 0;
-      content.push(headingNode((heading[1] ?? '#').length, heading[2] ?? ''));
+      content.push(headingNode((heading[1] ?? '#').length, heading[2] ?? '', sink));
       continue;
     }
 
@@ -1106,7 +1174,7 @@ export function adfFromMarkdown(text: string): AdfDoc {
     // item whose text runs over one line.
     const open = stack.at(-1);
     if (open !== undefined && indentWidth(line) > open.indent) {
-      open.item.inline.push({ type: 'hardBreak' }, ...parseInline(line.trim(), 0));
+      open.item.inline.push({ type: 'hardBreak' }, ...parseInline(line.trim(), 0, sink));
       continue;
     }
     stack.length = 0;
@@ -1121,6 +1189,50 @@ export function adfFromMarkdown(text: string): AdfDoc {
   flushParagraph();
 
   return { type: 'doc', version: 1, content };
+}
+
+/**
+ * Parse the markdown subset into an ADF document. The inverse of
+ * {@link adfToMarkdown} for everything the subset covers; anything else — block
+ * quotes, tables, images, reference links, setext headings, HTML — degrades to
+ * the paragraph text it was written as, never to an exception.
+ *
+ * CC-10 parity with {@link adfFromText} is deliberate: CRLF is normalised, a
+ * blank line starts a new paragraph, a single newline inside a paragraph is a
+ * `hardBreak`, and leading/trailing blank paragraphs are trimmed.
+ *
+ * `options.mentions` (D100) resolves `@[name]` tokens: a token whose verbatim
+ * content is a map key becomes that entry's `mention` node; every other
+ * spelling — no map, no entry, unterminated `@[`, empty `@[]`, or a name past
+ * {@link MAX_MENTION_NAME_LENGTH} — stays literal text, byte-identical to the
+ * option-less call (CC-108). No id is ever fabricated, and tokens inside code
+ * spans, fenced code blocks, or behind a `\@[` escape are never tokens
+ * (CC-109).
+ */
+export function adfFromMarkdown(
+  text: string,
+  options?: { readonly mentions?: ReadonlyMap<string, MentionTarget> },
+): AdfDoc {
+  const mentions = options?.mentions;
+  return parseMarkdown(text, mentions === undefined ? undefined : { mentions });
+}
+
+/**
+ * Distinct raw `@[...]` token contents, document order, exact-string dedupe
+ * (case-insensitive grouping is the resolver's job — CC-112). Same grammar as
+ * {@link adfFromMarkdown}: fenced code blocks, code spans and backslash-escaped
+ * `\@[` are skipped, and extraction consumes a valid token exactly where
+ * resolution would, so the two modes cannot disagree (CC-109). Pure, total,
+ * never throws.
+ */
+export function extractMentions(text: string): readonly string[] {
+  const names = new Set<string>();
+  parseMarkdown(text, {
+    collect: (name) => {
+      names.add(name);
+    },
+  });
+  return [...names];
 }
 
 /** Structural guard: is this value an ADF document rather than a scalar field? */

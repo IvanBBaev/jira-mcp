@@ -7,10 +7,12 @@
 
 ## Principles
 
-1. **stderr only.** stdout is the MCP protocol (stdio transport); every
-   diagnostic line — structured or human — goes to stderr. The sole exception
-   is the `doctor` CLI report, which goes to stdout (D11 in DECISIONS.md):
-   doctor is a CLI run, no protocol is on stdout.
+1. **stderr only.** stdout is the MCP protocol under the stdio transport;
+   under `http` (D101) the protocol rides the socket and stdout carries
+   nothing at all (CC-119). Every diagnostic line — structured or human —
+   goes to stderr in both cases. The sole exception is the `doctor` CLI
+   report, which goes to stdout (D11 in DECISIONS.md): doctor is a CLI run,
+   no protocol is on stdout.
 2. **Metadata-only.** Log events carry names, statuses, durations and counts —
    never payload. See the never-log list below.
 3. **Redacted at the choke point.** Every event passes `core/redact.ts` before

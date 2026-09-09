@@ -1182,14 +1182,15 @@ const PROBES: readonly Probe[] = [
         ...selectionProblems(settings),
       ];
 
+      // Both transports are served (D101). A missing JIRA_HTTP_TOKEN is a
+      // settings-level failure (`http_token_missing`, CC-30) and is already
+      // reported by the settings probe — not duplicated here.
       findings.push(
         settings.transport === 'stdio'
           ? { status: 'ok', text: 'transport stdio' }
           : {
-              status: 'fail',
-              text: `transport ${settings.transport} is not available in v1`,
-              remediation:
-                'Unset JIRA_TRANSPORT or set it to stdio; HTTP is planned for v1.5 (D19).',
+              status: 'ok',
+              text: `transport http (loopback 127.0.0.1:${String(settings.httpPort)})`,
             },
       );
 

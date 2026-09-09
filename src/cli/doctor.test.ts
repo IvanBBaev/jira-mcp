@@ -416,16 +416,16 @@ test('a broken configuration exits 2 and skips the network probes', async () => 
   assert.match(out, /\[skip] identity: skipped: no usable site or credentials/);
 });
 
-test('a local probe can fail on its own: unsupported transport exits 1', async () => {
+test('the http transport is a supported loopback bind, not a failure (D101)', async () => {
   const r = rig({
     env: baseEnv({ JIRA_TRANSPORT: 'http', JIRA_HTTP_TOKEN: 'loopback-token' }),
   });
   const code = await run({ ...r.options, argv: ['--offline'] });
 
   const out = r.stdout();
-  assert.equal(code, EXIT_PROBE_FAILED, out);
-  assert.match(out, /\[FAIL] gating: transport http is not available in v1/);
-  assert.match(out, /v1\.5 \(D19\)/);
+  assert.equal(code, EXIT_OK, out);
+  assert.match(out, /\[ ok \] gating: transport http \(loopback 127\.0\.0\.1:3334\)/);
+  assert.doesNotMatch(out, /not available/);
 });
 
 test('an unwritable journal path fails the journal probe', async () => {

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // api/users.ts — the authenticated identity and user lookup (WP-20).
 //
-// Two calls, one privacy rule and one decision behind them:
+// Three calls, one privacy rule and one decision behind them:
 //
 //  1. **`GET /rest/api/3/myself`** — who the credentials belong to. Also the
 //     source of the worklog `started` offset (D16): the site's calendar, not the
@@ -14,6 +14,11 @@
 //     produce it. O-5 folds "who can this be assigned to" into the SAME
 //     function as an input (`project` / `issueKey`) instead of a second tool —
 //     it switches the endpoint to `/user/assignable/search`, nothing else.
+//  3. **Mention resolution (D100)** — the write path's bridge from `@[Display
+//     Name]` tokens to accountIds, built ON TOP of the plain search. Same
+//     directory, stricter contract: each name must land on exactly one active
+//     human account or the whole call refuses (CC-106/CC-107), because a
+//     guessed mention notifies the wrong person — see {@link resolveMentionNames}.
 //
 // The privacy rule (CC-19): a tenant may mask `emailAddress`, and a masked
 // record is a NORMAL result, never an error. The api ring reports the fact as
@@ -30,6 +35,7 @@ import type {
   JiraResponse,
   QueryParams,
 } from '../core/types.js';
+import type { MentionTarget } from './adf.js';
 import {
   budgetOf,
   fetchAll,
@@ -67,6 +73,22 @@ export const MAX_USER_SEARCH_RESULTS = 100;
  * by a better query; a caller that wants a roster passes `maxPages`.
  */
 export const DEFAULT_USER_SEARCH_MAX_PAGES = 1;
+
+/**
+ * CC-112 — cap on DISTINCT case-insensitive names one {@link resolveMentionNames}
+ * call may resolve. Checked before any search, so a breach costs zero wire
+ * calls. Each name is its own `GET /user/search`; twenty already buys a
+ * town-hall announcement, and past that the bill is rate-limit budget, not
+ * usefulness.
+ */
+export const MAX_MENTION_NAMES = 20;
+
+/**
+ * CC-107 — how many candidates an ambiguity refusal names. Enough to pick the
+ * intended account from; the full roster is `jira_search_users`' job, and the
+ * refusal says so instead of quoting fifty directory rows into an error.
+ */
+export const MAX_MENTION_CANDIDATES_LISTED = 5;
 
 // ---------------------------------------------------------------------------
 // 2. Public shapes
@@ -184,6 +206,21 @@ export interface SearchUsersResult {
    * than missing by error. `false` for an empty result: nothing was hidden.
    */
   readonly emailHidden: boolean;
+}
+
+/** Options for {@link resolveMentionNames} (D100). */
+export interface ResolveMentionNamesOptions {
+  /** The only way to reach Jira (`core/types.ts` §Wire). */
+  readonly jira: JiraRequestFn;
+  /**
+   * Raw `@[...]` token spellings exactly as `extractMentions` produced them —
+   * verbatim, no trimming. Case-insensitive duplicates share one search and one
+   * target (CC-112); every raw spelling still gets its own map key, because the
+   * converter looks tokens up verbatim.
+   */
+  readonly names: readonly string[];
+  /** Cancellation from the MCP request. */
+  readonly signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +360,161 @@ function assignableScopeQuery(options: SearchUsersBase): QueryParams {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Response narrowing
+// 5. Mention resolution (D100)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve `@[name]` mention tokens to accountIds via the plain user search.
+ *
+ * The plain scope, NOT the assignable one: anyone in the directory can be
+ * mentioned, only a subset can be assigned. One page per name — a mention that
+ * the first {@link DEFAULT_USER_SEARCH_MAX_RESULTS} candidates cannot settle is
+ * refused as ambiguous, never chased across pages, because a full page means
+ * the directory has more matches than the name distinguishes (CC-107).
+ *
+ * Refusals are `validation` errors thrown on the FIRST failing name in
+ * document order — nothing downstream sees a partial map, so no write and no
+ * plan is ever built from a half-resolved body (CC-106):
+ *
+ *  - more than {@link MAX_MENTION_NAMES} distinct case-insensitive names,
+ *    refused before any search reaches the wire (CC-112);
+ *  - zero active human matches — the refusal says when only inactive accounts
+ *    matched (CC-106, CC-113);
+ *  - two or more candidates with no unique exact display-name match (CC-107).
+ *
+ * The returned map is keyed by every RAW input spelling, so the converter can
+ * look tokens up verbatim; case-insensitive duplicates share one search and
+ * resolve to the same target (CC-112).
+ */
+export async function resolveMentionNames(
+  options: ResolveMentionNamesOptions,
+): Promise<ReadonlyMap<string, MentionTarget>> {
+  const groups = groupNames(options.names);
+
+  if (groups.length > MAX_MENTION_NAMES) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `Mention resolution covers at most ${String(MAX_MENTION_NAMES)} distinct names per call; this call carries ${String(groups.length)}.`,
+      remediation: 'Mention fewer people, or split the change into more than one call.',
+    });
+  }
+
+  const resolved = new Map<string, MentionTarget>();
+  for (const group of groups) {
+    const target = await resolveOneMention(options, group.query);
+    for (const spelling of group.spellings) resolved.set(spelling, target);
+  }
+  return resolved;
+}
+
+/** One case-insensitive name: the search query plus every raw spelling of it. */
+interface MentionNameGroup {
+  /** The first-seen raw spelling — what is searched and what refusals name. */
+  readonly query: string;
+  /** Every distinct raw spelling, each of which becomes a map key. */
+  readonly spellings: string[];
+}
+
+/**
+ * Fold raw spellings into case-insensitive groups, first-appearance order —
+ * which is document order, so fail-fast refusals name the earliest bad token.
+ */
+function groupNames(names: readonly string[]): readonly MentionNameGroup[] {
+  const byFold = new Map<string, MentionNameGroup>();
+  for (const name of names) {
+    const fold = name.toLowerCase();
+    const group = byFold.get(fold);
+    if (group === undefined) {
+      byFold.set(fold, { query: name, spellings: [name] });
+    } else if (!group.spellings.includes(name)) {
+      group.spellings.push(name);
+    }
+  }
+  return [...byFold.values()];
+}
+
+/** Resolve one name to its unique mention target, or refuse (CC-106/CC-107). */
+async function resolveOneMention(
+  options: ResolveMentionNamesOptions,
+  name: string,
+): Promise<MentionTarget> {
+  const page = await searchUsers({
+    jira: options.jira,
+    query: name,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+
+  // CC-113 — exclusion happens BEFORE any counting or tiebreak: an `app` row is
+  // a bot and an inactive account cannot be notified, so neither may claim an
+  // exact-name win nor pad an ambiguity count.
+  const humans = page.users.filter((user) => user.accountType !== 'app');
+  const candidates = humans.filter((user) => user.active !== false);
+  const [firstCandidate, secondCandidate] = candidates;
+
+  if (firstCandidate === undefined) {
+    // CC-106 — when the directory DID match but only inactive accounts, saying
+    // so is the difference between "fix the spelling" and "wrong person".
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        humans.length > 0
+          ? `Every user matching the mention @[${name}] is inactive, and an inactive account cannot be mentioned.`
+          : `No user matched the mention @[${name}].`,
+      remediation:
+        'Check the spelling, or look the account up with jira_search_users and mention its exact display name.',
+    });
+  }
+
+  // CC-107 — a unique case-insensitive exact display-name match settles the
+  // name even among partial matches; two exact matches settle nothing.
+  const fold = name.toLowerCase();
+  const exact = candidates.filter((user) => user.displayName?.toLowerCase() === fold);
+  const [firstExact, secondExact] = exact;
+  if (firstExact !== undefined && secondExact === undefined) {
+    return toMentionTarget(firstExact);
+  }
+
+  // A lone partial match resolves — unless the page is full: `partial` means
+  // the directory holds matches this call never saw, and resolving from a
+  // truncated view would be a guess (CC-107).
+  if (firstExact === undefined && secondCandidate === undefined && !page.partial) {
+    return toMentionTarget(firstCandidate);
+  }
+
+  throw ambiguousMentionError(name, candidates, page.partial);
+}
+
+/** `text` is `'@' + displayName`; omitted when the tenant blanked the name. */
+function toMentionTarget(user: JiraUser): MentionTarget {
+  return {
+    id: user.accountId,
+    ...(user.displayName === undefined ? {} : { text: `@${user.displayName}` }),
+  };
+}
+
+/** CC-107 — the refusal that teaches: candidates first, then the way out. */
+function ambiguousMentionError(
+  name: string,
+  candidates: readonly JiraUser[],
+  partial: boolean,
+): JiraError {
+  const listed = candidates
+    .slice(0, MAX_MENTION_CANDIDATES_LISTED)
+    .map((user) => `${user.displayName ?? '(no display name)'} (${user.accountId})`)
+    .join(', ');
+  const unlisted =
+    candidates.length - Math.min(candidates.length, MAX_MENTION_CANDIDATES_LISTED);
+  return createJiraError({
+    kind: 'validation',
+    reason: partial
+      ? `The mention @[${name}] matched a full page of users with no unique exact display-name match; more matches may exist beyond the first page.`
+      : `The mention @[${name}] is ambiguous: ${String(candidates.length)} active users match and none is a unique exact display-name match.`,
+    remediation: `Candidates: ${listed}${unlisted > 0 ? `, and ${String(unlisted)} more` : ''}. Use a fuller display name, or resolve the account with jira_search_users.`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 6. Response narrowing
 // ---------------------------------------------------------------------------
 
 /**
@@ -364,7 +555,7 @@ function toJiraUser(row: unknown, what: string): JiraUser {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Input normalization
+// 7. Input normalization
 // ---------------------------------------------------------------------------
 
 function requireQuery(query: string): string {
@@ -400,7 +591,7 @@ function resolveMaxResults(requested: number | undefined): {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Small shared helpers
+// 8. Small shared helpers
 // ---------------------------------------------------------------------------
 
 function trimmed(value: string | undefined): string | undefined {

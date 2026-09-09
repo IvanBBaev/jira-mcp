@@ -1,12 +1,14 @@
-// Tests for `tools/issues.ts` (WP-31) — contract tier (TESTING.md §Mocking tiers).
+// Tests for `tools/issues.ts` (WP-31, WP-121) — contract tier (TESTING.md
+// §Mocking tiers).
 //
 // The api layer is already tested against Jira's wire shapes in
-// `api/issues.test.ts`, so nothing here re-asserts flattening or user
-// projection. What is asserted is the half this ring owns and only this ring
-// can get wrong: the annotation quadruple, the strict input schemas, which
-// tool may return ADF, the untrusted brand (present on the four content-bearing
-// reads, absent on the metadata one — CC-35), the fact that a page-cap stop is
-// NOT the `truncated` hint, and that an api error reaches the model with its
+// `api/issues.test.ts` and `api/bulk.test.ts`, so nothing here re-asserts
+// flattening, user projection or the bulk progress mapping. What is asserted
+// is the half this ring owns and only this ring can get wrong: the annotation
+// quadruple, the strict input schemas, which tool may return ADF, the
+// untrusted brand (present on the four content-bearing reads, absent on the
+// two metadata ones — CC-35, CC-132), the fact that a page-cap stop is NOT
+// the `truncated` hint, and that an api error reaches the model with its
 // wording intact (CC-16).
 //
 // Response bodies are inline plain objects shaped after real Jira Cloud v3
@@ -30,6 +32,7 @@ import { renderResult } from '../mcp/result.js';
 import { TAINT_BEGIN, TAINT_END } from '../mcp/taint.js';
 import type { AnyToolSpec, Hint, ToolCtx, ToolResult } from '../mcp/types.js';
 import {
+  getBulkStatusTool,
   getChangelogTool,
   getCommentsTool,
   getIssueTool,
@@ -45,6 +48,9 @@ const WORKLOG_ROUTE = `${ISSUE_ROUTE}/worklog`;
 const CHANGELOG_ROUTE = `${ISSUE_ROUTE}/changelog`;
 const TRANSITIONS_ROUTE = `${ISSUE_ROUTE}/transitions`;
 const ACCOUNT_ID = '5b10a2844c20165700ede21g';
+/** The bulk task id as the Phase 12 submits return it. // synthetic */
+const TASK_ID = '10321';
+const BULK_QUEUE_ROUTE = `GET /rest/api/3/bulk/queue/${TASK_ID}`;
 
 /** 2026-08-07T10:00:00.000Z — the instant every call in this file runs at. */
 const NOW = Date.UTC(2026, 7, 7, 10, 0, 0);
@@ -311,7 +317,7 @@ const ALL_TOOLS: readonly AnyToolSpec[] = issuesPackage.tools;
 // The package and its annotations
 // ---------------------------------------------------------------------------
 
-test('the issues package exports exactly the five documented read tools', () => {
+test('the issues package exports exactly the six documented read tools', () => {
   assert.equal(issuesPackage.id, 'issues');
   assert.deepEqual(
     ALL_TOOLS.map((tool) => tool.name),
@@ -321,6 +327,7 @@ test('the issues package exports exactly the five documented read tools', () => 
       'jira_get_transitions',
       'jira_get_changelog',
       'jira_get_worklogs',
+      'jira_get_bulk_status',
     ],
   );
   for (const tool of ALL_TOOLS) assert.equal(tool.package, 'issues');
@@ -360,7 +367,15 @@ test('every input schema is strict — an unknown key is rejected, not ignored',
 
 test('every tool declares the profile control field', () => {
   for (const tool of ALL_TOOLS) {
-    assert.equal(tool.input.safeParse({ issue: KEY, profile: 'agile' }).success, true);
+    // The base arguments differ (five reads take an issue, the bulk status
+    // read takes a taskId); `profile` must ride along on all of them.
+    const base =
+      tool.name === 'jira_get_bulk_status' ? { taskId: TASK_ID } : { issue: KEY };
+    assert.equal(
+      tool.input.safeParse({ ...base, profile: 'agile' }).success,
+      true,
+      tool.name,
+    );
   }
 });
 
@@ -861,4 +876,59 @@ test('a permission failure keeps its own kind rather than collapsing to not_foun
 
   assert.equal(result.ok, false);
   assert.equal(result.error?.kind, forbidden.kind);
+});
+
+// ---------------------------------------------------------------------------
+// CC-132 — jira_get_bulk_status (WP-121)
+// ---------------------------------------------------------------------------
+
+test('CC-132: the bulk status read lives in issues and reports the queue as counts', async () => {
+  // The poller MUST survive `JIRA_PACKAGES_DENY=issues-delete`: an operator
+  // who denies the irreversible surface still needs to watch bulk tasks —
+  // including ones enqueued through the Jira UI. So the tool ships in the
+  // read package, an ungated safe read like any other.
+  assert.equal(getBulkStatusTool.package, 'issues');
+  assert.equal(getBulkStatusTool.writeTier, undefined);
+  assert.deepEqual(getBulkStatusTool.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  });
+
+  const fake = createFakeJiraRequest().on(
+    BULK_QUEUE_ROUTE,
+    jiraOk({
+      // `GET /bulk/queue/{taskId}` for a finished task. // synthetic
+      taskId: TASK_ID,
+      status: 'COMPLETE',
+      progressPercent: 100,
+      totalIssueCount: 3,
+      processedAccessibleIssues: [10001, 10002],
+      failedAccessibleIssues: { '10003': ['Issue does not exist.'] },
+      invalidOrInaccessibleIssueCount: 0,
+      created: 1754560800000,
+      started: 1754560801000,
+      updated: 1754560805000,
+    }),
+  );
+
+  const result = await getBulkStatusTool.handler({ taskId: TASK_ID }, ctxOf(fake));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, {
+    taskId: TASK_ID,
+    status: 'COMPLETE',
+    progressPercent: 100,
+    totalIssueCount: 3,
+    processedCount: 2,
+    failedCount: 1,
+    invalidOrInaccessibleIssueCount: 0,
+    created: 1754560800000,
+    started: 1754560801000,
+    updated: 1754560805000,
+  });
+  // Progress counters, not Jira-authored prose: NOT branded (CC-35 pattern).
+  assert.equal(result._untrusted, undefined);
+  assert.equal(result.hints, undefined);
 });

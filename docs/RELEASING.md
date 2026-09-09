@@ -368,7 +368,11 @@ than explaining a gap later.
   component and an attachment, and every run ends by printing an inventory of
   what it left behind together with the command that removes the removable part
   — see `scripts/verify-live.mjs`, whose header is the authoritative safety
-  contract. Three artifacts (the version, the sprint and the component) cannot be
-  removed by any command, because this server ships no delete for any of them and
-  the gate does not get to widen the product's write surface (D73); the inventory
-  says so in as many words rather than implying a cleanup that does not exist.
+  contract. Until D102 three artifacts (the version, the sprint and the
+  component) could not be removed by any command, because this server shipped no
+  delete for any of them and the gate does not get to widen the product's write
+  surface (D73). Since D102 (2026-09-01) the deletes exist for users, so
+  `--purge` attempts all three — and the inventory stays honest the same way it
+  always was: on a tenant whose account lacks Administer Projects or the board's
+  manage-sprints permission, the refused classes print *manual* with the UI
+  path rather than implying a cleanup that did not happen (CC-85).

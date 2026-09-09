@@ -21,11 +21,13 @@ import {
   adfToMarkdown,
   adfToText,
   DEPTH_LIMIT_MARKER,
+  extractMentions,
   isAdfDoc,
   MAX_LIST_INDENT_DEPTH,
   renderAdfDocs,
   toAdf,
   type AdfNode,
+  type MentionTarget,
 } from './adf.js';
 import { JiraError } from '../core/types.js';
 
@@ -1100,8 +1102,9 @@ test('CC-44: markdown round trip: the documented lossy cases', () => {
   );
   // An empty paragraph has no markdown spelling at all.
   assert.deepEqual(adfFromMarkdown(adfToMarkdown(doc(para('')))), doc());
-  // Mentions are one-way by design: creating one needs an accountId, and the
-  // converters are pure and network-free.
+  // Mentions stay one-way here: the converter never emits a mention node it
+  // did not get from a caller-supplied resolution map (D100), and the read
+  // side's `@Alice` output is not the `@[...]` token syntax (CC-110).
   assert.deepEqual(
     adfFromMarkdown(
       adfToMarkdown(
@@ -1151,6 +1154,263 @@ test('CC-44: markdown round trip: the documented lossy cases', () => {
     ),
     doc(para('evil')),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Mentions on the write path (D100) — the @[name] grammar
+// ---------------------------------------------------------------------------
+
+const ALICE: MentionTarget = { id: 'acc-alice', text: '@Alice Example' };
+const BOB: MentionTarget = { id: 'acc-bob', text: '@Bob Builder' };
+
+/** The node shape D100 pins: the map's id, `text` only when the map had one. */
+function mention(target: MentionTarget): AdfNode {
+  return {
+    type: 'mention',
+    attrs:
+      target.text === undefined || target.text === ''
+        ? { id: target.id }
+        : { id: target.id, text: target.text },
+  };
+}
+
+test('extractMentions: distinct raw tokens in document order', () => {
+  assert.deepEqual(extractMentions('Ping @[Alice] and @[Bob], then @[Alice] again'), [
+    'Alice',
+    'Bob',
+  ]);
+  // Exact-string dedupe only: case grouping belongs to the resolver (CC-112).
+  assert.deepEqual(extractMentions('@[alice] @[Alice]'), ['alice', 'Alice']);
+  assert.deepEqual(
+    extractMentions('# @[Head]\n\n- item @[Item]\n  more @[Cont]\n\n@[Tail]'),
+    ['Head', 'Item', 'Cont', 'Tail'],
+  );
+  // Content is verbatim: no trimming, whitespace is part of the key.
+  assert.deepEqual(extractMentions('@[ Alice ]'), [' Alice ']);
+  assert.deepEqual(extractMentions(''), []);
+  assert.deepEqual(extractMentions('no tokens here'), []);
+});
+
+test('extractMentions: unterminated, empty and overlong tokens are not tokens', () => {
+  assert.deepEqual(extractMentions('@[never closed'), []);
+  assert.deepEqual(extractMentions('@[]'), []);
+  assert.deepEqual(extractMentions(`@[${'x'.repeat(256)}]`), []);
+  // 255 characters is the boundary: still a token.
+  assert.deepEqual(extractMentions(`@[${'x'.repeat(255)}]`), ['x'.repeat(255)]);
+  // A bare @name is never a token (D100).
+  assert.deepEqual(extractMentions('@Alice'), []);
+});
+
+test('extractMentions: tokens inside link labels and emphasis are still found', () => {
+  assert.deepEqual(extractMentions('*@[Alice]* [see @[Bob]](https://x.test/a)'), [
+    'Alice',
+    'Bob',
+  ]);
+});
+
+test('CC-108: a mention node comes only from the caller-supplied map, never an invented id', () => {
+  const text = 'ping @[Alice] and @[Bob]';
+  const resolved = adfFromMarkdown(text, {
+    mentions: new Map([['Alice', ALICE]]),
+  });
+  // The map hit becomes its node; the miss stays the literal text it was.
+  assert.deepEqual(
+    resolved,
+    doc({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'ping ' },
+        mention(ALICE),
+        { type: 'text', text: ' and @[Bob]' },
+      ],
+    }),
+  );
+  // No options, empty options and an empty map are all the literal document.
+  const literal = doc(para(text));
+  assert.deepEqual(adfFromMarkdown(text), literal);
+  assert.deepEqual(adfFromMarkdown(text, {}), literal);
+  assert.deepEqual(adfFromMarkdown(text, { mentions: new Map() }), literal);
+  // Nothing in the sink-less output even resembles a mention node.
+  assert.ok(!JSON.stringify(adfFromMarkdown(text)).includes('mention'));
+});
+
+test('CC-108: the mention node carries the map id, and text only when non-empty', () => {
+  const withText = adfFromMarkdown('@[a]', { mentions: new Map([['a', ALICE]]) });
+  assert.deepEqual(
+    withText,
+    doc({
+      type: 'paragraph',
+      content: [{ type: 'mention', attrs: { id: 'acc-alice', text: '@Alice Example' } }],
+    }),
+  );
+  const bare = adfFromMarkdown('@[a]', {
+    mentions: new Map([['a', { id: 'acc-x' }]]),
+  });
+  assert.deepEqual(
+    bare,
+    doc({ type: 'paragraph', content: [{ type: 'mention', attrs: { id: 'acc-x' } }] }),
+  );
+  const emptyText = adfFromMarkdown('@[a]', {
+    mentions: new Map([['a', { id: 'acc-x', text: '' }]]),
+  });
+  assert.deepEqual(emptyText, bare);
+});
+
+test('CC-109: no extraction and no resolution in code spans, fences, or after an escape', () => {
+  const map = new Map([
+    ['Alice', ALICE],
+    ['Bob', BOB],
+    ['Carol', { id: 'acc-carol' }],
+  ]);
+  // The same grammar drives both modes: what one skips, the other skips.
+  for (const text of ['`@[Alice]`', '```\n@[Alice]\n```', '\\@[Alice]']) {
+    assert.deepEqual(extractMentions(text), []);
+    const resolved = adfFromMarkdown(text, { mentions: map });
+    assert.ok(!JSON.stringify(resolved).includes('"mention"'));
+    assert.deepEqual(resolved, adfFromMarkdown(text));
+  }
+  // The escape consumes the backslash and leaves the literal token text.
+  assert.deepEqual(
+    adfFromMarkdown('\\@[Alice]', { mentions: map }),
+    doc(para('@[Alice]')),
+  );
+  // Mixed document: only the plain-text token is seen by either mode.
+  const mixed = 'a `@[Bob]` b @[Alice]\n\n```\n@[Carol]\n```';
+  assert.deepEqual(extractMentions(mixed), ['Alice']);
+  assert.deepEqual(
+    adfFromMarkdown(mixed, { mentions: map }),
+    doc(
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'a ' },
+          { type: 'text', text: '@[Bob]', marks: [{ type: 'code' }] },
+          { type: 'text', text: ' b ' },
+          mention(ALICE),
+        ],
+      },
+      { type: 'codeBlock', content: [{ type: 'text', text: '@[Carol]' }] },
+    ),
+  );
+});
+
+test('CC-110: the read side renders @Display Name, never @[...], so round trips cannot re-resolve', () => {
+  const rendered = adfToMarkdown(
+    doc({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'ask ' }, mention(ALICE)],
+    }),
+  );
+  assert.equal(rendered, 'ask @Alice Example');
+  assert.ok(!rendered.includes('@['));
+  // Feeding the read output back with a map keyed by the display name cannot
+  // produce a mention: the bracketed token syntax is simply not there.
+  for (const key of ['Alice Example', '@Alice Example']) {
+    assert.deepEqual(
+      adfFromMarkdown(rendered, { mentions: new Map([[key, ALICE]]) }),
+      doc(para('ask @Alice Example')),
+    );
+  }
+});
+
+test('adfFromMarkdown: invalid tokens stay literal even when a map is supplied', () => {
+  const overlong = 'x'.repeat(256);
+  const map = new Map<string, MentionTarget>([
+    ['', ALICE],
+    ['Alice', ALICE],
+    [overlong, ALICE],
+  ]);
+  assert.deepEqual(adfFromMarkdown('@[]', { mentions: map }), doc(para('@[]')));
+  assert.deepEqual(adfFromMarkdown('@[Alice', { mentions: map }), doc(para('@[Alice')));
+  assert.deepEqual(
+    adfFromMarkdown(`@[${overlong}]`, { mentions: map }),
+    doc(para(`@[${overlong}]`)),
+  );
+  // A map miss must not consume: `@[x](url)` still parses as `@` + link,
+  // byte-identical to the sink-less scan (CC-108).
+  const miss = adfFromMarkdown('@[nope](https://x.test/a)', { mentions: map });
+  assert.deepEqual(
+    miss,
+    doc({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: '@' },
+        {
+          type: 'text',
+          text: 'nope',
+          marks: [{ type: 'link', attrs: { href: 'https://x.test/a' } }],
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(miss, adfFromMarkdown('@[nope](https://x.test/a)'));
+  // A hit consumes the token, so the would-be link tail stays plain text.
+  assert.deepEqual(
+    adfFromMarkdown('@[Alice](https://x.test/a)', { mentions: map }),
+    doc({
+      type: 'paragraph',
+      content: [mention(ALICE), { type: 'text', text: '(https://x.test/a)' }],
+    }),
+  );
+});
+
+test('adfFromMarkdown: mentions resolve in headings, list items and continuations', () => {
+  const map = new Map([
+    ['Alice', ALICE],
+    ['Bob', BOB],
+  ]);
+  assert.deepEqual(
+    adfFromMarkdown('# Owner @[Alice]', { mentions: map }),
+    doc({
+      type: 'heading',
+      attrs: { level: 1 },
+      content: [{ type: 'text', text: 'Owner ' }, mention(ALICE)],
+    }),
+  );
+  assert.deepEqual(
+    adfFromMarkdown('- ping @[Alice]\n  then @[Bob]', { mentions: map }),
+    doc({
+      type: 'bulletList',
+      content: [
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'ping ' },
+                mention(ALICE),
+                { type: 'hardBreak' },
+                { type: 'text', text: 'then ' },
+                mention(BOB),
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+});
+
+test('adfFromMarkdown: without a map a document full of tokens reads as literal text', () => {
+  const text =
+    '# @[Head]\n\nPing @[Alice] and \\@[escaped]\n\n- @[Item]\n\n```\n@[code]\n```';
+  const expected = doc(
+    {
+      type: 'heading',
+      attrs: { level: 1 },
+      content: [{ type: 'text', text: '@[Head]' }],
+    },
+    para('Ping @[Alice] and @[escaped]'),
+    {
+      type: 'bulletList',
+      content: [{ type: 'listItem', content: [para('@[Item]')] }],
+    },
+    { type: 'codeBlock', content: [{ type: 'text', text: '@[code]' }] },
+  );
+  assert.deepEqual(adfFromMarkdown(text), expected);
+  assert.deepEqual(adfFromMarkdown(text, {}), expected);
+  assert.deepEqual(adfFromMarkdown(text, { mentions: new Map() }), expected);
 });
 
 // ---------------------------------------------------------------------------

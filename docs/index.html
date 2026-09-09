@@ -6,7 +6,7 @@
     <title>jira-mcp-ai — Jira Cloud MCP Server for AI assistants</title>
     <meta
       name="description"
-      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. 52 tools, TypeScript, MIT, Node 22+."
+      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. 58 tools, TypeScript, MIT, Node 22+."
     />
     <meta name="author" content="Ivan Baev" />
     <meta name="color-scheme" content="light dark" />
@@ -66,7 +66,7 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "MCP Server",
             "operatingSystem": "Cross-platform (Node.js 22+)",
-            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud: 52 tools across JQL search, issue reads and writes, transitions, comments, worklogs, attachments, watchers, components, versions, project and field metadata, boards and sprints — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write and a second opt-in for deletes.",
+            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud: 58 tools across JQL search, issue reads and writes, transitions, comments, worklogs, attachments, watchers, components, versions, project and field metadata, boards and sprints, and bulk edits and deletes — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write and a second opt-in for deletes.",
             "url": "https://ivanbbaev.github.io/jira-mcp/",
             "codeRepository": "https://github.com/IvanBBaev/jira-mcp",
             "license": "https://opensource.org/licenses/MIT",
@@ -115,7 +115,7 @@
                 "name": "Is it safe to let an AI assistant write to my Jira site?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. The three deletes sit in a separate irreversible tier that needs a fourth thing, JIRA_ALLOW_IRREVERSIBLE=true, because blanket write mode must never cover them. There are no bulk operations at all, and a write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
+                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. The six deletes — issue, comment, worklog, component, version and sprint — sit in a separate irreversible tier that needs a fourth thing, JIRA_ALLOW_IRREVERSIBLE=true, because blanket write mode must never cover them. There are no bulk operations at all, and a write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
                 }
               },
               {
@@ -123,7 +123,7 @@
                 "name": "What actually works today?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "The whole surface, offline. All 52 tools across 10 packages are implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,400+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. And now online too, in part: two runs against a real Atlassian tenant have proven 40 of the 52 tools against the live API — all 27 reads and 13 of the 25 writes. Of the 12 still unproven, seven need a project administrator — the watcher pair, the version pair, the component pair and issue delete — and five are the sprint writes, which that run never reached because the gate itself asked Jira for an over-long sprint name."
+                  "text": "The whole surface, offline. All 58 tools across 10 packages are implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,700+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. And now online too, in part: two runs against a real Atlassian tenant have proven 40 of the 58 tools against the live API — 27 of the 28 reads and 13 of the 30 writes. Of the 18 still unproven, seven need a project administrator — the watcher pair, the version pair, the component pair and issue delete — five are the sprint writes, which that run never reached because the gate itself asked Jira for an over-long sprint name, three are the component, version and sprint deletes, which landed after the last live run, and three are the bulk operations — bulk edit, bulk delete and the queue-status read — which landed after it too and additionally need the site-wide Make bulk changes permission."
                 }
               },
               {
@@ -139,7 +139,7 @@
                 "name": "Which MCP clients does it work with?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Any client that speaks the Model Context Protocol over stdio — Claude Code, Claude Desktop, VS Code and Cursor among them. stdio is the only transport v1 runs: a loopback-only Streamable HTTP transport is specified and its settings are validated, but selecting it is refused at startup with an error naming v1.5, so no port is ever bound."
+                  "text": "Any client that speaks the Model Context Protocol — Claude Code, Claude Desktop, VS Code and Cursor among them. stdio is the default transport; a loopback-only Streamable HTTP transport can be selected instead, binding 127.0.0.1 only and requiring a bearer token on every request — without the token the server refuses to start."
                 }
               },
               {
@@ -1361,7 +1361,7 @@
             <span class="badge">MIT</span>
             <span class="badge">Node 22+</span>
             <span class="badge">Jira Cloud REST v3</span>
-            <span class="badge">52 tools · 10 packages</span>
+            <span class="badge">58 tools · 10 packages</span>
             <span class="badge warn">pre-1.0 · on npm</span>
           </div>
 
@@ -1414,21 +1414,21 @@
           </div>
 
           <div class="stats">
-            <div><b>52</b><span>tools in 10 packages</span></div>
-            <div><b>27 / 25</b><span>read tools / write tools</span></div>
+            <div><b>58</b><span>tools in 10 packages</span></div>
+            <div><b>28 / 30</b><span>read tools / write tools</span></div>
             <div><b>1</b><span>host the process may reach</span></div>
             <div><b>0</b><span>telemetry calls, by design</span></div>
           </div>
 
           <p class="note warn" style="margin-top: 32px">
             <strong>Status, honestly.</strong> The surface is complete and green
-            offline: all 52 tools, the write gate, the error catalog and the corner
+            offline: all 58 tools, the write gate, the error catalog and the corner
             cases are implemented against the spec in <code>docs/</code>, which stays
-            normative — 1,400+ hermetic tests behind a network fence, with layering,
-            coverage floors and docs consistency enforced in CI. What has
-            <em>not</em> happened yet is a run against a real Jira site, so nothing here
-            has been confirmed by Atlassian's actual API. There is no tagged release and
-            no npm package yet.
+            normative — 1,700+ hermetic tests behind a network fence, with layering,
+            coverage floors and docs consistency enforced in CI. The package is on npm
+            as <code>jira-mcp-ai</code>, and two runs against a real Atlassian tenant
+            have proven 40 of the 58 tools live. The 18 still unproven — 17 writes and
+            the bulk queue-status read — are why the version stays below 1.0.0.
           </p>
         </div>
       </section>
@@ -1448,11 +1448,12 @@
           <p class="note warn">
             <strong>On npm as <code>jira-mcp-ai@0.9.4</code>, and pre-1.0 on
             purpose.</strong> The surface is complete, the offline gate is green, and the
-            build has now been run against a real Atlassian tenant — 40 of the 52 tools
-            have been proven live, every read tool among them, and the three bugs that
-            run found are fixed in this version. The 12 still unproven are all writes,
-            and most of them need a project-administrator account nobody has pointed at
-            it yet, so the number stays below 1.0.0 until they are covered too. The
+            build has now been run against a real Atlassian tenant — 40 of the 58 tools
+            have been proven live, and the three bugs that run found are fixed in this
+            version. Of the 18 still unproven, most need a permission nobody has pointed
+            at it yet — project administrator for the older ones, the site-wide Make
+            bulk changes for the three bulk tools that landed after that run — so the
+            number stays below 1.0.0 until they are covered too. The
             registration below resolves as written; it installs the published package,
             provenance and all.
           </p>
@@ -1649,7 +1650,7 @@
                   <pre id="c-modes">JIRA_WRITE_MODE=plan       <span class="c"># default — writes return a plan, nothing executes</span>
 JIRA_TOOL_PACKAGES=reader  <span class="c"># reads only — write tools are never registered</span>
 JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also passes apply:true</span>
-JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three deletes; apply alone never does</span></pre>
+JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six deletes; apply alone never does</span></pre>
                 </div>
               </div>
             </div>
@@ -1662,7 +1663,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
         <div class="wrap stack-lg">
           <div>
             <span class="eyebrow">Capabilities</span>
-            <h2 id="h-capabilities">Ten packages, 52 tools</h2>
+            <h2 id="h-capabilities">Ten packages, 58 tools</h2>
             <p class="sub">
               Packages are the unit of exposure: <code>JIRA_TOOL_PACKAGES</code> picks a
               profile (<code>core</code>, <code>reader</code>, <code>all</code> — the
@@ -1711,11 +1712,12 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                 </tr>
                 <tr>
                   <td><code>issues</code></td>
-                  <td><span class="tag read">5 read</span></td>
+                  <td><span class="tag read">6 read</span></td>
                   <td>—</td>
                   <td>
                     One issue with ADF flattened to plain text (raw on request),
-                    comments, transitions, changelog, worklogs.
+                    comments, transitions, changelog, worklogs, and the status of a
+                    queued bulk operation.
                   </td>
                 </tr>
                 <tr>
@@ -1729,11 +1731,13 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                 </tr>
                 <tr>
                   <td><code>issues-delete</code></td>
-                  <td><span class="tag irr">3 irreversible</span></td>
+                  <td><span class="tag irr">8 irreversible</span></td>
                   <td><code>plan</code> + opt-in</td>
                   <td>
-                    Delete an issue, a comment or a worklog. The one package that is not
-                    covered by <code>JIRA_WRITE_MODE=apply</code> alone — it also needs
+                    Delete an issue, a comment, a worklog, a component, a version or a
+                    sprint — or bulk-edit and bulk-delete up to 1,000 issues at once.
+                    The one package that is not covered by
+                    <code>JIRA_WRITE_MODE=apply</code> alone — it also needs
                     <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, set on purpose.
                   </td>
                 </tr>
@@ -1821,7 +1825,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
           </div>
 
           <p class="sub">
-            The full 52-tool catalog — input schemas, hints and the error contract per
+            The full 55-tool catalog — input schemas, hints and the error contract per
             tool — lives in
             <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/TOOLS.md"
               >docs/TOOLS.md</a
@@ -1866,13 +1870,14 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
             <div class="tier">
               <div>
                 <h3>irreversible</h3>
-                <span class="tag irr">3 tools</span>
+                <span class="tag irr">6 tools</span>
               </div>
               <p>
-                Deleting an issue, a comment or a worklog. These need a second, separate
-                switch — <code>JIRA_ALLOW_IRREVERSIBLE=true</code> — on top of everything
-                the standard tier already requires, because an operator who turned writes
-                on to move a ticket did not thereby agree to lose one.
+                Deleting an issue, a comment, a worklog, a component, a version or a
+                sprint. These need a second, separate switch —
+                <code>JIRA_ALLOW_IRREVERSIBLE=true</code> — on top of everything the
+                standard tier already requires, because an operator who turned writes on
+                to move a ticket did not thereby agree to lose one.
               </p>
             </div>
           </div>
@@ -1965,10 +1970,10 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
               </li>
               <li>
                 <span
-                  ><strong>One transport, and it is stdio.</strong> The loopback-only
-                  Streamable HTTP transport is specified and its settings are validated,
-                  but selecting it is refused at startup with an error naming v1.5 — v1
-                  binds no port at all.</span
+                  ><strong>The HTTP transport binds loopback only.</strong> stdio is
+                  the default; selecting <code>http</code> binds <code>127.0.0.1</code>
+                  only, demands a bearer token on every request and refuses to start
+                  without one — no other interface is ever listened on.</span
                 >
               </li>
             </ul>
@@ -2229,7 +2234,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                       <td><code>JIRA_ALLOW_IRREVERSIBLE</code></td>
                       <td><code>false</code></td>
                       <td>
-                        Opt-in for the irreversible tier. Without it the three deletes
+                        Opt-in for the irreversible tier. Without it the six deletes
                         refuse even under <code>apply</code> — blanket write mode never
                         covers them.
                       </td>
@@ -2286,26 +2291,25 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                       <td><code>JIRA_TRANSPORT</code></td>
                       <td><code>stdio</code></td>
                       <td>
-                        Accepts <code>stdio</code> or <code>http</code>, but only
-                        <code>stdio</code> runs — <code>http</code> is parsed, then
-                        refused at startup with an error naming v1.5.
+                        <code>stdio</code> (default) or <code>http</code> — the
+                        loopback Streamable HTTP transport.
                       </td>
                     </tr>
                     <tr>
                       <td><code>JIRA_HTTP_PORT</code></td>
                       <td><code>3334</code></td>
                       <td>
-                        Loopback-only port for the future <code>http</code> transport.
-                        Parsed and validated; unused until it is reinstated.
+                        Loopback port the <code>http</code> transport binds —
+                        <code>127.0.0.1</code> only, never another interface.
                       </td>
                     </tr>
                     <tr>
                       <td><code>JIRA_HTTP_TOKEN</code></td>
                       <td>—</td>
                       <td>
-                        <strong>Secret.</strong> Bearer token required whenever
-                        <code>http</code> is selected — settings refuse that combination
-                        without it, though the transport is refused a step later anyway.
+                        <strong>Secret.</strong> Bearer token required on every
+                        <code>http</code> request; without it the server refuses to
+                        start.
                       </td>
                     </tr>
                     <tr>
@@ -2466,15 +2470,17 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                   <td>Live verification · write half</td>
                   <td><span class="tag write">partial</span></td>
                   <td>
-                    Run 2026-08-18 against a sandbox project: 13 of the 25 write tools
-                    applied successfully, taking the live-proven surface to 40 of 52.
-                    Seven of the remaining 12 wait on permissions the test account does
-                    not hold — both watcher writes, both version writes, both component
-                    writes and issue delete, each answering with a correctly shaped
-                    refusal rather than a result. The other five are the sprint writes,
-                    which the run never reached: the gate asked Jira for a sprint name
-                    past a length cap Atlassian does not document. That was the harness,
-                    not the server, and it is fixed here.
+                    Run 2026-08-18 against a sandbox project: 13 write tools applied
+                    successfully, taking the live-proven surface to 40 — of today's 55
+                    tools. Seven of the writes still unproven wait on permissions the
+                    test account does not hold — both watcher writes, both version
+                    writes, both component writes and issue delete, each answering with
+                    a correctly shaped refusal rather than a result. Five are the sprint
+                    writes, which the run never reached: the gate asked Jira for a
+                    sprint name past a length cap Atlassian does not document — that was
+                    the harness, not the server, and it is fixed here. The last three,
+                    the component, version and sprint deletes, landed after this run and
+                    have never been sent at all.
                   </td>
                 </tr>
                 <tr>
@@ -2490,10 +2496,12 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                   <td>1.0.0 on npm</td>
                   <td><span class="tag">planned</span></td>
                   <td>
-                    The 12 remaining tools proven — the sprint five on any site with a
-                    Scrum board, the other seven on a site where the account may
-                    administer a project — and the semver promise made: from then on OIDC
-                    trusted publishing, no token in the repository.
+                    The 15 remaining tools proven — the sprint five on any site with a
+                    Scrum board, the seven permission-gated writes and the component and
+                    version deletes on a site where the account may administer a project,
+                    the sprint delete where it may manage sprints — and the semver
+                    promise made: from then on OIDC trusted publishing, no token in the
+                    repository.
                   </td>
                 </tr>
               </tbody>
@@ -2505,8 +2513,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
             <a
               href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/IMPLEMENTATION-PLAN.md"
               >docs/IMPLEMENTATION-PLAN.md</a
-            >; the longer horizon — <code>@name</code> mention resolution, OAuth 3LO, a
-            Data Center adapter, bulk operations — is
+            >; the longer horizon — a Data Center adapter, bulk operations — is
             <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/ROADMAP.md"
               >docs/ROADMAP.md</a
             >.
@@ -2577,8 +2584,9 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
                 arguments.
               </p>
               <p>
-                The three deletes sit in a separate irreversible tier that needs a
-                fourth thing, <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, because blanket
+                The six deletes — issue, comment, worklog, component, version and
+                sprint — sit in a separate irreversible tier that needs a fourth thing,
+                <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, because blanket
                 write mode must never cover them. There are no bulk operations at all,
                 and a write whose outcome is unknowable — a timeout mid-flight — is
                 never retried: the server asks you to check state instead of guessing.
@@ -2590,28 +2598,32 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
             <summary>What actually works today?</summary>
             <div class="details-body">
               <p>
-                The whole surface, offline. All 52 tools across 10 packages are
+                The whole surface, offline. All 58 tools across 10 packages are
                 implemented, along with the plan-and-apply write gate, the error catalog
                 and the corner cases — the spec in
                 <a href="https://github.com/IvanBBaev/jira-mcp/tree/main/docs"
                   ><code>docs/</code></a
                 >
-                stays normative and the code is checked against it by 1,400+ hermetic
+                stays normative and the code is checked against it by 1,700+ hermetic
                 tests behind a network fence, with layering, coverage floors and docs
                 consistency all enforced in CI.
               </p>
               <p>
                 And now online too, in part. Two runs against a real Atlassian tenant
-                have proven 40 of the 52 tools against the live API — all 27 reads, and
-                13 of the 25 writes: issue create and update, comments and comment edit,
-                worklogs, transitions, links, assignment, votes, attachment upload and
-                the comment and worklog deletes. Of the 12 still unproven, seven need a
-                project administrator — the watcher pair, the version pair, the component
-                pair and issue delete — and five are the sprint writes, which that run
-                never reached because the gate itself asked Jira for an over-long sprint
-                name. All 12 are implemented and tested offline; the sprint five need
-                only another run, and the other seven need a site where the account holds
-                the permission.
+                have proven 40 of the 58 tools against the live API — 27 of the 28
+                reads, and 13 of the 30 writes: issue create and update, comments and
+                comment edit, worklogs, transitions, links, assignment, votes,
+                attachment upload and the comment and worklog deletes. Of the 18 still
+                unproven, seven need a project administrator — the watcher pair, the
+                version pair, the component pair and issue delete — five are the sprint
+                writes, which that run never reached because the gate itself asked Jira
+                for an over-long sprint name, three are the component, version and
+                sprint deletes, which landed after the last live run, and three are the
+                bulk operations — bulk edit, bulk delete and the queue-status read —
+                which landed after it too and additionally need the site-wide Make bulk
+                changes permission. All 18 are implemented and tested offline; the
+                sprint five need only another run, and the rest need a site where the
+                account holds the permission.
               </p>
             </div>
           </details>
@@ -2643,12 +2655,12 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the three dele
             <summary>Which MCP clients does it work with?</summary>
             <div class="details-body">
               <p>
-                Any client that speaks the Model Context Protocol over stdio — Claude
-                Code, Claude Desktop, VS Code and Cursor among them.
-                <code>stdio</code> is the only transport v1 runs: a loopback-only
-                Streamable HTTP transport is specified and its settings are validated,
-                but selecting it is refused at startup with an error naming v1.5, so no
-                port is ever bound.
+                Any client that speaks the Model Context Protocol — Claude Code,
+                Claude Desktop, VS Code and Cursor among them. <code>stdio</code> is
+                the default transport; a loopback-only Streamable HTTP transport can
+                be selected instead, binding <code>127.0.0.1</code> only and requiring
+                a bearer token on every request — without the token the server refuses
+                to start.
               </p>
             </div>
           </details>

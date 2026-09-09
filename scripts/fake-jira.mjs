@@ -326,6 +326,8 @@ function seedState(config) {
       },
     ],
     attachments: new Map(),
+    /** Submitted bulk-operation tasks, by taskId (`GET /bulk/queue/{taskId}`). */
+    bulkTasks: new Map(),
     /** Monotonic id source, so nothing ever collides with the seeded ids. */
     nextId: 20000,
   };
@@ -994,6 +996,51 @@ function buildRoutes(server) {
       isLast: startAt + slice.length >= rows.length,
       [key]: slice,
     };
+  };
+
+  /** Jira Cloud's default priority scheme, for `JiraPriorityField.priorityId`. */
+  const PRIORITY_NAMES = {
+    1: 'Highest',
+    2: 'High',
+    3: 'Medium',
+    4: 'Low',
+    5: 'Lowest',
+  };
+
+  /**
+   * Shared submit half of the two bulk writes: validate the selection, apply
+   * `mutate` to every resolvable issue, and enqueue a task for the queue read.
+   * Unresolvable entries are not an error — they become the task's
+   * `invalidOrInaccessibleIssueCount`, exactly as on a real tenant.
+   */
+  const submitBulk = (ctx, mutate) => {
+    const selected = ctx.body?.selectedIssueIdsOrKeys;
+    if (!Array.isArray(selected) || selected.length === 0 || selected.length > 1000) {
+      return jiraError(400, [
+        'selectedIssueIdsOrKeys must list between 1 and 1000 issues.',
+      ]);
+    }
+    let invalid = 0;
+    const processed = [];
+    for (const wanted of selected) {
+      const issue = findIssue(String(wanted));
+      if (issue === undefined) {
+        invalid += 1;
+        continue;
+      }
+      mutate(issue);
+      processed.push(Number(issue.id));
+    }
+    const taskId = nextId();
+    state.bulkTasks.set(taskId, {
+      taskId,
+      polls: 0,
+      created: Date.now(),
+      totalIssueCount: selected.length,
+      processed,
+      invalid,
+    });
+    return json(201, { taskId });
   };
 
   return [
@@ -1867,6 +1914,52 @@ function buildRoutes(server) {
     ],
 
     [
+      'GET',
+      '/rest/api/3/component/{id}',
+      (ctx) => {
+        const component = state.components.get(ctx.params.id);
+        if (component === undefined) return notFound('Component');
+        return json(200, wireComponent(component, origin()));
+      },
+    ],
+
+    [
+      'GET',
+      '/rest/api/3/component/{id}/relatedIssueCounts',
+      (ctx) => {
+        const component = state.components.get(ctx.params.id);
+        if (component === undefined) return notFound('Component');
+        // The fake's issues never carry a component, so the honest count is
+        // zero. The route exists because jira_delete_component reads it before
+        // planning (CC-124); unrouted, that read would fail the purge loudly.
+        return json(200, {
+          self: `${origin()}/rest/api/3/component/${ctx.params.id}`,
+          issueCount: 0,
+        });
+      },
+    ],
+
+    [
+      'DELETE',
+      '/rest/api/3/component/{id}',
+      (ctx) => {
+        const component = state.components.get(ctx.params.id);
+        if (component === undefined) return notFound('Component');
+        const moveTo = ctx.query.moveIssuesTo;
+        if (moveTo !== undefined) {
+          if (String(moveTo) === ctx.params.id) {
+            return jiraError(400, [
+              'You cannot move issues to the component being deleted.',
+            ]);
+          }
+          if (!state.components.has(String(moveTo))) return notFound('Component');
+        }
+        state.components.delete(ctx.params.id);
+        return noContent();
+      },
+    ],
+
+    [
       'POST',
       '/rest/api/3/version',
       (ctx) => {
@@ -1918,6 +2011,68 @@ function buildRoutes(server) {
           if (Object.hasOwn(body, name)) version[name] = body[name];
         }
         return json(200, wireVersion(version, origin()));
+      },
+    ],
+
+    [
+      'GET',
+      '/rest/api/3/version/{id}',
+      (ctx) => {
+        const version = state.versions.get(ctx.params.id);
+        if (version === undefined) return notFound('Version');
+        return json(200, wireVersion(version, origin()));
+      },
+    ],
+
+    [
+      'GET',
+      '/rest/api/3/version/{id}/relatedIssueCounts',
+      (ctx) => {
+        const version = state.versions.get(ctx.params.id);
+        if (version === undefined) return notFound('Version');
+        // Zeroes for the same reason as the component twin above: no fake
+        // issue references a version, and the route is here for
+        // jira_delete_version's before-read (CC-124), not for the numbers.
+        return json(200, {
+          self: `${origin()}/rest/api/3/version/${ctx.params.id}`,
+          issuesFixedCount: 0,
+          issuesAffectedCount: 0,
+          issueCountWithCustomFieldsShowingVersion: 0,
+        });
+      },
+    ],
+
+    // Note what is NOT here: `DELETE /rest/api/3/version/{id}`. Atlassian
+    // deprecated the bare delete in favour of removeAndSwap, and the client
+    // never calls it — leaving it unrouted means a regression to the
+    // deprecated endpoint surfaces as an `unmatched` request in the
+    // rehearsal's universal checks instead of quietly passing.
+    [
+      'POST',
+      '/rest/api/3/version/{id}/removeAndSwap',
+      (ctx) => {
+        const version = state.versions.get(ctx.params.id);
+        if (version === undefined) return notFound('Version');
+        const body = ctx.body ?? {};
+        // docs/JIRA-API.md reads the swap targets as NUMBERS — the same id
+        // family as `projectId` on POST /version (C15/C22). The fake enforces
+        // that reading; only a real site can prove the reading itself.
+        for (const name of ['moveFixIssuesTo', 'moveAffectedIssuesTo']) {
+          if (!Object.hasOwn(body, name)) continue;
+          if (typeof body[name] !== 'number') {
+            return jiraError(400, [], {
+              [name]: `${name} must be a number, not a string.`,
+            });
+          }
+          if (String(body[name]) === ctx.params.id) {
+            return jiraError(400, [
+              'You cannot move issues to the version being deleted.',
+            ]);
+          }
+          if (!state.versions.has(String(body[name]))) return notFound('Version');
+        }
+        state.versions.delete(ctx.params.id);
+        return noContent();
       },
     ],
 
@@ -2127,7 +2282,8 @@ function buildRoutes(server) {
       },
     ],
 
-    // The four agile WRITE routes. They validate rather than shrug, because a
+    // The five agile WRITE routes (the delete joined with D102). They validate
+    // rather than shrug, because a
     // lenient fake turns the rehearsal into a tautology: a route that accepts
     // anything cannot catch the client sending the wrong thing, which is the
     // one class of bug this harness exists to find before Gate C does.
@@ -2201,6 +2357,23 @@ function buildRoutes(server) {
           resolved.push(issue);
         }
         for (const issue of resolved) issue.sprintId = undefined;
+        return noContent();
+      },
+    ],
+
+    [
+      'DELETE',
+      '/rest/agile/1.0/sprint/{sprintId}',
+      (ctx) => {
+        const sprintId = Number(ctx.params.sprintId);
+        const index = state.sprints.findIndex((row) => row.id === sprintId);
+        if (index === -1) return notFound('Sprint');
+        // Jira's documented behaviour: a deleted sprint's issues land on the
+        // backlog. The fake mirrors it so a post-purge listing agrees.
+        for (const issue of state.issues.values()) {
+          if (issue.sprintId === sprintId) issue.sprintId = undefined;
+        }
+        state.sprints.splice(index, 1);
         return noContent();
       },
     ],
@@ -2337,6 +2510,105 @@ function buildRoutes(server) {
           endDate: sprint.endDate,
           completeDate: sprint.completeDate,
           originBoardId: sprint.originBoardId,
+        });
+      },
+    ],
+
+    // -- bulk operations --------------------------------------------------
+    //
+    // The submits apply their mutations immediately and answer 201 {taskId};
+    // the queue read then stages ENQUEUED -> RUNNING -> COMPLETE over three
+    // polls, so a client that treats the 201 as the outcome never sees its
+    // operation finish. (Real Jira mutates asynchronously — reading an issue
+    // between submit and COMPLETE can therefore disagree with the queue here.
+    // Rehearsal polls to COMPLETE before verifying, so the shortcut is safe.)
+
+    [
+      'POST',
+      '/rest/api/3/bulk/issues/delete',
+      (ctx) =>
+        submitBulk(ctx, (issue) => {
+          issue.deleted = true;
+        }),
+    ],
+
+    [
+      'POST',
+      '/rest/api/3/bulk/issues/fields',
+      (ctx) => {
+        const input = ctx.body?.editedFieldsInput ?? {};
+        const actions = ctx.body?.selectedActions;
+        if (!Array.isArray(actions) || actions.length === 0) {
+          return jiraError(400, ['selectedActions must name at least one field.']);
+        }
+        const labels = input.labelsFields?.[0];
+        const priorityId = input.priority?.priorityId;
+        const assignee = input.singleSelectClearableUserPickerFields?.find(
+          (row) => row.fieldId === 'assignee',
+        );
+        const versions = input.multipleVersionPickerFields?.find(
+          (row) => row.fieldId === 'fixVersions',
+        );
+        const applyPicker = (current, option, wanted) => {
+          if (option === 'ADD') return [...new Set([...current, ...wanted])];
+          if (option === 'REMOVE') return current.filter((one) => !wanted.includes(one));
+          if (option === 'REPLACE') return wanted;
+          return []; // REMOVE_ALL
+        };
+        return submitBulk(ctx, (issue) => {
+          if (labels !== undefined) {
+            issue.labels = applyPicker(
+              issue.labels,
+              labels.bulkEditMultiSelectFieldOption,
+              (labels.labels ?? []).map((row) => row.name),
+            );
+          }
+          if (priorityId !== undefined) {
+            issue.priority = {
+              id: priorityId,
+              name: PRIORITY_NAMES[priorityId] ?? priorityId,
+            };
+          }
+          if (assignee !== undefined) {
+            // `user: null` is the wire's "unassign" (JiraSingleSelectUserPickerField).
+            issue.assigneeAccountId = assignee.user?.accountId ?? undefined;
+          }
+          if (versions !== undefined) {
+            // Stored but not rendered: wireIssueFields keeps its fixed empty
+            // fixVersions, so this proves the request shape, not the rendering.
+            issue.fixVersionIds = applyPicker(
+              issue.fixVersionIds ?? [],
+              versions.bulkEditMultiSelectFieldOption,
+              (versions.versions ?? []).map((row) => row.versionId),
+            );
+          }
+          issue.updated = now();
+        });
+      },
+    ],
+
+    [
+      'GET',
+      '/rest/api/3/bulk/queue/{taskId}',
+      (ctx) => {
+        const task = state.bulkTasks.get(ctx.params.taskId);
+        if (task === undefined) return notFound('Task');
+        task.polls += 1;
+        const status =
+          task.polls === 1 ? 'ENQUEUED' : task.polls === 2 ? 'RUNNING' : 'COMPLETE';
+        const done = status === 'COMPLETE';
+        return json(200, {
+          taskId: task.taskId,
+          status,
+          progressPercent: done ? 100 : status === 'RUNNING' ? 50 : 0,
+          submittedBy: { accountId: SELF_ACCOUNT },
+          created: task.created,
+          started: status === 'ENQUEUED' ? undefined : task.created,
+          updated: Date.now(),
+          totalIssueCount: task.totalIssueCount,
+          processedAccessibleIssues: done ? task.processed : [],
+          failedAccessibleIssues: {},
+          invalidOrInaccessibleIssueCount: done ? task.invalid : 0,
         });
       },
     ],

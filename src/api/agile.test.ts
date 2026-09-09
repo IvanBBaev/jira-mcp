@@ -40,8 +40,12 @@ import {
   DEFAULT_AGILE_PAGE_SIZE,
   DEFAULT_SPRINT_ISSUE_FIELDS,
   MAX_MOVE_ISSUES,
+  SPRINT_PATH_TEMPLATE,
   closeSprint,
   createSprint,
+  deleteSprint,
+  deleteSprintRequest,
+  getSprint,
   listBoards,
   listSprintIssues,
   listSprints,
@@ -1130,4 +1134,186 @@ test('CC-34 never rewrites a 403 the client already read as an auth failure', as
   // Telling this caller to check their Jira Software licence would send them
   // after the wrong problem entirely.
   assert.equal(error, upstream);
+});
+
+// ---------------------------------------------------------------------------
+// getSprint / deleteSprint (Phase 11)
+// ---------------------------------------------------------------------------
+
+const SPRINT_DELETE_ROUTE = 'DELETE /rest/agile/1.0/sprint/42';
+
+test('getSprint reads one sprint from the agile root and narrows it', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/sprint/42',
+    jiraOk(sprintRow(42, 'active')),
+  );
+
+  const sprint = await getSprint({ jira: jira.fn, sprintId: 42 });
+
+  assert.deepEqual(jira.routes(), ['GET /rest/agile/1.0/sprint/42']);
+  assert.equal(jira.lastRequest()?.method, 'GET');
+  assert.equal(jira.lastRequest()?.root, 'agile');
+  assert.equal(jira.lastRequest()?.pathTemplate, SPRINT_PATH_TEMPLATE);
+  // Whole-object deepEqual: `self` is dropped, everything narrow survives.
+  assert.deepEqual(sprint, {
+    id: 42,
+    name: 'Sprint 42',
+    state: 'active',
+    goal: 'Ship the agile package',
+    startDate: '2026-08-03T09:00:00.000+02:00',
+    endDate: '2026-08-17T09:00:00.000+02:00',
+    originBoardId: 7,
+  });
+});
+
+test('getSprint rejects a sprint id that is not one, before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() => getSprint({ jira: jira.fn, sprintId: 'board 7' })),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /sprintId/);
+  assert.match(error.remediation ?? '', /jira_list_sprints/);
+  assert.deepEqual(jira.calls, []);
+});
+
+test('deleteSprintRequest builds the bare spec the plan shows', () => {
+  // Whole-spec deepEqual: the builder stamps neither controls nor a `safe`
+  // flag — that is the executor's job.
+  assert.deepEqual(deleteSprintRequest({ sprintId: '42' }), {
+    method: 'DELETE',
+    root: 'agile',
+    path: '/sprint/42',
+    pathTemplate: SPRINT_PATH_TEMPLATE,
+  });
+});
+
+test('CC-124: deleteSprint sends the DELETE whatever the sprint state', async () => {
+  // ONLY the DELETE route is programmed: a client-side state guard would have
+  // to read the sprint first, hit an unprogrammed route, and fail this test.
+  const jira = createFakeJiraRequest().on(
+    SPRINT_DELETE_ROUTE,
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  const receipt = await deleteSprint({ jira: jira.fn, sprintId: 42 });
+
+  const spec = jira.lastRequest();
+  assert.deepEqual(jira.routes(), [SPRINT_DELETE_ROUTE]);
+  assert.equal(spec?.method, 'DELETE');
+  assert.equal(spec?.root, 'agile');
+  assert.equal(spec?.pathTemplate, SPRINT_PATH_TEMPLATE);
+  assert.equal(spec?.body, undefined);
+  // CC-12/13: an unsafe write is never replayed, so `safe` must be absent —
+  // not `false`, absent: the retry matrix reads the property's presence.
+  assert.equal(spec?.safe, undefined);
+  assert.equal(Object.hasOwn(spec ?? {}, 'safe'), false);
+
+  assert.deepEqual(receipt, { sprintId: 42, deleted: true });
+});
+
+test('CC-124: a 400 refusal is re-aimed like the other sprint writes', async () => {
+  const upstream = new JiraError({
+    kind: 'validation',
+    message:
+      'Jira returned 400 for DELETE /sprint/{sprintId}: The sprint cannot be ' +
+      'deleted. Check the request fields and retry.',
+    httpStatus: 400,
+    jiraMessages: ['The sprint cannot be deleted. It is the active sprint.'],
+    remediation: 'Check the request fields and retry.',
+    detail: '{"errorMessages":["The sprint cannot be deleted."]}',
+  });
+  const jira = createFakeJiraRequest().on(SPRINT_DELETE_ROUTE, jiraErr(upstream));
+
+  const error = asJiraError(
+    await caught(() => deleteSprint({ jira: jira.fn, sprintId: 42 })),
+  );
+
+  // The kind and everything Jira said travel on untouched — CC-21's shape.
+  assert.equal(error.kind, 'validation');
+  assert.equal(error.httpStatus, 400);
+  assert.deepEqual(error.jiraMessages, [
+    'The sprint cannot be deleted. It is the active sprint.',
+  ]);
+  assert.equal(error.detail, upstream.detail);
+  assert.equal(error.cause, upstream);
+  assert.match(error.message, /Jira refused to delete this sprint/);
+  assert.match(error.message, /It is the active sprint\./);
+  assert.doesNotMatch(error.message, /\.\./);
+  // Only the remediation changes: "check the request fields" is wrong advice
+  // when the sprint's state, not the request, is what Jira objected to.
+  assert.match(error.remediation ?? '', /jira_list_sprints/);
+  assert.doesNotMatch(error.remediation ?? '', /Check the request fields/);
+});
+
+test('a refused delete without Jira messages has no dangling colon', async () => {
+  const upstream = new JiraError({
+    kind: 'validation',
+    message: 'Jira returned 400 for DELETE /sprint/{sprintId}.',
+    httpStatus: 400,
+  });
+  const jira = createFakeJiraRequest().on(SPRINT_DELETE_ROUTE, jiraErr(upstream));
+
+  const error = asJiraError(
+    await caught(() => deleteSprint({ jira: jira.fn, sprintId: 42 })),
+  );
+
+  assert.equal(error.jiraMessages, undefined);
+  assert.match(error.message, /Jira refused to delete this sprint\./);
+});
+
+test("the delete re-aim only touches 400s — a 403 is CC-34's business", async () => {
+  const upstream = new JiraError({
+    kind: 'permission',
+    message: 'Jira returned 403 for DELETE /sprint/{sprintId}.',
+    httpStatus: 403,
+    remediation: 'Ask a Jira admin for the Manage Sprints permission.',
+  });
+  const jira = createFakeJiraRequest().on(SPRINT_DELETE_ROUTE, jiraErr(upstream));
+
+  const error = asJiraError(
+    await caught(() => deleteSprint({ jira: jira.fn, sprintId: 42 })),
+  );
+
+  assert.equal(error.kind, 'permission');
+  assert.match(error.remediation ?? '', /Manage Sprints/);
+  assert.match(error.remediation ?? '', /Agile API/);
+  // Not the sprint-state wording: nothing here says the state is stale.
+  assert.doesNotMatch(error.remediation ?? '', /jira_list_sprints/);
+});
+
+test('a 500 from a sprint delete propagates untouched — the same instance', async () => {
+  const upstream = new JiraError({
+    kind: 'transport',
+    message: 'Jira returned 500 for DELETE /sprint/{sprintId}.',
+    httpStatus: 500,
+  });
+  const jira = createFakeJiraRequest().on(SPRINT_DELETE_ROUTE, jiraErr(upstream));
+
+  const error = await caught(() => deleteSprint({ jira: jira.fn, sprintId: 42 }));
+
+  // Same instance: an unsafe write that failed ambiguously belongs to the retry
+  // policy in `core/http.ts`, and this ring has no opinion to add.
+  assert.equal(error, upstream);
+});
+
+test('deleteSprint carries the deadline and signal onto the write', async () => {
+  const controller = new AbortController();
+  const jira = createFakeJiraRequest().on(
+    SPRINT_DELETE_ROUTE,
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  await deleteSprint({
+    jira: jira.fn,
+    sprintId: 42,
+    signal: controller.signal,
+    clock: createFakeClock(0),
+    deadlineAt: 5_000,
+  });
+
+  assert.equal(jira.lastRequest()?.signal, controller.signal);
+  assert.equal(jira.lastRequest()?.deadlineAt, 5_000);
 });

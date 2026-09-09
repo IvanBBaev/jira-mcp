@@ -221,6 +221,20 @@ describe('createJiraError', () => {
     assert.equal(error.remediation, REMEDIATION.permission);
   });
 
+  it('carries the cause sentence first-class, apart from the composed message', () => {
+    const error = createJiraError({
+      kind: 'permission',
+      reason: 'Jira returned HTTP 403.',
+    });
+
+    assert.equal(error.reason, 'Jira returned HTTP 403.');
+    assert.equal(error.message, `Jira returned HTTP 403. ${REMEDIATION.permission}`);
+
+    // Only the factory promises the field; a direct construction may skip it.
+    const direct = new JiraError({ kind: 'permission', message: 'raw' });
+    assert.equal(direct.reason, undefined);
+  });
+
   it('defaults retryable from the frozen retryable set', () => {
     for (const kind of JIRA_ERROR_KINDS) {
       const error = createJiraError({ kind, reason: 'x.' });
@@ -255,6 +269,7 @@ describe('createJiraError', () => {
     });
 
     assert.ok(!error.message.includes(TOKEN));
+    assert.ok(error.reason !== undefined && !error.reason.includes(TOKEN));
     assert.ok(!JSON.stringify(error.jiraMessages).includes(TOKEN));
     assert.ok(error.detail !== undefined && !error.detail.includes(TOKEN));
   });

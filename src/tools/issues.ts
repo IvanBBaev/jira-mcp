@@ -1,11 +1,14 @@
 // ---------------------------------------------------------------------------
 // Package `issues` (read) — TOOLS.md §Package `issues`.
 //
-// Five read tools over one issue: the issue itself, its comments, the workflow
-// transitions available from its current status, its change history and its
-// worklogs. Everything here is read-only, so no tool carries a `writeTier` and
-// none of them ever branches on plan mode — the write gate owns that, and there
-// is nothing to gate.
+// Six read tools: the issue itself, its comments, the workflow transitions
+// available from its current status, its change history, its worklogs — and,
+// since Phase 12, the progress of one bulk operation by task id. Everything
+// here is read-only, so no tool carries a `writeTier` and none of them ever
+// branches on plan mode — the write gate owns that, and there is nothing to
+// gate. The bulk-status read lives HERE, not in `issues-delete`, on purpose
+// (CC-132): a deployment that denies the irreversible surface must still be
+// able to watch a bulk task somebody submitted through the Jira UI.
 //
 // THIS RING IS THIN ON PURPOSE. `api/issues.ts` already shapes what Jira sent
 // (ADF flattened unless `raw`, users reduced to accountId + displayName,
@@ -26,16 +29,20 @@
 // dressed up as one: a model that reads `truncated` is told not to page on,
 // which is the opposite of what a partial page means (CC-25/26 vs here).
 //
-// UNTRUSTED CONTENT (D15, CC-35). Four of the five tools can return Jira-authored
+// UNTRUSTED CONTENT (D15, CC-35). Four of the six tools can return Jira-authored
 // free text — descriptions, comment bodies, changelog values, worklog comments —
 // so their envelopes are branded `_untrusted: true` and carry the
 // `untrusted_content` hint. `jira_get_transitions` returns workflow metadata
-// only (ids, names, target statuses) and is deliberately NOT branded: branding
-// metadata would train the model to ignore the warning where it matters.
+// only (ids, names, target statuses) and `jira_get_bulk_status` queue metadata
+// only (ids, statuses, counts, epochs); both are deliberately NOT branded:
+// branding metadata would train the model to ignore the warning where it
+// matters.
 //
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
+import { getBulkStatus } from '../api/bulk.js';
+import type { BulkStatusResult } from '../api/bulk.js';
 import {
   DEFAULT_COMMENT_ORDER_BY,
   MAX_PAGE_SIZE,
@@ -360,6 +367,41 @@ export const getWorklogsTool = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// jira_get_bulk_status
+// ---------------------------------------------------------------------------
+
+const getBulkStatusInput = toolInput({
+  taskId: z
+    .string()
+    .min(1)
+    .describe(
+      'Bulk task id, as jira_bulk_delete_issues or jira_bulk_edit_issues ' +
+        'returned it.',
+    ),
+});
+
+export const getBulkStatusTool = defineTool({
+  name: 'jira_get_bulk_status',
+  title: 'Get bulk status',
+  description:
+    'Poll one bulk operation by task id — any bulk task this account may see, ' +
+    'including one submitted through the Jira UI. Status is ENQUEUED, RUNNING, ' +
+    'COMPLETE, FAILED, CANCEL_REQUESTED, CANCELLED or DEAD, with progressPercent ' +
+    'and the counts that matter: failedCount and invalidOrInaccessibleIssueCount. ' +
+    'Per-issue errors are not exposed here — examine a FAILED or DEAD task in the ' +
+    'Jira UI. A finished task stays readable for about 14 days.',
+  package: 'issues',
+  annotations: READ_ANNOTATIONS,
+  input: getBulkStatusInput,
+  handler: async (args, ctx): Promise<ToolResult<BulkStatusResult>> =>
+    guarded(async () => {
+      const status = await getBulkStatus({ ...callBase(ctx), taskId: args.taskId });
+      // Queue metadata, not Jira free text: no D15 brand here (CC-35/CC-132).
+      return ok(status);
+    }),
+});
+
+// ---------------------------------------------------------------------------
 // The package
 // ---------------------------------------------------------------------------
 
@@ -373,12 +415,14 @@ export const issuesPackage: PackageSpec = {
   title: 'Issues (read)',
   description:
     'One issue and its comments, available transitions, change history and ' +
-    'worklogs — reads only; the matching writes live in issues-write.',
+    'worklogs, plus the progress of a bulk task — reads only; the matching ' +
+    'writes live in issues-write and issues-delete.',
   tools: [
     getIssueTool,
     getCommentsTool,
     getTransitionsTool,
     getChangelogTool,
     getWorklogsTool,
+    getBulkStatusTool,
   ],
 };

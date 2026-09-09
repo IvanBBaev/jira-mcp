@@ -254,26 +254,39 @@ test('CC-85: the residue table lists every class even when the site is clean', (
   }
 });
 
-test('CC-85: every class states how it is removed, and only issues and files are automatic', () => {
+test('CC-85: every class states how it is removed, and every remote class is a command', () => {
   const plan = driver.residuePlan({});
   const removal = Object.fromEntries(plan.map((row) => [row.kind, row.removal]));
-  // The honest half: this server ships no version delete and no sprint delete
-  // (D73 — the gate does not get to widen the product's write surface), so a
-  // `--write` run leaves one of each behind permanently and the table has to
-  // say so rather than imply a command exists.
+  // The honest half flipped with D102: jira_delete_version,
+  // jira_delete_component and jira_delete_sprint exist now, so every remote
+  // class is `command` — versions, components and sprints stopped being the
+  // permanent residue D73 had made them. `manual` stays in the contract but
+  // currently owns nothing.
   assert.deepEqual(removal, {
     issues: 'command',
-    versions: 'manual',
-    components: 'manual',
-    sprints: 'manual',
+    versions: 'command',
+    components: 'command',
+    sprints: 'command',
     media: 'local',
   });
   for (const row of plan) {
     assert.notEqual(row.how.trim(), '', `${row.kind} does not say how to remove it`);
-    if (row.removal === 'manual') {
-      assert.match(row.how, /→/, `${row.kind} does not give a UI path`);
+    if (row.removal === 'command') {
+      assert.match(row.how, /--purge/, `${row.kind} does not name the purge command`);
     }
   }
+  // A command the tenant can refuse must not read like a guarantee: the two
+  // project-scoped deletes need project admin, the sprint delete needs
+  // manage-sprints, and each row has to carry its own caveat.
+  for (const kind of ['versions', 'components']) {
+    const row = plan.find((r) => r.kind === kind);
+    assert.match(row?.how ?? '', /project admin/, `${kind} hides the permission caveat`);
+  }
+  assert.match(
+    plan.find((r) => r.kind === 'sprints')?.how ?? '',
+    /manage-sprints/,
+    'sprints hide the permission caveat',
+  );
 });
 
 test('CC-85: the run that found the residue prints the command that clears it', () => {

@@ -406,6 +406,31 @@
             "required": ["issue"],
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_get_bulk_status",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["taskId"],
+            "additionalProperties": false
+          }
         }
       ]
     },
@@ -466,6 +491,9 @@
               "format": {
                 "type": "string",
                 "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
               },
               "apply": {
                 "type": "boolean"
@@ -565,6 +593,9 @@
                 "type": "string",
                 "enum": ["text", "markdown"]
               },
+              "resolveMentions": {
+                "type": "boolean"
+              },
               "apply": {
                 "type": "boolean"
               },
@@ -626,6 +657,9 @@
               "format": {
                 "type": "string",
                 "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
               },
               "apply": {
                 "type": "boolean"
@@ -692,6 +726,9 @@
               "format": {
                 "type": "string",
                 "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
               },
               "apply": {
                 "type": "boolean"
@@ -771,6 +808,9 @@
               "format": {
                 "type": "string",
                 "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
               },
               "apply": {
                 "type": "boolean"
@@ -876,6 +916,9 @@
                 "type": "string",
                 "enum": ["text", "markdown"]
               },
+              "resolveMentions": {
+                "type": "boolean"
+              },
               "apply": {
                 "type": "boolean"
               },
@@ -934,6 +977,9 @@
               "format": {
                 "type": "string",
                 "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
               },
               "apply": {
                 "type": "boolean"
@@ -1063,6 +1109,242 @@
               }
             },
             "required": ["issue", "worklogId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_component",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "componentId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "moveIssuesTo": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["componentId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_version",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "moveFixIssuesTo": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "moveAffectedIssuesTo": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["versionId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_bulk_delete_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "notifyUsers": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_bulk_edit_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "labelsAction": {
+                "type": "string",
+                "enum": ["ADD", "REMOVE", "REPLACE", "REMOVE_ALL"]
+              },
+              "priorityId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeAccountId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fixVersionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "fixVersionsAction": {
+                "type": "string",
+                "enum": ["ADD", "REMOVE", "REPLACE", "REMOVE_ALL"]
+              },
+              "notifyUsers": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
             "additionalProperties": false
           }
         }

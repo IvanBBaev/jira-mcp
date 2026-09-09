@@ -1,11 +1,13 @@
 // ---------------------------------------------------------------------------
-// Transport wiring (D5 — the low-level SDK `Server`; D19 — v1 is stdio-only;
-// OBSERVABILITY.md §Log events for `shutdown`).
+// Transport wiring (D5 — the low-level SDK `Server`; OBSERVABILITY.md §Log
+// events for `shutdown`).
 //
-// This module owns exactly one decision — WHICH transport, and how it is
-// attached and detached. It does not build the server, register handlers, or
-// install signal traps: that is `buildServer`/`main` (WP-40), which calls
-// `connectTransport` and later `handle.close(reason)`.
+// This module owns exactly one decision — how the STDIO transport is attached
+// and detached. It does not build the server, register handlers, or install
+// signal traps: that is `buildServer`/`main` (WP-40), which calls
+// `connectTransport` and later `handle.close(reason)`. Which transport runs is
+// `index.ts`'s branch on `settings.transport` (D101): `http` goes to
+// `connectHttpTransport` in `transport-http.ts` and never enters this module.
 //
 // STDIO IS THE PROTOCOL. stdout carries JSON-RPC frames, which is why the whole
 // codebase logs to stderr and why `no-console` is on in eslint. Both streams are
@@ -18,12 +20,6 @@
 // user's machine, so EOF is wired here to the same close path a signal uses,
 // and reported with the `stdin_eof` reason from the frozen vocabulary.
 //
-// HTTP IS REFUSED (D19). `core/settings.ts` still parses `JIRA_TRANSPORT`,
-// `JIRA_HTTP_PORT` and `JIRA_HTTP_TOKEN` so the configuration surface stays
-// stable across the v1.5 reinstatement — the refusal lives here, at the only
-// place that would have had to implement the listener, the token gate (CC-30)
-// and session handling.
-//
 // Layering: `core ← api ← mcp ← tools`. The SDK enters the codebase here (and
 // in WP-40's assembly), never below.
 // ---------------------------------------------------------------------------
@@ -33,7 +29,6 @@ import type { Readable, Writable } from 'node:stream';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
-import { JiraError } from '../core/types.js';
 import type { Logger, Settings, TransportKind } from '../core/types.js';
 
 /**
@@ -68,73 +63,24 @@ export interface TransportDeps {
 /** A live transport attachment, and the one way to take it down. */
 export interface TransportHandle {
   readonly kind: TransportKind;
-  /** The attached transport; WP-40 needs it for nothing else than diagnostics. */
-  readonly transport: Transport;
+  /** stdio: the connected transport. http: absent — each session owns its own. */
+  readonly transport?: Transport;
   readonly closed: boolean;
   /** Detach and close the server. Idempotent — the first reason is the one logged. */
   close(reason: ShutdownReason): Promise<void>;
 }
 
-/** Message of the D19 refusal; asserted verbatim by the test. */
-export const HTTP_TRANSPORT_MESSAGE =
-  'JIRA_TRANSPORT=http is not available in v1: the Streamable HTTP transport was ' +
-  'demoted to v1.5 (D19). This build serves the stdio transport only.';
-
-export const HTTP_TRANSPORT_REMEDIATION =
-  'Set JIRA_TRANSPORT=stdio (the default) and register the server as a stdio MCP ' +
-  'server. JIRA_HTTP_PORT and JIRA_HTTP_TOKEN keep being parsed so the ' +
-  'configuration survives the v1.5 upgrade unchanged.';
-
 /**
- * The refusal for every transport this build cannot serve, keyed by kind.
- *
- * A table rather than an `isHttp ? … : generic-fallback` pair, because the
- * fallback was unreachable code: `TRANSPORT_KINDS` has exactly two members and
- * `core/settings.ts` rejects anything outside it, so the only kind that ever
- * reaches here is `http`. The `Record` keeps that honest at COMPILE time —
- * adding a transport makes this table incomplete and breaks the build here,
- * which is where the new kind's refusal belongs, instead of silently shipping a
- * generic sentence no test ever exercised.
- */
-const REFUSALS: Record<
-  Exclude<TransportKind, 'stdio'>,
-  { readonly message: string; readonly remediation: string }
-> = {
-  http: { message: HTTP_TRANSPORT_MESSAGE, remediation: HTTP_TRANSPORT_REMEDIATION },
-};
-
-function unsupportedTransport(kind: Exclude<TransportKind, 'stdio'>): JiraError {
-  const refusal = REFUSALS[kind];
-  return new JiraError({
-    kind: 'config',
-    message: refusal.message,
-    retryable: false,
-    remediation: refusal.remediation,
-  });
-}
-
-/**
- * Fail before anything is constructed if the configured transport cannot be
- * served. Separate from {@link connectTransport} so startup validation (and
- * doctor) can ask the question without owning a server instance.
- */
-export function assertTransportSupported(settings: Settings): void {
-  if (settings.transport !== 'stdio') throw unsupportedTransport(settings.transport);
-}
-
-/**
- * Attach `server` to the configured transport.
+ * Attach `server` to the stdio transport.
  *
  * Throws (rather than returning a result envelope) on purpose: this runs at
  * startup, before any MCP session exists, so there is no channel to answer on —
- * `main` turns the `JiraError` into a stderr message and a non-zero exit.
+ * `main` turns the failure into a stderr message and a non-zero exit.
  */
 export async function connectTransport(
   server: ConnectableServer,
   deps: TransportDeps,
 ): Promise<TransportHandle> {
-  assertTransportSupported(deps.settings);
-
   const stdin = deps.stdin ?? process.stdin;
   const transport = new StdioServerTransport(stdin, deps.stdout ?? process.stdout);
 

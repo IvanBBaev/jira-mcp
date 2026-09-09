@@ -30,6 +30,7 @@ import {
   jiraErr,
   jiraOk,
 } from '../core/fakes/index.js';
+import type { JiraRequestSpec } from '../core/types.js';
 import type { AnyToolSpec, Hint, ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   addCommentTool,
@@ -1003,6 +1004,337 @@ test('CC-46: create_issue sends the converted document under fields.description'
     nested(lastBody(fake), 'fields')['description'],
     adfFromMarkdown(MD_TEXT),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Mention resolution (D100 / CC-105, CC-111)
+// ---------------------------------------------------------------------------
+
+const USER_SEARCH_ROUTE = 'GET /rest/api/3/user/search';
+
+const ANA_ID = '5b10ac8d82e05b22cc7d4ef5';
+const BORIS_ID = '5b10a0effa615349cb016cd8';
+/** The same display name under a NEW accountId — CC-111's directory drift. */
+const DRIFTED_ANA_ID = '712020:0af1bc3d-95cb-4c17-9d2e-5a1c8e2f9b10';
+
+/** `GET /user/search` rows. // synthetic */
+const ANA = {
+  accountId: ANA_ID,
+  accountType: 'atlassian',
+  displayName: 'Ana Petrova',
+  active: true,
+};
+const BORIS = {
+  accountId: BORIS_ID,
+  accountType: 'atlassian',
+  displayName: 'Boris Iliev',
+  active: true,
+};
+
+/** What the resolver builds from those rows — the converter's map values. */
+const ANA_TARGET = { id: ANA_ID, text: '@Ana Petrova' };
+const BORIS_TARGET = { id: BORIS_ID, text: '@Boris Iliev' };
+
+/** Matches the ONE user search whose query is `name` — a route string cannot. */
+function userSearchFor(name: string): (req: JiraRequestSpec) => boolean {
+  return (req) =>
+    req.method === 'GET' && req.path === '/user/search' && req.query?.['query'] === name;
+}
+
+/** Every user-search query the fake saw, in wire order. */
+function searchQueries(fake: FakeJira): readonly unknown[] {
+  return fake.calls
+    .filter((req) => req.path === '/user/search')
+    .map((req) => req.query?.['query']);
+}
+
+/** Every mention-node id inside an ADF value, document order. */
+function mentionIds(node: unknown): string[] {
+  if (Array.isArray(node)) {
+    return (node as readonly unknown[]).flatMap((item) => mentionIds(item));
+  }
+  if (node === null || typeof node !== 'object') return [];
+  const record = node as Record<string, unknown>;
+  const attrs = record['attrs'] as Record<string, unknown> | undefined;
+  const own = record['type'] === 'mention' ? [String(attrs?.['id'])] : [];
+  return [...own, ...mentionIds(record['content'])];
+}
+
+test('CC-105: @[name] resolves only when format is "markdown" AND resolveMentions is true', async () => {
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Ana Petrova'), jiraOk([ANA]))
+    .on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+  const text = 'Ping @[Ana Petrova] about the retry policy.';
+
+  const result = await addCommentTool.handler(
+    { issue: KEY, body: text, format: 'markdown', resolveMentions: true },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(hintCodes(result), []);
+  // The search precedes the write, so the plan seam would capture the SAME
+  // body the executing fake records here (CC-20): the node is already in it.
+  assert.deepEqual(fake.routes(), [USER_SEARCH_ROUTE, COMMENT_ROUTE]);
+
+  const body = lastBody(fake)['body'];
+  assert.deepEqual(
+    body,
+    adfFromMarkdown(text, { mentions: new Map([['Ana Petrova', ANA_TARGET]]) }),
+  );
+  assert.deepEqual(mentionIds(body), [ANA_ID]);
+});
+
+test('CC-105: resolveMentions without format: "markdown" is refused at the flag itself', () => {
+  for (const [name, field] of Object.entries(RICH_TEXT_FIELDS)) {
+    const tool = ALL_TOOLS.find((candidate) => candidate.name === name);
+    assert.ok(tool !== undefined, `${name} is not exported`);
+    const args = { ...minimalArgs(tool), [field]: 'Ping @[Ana Petrova].' };
+
+    for (const format of [undefined, 'text' as const]) {
+      const parsed = tool.input.safeParse({
+        ...args,
+        ...(format === undefined ? {} : { format }),
+        resolveMentions: true,
+      });
+      assert.equal(parsed.success, false, `${name} accepted the contradiction`);
+      // Annotated: an inferred type here is circular through the asserts flow.
+      const issue: { path: PropertyKey[]; message: string } | undefined = parsed.success
+        ? undefined
+        : parsed.error.issues[0];
+      assert.deepEqual(issue?.path, ['resolveMentions'], `${name} refusal path`);
+      assert.match(issue?.message ?? '', /format: "markdown"/, `${name} refusal fix`);
+    }
+
+    // The coherent spellings parse: markdown + true, and the bare false.
+    assert.equal(
+      tool.input.safeParse({ ...args, format: 'markdown', resolveMentions: true })
+        .success,
+      true,
+      `${name} rejected format: "markdown" with resolveMentions`,
+    );
+    assert.equal(
+      tool.input.safeParse({ ...args, resolveMentions: false }).success,
+      true,
+      `${name} rejected resolveMentions: false without format`,
+    );
+  }
+
+  // The tool without a rich-text surface never grew the flag.
+  assert.equal(
+    rejectsAsUnknown(assignIssueTool, {
+      ...minimalArgs(assignIssueTool),
+      resolveMentions: true,
+    }),
+    true,
+  );
+});
+
+test('CC-105: tokens left unresolved stay literal and earn the mentions_skipped hint', async () => {
+  const text = 'Ping @[Ana Petrova] about the retry policy.';
+
+  for (const resolveMentions of [undefined, false]) {
+    const fake = createFakeJiraRequest().on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+
+    const result = await addCommentTool.handler(
+      {
+        issue: KEY,
+        body: text,
+        format: 'markdown',
+        ...(resolveMentions === undefined ? {} : { resolveMentions }),
+      },
+      ctxOf(fake),
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.hints, [
+      {
+        code: 'mentions_skipped',
+        message:
+          '@[...] tokens were left as literal text — set resolveMentions: true to ' +
+          'resolve them to mentions via user search.',
+      },
+    ]);
+    // No search went out, and the token survives as literal text (CC-108).
+    assert.deepEqual(fake.routes(), [COMMENT_ROUTE]);
+    assert.deepEqual(lastBody(fake)['body'], adfFromMarkdown(text));
+    assert.deepEqual(mentionIds(lastBody(fake)['body']), []);
+  }
+});
+
+test('mentions_skipped never fires without a token, and never off the markdown path', async () => {
+  const fake = createFakeJiraRequest().on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+
+  // Markdown without a token: quiet.
+  const markdown = await addCommentTool.handler(
+    { issue: KEY, body: 'No mentions here.', format: 'markdown' },
+    ctxOf(fake),
+  );
+  assert.deepEqual(hintCodes(markdown), []);
+
+  // Text format: `@[...]` is not a token there (CC-110), so no hint either,
+  // and the characters travel untouched.
+  const text = await addCommentTool.handler(
+    { issue: KEY, body: 'Ping @[Ana Petrova].' },
+    ctxOf(fake),
+  );
+  assert.deepEqual(hintCodes(text), []);
+  assert.deepEqual(lastBody(fake)['body'], adfDoc('Ping @[Ana Petrova].'));
+});
+
+test('one resolver pass covers every token — case duplicates fold into one search', async () => {
+  const text = '@[Ana Petrova] and @[Boris Iliev] pair; @[ana petrova] reviews.';
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Ana Petrova'), jiraOk([ANA]))
+    .on(userSearchFor('Boris Iliev'), jiraOk([BORIS]))
+    .on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+
+  const result = await addCommentTool.handler(
+    { issue: KEY, body: text, format: 'markdown', resolveMentions: true },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  // Two distinct names, two searches (CC-112) — the respelling rides along.
+  assert.deepEqual(searchQueries(fake), ['Ana Petrova', 'Boris Iliev']);
+  assert.deepEqual(fake.routes(), [USER_SEARCH_ROUTE, USER_SEARCH_ROUTE, COMMENT_ROUTE]);
+
+  const body = lastBody(fake)['body'];
+  assert.deepEqual(mentionIds(body), [ANA_ID, BORIS_ID, ANA_ID]);
+  assert.deepEqual(
+    body,
+    adfFromMarkdown(text, {
+      mentions: new Map([
+        ['Ana Petrova', ANA_TARGET],
+        ['Boris Iliev', BORIS_TARGET],
+        ['ana petrova', ANA_TARGET],
+      ]),
+    }),
+  );
+});
+
+test('a name the search cannot settle refuses the whole call — the plan sees nothing', async () => {
+  // The COMMENT_ROUTE rule stands in for the capturing seam: reaching it would
+  // leak the unwind Error out of the handler. CC-106 says it is never reached.
+  const captured = new Error(`PlanCaptured: POST /rest/api/3/issue/${KEY}/comment`);
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Nobody Known'), jiraOk([]))
+    .on(COMMENT_ROUTE, jiraErr(captured));
+
+  const result = await addCommentTool.handler(
+    {
+      issue: KEY,
+      body: 'Ask @[Nobody Known].',
+      format: 'markdown',
+      resolveMentions: true,
+    },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(result.error?.remediation ?? '', /jira_search_users/);
+  // Only the search went out — the write seam was never touched.
+  assert.deepEqual(fake.routes(), [USER_SEARCH_ROUTE]);
+});
+
+test('CC-111: resolution is execution-time — apply re-resolves, the plan was a snapshot', async () => {
+  const args = {
+    issue: KEY,
+    body: 'Ping @[Ana Petrova].',
+    format: 'markdown',
+    resolveMentions: true,
+  } as const;
+  const captured = new Error(`PlanCaptured: POST /rest/api/3/issue/${KEY}/comment`);
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Ana Petrova'), jiraOk([ANA]), 1)
+    .on(userSearchFor('Ana Petrova'), jiraOk([{ ...ANA, accountId: DRIFTED_ANA_ID }]))
+    .on(COMMENT_ROUTE, jiraErr(captured), 1)
+    .on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+
+  // Plan: the capture unwind travels, and the captured body held the OLD id.
+  await assert.rejects(
+    addCommentTool.handler({ ...args }, ctxOf(fake)),
+    (error: unknown) => error === captured,
+  );
+  const planned = fake.calls[1]?.body as Record<string, unknown> | undefined;
+  assert.deepEqual(mentionIds(planned?.['body']), [ANA_ID]);
+
+  // Apply: a FRESH search runs, and the id the directory holds NOW is written.
+  const result = await addCommentTool.handler({ ...args }, ctxOf(fake));
+  assert.equal(result.ok, true);
+  assert.deepEqual(searchQueries(fake), ['Ana Petrova', 'Ana Petrova']);
+  assert.deepEqual(mentionIds(lastBody(fake)['body']), [DRIFTED_ANA_ID]);
+});
+
+test('resolution reaches the rich-text surface of every tool that has one', async () => {
+  const text = 'Handing to @[Ana Petrova].';
+  const expected = adfFromMarkdown(text, {
+    mentions: new Map([['Ana Petrova', ANA_TARGET]]),
+  });
+
+  const cases: readonly {
+    readonly tool: AnyToolSpec;
+    readonly fake: FakeJira;
+    readonly sent: (fake: FakeJira) => unknown;
+  }[] = [
+    {
+      tool: createIssueTool,
+      fake: createFakeJiraRequest().on(CREATE_ROUTE, jiraOk(CREATED_BODY)),
+      sent: (fake) => nested(lastBody(fake), 'fields')['description'],
+    },
+    {
+      tool: updateIssueTool,
+      fake: createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT),
+      sent: (fake) => nested(lastBody(fake), 'fields')['description'],
+    },
+    {
+      tool: transitionIssueTool,
+      fake: createFakeJiraRequest()
+        .on(GET_TRANSITIONS_ROUTE, jiraOk(TRANSITIONS_BODY))
+        .on(POST_TRANSITION_ROUTE, NO_CONTENT),
+      sent: (fake) => {
+        const comment = nested(lastBody(fake), 'update')['comment'] as readonly {
+          add: { body: unknown };
+        }[];
+        return comment[0]?.add.body;
+      },
+    },
+    {
+      tool: addCommentTool,
+      fake: createFakeJiraRequest().on(COMMENT_ROUTE, jiraOk(COMMENT_BODY)),
+      sent: (fake) => lastBody(fake)['body'],
+    },
+    {
+      tool: updateCommentTool,
+      fake: createFakeJiraRequest().on(EDIT_COMMENT_ROUTE, jiraOk(EDITED_COMMENT_BODY)),
+      sent: (fake) => lastBody(fake)['body'],
+    },
+    {
+      tool: addWorklogTool,
+      fake: worklogFake(),
+      sent: (fake) => lastBody(fake)['comment'],
+    },
+    {
+      tool: linkIssuesTool,
+      fake: createFakeJiraRequest().on(LINK_ROUTE, jiraOk({}, { status: 201 })),
+      sent: (fake) => nested(lastBody(fake), 'comment')['body'],
+    },
+  ];
+
+  for (const { tool, fake, sent } of cases) {
+    fake.on(userSearchFor('Ana Petrova'), jiraOk([ANA]));
+    const field = RICH_TEXT_FIELDS[tool.name];
+    assert.ok(field !== undefined, `${tool.name} has no rich-text field registered`);
+
+    const result = await tool.handler(
+      { ...minimalArgs(tool), [field]: text, format: 'markdown', resolveMentions: true },
+      ctxOf(fake),
+    );
+
+    assert.equal(result.ok, true, `${tool.name} failed`);
+    assert.deepEqual(sent(fake), expected, `${tool.name} sent a different document`);
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -94,9 +94,13 @@ export const DEFAULT_AUTH_MODE: AuthMode = 'basic';
  * platform half, but Jira Software (boards, sprints, epics) has no classic
  * equivalent, so those tools need granular scopes. `offline_access` is what
  * makes the refresh token appear; without it a session dies in an hour.
- * `manage:jira-configuration` (global admin) and `delete:sprint:jira-software`
- * are left out on purpose — the consent screen should not ask for power the tool
- * surface does not exercise, and there is no sprint-delete tool at all.
+ * `manage:jira-configuration` (global admin) is left out on purpose — the
+ * consent screen should not ask for power the tool surface does not exercise.
+ * `delete:sprint:jira-software` is also left out, even though a sprint-delete
+ * tool exists since D102: widening the default set would force every existing
+ * grant through re-consent (the economics below), so an oauth-mode
+ * `jira_delete_sprint` under the defaults is a scope refusal, remedied with
+ * `JIRA_OAUTH_SCOPES` and a fresh `login` (AUTH.md finding 5).
  *
  * Changing this list after a successful `login` forces a re-consent: the stored
  * grant is for the old set, and Atlassian will not widen it silently. That is

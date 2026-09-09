@@ -92,7 +92,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_PACKAGES_DENY` | — | Deny list; wins over selection; `core` is force-re-added. |
 | `JIRA_PACKAGES_READONLY` | — | Packages whose write-tier tools are dropped. |
 | `JIRA_WRITE_MODE` | `plan` | `plan` = writes describe instead of execute; `apply` = writes execute when the call passes `apply: true`. Gate contract: THREAT-MODEL.md. |
-| `JIRA_ALLOW_IRREVERSIBLE` | `false` | Opt-in for the irreversible write tier (deletes, D45). Without it those tools refuse even under `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier. |
+| `JIRA_ALLOW_IRREVERSIBLE` | `false` | Opt-in for the irreversible write tier (deletes, D45 and D102). Without it those tools refuse even under `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier. |
 
 ## HTTP behaviour
 
@@ -110,9 +110,9 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 
 | Variable | Default | Description |
 |---|---|---|
-| `JIRA_TRANSPORT` | `stdio` | Accepts `stdio` or `http`, but **only `stdio` runs**: `http` is parsed, then refused at startup with an error naming v1.5 (D19). |
-| `JIRA_HTTP_PORT` | `3334` | Loopback-only Streamable HTTP port. Parsed and validated; unused until the HTTP transport is reinstated. |
-| `JIRA_HTTP_TOKEN` | — | Required whenever `http` is selected — settings refuse that combination without it (CC-30) — though the transport itself is refused a step later regardless. |
+| `JIRA_TRANSPORT` | `stdio` | `stdio` (default) or `http` — the loopback Streamable HTTP transport (D101). |
+| `JIRA_HTTP_PORT` | `3334` | Loopback port the `http` transport binds — `127.0.0.1` only, never another interface (CC-115). |
+| `JIRA_HTTP_TOKEN` | — | Bearer token (secret; registered with the redactor) required on every `http` request (CC-114). Required whenever `http` is selected — settings refuse that combination without it (CC-30). |
 
 ## Diagnostics
 

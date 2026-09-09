@@ -1,9 +1,9 @@
 # Implementation plan
 
 > Status: normative and implemented — this document and the code ship together;
-> drift is a bug. Phases 0–8 with their exits are the milestone truth for this
+> drift is a bug. Phases 0–12 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished. Phases 0–7 are closed; Phase 8 is open.
+> finished. Phases 0–12 are closed.
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -538,6 +538,285 @@ access token has served a real tool call through the gateway, and the redirect
 URI (D99) is still the unverified assumption it was when this section was
 written. Until Gate C covers the OAuth path, every claim here is a claim about
 the suite, not about the product.
+
+## Phase 9 — Markdown mention resolution (graduated by D100)
+
+Four work packages with disjoint file ownership, dispatched as parallel agents
+on 2026-08-29. As with Phase 8, the WP ids are local to this phase —
+`docs/WORK-PACKAGES.md` decomposes the v1 phases and was not re-cut for this
+one.
+
+- [x] WP-90: `api/adf.ts` — the `@[name]` grammar in the inline scanner, one
+      code path for both uses: extraction (`extractMentions`, a collector sink)
+      and conversion (`adfFromMarkdown` with an optional
+      `mentions: ReadonlyMap<string, MentionTarget>` options bag). Code spans,
+      fences and `\@[` escapes stay inert (CC-109); unterminated, empty and
+      over-long tokens stay literal text; with no map the output is
+      byte-identical to the pre-feature converter (CC-108), which is what keeps
+      the round-trip property suite valid unchanged.
+- [x] WP-91: `api/users.ts` — `resolveMentionNames` over the existing
+      user-search machinery: plain query scope (mentionable ≠ assignable), one
+      page per name, case-insensitive dedupe under a distinct-name cap refused
+      before any search (CC-112), active non-app candidates only (CC-113), the
+      unique exact-displayName tiebreak, and `validation` refusals that name
+      the failing token and list candidates (CC-106, CC-107) — fail fast on the
+      first failing name, document order.
+- [x] WP-92: `tools/issues-write.ts` — the `resolveMentions` schema arg on the
+      7 rich-text write tools with the superRefine refusal outside markdown
+      format, one resolution pass per call across all rich-text fields, the
+      `mentions_skipped` hint (and its `HINT_CODES` entry), and resolution in
+      the tool ring before the api builder so plan mode captures the exact ADF
+      an apply would send (D44 order preserved; CC-105, CC-111).
+- [x] WP-93: the documentation corpus — D100, CC-105…CC-113 (with CC-43's
+      wording amended in place), the ROADMAP carve-out graduated, the
+      `mentions_skipped` catalog row plus the plan-mode and untrusted-content
+      amendments in TOOLS.md and THREAT-MODEL.md, the resolver's wire pin in
+      JIRA-API.md §Users, the scope note in AUTH.md, suite 12 in TESTING.md,
+      and this section.
+- [x] Integrator: cross-file wiring, `npm run check`, and the manifest snapshot
+      re-taken — the tool surface grew no tool, but 7 input schemas grew an
+      argument, and the snapshot locks schemas, not counts. Landed 2026-08-30:
+      snapshot regenerated (and prettier-formatted — `JSON.stringify` and the
+      repo style disagree on short arrays), one integration fix in the CC-111
+      test (its `mentionIds` helper was handed the wire envelope `{ body }`
+      instead of the ADF document, so it vacuously saw no mentions), gate green
+      at 1715 tests with coverage 97.94/92.34/97.82/97.94 and a clean docs-lint.
+
+Exit: the converter is still pure — resolution happens in the tool ring, and
+`core/http.ts` is still the only module that touches the network; the no-map
+output of `adfFromMarkdown` is byte-identical to the pre-feature converter;
+`scripts/docs-lint.mjs` is clean, which now requires each of the nine new
+corner cases (CC-105…CC-113) to be carried by a test name; gate green with the
+D36 coverage floors intact.
+
+Deliberately **not** in that exit: proof against a real Atlassian tenant. No
+`@[name]` has resolved against a live directory — the exact-match and
+ambiguity behaviour of the real user-search endpoint, like everything else this
+corpus asserts about the wire, is a claim about the suite until Gate C covers
+it (the standing lesson of Phases 1 and 8).
+
+## Phase 10 — Loopback Streamable HTTP transport (graduated by D101)
+
+Three work packages with disjoint file ownership, dispatched as parallel
+agents on 2026-08-30. As with Phases 8 and 9, the WP ids are local to this
+phase — `docs/WORK-PACKAGES.md` decomposes the v1 phases and was not re-cut
+for this one.
+
+- [x] WP-100: `mcp/transport-http.ts` — the listener and everything it
+      guards. Bound to `127.0.0.1` only (CC-115); every request passes the
+      pipeline in one order — `/mcp` path, `Host` and `Origin` against
+      loopback (CC-116), the constant-time bearer check (CC-114) — before any
+      JSON-RPC is processed. One MCP session per `Mcp-Session-Id`, each
+      holding its own `Server` from the injected factory, destroyed on
+      `DELETE` or idle timeout with its plan_id table (CC-117); the idle
+      sweeper is an async sleep-loop on the injected `Clock`, so tests drive
+      it with fake time over real sockets. Shutdown closes the listener,
+      drains sessions and emits `shutdown` once (CC-118). Fails closed
+      without `JIRA_HTTP_TOKEN` even if handed settings that should not exist
+      past `assertStartupOk` (CC-30, second lock).
+- [x] WP-101: the wiring — `mcp/transport.ts` loses the D19 refusal
+      machinery (`assertTransportSupported` and the verbatim-asserted message
+      die with it), `TransportHandle.transport` becomes optional because each
+      http session owns its own; `index.ts` branches at connect time and
+      hands the http path a `buildServer` factory instead of an eager server;
+      the doctor transport probe reports `http` as a supported answer instead
+      of failing it with the v1.5 wording; `.env.example`'s three transport
+      comments follow. The two sync tests the design expected to carry
+      refusal wording turned out not to — they assert the documented stdio
+      default, which is still true, and stand unedited.
+      CC-119 — stdout byte-empty under a real http child process — binds in
+      `src/index.test.ts`.
+- [x] WP-102: the documentation corpus — D101, CC-114…CC-119, the
+      ARCHITECTURE §Transport rewrite from kept design to implemented truth,
+      the THREAT-MODEL transport and supply-chain amendments, the
+      CONFIGURATION transport rows, TESTING suite 13, the ROADMAP graduation,
+      the OBSERVABILITY stdout amendment, the site's four transport claims,
+      and this section.
+- [x] Integrator: removed WP-100's interim boundary cast (the local
+      `HttpTransportHandle` bridge died once WP-101 made
+      `TransportHandle.transport` optional); fixed one test bug — the CC-117
+      plan-death case ran its harness in plan mode, where the gate re-plans an
+      `apply: true` call instead of consuming the id, so only
+      `writeMode: 'apply'` can show a dead plan being refused; corrected this
+      section's WP-101 row (the two sync tests never asserted the refusal —
+      design §4.6 was wrong, and they stand unedited). The manifest snapshot
+      is deliberately untouched — the tool surface did not change, and the
+      snapshot locks schemas, not transports. Gate: `npm run check` exit 0 —
+      1727 tests / 82 suites, 0 fail (was 1715); coverage 97.91 / 92.25 /
+      97.85 / 97.91 against floors 94 / 82 / 97 / 94; docs-lint 17 files
+      clean (binds CC-114…CC-119 to test names); audit 0 vulnerabilities.
+
+Exit: `JIRA_TRANSPORT=http` binds `127.0.0.1:JIRA_HTTP_PORT` and serves the
+full tool surface over Streamable HTTP behind the bearer gate; stdio remains
+the default and byte-identical in behaviour; `scripts/docs-lint.mjs` is
+clean, which now requires each of the six new corner cases (CC-114…CC-119) to
+be carried by a test name; gate green with the D36 coverage floors intact.
+
+Deliberately **not** in that exit: proof against a real MCP client. No client
+has spoken Streamable HTTP to this listener — the suite drives it with raw
+`http.request`, so client behaviours the SDK does not pin (resumability
+expectations, SSE reconnects, session reuse across restarts) are claims about
+the suite, not about a client, in exactly the sense Phases 8 and 9 reserve
+their live-tenant claims for Gate C.
+
+## Phase 11 — Component, version and sprint deletes (graduated by D102)
+
+Three work packages with disjoint file ownership, dispatched as parallel
+agents on 2026-09-01. As with Phases 8–10, the WP ids are local to this
+phase — `docs/WORK-PACKAGES.md` decomposes the v1 phases and was not re-cut
+for this one.
+
+- [x] WP-110: the api layer — `api/collab.ts` gains the component and
+      version single-reads (`getComponent`, `getVersion`) and their
+      `relatedIssueCounts` companions (a body without a numeric count maps
+      to `{}`, never to a guessed zero — CC-66), plus `deleteComponent`
+      (`DELETE /component/{id}?moveIssuesTo=`) and `deleteVersion` via
+      `POST /version/{id}/removeAndSwap` — the bare `DELETE /version/{id}`
+      is deprecated upstream and this codebase never calls it (CC-122,
+      bound in `collab.test.ts`); swap targets go on the wire as numbers.
+      `api/agile.ts` gains `deleteSprint`
+      (`DELETE /rest/agile/1.0/sprint/{sprintId}`); the wire half of CC-124
+      binds in `agile.test.ts`.
+- [x] WP-111: the tools layer — `jira_delete_component`,
+      `jira_delete_version` and `jira_delete_sprint` join the
+      `issues-delete` package (id kept so an existing
+      `JIRA_PACKAGES_DENY=issues-delete` keeps denying everything
+      irreversible — CC-120; the title generalized to "Deletes
+      (irreversible)"), all `writeTier: 'irreversible'` behind the D45
+      ceremony. Each plan snapshots what it would destroy: the component
+      plan carries the blast radius `issueCount` beside the reassignment
+      target (CC-121, CC-125), the version plan all three related-issue
+      counts (CC-123), the sprint plan the sprint's `state` — an audit
+      trail, not a guard (CC-124). The component lead survives as a display
+      name only, and absent swap targets read as cleared, never as errors.
+- [x] WP-112: the documentation corpus — D102 (completing D50 and
+      superseding the sprint-delete half of D73), CC-120…CC-125, the
+      TOOLS/ARCHITECTURE/CONFIGURATION/JIRA-API/THREAT-MODEL/TESTING/AUTH
+      amendments, the ROADMAP graduation (§v2 shrinks to the DC adapter and
+      bulk operations), the README and site count updates (55 tools, 28
+      writes, 15 not yet run live), and this section. RELEASING §6's
+      residue paragraph now points at the delete tools instead of the UI.
+- [x] Integrator: prettier-formatted the regenerated manifest snapshot (the
+      `UPDATE_SNAPSHOT` writer does not emit prettier-clean JSON, and
+      `format:check` rightly refused it); fixed one test bug — the
+      contract-tier fake matches string routes by PREFIX and WP-111
+      registered `GET /component/{id}` before
+      `GET /component/{id}/relatedIssueCounts`, so the counts read matched
+      the shorter rule, answered with the component body, and the
+      blast-radius counts silently vanished from the before-state — the
+      CC-121 and CC-123 assertions caught it, and the counts routes now
+      register first, as the fake's own contract requires; taught
+      `scripts/fake-jira.mjs` the five delete-adjacent routes and
+      `scripts/rehearse-live.mjs` Pass I the purge truth (component DELETE,
+      version removeAndSwap and sprint delete each hit exactly once, no
+      `gate-c-` artifact surviving); rewrote the stale `core/settings.ts`
+      comment that claimed no sprint-delete tool exists. Gate:
+      `npm run check` exit 0 — 1761 tests / 82 suites, 0 fail (was 1727);
+      coverage 97.96 / 92.26 / 97.89 / 97.96 against floors
+      94 / 82 / 97 / 94; docs-lint 17 files clean (binds CC-120…CC-125 to
+      test names); audit 0 vulnerabilities; the full rehearsal
+      (`scripts/rehearse-live.mjs`) green across all nine passes, Pass I
+      now proving the purge path end to end against the fake.
+
+Exit: the three non-issue deletes exist as first-class tools — plan mode
+shows what each would destroy (counts, targets, sprint state) and apply
+executes only behind `JIRA_WRITE_MODE=apply` plus `JIRA_ALLOW_IRREVERSIBLE`;
+the tool surface is 55 (28 writes, 6 in `issues-delete`, all six
+irreversible); `scripts/docs-lint.mjs` is clean, which now requires each of
+the six new corner cases (CC-120…CC-125) to be carried by a test name; gate
+green with the D36 coverage floors intact.
+
+Deliberately **not** in that exit: proof against a real tenant. None of the
+three tools has ever deleted anything on a real Jira site — they are three
+of the 15 live-unproven writes (the proven count stays 40, now of 55), and
+the `--purge` pass that would prove them has run only against the fake. The
+sprint delete additionally sits outside the default OAuth scope set
+(`delete:sprint:jira-software`, AUTH.md finding 5), so in oauth mode it is a
+scope refusal until the operator widens `JIRA_OAUTH_SCOPES` and logs in
+afresh.
+
+## Phase 12 — Bulk operations (graduated by D103)
+
+Three work packages with disjoint file ownership, dispatched as parallel
+agents on 2026-09-02, the same cut as Phases 8–11; the WP ids are local to
+this phase.
+
+- [x] WP-120: the api layer — new `api/bulk.ts`: `submitBulkDelete`
+      (`POST /rest/api/3/bulk/issues/delete`), `submitBulkEdit`
+      (`POST /rest/api/3/bulk/issues/fields` — there is no
+      `/bulk/issues/edit`; the module builds `editedFieldsInput` and derives
+      `selectedActions` itself, in the fixed order labels, priority,
+      assignee, fixVersions — CC-130), and `getBulkStatus`
+      (`GET /rest/api/3/bulk/queue/{taskId}`), which maps
+      `BulkOperationProgress` to counts and takes the documented epoch-millis
+      example, not the schema's date-time strings, as the wire truth for the
+      three timestamps. Four edit families ship (labels, priority, assignee
+      with `user: null` as the unassign, fixVersions);
+      `sendBulkNotification` stays off the wire when the caller says nothing
+      (CC-131); pairing violations refuse before any request exists (CC-133,
+      the D22 shape); a bulk 403 permission failure gains the "Make bulk
+      changes" hint on the CC-34 pattern, and an auth 403 passes through by
+      identity.
+- [x] WP-121: the tools layer — `jira_bulk_delete_issues` and
+      `jira_bulk_edit_issues` join `issues-delete` (the id keeps an existing
+      `JIRA_PACKAGES_DENY=issues-delete` denying the whole irreversible
+      surface — CC-126; the title generalizes a second time, to "Deletes and
+      bulk changes (irreversible)"), both `writeTier: 'irreversible'` behind
+      the D45 ceremony, the 1..1000 cap enforced in the schema before
+      anything is sent (CC-128), and a before-state that is the request's
+      own blast radius — a count and the first twenty ids, `truncated` only
+      when true — never a pre-fetch (CC-129). The apply answer is a `taskId`
+      and an ENQUEUED hint: a 201 means queued, not done (CC-127).
+      `jira_get_bulk_status` is a safe read in the `issues` package, so a
+      deployment that denies `issues-delete` can still watch tasks submitted
+      from the UI (CC-132). CC-120's set equality grows to eight names on
+      both sides.
+- [x] WP-122: the documentation corpus — D103, CC-126…CC-133, the
+      TOOLS/JIRA-API/TESTING/THREAT-MODEL amendments (the threat model no
+      longer claims bulk operations stay out of scope), the ROADMAP
+      graduation (§v2 shrinks to the Data Center adapter; bulk move,
+      transition and watch plus the editable-fields read are parked with
+      reasons), suite 15 in TESTING.md, and suite 14's honest denominator
+      (17 unproven writes of 30).
+- [x] Integrator: taught `scripts/fake-jira.mjs` the three bulk routes (the
+      submits mutate immediately, the queue stages
+      ENQUEUED → RUNNING → COMPLETE across polls); gave
+      `scripts/verify-live.mjs` a `pollBulkTask` helper and two new claims
+      in the delete phase — C42 bulk-edits a label onto the run's own
+      throwaway issues, polls to COMPLETE and re-reads the label off the
+      issue; C43 creates a dedicated throwaway under the anchored gate-c
+      summary, bulk-deletes it and proves the re-read is `not_found` — both
+      skipping rather than failing on a tenant that withholds the global
+      Bulk Change permission; bumped rehearsal Pass A's exact claim count
+      41 → 43 and pinned C42/C43 as PASS there; regenerated the manifest
+      snapshot and README tables; updated the surface-count test to
+      58 / 30 / 8. Two advisories (fast-uri high, qs moderate — both
+      transitive via the MCP SDK) arrived upstream mid-phase;
+      `npm audit fix` bumped the lockfile six lines and the audit is clean
+      again. Gate: `npm run check` exit 0 — 1790 tests / 82 suites, 0 fail
+      (was 1761); coverage 98.01 / 92.36 / 97.95 / 98.01 against floors
+      94 / 82 / 97 / 94; docs-lint 17 files clean (binds CC-126…CC-133 to
+      test names); audit 0 vulnerabilities; the full rehearsal green across
+      all eleven passes, Pass A now exercising both bulk claims against the
+      fake.
+
+Exit: bulk delete and bulk edit exist as first-class irreversible tools —
+plan mode shows the blast radius the request itself names, apply returns a
+task receipt rather than a claim of completion, and the queue read reports
+the server's own verdict, `invalidOrInaccessibleIssueCount` included; the
+tool surface is 58 (30 writes, 8 in `issues-delete`, all eight
+irreversible); `scripts/docs-lint.mjs` is clean, which now requires each of
+CC-126…CC-133 to be carried by a test name; gate green with the D36
+coverage floors intact.
+
+Deliberately **not** in that exit: proof against a real tenant. None of the
+three bulk tools has ever spoken to a real Jira site — the proven count
+stays 40, now of 58 — and the two submits additionally need the global
+"Make bulk changes" permission, which is exactly why C42 and C43 are
+allowed to SKIP on a tenant that withholds it. Both claims have run only
+against the fake, whose queue reaches COMPLETE in three polls; a real queue
+that answers slowly, reorders, or dies with FAILED is territory only Gate C
+can survey.
 
 ## Risks
 

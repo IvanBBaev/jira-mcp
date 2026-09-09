@@ -260,6 +260,22 @@ describe('the tool manifest', () => {
     assert.ok(names.every((name) => name.startsWith('jira_')));
   });
 
+  test('holds 58 tools — 30 writes behind the gate, 8 of them irreversible', () => {
+    // Phase 12 grew the surface from 55 to 58: the two bulk writes joined
+    // `issues-delete` (D103), taking that package from 6 tools to 8 and the
+    // write surface from 28 to 30, and the safe queue read joined `issues`.
+    // A drift in any of these numbers is a surface change someone has to have
+    // meant.
+    const tools = PACKAGES.flatMap((pkg) => pkg.tools);
+    assert.equal(tools.length, 58);
+    assert.equal(tools.filter((tool) => tool.writeTier !== undefined).length, 30);
+
+    const deletes = PACKAGES.find((pkg) => pkg.id === 'issues-delete');
+    assert.ok(deletes);
+    assert.equal(deletes.tools.length, 8);
+    assert.ok(deletes.tools.every((tool) => tool.writeTier === 'irreversible'));
+  });
+
   test('tags every tool with the package that holds it', () => {
     for (const pkg of PACKAGES) {
       for (const tool of pkg.tools) assert.equal(tool.package, pkg.id);

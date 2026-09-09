@@ -130,6 +130,8 @@ dies at the first expiry.
 | Irreversible tier — delete issue, delete comment, delete worklog | `write:jira-work` (its published description names issue deletion) | yes |
 | Users — user search, `myself` | `read:jira-user` | yes |
 | Project configuration — create/update component, create/update version, project roles | `manage:jira-project` ("Project settings, versions, components") | yes |
+| Irreversible tier (D102) — delete component, delete version | `manage:jira-project` (inferred — its published description names versions and components but does not say *delete*; the finding-1 rule applies: already in the default, and a 403 here is a documentation bug to file, not a configuration problem) | yes |
+| Irreversible tier (D102) — delete sprint | `delete:sprint:jira-software` | **no** — see finding 5 |
 | Boards — board listing | `read:board-scope:jira-software` | yes |
 | Sprint reads — sprint listing, sprint issues | `read:sprint:jira-software`, plus `read:issue:jira-software` for the issue payloads | yes |
 | Sprint writes — move issue to sprint, start sprint, close sprint | `write:sprint:jira-software` ("Update sprints, move issues to sprints, and update the order of sprints") | yes |
@@ -172,8 +174,23 @@ findings, not formatting:
 5. **Two deliberate exclusions.** `manage:jira-configuration` is global admin and
    nothing here needs it — no tool touches a permission scheme, workflow, screen,
    application role, group or site configuration. `delete:sprint:jira-software`
-   is excluded for a simpler reason than "irreversible tier": this server ships
-   no sprint-delete tool at all, so there is nothing for it to authorise.
+   was originally excluded for a simpler reason than "irreversible tier": this
+   server shipped no sprint-delete tool at all, so there was nothing for it to
+   authorise. Since D102 the tool exists, and the scope **stays out of the
+   default anyway** — this is finding 3's economics running the other way:
+   widening a consented list forces every existing user to re-login, and a
+   scope whose only use is the rarest, most-gated write in the catalog does not
+   earn that. Under the default scopes an oauth-mode `jira_delete_sprint` apply
+   is a scope refusal from Jira; an operator who wants it adds
+   `delete:sprint:jira-software` to `JIRA_OAUTH_SCOPES` and runs `login` again
+   to re-consent.
+
+One cross-family dependency arrived with D100: `resolveMentions: true` on the
+issues-write family runs user search before it writes, so those calls need
+`read:jira-user` in addition to `write:jira-work` — the same scope
+`jira_search_users` needs, and already in the default set. Under a narrowed
+scope list, a 403 on a mention-resolving write is this read dependency, not a
+write-scope problem.
 
 Two rules that catch people out:
 

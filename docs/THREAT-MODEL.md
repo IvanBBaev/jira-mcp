@@ -153,11 +153,15 @@ the exposure is this document's.
   `apply: true`.
 - Write tiers: `standard` — writes a later call can put back, or that touch one
   field of one record (issue writes, the sprint lifecycle, watchers, votes,
-  components, versions, attachment upload) — and `irreversible`, which is the
-  three deletes (issue, comment, worklog) graduated by D45. D7's blanket v1
-  exclusion of deletes matured into this tier: what was missing was never the
-  endpoint, it was the ceremony. Bulk operations stay out of scope entirely
-  (ROADMAP.md). Which tool sits in which tier is TOOLS.md's catalog.
+  components, versions, attachment upload) — and `irreversible`: the six
+  deletes — issue, comment and worklog graduated by D45; component, version
+  and sprint by D102, each of which makes Jira rewrite or strip every issue
+  that referenced the deleted entity — plus the two bulk writes (D103), which
+  multiply the blast radius to as many as 1000 issues in a single call; the
+  tier's ceremony is exactly the mitigation that number demands. D7's blanket
+  v1 exclusion of deletes matured into this tier: what was missing was never
+  the endpoint, it was the ceremony. Which tool sits in which tier is
+  TOOLS.md's catalog.
 - **The irreversible tier's second gate is an environment variable —
   `JIRA_ALLOW_IRREVERSIBLE` (CONFIGURATION.md) — not a per-call confirm token
   (D56).** A blanket `JIRA_WRITE_MODE=apply` never covers the tier. The donor's
@@ -182,7 +186,11 @@ the exposure is this document's.
   through the redactor like any other plan payload. A successful apply echoes
   the same snapshot — Jira answers 204 with no body and the journal line carries
   only an `argsHash`, so a receipt saying `{deleted: true}` would be
-  unauditable (CC-62…CC-66).
+  unauditable (CC-62…CC-66, CC-120…CC-125). The bulk writes keep the ceremony
+  with a different snapshot: the request's own blast radius — a count and a
+  capped id echo — because pre-fetching up to 1000 issues would be its own
+  incident, and the server's verdict arrives on the queue read
+  (CC-126…CC-133).
 - Non-idempotent writes are NEVER auto-retried after an ambiguous failure
   (timeout/5xx after send); the error instructs the model to verify state first.
   Deletes are the literal case: a second call answers 404, not 204, so they are
@@ -227,8 +235,13 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
 
 ### Transport
 - stdio: console guard; protocol on stdout, diagnostics on stderr.
-- HTTP: loopback bind only; fails closed without `JIRA_HTTP_TOKEN`;
-  `timingSafeEqual` bearer comparison; same-origin `Origin` check.
+- HTTP (D101): loopback bind only (CC-115); fails closed without
+  `JIRA_HTTP_TOKEN` — twice, in settings (CC-30) and again in the transport;
+  constant-time `timingSafeEqual` bearer comparison on every request (CC-114);
+  `Host` checked against the bound loopback authority and `Origin`, when
+  present, against loopback origins before any JSON-RPC is processed (CC-116);
+  one session per `Mcp-Session-Id`, whose teardown takes its armed plans with
+  it (CC-117).
 
 ### Untrusted content
 - ADF flattening produces plain text — no markdown link smuggling from rendered
@@ -261,19 +274,29 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
   renderer emits link markup only for `http(s):` and `mailto:` hrefs — any
   other scheme (`javascript:`, `data:`, `file:`) loses its href and renders as
   text, so a description written by a third party cannot smuggle an executable
-  URL into a client that renders the markdown. `adfFromMarkdown` never
-  synthesises a `mention`, so text that round-trips through the converter
-  cannot fabricate a notification to an arbitrary account.
+  URL into a client that renders the markdown. Mention synthesis stays closed
+  under D100's opt-in resolution: `adfFromMarkdown` still emits no `mention`
+  node on its own — only the tool ring can hand it one, keyed to a
+  `@[Display Name]` token, and only when the caller set `resolveMentions:
+  true` on a markdown write. The mitigations are layered: the flag defaults
+  off; the bracketed syntax is disjoint from the `@Display Name` the read side
+  emits, so round-tripped untrusted text never re-resolves (CC-110); every
+  emitted accountId comes from a live user-search response in the same call,
+  never from input text (CC-108); and an unknown or ambiguous name refuses
+  with candidates instead of guessing a target (CC-106, CC-107).
 
 ### Supply chain
 - **Direct** runtime deps limited to `@modelcontextprotocol/sdk` and `zod`
   (dotenv dropped — D10 in DECISIONS.md: env files load via
   `process.loadEnvFile`). Say *direct*: the installed production tree is ~94
   packages, because the SDK depends unconditionally on a full HTTP/OAuth server
-  stack (express, hono, cors, ajv, jose, pkce-challenge, eventsource). This
-  server is stdio-only — `src/mcp/transport.ts` constructs
-  `StdioServerTransport` and nothing else — so that half of the tree installs on
-  every user's machine and never executes. Unreachable code is still attack
+  stack (express, hono, cors, ajv, jose, pkce-challenge, eventsource). Under
+  the default stdio transport `src/mcp/transport.ts` constructs
+  `StdioServerTransport` and that half of the tree installs on every user's
+  machine without executing; `JIRA_TRANSPORT=http` (D101) constructs
+  `StreamableHTTPServerTransport`, which runs on bare `node:http` — selecting
+  it executes more of the SDK, not more of the dependency tree, and the
+  install is identical either way. Unreachable code is still attack
   surface at install time (lifecycle scripts, typosquats on a transitive), and
   it is not fixable from this repo; it is a property of the SDK's dependency
   layout. The honest claim is "two direct runtime dependencies", never "a

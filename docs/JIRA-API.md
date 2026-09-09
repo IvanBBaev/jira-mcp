@@ -183,11 +183,16 @@ are ADF JSON trees, not strings.
   steps over code spans when looking for a closing delimiter. The round trip is
   lossless only up to a normal form (marks sorted, adjacent same-mark text runs
   merged) and only over the subset; the losses are enumerated in CORNER-CASES.
-- **Mentions are one-way by design**: `adfToMarkdown` renders `@displayName`
-  (accountId fallback, CC-07), and `adfFromMarkdown` never produces a `mention`
-  node. Creating one needs an accountId lookup, and the converters are pure and
-  network-free (D38); a literal mention syntax would also let round-tripped
-  untrusted text synthesise a mention of an arbitrary account.
+- **Mentions are one-way on the round trip (CC-110)**: `adfToMarkdown` renders
+  `@displayName` (accountId fallback, CC-07), and that spelling never
+  re-resolves. The write side's resolvable syntax is the disjoint
+  `@[Display Name]`, honoured only when `format: "markdown"` AND
+  `resolveMentions: true` (D100, CC-105) — the converters stay pure and
+  network-free (D38): the tool ring resolves names via user search (§Users
+  below) and hands `adfFromMarkdown` a map, and the converter never emits a
+  `mention` node it did not get from that map (CC-108). Round-tripped
+  untrusted text therefore still cannot synthesise a mention of an arbitrary
+  account (D43).
 
 ## Custom fields
 
@@ -214,6 +219,15 @@ Cloud identifies users **only by `accountId`** — no usernames, no user keys.
   O-5): GET `/rest/api/3/user/assignable/search?query=` with `issueKey=` or
   `project=`. Exactly one scope is sent; when both are supplied, `issueKey`
   wins (server precedence is undocumented, so the choice is fixed client-side).
+- Mention resolution (D100) uses the plain-query endpoint, deliberately NOT
+  the assignable variant — mentionable ≠ assignable. `resolveMentionNames`
+  issues one `GET /rest/api/3/user/search?query=` per distinct name
+  (case-insensitive dedupe, refused above 20 distinct names before any search
+  — CC-112), reads ONE page, filters to active non-app accounts (CC-113), and
+  demands a unique winner: a single case-insensitive exact displayName match
+  beats partials, anything else refuses listing up to 5 candidates (CC-107,
+  CC-106). Every accountId in an emitted `mention` node comes from that live
+  response in the same call — never from input text.
 - `GET /rest/api/3/myself` verifies credentials and returns the caller identity —
   the doctor probe and `jira_get_myself` use it.
 
@@ -291,12 +305,16 @@ keeps counting against the concurrency cap for its whole duration.
   is validated as a positive integer before the request. A comment that does not
   exist, one on another issue and one the caller may not edit are all a 404.
 
-### Deletes (D45)
+### Deletes (D45, D102)
 
 Verified against the Cloud reference on 2026-08-13:
 `https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/`
 and
 `https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-worklogs/`
+The three D102 endpoints verified against the Cloud reference on 2026-09-01:
+`https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-project-components/`,
+`https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-project-versions/`
+and `https://developer.atlassian.com/cloud/jira/software/rest/api-group-sprint/`.
 
 - `DELETE /rest/api/3/issue/{issueIdOrKey}` — query `deleteSubtasks` (string
   `"true"`/`"false"`, **default `false`**). Atlassian: "An issue cannot be
@@ -315,11 +333,71 @@ and
   is the behaviour a human expects from "undo this log", and the alternatives
   (`new`/`manual`) turn a delete into a silent estimate rewrite. If that ever
   becomes configurable it must be an explicit tool input, shown in the plan.
+- `DELETE /rest/api/3/component/{id}` — query `moveIssuesTo`, another
+  component's id; when present Jira reassigns every affected issue to it, when
+  absent the `components` entries are simply removed. Needs the project's
+  Administer Projects permission. The blast radius is readable in advance:
+  `GET /rest/api/3/component/{id}/relatedIssueCounts` answers `{issueCount}`,
+  and the before-state carries it (CC-121).
+- `POST /rest/api/3/version/{id}/removeAndSwap` — body `moveFixIssuesTo?` and
+  `moveAffectedIssuesTo?`, each another version's id; an absent field means
+  that occurrence type is **cleared** from every issue, not that the call
+  fails. The bare `DELETE /rest/api/3/version/{id}` is deprecated upstream and
+  is never called (CC-122); the body's `customFieldReplacementList` is out of
+  scope. Needs Administer Projects.
+  `GET /rest/api/3/version/{id}/relatedIssueCounts` supplies the three counts
+  the before-state carries (CC-123).
+- `DELETE /rest/agile/1.0/sprint/{sprintId}` — the agile root, not the
+  platform one. Atlassian: "Once a sprint is deleted, all open issues in the
+  sprint will be moved to the backlog." Needs the board's manage-sprints
+  permission. No client-side state guard: the request is sent whatever the
+  sprint's state, and a refusal is Jira's to make and ours to re-aim with
+  remediation, like the other sprint writes (CC-124).
 
-All three answer **`204 No Content`** on success. All three are unsafe, so the
+All six answer **`204 No Content`** on success. All six are unsafe, so the
 retry rules in §"Rate limiting and retries" apply unchanged: they are never
 replayed on an ambiguous failure — a replayed delete cannot be distinguished
 from a 404 that means "already gone".
+
+## Bulk operations (D103)
+
+Extracted from Atlassian's own OpenAPI document for the platform v3 API
+(downloaded 2026-09-01); the HTML reference group is
+`https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-bulk-operations/`.
+
+- `POST /rest/api/3/bulk/issues/delete` — body
+  `{ selectedIssueIdsOrKeys: string[], sendBulkNotification?: boolean }`.
+  `selectedIssueIdsOrKeys` is required and capped at **1000** entries; subtasks
+  of selected parents are deleted too and count against the cap.
+  `sendBulkNotification` defaults to **true** server-side, and an absent field
+  is left absent so the default stays Jira's (CC-131). Answers **201** with
+  `{ taskId }`. Permissions: the global **Bulk Change** permission plus Browse
+  projects and **Delete issues** in every touched project.
+- `POST /rest/api/3/bulk/issues/fields` — **the bulk-edit path; there is no
+  `/bulk/issues/edit`** (CC-130). Body `{ editedFieldsInput, selectedActions,
+  selectedIssueIdsOrKeys, sendBulkNotification? }`: `editedFieldsInput` is
+  Jira's 23-family field union, of which this server builds four families —
+  labels, priority (by id), assignee via the single-select clearable user
+  picker, fixVersions via the multiple-version picker; `selectedActions` names
+  the field ids being edited and is derived from the fields actually present.
+  Caps: **1000 issues and 200 fields** per call. Answers **201** with
+  `{ taskId }`. Permissions: global **Bulk Change** plus Browse projects and
+  **Edit issues** per project.
+- `GET /rest/api/3/bulk/queue/{taskId}` — answers **200** with
+  `BulkOperationProgress`: `taskId`, `status` (one of `ENQUEUED`, `RUNNING`,
+  `COMPLETE`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`, `DEAD`),
+  `progressPercent`, `submittedBy`, `created`/`started`/`updated`,
+  `totalIssueCount`, `processedAccessibleIssues` (issue ids),
+  `failedAccessibleIssues` (issue id → error strings) and
+  `invalidOrInaccessibleIssueCount`. A task stays viewable for **14 days**
+  after completion. Permission: global **Bulk Change** only — nothing
+  per-project, so the queue is readable for tasks submitted through the Jira
+  UI as well.
+
+The two submits are unsafe POSTs, so §"Rate limiting and retries" applies
+unchanged: they are never replayed on an ambiguous failure — a replayed submit
+enqueues a SECOND task, not the same one. The queue GET is a plain read and
+retries under the normal policy.
 
 ## Agile writes (sprints and the backlog)
 
@@ -352,6 +430,10 @@ and `https://developer.atlassian.com/cloud/jira/software/rest/api-group-backlog/
   sprint was called `gate-c-<runid> (safe to delete)` — 32 characters — and took
   three dependent claims down with it. Nothing client-side enforces this: the
   limit is the site's to state, and Jira's message is already the remediation.
+- **Single-sprint read.** `GET /rest/agile/1.0/sprint/{sprintId}` returns the
+  sprint whole — `id`, `name`, `state`, dates, `originBoardId`, `goal`. The
+  delete's before-state (D102) is built from it, through the same seam, just
+  before the DELETE; the caller needs to be able to view the board.
 - **Backlog move.** `POST /rest/agile/1.0/backlog/issue`, body
   `{ "issues": ["ABC-1", ...] }`, answers 204 with no body. Jira defines it as
   "removing the future and active sprints from a given set of issues", so it
@@ -397,7 +479,10 @@ Reference groups consulted 2026-08-13:
   **partial** update: fields left out keep their stored value. `description` is
   a **plain string, not ADF**; there is no `format` field on these endpoints and
   an ADF document would be stored as literal JSON text. A component cannot be
-  moved between projects.
+  moved between projects. Two single-entity reads exist for the delete's
+  before-state (D102): `GET /rest/api/3/component/{id}` returns the component
+  whole, and `GET /rest/api/3/component/{id}/relatedIssueCounts` answers
+  `{issueCount}` — the number of issues that reference it.
 - **Versions.** Same singular/plural split:
   `GET /rest/api/3/project/{projectIdOrKey}/version` is the paginated route,
   `/versions` the unbounded one. Filters: `query` (name + description) and
@@ -408,7 +493,11 @@ Reference groups consulted 2026-08-13:
   are **calendar dates, `YYYY-MM-DD`**, with no time of day and no timezone;
   they are sent and returned verbatim. `released` and `archived` are booleans
   that flip in both directions, so cutting a release is reversible.
-  `overdue` is Jira's own computed verdict and is read-only.
+  `overdue` is Jira's own computed verdict and is read-only. The delete's
+  before-state (D102) reads `GET /rest/api/3/version/{id}` and
+  `GET /rest/api/3/version/{id}/relatedIssueCounts`, whose answer has three
+  edges: `issuesFixedCount`, `issuesAffectedCount` and
+  `issueCountWithCustomFieldsShowingVersion`.
 - **Project roles.** `GET /rest/api/3/project/{projectIdOrKey}/role` answers
   with a **map of role name → role URL** and no membership whatsoever; the role
   id exists only as the last segment of that URL

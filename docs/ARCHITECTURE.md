@@ -23,8 +23,9 @@ TypeScript. It follows the house template established by its sibling repos:
    CI, and remote sessions — the primary reason not to use Atlassian's official
    remote MCP server.
 3. Be safe by default: read-only unless explicitly enabled, plan/apply gate for
-   writes, and a second gate in front of the irreversible tier — the three
-   deletes that shipped with D45. THREAT-MODEL.md owns both gate contracts.
+   writes, and a second gate in front of the irreversible tier — the six
+   deletes: three shipped with D45, three more with D102. THREAT-MODEL.md owns
+   both gate contracts.
 
 ## Non-goals (v1)
 
@@ -70,8 +71,9 @@ core  ←  api  ←  mcp  ←  tools
   `meta.ts`, `users.ts`, `agile.ts`, `adf.ts`, `shared.ts` for pagination
   helpers). No MCP concepts here.
 - **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
-  `result.ts`, `taint.ts`, `transport.ts`, `write-mode.ts`, `recent-writes.ts`,
-  `tool-helpers.ts`, `errors.ts`, `types.ts`. No Jira endpoint knowledge.
+  `result.ts`, `taint.ts`, `transport.ts`, `transport-http.ts`, `write-mode.ts`,
+  `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`. No Jira
+  endpoint knowledge.
 - **`src/tools/`** — one file per package, each exporting a `PackageSpec`
   (`searchPackage`, `issuesPackage`, …) that `index.ts` composes into
   `PACKAGES`; thin glue from validated input → api call → shaped result. One
@@ -176,8 +178,10 @@ and a `_truncation` marker always survive.
 ## Error model
 
 One error type: `JiraError { kind, httpStatus?, jiraMessages?: string[],
-retryable: boolean, remediation?: string }`. Messages state cause, then recovery
-action; machine-stable `kind` codes live in a documented catalog and are
+retryable: boolean, remediation?: string, reason?: string }`. Messages state
+cause, then recovery action; `reason` carries the cause sentence alone
+(always set by the factory, so composers append hints without re-parsing the
+message); machine-stable `kind` codes live in a documented catalog and are
 substring-asserted in tests. Error text is redacted at construction time.
 HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
 `message` shapes (see JIRA-API.md).
@@ -240,27 +244,45 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
 
 ## Transport
 
-- **stdio** — the default, and the only transport v1 accepts. Shuts down cleanly
-  on stdin EOF, SIGINT, SIGTERM.
-- **Streamable HTTP** (`JIRA_TRANSPORT=http`) — **refused at startup**, with an
-  error naming v1.5. O-11 was resolved by its own default at the Phase-2a start
-  (D19): no concrete use case appeared, and the http path drags in a token gate,
-  loopback binding and session handling for zero current users. Two layers hold
-  the line: `core/settings.ts` still rejects `http` without `JIRA_HTTP_TOKEN`
-  (CC-30) and still parses `JIRA_HTTP_PORT`, so the configuration surface
-  survives the gap unchanged; `mcp/transport.ts` then refuses any transport
-  other than stdio outright, token or no token.
+- **stdio** — the default (`mcp/transport.ts`). Shuts down cleanly on stdin
+  EOF, SIGINT, SIGTERM.
+- **Streamable HTTP** (`JIRA_TRANSPORT=http`) — a loopback-only Streamable
+  HTTP listener, `mcp/transport-http.ts`. O-11 was resolved by its own default
+  at the Phase-2a start (D19): no concrete use case had appeared, so v1
+  shipped stdio-only and this section kept the design. D101 reinstated it as
+  designed — what follows is no longer a kept plan; it is what
+  `src/mcp/transport-http.ts` does.
 
-  The v1.5 design is kept below so reinstating it stays a scheduling call rather
-  than a design one — **none of it exists in `src/` today**: bind loopback only,
-  fail closed without a bearer token, check `Origin` for same origin
-  (DNS-rebinding defense); one MCP session per `Mcp-Session-Id`, created on
-  `initialize` and destroyed on `DELETE` or idle timeout; session teardown
-  aborts that session's in-flight requests via its `AbortController` and clears
-  its plan_id table, so a dropped client can never leave an armed apply behind;
-  SIGTERM stops accepting new sessions, drains in-flight calls under the call
-  budget, then exits. No `/healthz` — a loopback-only, single-user server has no
-  load balancer to answer to; doctor is the health check.
+  Every request passes one pipeline, in one order: only `/mcp` is served (no
+  `/healthz` — a loopback-only, single-user server has no load balancer to
+  answer to; doctor is the health check); the `Host` header must be the bound
+  loopback authority and an `Origin` header, when present, must be a loopback
+  origin (DNS-rebinding defense, CC-116); a constant-time bearer check against
+  `JIRA_HTTP_TOKEN` (CC-114) — settings refuse `http` without the token
+  (CC-30), and the transport refuses again if handed such settings, so the
+  gate fails closed twice; only then is the request routed by method and
+  `Mcp-Session-Id`.
+
+  Sessions: one MCP session per `Mcp-Session-Id`, created on `initialize` and
+  destroyed on `DELETE` or idle timeout. One SDK `Server` binds one transport,
+  so each session gets its own `buildServer` product from an injected
+  factory — which is what makes plan death structural rather than a cleanup
+  chore: the write gate's plan_id table lives inside each session's `Server`,
+  so tearing the session down aborts its in-flight calls and takes its armed
+  plans with it (CC-117). The idle sweeper is an async sleep-loop on the
+  injected `Clock` (no raw timers, same rule as everywhere else);
+  SIGINT/SIGTERM close the listener, tear down every live session and resolve
+  (CC-118). Under http the protocol rides the socket and stdout carries
+  nothing at all (CC-119); diagnostics stay on stderr. Like the login CLI's
+  callback listener, the module performs inbound loopback I/O only — "only
+  `core/http.ts` touches the network" is a rule about outbound egress, and
+  neither listener makes an outbound call.
+
+  One honest exception to per-session isolation: `sessionRecentWrites`
+  (`mcp/recent-writes.ts`) is a module singleton, so the recent-write registry
+  (CC-02) is shared by every session in the process. For a loopback
+  single-user server that is accepted, not overlooked — the sessions belong to
+  the same human.
 
 ## Package gating and write safety
 
@@ -269,7 +291,7 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   `JIRA_PACKAGES_READONLY` (drops write-tier tools).
 - `JIRA_WRITE_MODE=plan|apply` (default `plan`): in `plan` mode write tools
   return a description of what they would do; `apply` requires per-call
-  `apply: true`. The irreversible tier (the three deletes) sits above that gate
+  `apply: true`. The irreversible tier (the six deletes) sits above that gate
   and needs `JIRA_ALLOW_IRREVERSIBLE` as well, because a blanket write mode set
   for ordinary edits must never be read as consent to destroy. Normative gate
   contract + tiers: THREAT-MODEL.md (single owner); the variables and their

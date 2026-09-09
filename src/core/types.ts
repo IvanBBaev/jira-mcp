@@ -500,6 +500,12 @@ export interface JiraErrorInit {
   /** What the caller should do next; the model reads this. */
   readonly remediation?: string;
   /**
+   * The cause sentence alone, without the appended remediation.
+   * `createJiraError` always sets it; a direct construction may omit it, and
+   * then `message` is the only rendering of the cause.
+   */
+  readonly reason?: string;
+  /**
    * Bounded (≤ 200 chars), redacted body snippet for a non-JSON error body
    * (CC-15) — the sole exception to the never-log list, and it lives here on the
    * error rather than in a log event.
@@ -525,6 +531,7 @@ export class JiraError extends Error {
   readonly jiraMessages?: readonly string[];
   readonly retryable: boolean;
   readonly remediation?: string;
+  readonly reason?: string;
   readonly detail?: string;
 
   constructor(init: JiraErrorInit) {
@@ -535,6 +542,7 @@ export class JiraError extends Error {
     this.jiraMessages = init.jiraMessages;
     this.retryable = init.retryable ?? RETRYABLE_ERROR_KINDS.includes(init.kind);
     this.remediation = init.remediation;
+    this.reason = init.reason;
     this.detail = init.detail;
     // Restore the prototype chain so `instanceof JiraError` holds when the
     // class is transpiled to a function.

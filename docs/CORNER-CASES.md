@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-104`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-133`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -174,11 +174,13 @@ with a note, and gaps stay gaps.
   and a paragraph opening with `- `, `1. `, `# `, `>` or a fence has its leading
   marker escaped. Otherwise an issue description containing "1. do this"
   silently becomes an ordered list on the next write.
-- **CC-43** `adfFromMarkdown` never emits a `mention` node, and a markdown link
-  whose scheme is not `http(s):` or `mailto:` renders as plain text with the
-  href dropped. Mentions need an accountId lookup that a pure converter cannot
-  do (D38); an unrestricted href would let Jira-authored content carry a
-  `javascript:`/`data:` URL into whatever renders the markdown.
+- **CC-43** `adfFromMarkdown` never emits a `mention` node it did not get from
+  a caller-supplied resolution map (D100 — with no map, no mention, ever), and
+  a markdown link whose scheme is not `http(s):` or `mailto:` renders as plain
+  text with the href dropped. Mentions need an accountId lookup that a pure
+  converter cannot do (D38), so the ids in the map come from the tool ring,
+  never from this module; an unrestricted href would let Jira-authored content
+  carry a `javascript:`/`data:` URL into whatever renders the markdown.
 - **CC-44** The markdown round trip is lossless only up to a normal form and
   only over the subset. Enumerated losses, each a test: an empty paragraph
   disappears; `rule` returns as a `---` paragraph; a mention returns as literal
@@ -502,7 +504,9 @@ with a note, and gaps stay gaps.
   wish: only throwaway issues and local files can be removed by a command, while
   versions, components and sprints say *manual* with a UI path, because this
   server ships no delete for them and D73 refused to add one purely to service the
-  gate. Second, a class the inventory could not read prints `UNKNOWN — could not
+  gate (since D102, 2026-09-01, the deletes exist for users and `--purge` uses
+  them — a class the tenant's permissions refuse still prints *manual*, honestly).
+  Second, a class the inventory could not read prints `UNKNOWN — could not
   read (…)` and never `none` — on a site whose token cannot see sprints,
   `sprints: none` is a lie the operator has no way to catch. A partially-read
   class prints `UNKNOWN` and still lists what it saw (D83).
@@ -678,3 +682,152 @@ with a note, and gaps stay gaps.
   Atlassian error redirect that carries `error` instead does end it, reporting
   what Atlassian said. The server is torn down in a `finally`, so a failed or
   timed-out login never leaves a listener behind.
+
+## Appended with mention resolution (2026-08-29)
+
+- **CC-105** `@[name]` resolves only when `format: "markdown"` AND
+  `resolveMentions: true`; otherwise the token stays literal text,
+  byte-identical to before, and a markdown call with tokens but no flag
+  carries the `mentions_skipped` hint. `resolveMentions: true` without
+  markdown format is a schema refusal at path `resolveMentions` — and that one
+  rule also covers a raw ADF body, because `format` is a precondition of
+  `resolveMentions` and `format` alongside raw ADF is already refused (CC-46).
+- **CC-106** Zero active matches for a token → `validation` refusal naming the
+  token, remediation naming `jira_search_users`; nothing is written and no
+  plan is produced. If only inactive users matched, the refusal says so
+  instead of pretending the name is unknown.
+- **CC-107** Ambiguity refuses and lists up to 5 candidates as
+  `displayName (accountId)`; a single case-insensitive exact displayName match
+  beats any number of partial matches; two exact matches still refuse. A full
+  first page with no unique exact match is treated as ambiguous, never
+  paginated past.
+- **CC-108** The converter never invents an id: `adfFromMarkdown` emits a
+  `mention` node only for a token present in the caller-supplied resolution
+  map, and with no map at all the output is byte-identical to the pre-feature
+  converter. (Continuity of CC-43's guarantee under D100.)
+- **CC-109** No extraction and no resolution inside code spans, fenced code
+  blocks, or after a backslash escape (`\@[` stays literal). Extraction and
+  conversion share one grammar — one scanner, two sinks — so the tokens the
+  tool ring resolves and the tokens the converter replaces cannot disagree.
+- **CC-110** The read side is unchanged: mentions render as `@Display Name`,
+  never `@[Display Name]`, so read → write round trips cannot re-resolve even
+  with `resolveMentions: true`.
+- **CC-111** Resolution is execution-time: a plan's resolved mentions are a
+  snapshot of the directory at plan time; apply re-resolves, so directory
+  drift between plan and apply can change the resolved ids or turn the apply
+  into a refusal. `plan_id` binds arguments, not resolved output.
+- **CC-112** More than 20 distinct names (case-insensitive) in one call →
+  `validation` refusal before any search is issued; duplicate spellings of one
+  name cost one search and resolve identically across every rich-text field of
+  the call.
+- **CC-113** Only active non-app accounts are candidates: `active: false` and
+  `accountType: "app"` matches are excluded before the exact-match tiebreak
+  and before ambiguity counting — a bot is not a mention target by name.
+
+## Appended with the HTTP transport (2026-08-30)
+
+- **CC-114** Every HTTP request — POST, GET and DELETE alike — must present
+  `Authorization: Bearer <token>` equal to `JIRA_HTTP_TOKEN`. The comparison
+  is constant-time (`timingSafeEqual` behind a length gate, the login CLI's
+  `state` pattern); missing or mismatched → **401** with a terse JSON-RPC
+  error body that never echoes the presented value. The token is already a
+  registered secret, so it cannot reach a log field either.
+- **CC-115** The listener binds `127.0.0.1` only — `listen({ host, port })`
+  with both named, never a bare port — so no other interface can connect.
+  Transport close leaves no listener behind: the port accepts nothing
+  afterwards.
+- **CC-116** DNS-rebinding defense runs before any JSON-RPC processing: a
+  request whose `Host` is not the bound loopback authority
+  (`127.0.0.1:<port>` or `localhost:<port>`; on port 80 the bare host too,
+  because RFC 9110 has clients elide the scheme's default port), or whose
+  `Origin` header is
+  present and not a loopback origin (hostname `127.0.0.1`, `localhost` or
+  `::1`, any port), is refused with **403**. A request carrying no `Origin`
+  at all — curl, MCP clients — passes: the header marks a browser context,
+  and rebinding is a browser attack.
+- **CC-117** One MCP session per `Mcp-Session-Id`: created on `initialize`
+  (each session gets its own `Server` from the factory), destroyed on HTTP
+  `DELETE` or idle timeout — idle meaning no request *and* no response still
+  open, so a client holding the standalone SSE stream keeps its session
+  alive. Teardown closes the session's transport and
+  `Server`, aborting in-flight calls — and the session's plan_id table dies
+  with its `Server`, so an armed plan from a dead session can never be
+  applied. A request naming an unknown session id → **404**.
+- **CC-118** `close('sigint' | 'sigterm')` stops the listener — no new
+  connections, no new sessions — tears down every live session, then
+  resolves; the process exits cleanly with no timer or socket left behind.
+- **CC-119** stdout stays MCP-pure under http: the protocol rides the socket,
+  stdout carries nothing at all, and diagnostics still go to stderr as
+  NDJSON.
+
+## Appended with the component, version and sprint deletes (2026-09-01)
+
+- **CC-120** The three project-entity deletes live in `issues-delete` with
+  `writeTier: 'irreversible'`, not in a new package: a
+  `JIRA_PACKAGES_DENY=issues-delete` written against 0.9 must keep removing the
+  entire irreversible surface across the upgrade. The package id is historical;
+  its title says deletes generally ("Deletes (irreversible)"), so the id/title
+  pair is honest in both directions (D102).
+- **CC-121** The component before-state names the blast radius: `issueCount`
+  comes from a second GET (`component/{id}/relatedIssueCounts`) and is the
+  number of issues Jira will rewrite when the component goes. A thin component
+  (no lead, no description) still yields a valid snapshot — unfillable keys
+  drop, per the CC-66 rule.
+- **CC-122** The version delete never calls the deprecated
+  `DELETE /version/{id}`. The wire is `POST /version/{id}/removeAndSwap`, and
+  an empty swap body means "clear the `fixVersion`/`affectedVersion`
+  occurrences", not "fail" — absence of a target is a documented outcome the
+  plan must show, never an input error.
+- **CC-123** The version before-state carries all three related-issue counts —
+  `issuesFixedCount`, `issuesAffectedCount` and
+  `issueCountWithCustomFieldsShowingVersion` — because a version's blast radius
+  has three distinct edges and a receipt naming only one would understate the
+  other two.
+- **CC-124** The sprint delete ships no client-side state guard: the DELETE is
+  sent whatever the sprint's state, and a Jira refusal is re-aimed with
+  remediation exactly like the other sprint writes. The documented consequence —
+  open issues move to the backlog — is stated in the tool description, and the
+  before-state's `state` field is the auditable record of what state the sprint
+  died in.
+- **CC-125** Reassignment targets are visible in the plan surface.
+  `PlannedRequest` carries no query or body detail (the CC-63 rule), so
+  `moveIssuesTo`, `moveFixIssuesTo` and `moveAffectedIssuesTo` ride in the
+  before-state — plan and apply both show where the references will go, or
+  that they will be cleared.
+
+## Appended with the bulk operations (2026-09-02)
+
+- **CC-126** The two bulk writes live in `issues-delete` with
+  `writeTier: 'irreversible'`, not in a new package — the second application
+  of the D102 argument: a `JIRA_PACKAGES_DENY=issues-delete` written against
+  an earlier release must keep removing the entire irreversible surface.
+  CC-120's set equality grows on both sides, and once more the title, not the
+  id, generalizes — it now reads "Deletes and bulk changes (irreversible)"
+  (D103).
+- **CC-127** A 201 from a bulk submit means ENQUEUED, not done. The result is
+  a task id and says so, naming `jira_get_bulk_status` as the way to find out
+  what happened — the tool never blocks polling the queue inside the write
+  call.
+- **CC-128** The 1000-issue wire cap is enforced client-side in the input
+  schema, so an over-cap request never leaves the process — the D22 refusal
+  shape on a much bigger number.
+- **CC-129** The bulk before-state is the request's own blast radius — the
+  issue count, the first 20 ids echoed and a truncation marker — with no
+  per-issue pre-fetch. Server truth about which entries were real and
+  reachable arrives later, as `invalidOrInaccessibleIssueCount` on the queue
+  read.
+- **CC-130** Bulk edit posts to `/bulk/issues/fields` — there is no
+  `/bulk/issues/edit` — and `selectedActions` is derived from the inputs
+  actually present, in the api layer, never caller-supplied.
+- **CC-131** `notifyUsers` maps to `sendBulkNotification`; when absent the
+  field is omitted from the body so Jira's own default (true) applies — the
+  client invents no default.
+- **CC-132** `jira_get_bulk_status` is a safe read in the `issues` package,
+  deliberately outside the irreversible surface: it survives
+  `JIRA_PACKAGES_DENY=issues-delete`, and it can watch bulk tasks submitted
+  through the Jira UI, because the queue endpoint needs only the global Bulk
+  Change permission.
+- **CC-133** Edit-action pairing is validated client-side: values and their
+  action come together, `REMOVE_ALL` takes no values, and at least one edit
+  family must be present — every violation is a validation error with nothing
+  sent.

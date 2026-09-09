@@ -13,9 +13,9 @@
 // payload and the `plan` hint. A handler that asked "am I planning?" would have
 // two code paths and only one of them tested, which is the drift the seam
 // exists to make impossible. The same rule explains why the reads below
-// (`GET .../transitions`, `GET /myself`) are unconditional: a GET travels to the
-// real network in both modes, so the plan is built from live facts and shows the
-// id it would really send.
+// (`GET .../transitions`, `GET /myself`, D100's `GET /user/search`) are
+// unconditional: a GET travels to the real network in both modes, so the plan is
+// built from live facts and shows the id it would really send.
 //
 // THIS RING IS THIN. `api/issues.ts` owns every request body (its
 // builder/executor split is what keeps plan and apply from drifting), owns ADF
@@ -33,7 +33,12 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { adfFromMarkdown, type AdfNode } from '../api/adf.js';
+import {
+  adfFromMarkdown,
+  extractMentions,
+  type AdfNode,
+  type MentionTarget,
+} from '../api/adf.js';
 import {
   WORKLOG_STARTED_PATTERN,
   addComment,
@@ -58,7 +63,7 @@ import type {
   TransitionIssueResult,
   UpdateIssueResult,
 } from '../api/issues.js';
-import { getMyself } from '../api/users.js';
+import { getMyself, resolveMentionNames } from '../api/users.js';
 import type { JiraError } from '../core/types.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';
 import { errorResultOf } from '../mcp/errors.js';
@@ -70,7 +75,7 @@ import {
   callBase,
   guarded,
 } from '../mcp/tool-helpers.js';
-import type { Hint, PackageSpec, ToolResult } from '../mcp/types.js';
+import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
 
 // ---------------------------------------------------------------------------
 // Hints (TOOLS.md §Hint catalog — closed vocabulary)
@@ -111,6 +116,14 @@ const SPRINT_MOVE_HINT: Hint = {
     'A sprint cannot be set while creating an issue — the sprint field is not on ' +
     'the create screen. The issue was created in the backlog; follow with ' +
     'jira_move_to_sprint to place it in the sprint.',
+};
+
+/** `mentions_skipped` — @[...] tokens were found while resolution was off (CC-105). */
+const MENTIONS_SKIPPED_HINT: Hint = {
+  code: 'mentions_skipped',
+  message:
+    '@[...] tokens were left as literal text — set resolveMentions: true to ' +
+    'resolve them to mentions via user search.',
 };
 
 /** CC-24: an unknown field id comes back as a 400 that names the field. */
@@ -168,6 +181,23 @@ const writeFormatArg = z
       'links). Refused alongside a raw ADF document.',
   );
 
+/**
+ * D100: mention resolution is opt-in per call, and the `@[Name]` token is
+ * deliberately NOT what the read side renders (`@Name`, no brackets) — text
+ * round-tripped through a read can never resolve by accident, so D43's
+ * prompt-injection posture survives the feature (CC-110).
+ */
+const resolveMentionsArg = z
+  .boolean()
+  .optional()
+  .describe(
+    'Resolve @[Display Name] tokens in a markdown string input to real user ' +
+      'mentions via user search. Requires format: "markdown" — true without it ' +
+      'is refused. A token naming no active user, or more than one, refuses the ' +
+      'whole call before anything is written. Default off: @[...] stays literal ' +
+      'text.',
+  );
+
 const labelsArg = z.array(z.string().min(1));
 
 const fieldsArg = z
@@ -194,29 +224,41 @@ const visibilityArg = z
  * before the builder sees it, so plan mode captures the exact ADF an apply
  * would send (CC-20 stays faithful). The schemas refuse `format` next to a raw
  * document (CC-46), so the string check is exhaustive, not defensive.
+ *
+ * `mentions` is the call's one resolver pass (D100): the converter emits a
+ * mention node only for a token whose verbatim spelling the map holds, and with
+ * no map its output stays byte-identical to the pre-mention grammar (CC-108).
  */
 function asRichText(
   value: string | Record<string, unknown>,
   format?: 'text' | 'markdown',
+  mentions?: ReadonlyMap<string, MentionTarget>,
 ): string | AdfNode {
   if (typeof value !== 'string') return value as AdfNode;
-  return format === 'markdown' ? adfFromMarkdown(value) : value;
+  if (format !== 'markdown') return value;
+  return mentions === undefined
+    ? adfFromMarkdown(value)
+    : adfFromMarkdown(value, { mentions });
 }
 
 /** `asRichText` for an optional argument, keeping `undefined` distinct. */
 function optionalRichText(
   value: string | Record<string, unknown> | undefined,
   format?: 'text' | 'markdown',
+  mentions?: ReadonlyMap<string, MentionTarget>,
 ): string | AdfNode | undefined {
-  return value === undefined ? undefined : asRichText(value, format);
+  return value === undefined ? undefined : asRichText(value, format, mentions);
 }
 
 /** `asRichText` for a nullable argument — `null` CLEARS the field (CC-31). */
 function nullableRichText(
   value: string | Record<string, unknown> | null | undefined,
   format?: 'text' | 'markdown',
+  mentions?: ReadonlyMap<string, MentionTarget>,
 ): string | AdfNode | null | undefined {
-  return value === null || value === undefined ? value : asRichText(value, format);
+  return value === null || value === undefined
+    ? value
+    : asRichText(value, format, mentions);
 }
 
 /**
@@ -241,6 +283,73 @@ function refuseFormatOnRawAdf(
         `needs no interpreting. Pass ${field} as a string, or drop format.`,
     });
   }
+}
+
+/**
+ * CC-105: `@[...]` tokens exist only in the markdown grammar — the text grammar
+ * has no mention branch, and a raw ADF document is never re-read (its `format`
+ * pairing is already refused above, CC-46). So `resolveMentions: true` without
+ * `format: "markdown"` is a contradiction to refuse, not a format to infer.
+ */
+function refuseResolveWithoutMarkdown(
+  ctx: z.RefinementCtx,
+  format: 'text' | 'markdown' | undefined,
+  resolveMentions: boolean | undefined,
+): void {
+  if (resolveMentions === true && format !== 'markdown') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['resolveMentions'],
+      message:
+        'resolveMentions: true without format: "markdown" resolves nothing — ' +
+        '@[Display Name] tokens are only read out of markdown input. Pass ' +
+        'format: "markdown", or drop resolveMentions.',
+    });
+  }
+}
+
+/** What one call's mention-resolution step produced. */
+interface MentionResolution {
+  /** Present only when the call opted in and every token resolved (D100). */
+  readonly mentions?: ReadonlyMap<string, MentionTarget>;
+  /** `mentions_skipped`, or nothing. */
+  readonly hints: readonly Hint[];
+}
+
+/**
+ * D100: the per-call resolution step, run BEFORE the api builder is invoked —
+ * the same D44 placement as the markdown parse itself — so the document the
+ * builder produces, and plan mode captures, already carries the resolved
+ * mention nodes. Resolution is execution-time in BOTH modes (CC-111): the
+ * user-search GETs travel to the real network exactly like `listTransitions`,
+ * and an apply re-resolves rather than trusting the plan's snapshot.
+ *
+ * One pass per call: the names of every markdown rich-text field are extracted,
+ * unioned and resolved once, and the map is shared across the call's fields —
+ * with the current eight tools that union is the single rich-text field each
+ * carries. Tokens found while `resolveMentions` is off stay literal text and
+ * earn `mentions_skipped`, with no network touched (CC-105). A resolver refusal
+ * (zero match, ambiguity, cap — CC-106/CC-107/CC-112) throws `validation`
+ * through `guarded`, so nothing is written and no plan is produced.
+ */
+async function resolveCallMentions(
+  ctx: ToolCtx,
+  value: string | Record<string, unknown> | null | undefined,
+  format: 'text' | 'markdown' | undefined,
+  resolveMentions: boolean | undefined,
+): Promise<MentionResolution> {
+  // Only a markdown STRING has the @[...] grammar: raw ADF is never re-read
+  // (CC-46), and null/absent carry no text (CC-31 keeps null clearing).
+  if (format !== 'markdown' || typeof value !== 'string') return { hints: [] };
+  const names = extractMentions(value);
+  if (names.length === 0) return { hints: [] };
+  if (resolveMentions !== true) return { hints: [MENTIONS_SKIPPED_HINT] };
+  const mentions = await resolveMentionNames({
+    jira: ctx.jira,
+    names,
+    ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+  });
+  return { mentions, hints: [] };
 }
 
 function asVisibility(
@@ -284,8 +393,10 @@ const createIssueInput = writeToolInput({
     .describe('Parent issue key or id — the epic of a story, the story of a subtask.'),
   fields: fieldsArg.optional(),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'description', value.description);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
 });
 
 export const createIssueTool = defineTool({
@@ -305,12 +416,18 @@ export const createIssueTool = defineTool({
   input: createIssueInput,
   handler: async (args, ctx): Promise<ToolResult<CreatedIssue>> =>
     guarded(async () => {
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.description,
+        args.format,
+        args.resolveMentions,
+      );
       const created = await createIssue({
         ...callBase(ctx),
         project: args.project,
         issueType: args.issueType,
         summary: args.summary,
-        description: optionalRichText(args.description, args.format),
+        description: optionalRichText(args.description, args.format, resolution.mentions),
         assigneeAccountId: args.assigneeAccountId,
         labels: args.labels,
         priority: args.priority,
@@ -318,7 +435,10 @@ export const createIssueTool = defineTool({
         fields: args.fields,
       });
       return ok(created, {
-        hints: requestedSprint(args.fields) ? [SPRINT_MOVE_HINT] : [],
+        hints: [
+          ...(requestedSprint(args.fields) ? [SPRINT_MOVE_HINT] : []),
+          ...resolution.hints,
+        ],
       });
     }, fieldErrorHints),
 });
@@ -364,8 +484,10 @@ const updateIssueInput = writeToolInput({
     .optional()
     .describe('Default true, like Jira. false suppresses the change notification.'),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'description', value.description);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
 });
 
 export const updateIssueTool = defineTool({
@@ -385,11 +507,17 @@ export const updateIssueTool = defineTool({
   input: updateIssueInput,
   handler: async (args, ctx): Promise<ToolResult<UpdateIssueResult>> =>
     guarded(async () => {
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.description,
+        args.format,
+        args.resolveMentions,
+      );
       const updated = await updateIssue({
         ...callBase(ctx),
         issue: args.issue,
         summary: args.summary,
-        description: nullableRichText(args.description, args.format),
+        description: nullableRichText(args.description, args.format, resolution.mentions),
         assigneeAccountId: args.assigneeAccountId,
         labels: args.labels,
         labelsAdd: args.labelsAdd,
@@ -399,7 +527,7 @@ export const updateIssueTool = defineTool({
         fields: args.fields,
         notifyUsers: args.notifyUsers,
       });
-      return ok(updated);
+      return ok(updated, { hints: resolution.hints });
     }, fieldErrorHints),
 });
 
@@ -426,8 +554,10 @@ const transitionIssueInput = writeToolInput({
     .optional()
     .describe('Comment added as part of the transition; text or ADF.'),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'comment', value.comment);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
 });
 
 export const transitionIssueTool = defineTool({
@@ -446,6 +576,12 @@ export const transitionIssueTool = defineTool({
   handler: async (args, ctx): Promise<ToolResult<TransitionIssueResult>> =>
     guarded(async () => {
       const base = callBase(ctx);
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.comment,
+        args.format,
+        args.resolveMentions,
+      );
       // A GET, so it runs for real in plan mode too — the plan then shows the id
       // the apply would really send instead of the caller's name.
       const { transitions } = await listTransitions({ ...base, issue: args.issue });
@@ -455,9 +591,9 @@ export const transitionIssueTool = defineTool({
         issue: args.issue,
         transitionId,
         fields: args.fields,
-        comment: optionalRichText(args.comment, args.format),
+        comment: optionalRichText(args.comment, args.format, resolution.mentions),
       });
-      return ok(result);
+      return ok(result, { hints: resolution.hints });
     }, transitionErrorHints),
 });
 
@@ -472,8 +608,10 @@ const addCommentInput = writeToolInput({
     .optional()
     .describe('Restrict the comment to one project role or one group, by name.'),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'body', value.body);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
 });
 
 export const addCommentTool = defineTool({
@@ -491,13 +629,19 @@ export const addCommentTool = defineTool({
   input: addCommentInput,
   handler: async (args, ctx): Promise<ToolResult<IssueComment>> =>
     guarded(async () => {
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.body,
+        args.format,
+        args.resolveMentions,
+      );
       const comment = await addComment({
         ...callBase(ctx),
         issue: args.issue,
-        body: asRichText(args.body, args.format),
+        body: asRichText(args.body, args.format, resolution.mentions),
         visibility: asVisibility(args.visibility),
       });
-      return ok(comment);
+      return ok(comment, { hints: resolution.hints });
     }),
 });
 
@@ -531,8 +675,10 @@ const updateCommentInput = writeToolInput({
         'again to keep it.',
     ),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'body', value.body);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
 });
 
 export const updateCommentTool = defineTool({
@@ -551,14 +697,20 @@ export const updateCommentTool = defineTool({
   input: updateCommentInput,
   handler: async (args, ctx): Promise<ToolResult<IssueComment>> =>
     guarded(async () => {
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.body,
+        args.format,
+        args.resolveMentions,
+      );
       const comment = await updateComment({
         ...callBase(ctx),
         issue: args.issue,
         commentId: args.commentId,
-        body: asRichText(args.body, args.format),
+        body: asRichText(args.body, args.format, resolution.mentions),
         visibility: asVisibility(args.visibility),
       });
-      return ok(comment);
+      return ok(comment, { hints: resolution.hints });
     }),
 });
 
@@ -663,8 +815,10 @@ const addWorklogInput = writeToolInput({
     ),
   comment: richTextArg.optional().describe('Worklog comment; text or ADF.'),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'comment', value.comment);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
   const bySeconds = value.timeSpentSeconds !== undefined;
   const byText = value.timeSpent !== undefined;
   if (bySeconds === byText) {
@@ -694,6 +848,12 @@ export const addWorklogTool = defineTool({
   handler: async (args, ctx): Promise<ToolResult<IssueWorklog>> =>
     guarded(async () => {
       const base = callBase(ctx);
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.comment,
+        args.format,
+        args.resolveMentions,
+      );
       // D16: the offset belongs to the authenticated user, so it is FETCHED, not
       // observed. A GET, so plan mode passes it through and plans a real offset.
       const myself = await getMyself(base);
@@ -721,9 +881,9 @@ export const addWorklogTool = defineTool({
         timeSpent: args.timeSpent,
         startedAt: instant.epochMs,
         utcOffsetMinutes: instant.offsetMinutes,
-        comment: optionalRichText(args.comment, args.format),
+        comment: optionalRichText(args.comment, args.format, resolution.mentions),
       });
-      return ok(worklog);
+      return ok(worklog, { hints: resolution.hints });
     }),
 });
 
@@ -746,8 +906,10 @@ const linkIssuesInput = writeToolInput({
     .optional()
     .describe('Comment added to the inward issue alongside the link; text or ADF.'),
   format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'comment', value.comment);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
 });
 
 export const linkIssuesTool = defineTool({
@@ -765,14 +927,20 @@ export const linkIssuesTool = defineTool({
   input: linkIssuesInput,
   handler: async (args, ctx): Promise<ToolResult<LinkIssuesResult>> =>
     guarded(async () => {
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.comment,
+        args.format,
+        args.resolveMentions,
+      );
       const linked = await linkIssues({
         ...callBase(ctx),
         linkType: args.linkType,
         inwardIssue: args.inwardIssue,
         outwardIssue: args.outwardIssue,
-        comment: optionalRichText(args.comment, args.format),
+        comment: optionalRichText(args.comment, args.format, resolution.mentions),
       });
-      return ok(linked);
+      return ok(linked, { hints: resolution.hints });
     }, linkErrorHints),
 });
 

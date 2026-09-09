@@ -14,6 +14,9 @@
 //      tool cannot build a body Jira rejects on shape (CC-10).
 //   3. The markdown pair round-trips over the documented subset, and
 //      `adfFromMarkdown` is total with markdown as its own fixed point.
+//   4. The mentions option is inert when absent or empty — the sink-less
+//      parse, `{}` and an empty map are the same document (CC-108), and
+//      `extractMentions` is total.
 //
 // Run counts stay small on purpose: this is a gate in `npm run check`, not a
 // fuzzing campaign.
@@ -28,6 +31,7 @@ import {
   adfFromText,
   adfToMarkdown,
   adfToText,
+  extractMentions,
   isAdfDoc,
   toAdf,
   type AdfNode,
@@ -464,6 +468,41 @@ test('property: adfFromMarkdown is total and its markdown is a fixed point', () 
       // shrank its own output would drift on every edit round trip.
       const once = adfToMarkdown(parsed);
       assert.equal(adfToMarkdown(adfFromMarkdown(once)), once);
+    }),
+    RUNS,
+  );
+});
+
+test('property: the mentions option is inert when absent or empty (CC-108)', () => {
+  // Characters chosen to hit the mention grammar's edges: `@[`, `]`, escapes,
+  // code fences and spans, plus plain noise.
+  const mentionNoiseArb = fc.string({
+    unit: fc.constantFrom(
+      'a',
+      ' ',
+      '\n',
+      '@',
+      '[',
+      ']',
+      '(',
+      ')',
+      '\\',
+      '`',
+      '*',
+      '#',
+      '-',
+      '.',
+      'x',
+    ),
+    maxLength: 40,
+  });
+
+  fc.assert(
+    fc.property(fc.oneof(mentionNoiseArb, fc.string()), (text) => {
+      const bare = adfFromMarkdown(text);
+      assert.deepEqual(adfFromMarkdown(text, {}), bare);
+      assert.deepEqual(adfFromMarkdown(text, { mentions: new Map() }), bare);
+      assert.ok(Array.isArray(extractMentions(text)));
     }),
     RUNS,
   );

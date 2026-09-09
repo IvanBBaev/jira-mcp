@@ -9,9 +9,11 @@
 //   * watchers  — `GET|POST|DELETE /issue/{issueIdOrKey}/watchers`
 //   * votes     — `POST|DELETE /issue/{issueIdOrKey}/votes` (SELF only)
 //   * components— `GET /project/{projectIdOrKey}/component`, `POST /component`,
-//                 `PUT /component/{id}`
+//                 `GET|PUT|DELETE /component/{id}`,
+//                 `GET /component/{id}/relatedIssueCounts`
 //   * versions  — `GET /project/{projectIdOrKey}/version`, `POST /version`,
-//                 `PUT /version/{id}`
+//                 `GET|PUT /version/{id}`, `GET /version/{id}/relatedIssueCounts`,
+//                 `POST /version/{id}/removeAndSwap`
 //   * roles     — `GET /project/{projectIdOrKey}/role[/{id}]`
 //
 // Six rules, the first two of which are security boundaries rather than style:
@@ -25,11 +27,13 @@
 //     takes an accountId and nothing else; a role actor that carries no
 //     accountId (a GROUP actor) is reported without one rather than with a name
 //     that looks addressable but is not.
-//  3. **Nothing is deleted here.** Removing a watcher or a vote is a *reversible*
-//     write — the same tool re-adds it — and there is deliberately no component
-//     or version delete in this module: those DO destroy data (Jira reassigns or
-//     strips the field on every issue that referenced it) and belong to the
-//     irreversible tier (WP-72), not to this one.
+//  3. **The collab TOOL package still deletes nothing.** Removing a watcher or a
+//     vote is a *reversible* write — the same tool re-adds it. The component and
+//     version deletes DO destroy data (Jira reassigns or strips the field on
+//     every issue that referenced them), so while their wire primitives live in
+//     this module since Phase 11 (D102) — see §9 — the tools that call them
+//     belong to the irreversible `issues-delete` package, behind
+//     JIRA_ALLOW_IRREVERSIBLE, never to the `collab` package (D50/CC-48).
 //  4. **`description` is a PLAIN STRING on components and versions** — not ADF.
 //     These two endpoints predate the v3 rich-text migration and were never
 //     converted, so D44's `format` argument does NOT apply here and no ADF
@@ -91,6 +95,10 @@ export const COMPONENT_COLLECTION_PATH = '/component';
 /** `pathTemplate` for the single-component route. */
 export const COMPONENT_PATH_TEMPLATE = '/component/{id}';
 
+/** `pathTemplate` for the blast-radius count a component-delete plan shows. */
+export const COMPONENT_RELATED_COUNTS_PATH_TEMPLATE =
+  '/component/{id}/relatedIssueCounts';
+
 /** The PAGINATED version list. `/project/{key}/versions` (plural) is not paged. */
 export const PROJECT_VERSIONS_PATH_TEMPLATE = '/project/{projectIdOrKey}/version';
 
@@ -99,6 +107,16 @@ export const VERSION_COLLECTION_PATH = '/version';
 
 /** `pathTemplate` for the single-version route. */
 export const VERSION_PATH_TEMPLATE = '/version/{id}';
+
+/** `pathTemplate` for the blast-radius counts a version-delete plan shows. */
+export const VERSION_RELATED_COUNTS_PATH_TEMPLATE = '/version/{id}/relatedIssueCounts';
+
+/**
+ * `pathTemplate` for the version delete. The route is `removeAndSwap` because
+ * the bare `DELETE /version/{id}` is DEPRECATED upstream (CC-122) and must
+ * never appear on the wire.
+ */
+export const VERSION_REMOVE_AND_SWAP_PATH_TEMPLATE = '/version/{id}/removeAndSwap';
 
 /** `pathTemplate` for the project role map. */
 export const PROJECT_ROLES_PATH_TEMPLATE = '/project/{projectIdOrKey}/role';
@@ -214,6 +232,28 @@ export type UpdateComponentOptions = CollabOptions & {
   readonly assigneeType?: ComponentAssigneeType;
 };
 
+/** Options for {@link getComponent} and {@link getComponentRelatedIssueCounts}. */
+export type GetComponentOptions = CollabOptions & {
+  /** The NUMERIC component id, from {@link listComponents}. */
+  readonly componentId: string | number;
+};
+
+/**
+ * Input of {@link deleteComponentRequest} — the pure builder half of the
+ * issues.ts §13 split, so the plan/apply gate shows exactly what it sends.
+ */
+export interface DeleteComponentInput {
+  readonly componentId: string | number;
+  /**
+   * Component that inherits the deleted one's issues. Omitted, Jira strips the
+   * component off every issue that referenced it instead.
+   */
+  readonly moveIssuesTo?: string | number;
+}
+
+/** Options for {@link deleteComponent}. */
+export type DeleteComponentOptions = CollabOptions & DeleteComponentInput;
+
 /** Options for {@link listVersions}. */
 export type ListVersionsOptions = CollabPagedBase &
   BudgetGuard & {
@@ -256,6 +296,28 @@ export type UpdateVersionOptions = CollabOptions & {
   readonly released?: boolean;
   readonly archived?: boolean;
 };
+
+/** Options for {@link getVersion} and {@link getVersionRelatedIssueCounts}. */
+export type GetVersionOptions = CollabOptions & {
+  /** The NUMERIC version id, from {@link listVersions}. */
+  readonly versionId: string | number;
+};
+
+/**
+ * Input of {@link deleteVersionRequest} — the pure builder half of the
+ * issues.ts §13 split. The swap targets are OPTIONAL: an omitted target means
+ * "clear the field on every issue", not "refuse the call" (CC-122).
+ */
+export interface DeleteVersionInput {
+  readonly versionId: string | number;
+  /** Version that replaces this one in `fixVersion` fields; omitted clears them. */
+  readonly moveFixIssuesTo?: string | number;
+  /** Same for `affectedVersion` fields; omitted clears them. */
+  readonly moveAffectedIssuesTo?: string | number;
+}
+
+/** Options for {@link deleteVersion}. */
+export type DeleteVersionOptions = CollabOptions & DeleteVersionInput;
 
 /** Options for {@link listProjectRoles}. */
 export type ListProjectRolesOptions = CollabOptions & {
@@ -355,6 +417,45 @@ export interface VersionChange {
   readonly status: number;
 }
 
+/**
+ * What `GET /component/{id}/relatedIssueCounts` reports — the blast radius a
+ * delete plan prints. Hand-built (D41): the wire body also carries a `self`
+ * link, and a body without a numeric count maps to `{}` rather than to a guess
+ * (CC-66: an unfillable key is dropped, not defaulted).
+ */
+export interface ComponentRelatedIssueCounts {
+  /** Issues whose `components` field names this component. */
+  readonly issueCount?: number;
+}
+
+/** What `GET /version/{id}/relatedIssueCounts` reports — same allowlist rule. */
+export interface VersionRelatedIssueCounts {
+  /** Issues naming this version in `fixVersion`. */
+  readonly issuesFixedCount?: number;
+  /** Issues naming this version in `affectedVersion`. */
+  readonly issuesAffectedCount?: number;
+  /** Issues naming this version in a custom version-picker field. */
+  readonly issueCountWithCustomFieldsShowingVersion?: number;
+}
+
+/** The receipt of {@link deleteComponent}, built locally: Jira answers 204. */
+export interface DeleteComponentResult {
+  readonly componentId: string;
+  readonly deleted: true;
+  /** Present only when the issues were reassigned rather than stripped. */
+  readonly movedIssuesTo?: string;
+}
+
+/** The receipt of {@link deleteVersion}, built locally: Jira answers 204. */
+export interface DeleteVersionResult {
+  readonly versionId: string;
+  readonly deleted: true;
+  /** Present only when `fixVersion` occurrences were swapped, not cleared. */
+  readonly movedFixIssuesTo?: string;
+  /** Present only when `affectedVersion` occurrences were swapped, not cleared. */
+  readonly movedAffectedIssuesTo?: string;
+}
+
 /** One row of the project role map. */
 export interface ProjectRole {
   readonly id: string;
@@ -438,6 +539,50 @@ export function listComponents(
 }
 
 /**
+ * Read one component — `GET /component/{id}`.
+ *
+ * Same allowlist as the list rows ({@link mapComponent}). The single-item read
+ * exists so a delete plan can show the component before it is gone — the
+ * issues.ts §13 precedent: the preview reads travel with the delete they serve.
+ */
+export async function getComponent(
+  options: GetComponentOptions,
+): Promise<ProjectComponent> {
+  const id = positiveId(options.componentId, 'componentId', COMPONENT_ID_REMEDIATION);
+  const response = await collabCall(PROJECT_READ_HINT, () =>
+    sendOne(options, {
+      method: 'GET',
+      path: `${COMPONENT_COLLECTION_PATH}/${id}`,
+      pathTemplate: COMPONENT_PATH_TEMPLATE,
+    }),
+  );
+  return mapComponent(requireRecord(response.data, 'component'));
+}
+
+/**
+ * Count the issues that reference a component —
+ * `GET /component/{id}/relatedIssueCounts`.
+ *
+ * The number a delete plan prints as its blast radius. Hand-built (D41): the
+ * wire also carries `self`, which is dropped, and a body without a numeric
+ * `issueCount` maps to `{}` rather than to a guess (CC-66).
+ */
+export async function getComponentRelatedIssueCounts(
+  options: GetComponentOptions,
+): Promise<ComponentRelatedIssueCounts> {
+  const id = positiveId(options.componentId, 'componentId', COMPONENT_ID_REMEDIATION);
+  const response = await collabCall(PROJECT_READ_HINT, () =>
+    sendOne(options, {
+      method: 'GET',
+      path: `${COMPONENT_COLLECTION_PATH}/${id}/relatedIssueCounts`,
+      pathTemplate: COMPONENT_RELATED_COUNTS_PATH_TEMPLATE,
+    }),
+  );
+  const body = requireRecord(response.data, 'component issue count');
+  return compact({ issueCount: readNumber(body, 'issueCount') });
+}
+
+/**
  * List a project's versions, one classic page at a time —
  * `GET /project/{projectIdOrKey}/version`.
  *
@@ -467,6 +612,55 @@ export function listVersions(
       (response) => classicPage(response, 'version', mapVersion),
     ),
   );
+}
+
+/**
+ * Read one version — `GET /version/{id}`.
+ *
+ * Same allowlist as the list rows ({@link mapVersion}); exists so a delete plan
+ * can show the release before it is gone.
+ */
+export async function getVersion(options: GetVersionOptions): Promise<ProjectVersion> {
+  const id = positiveId(options.versionId, 'versionId', VERSION_ID_REMEDIATION);
+  const response = await collabCall(PROJECT_READ_HINT, () =>
+    sendOne(options, {
+      method: 'GET',
+      path: `${VERSION_COLLECTION_PATH}/${id}`,
+      pathTemplate: VERSION_PATH_TEMPLATE,
+    }),
+  );
+  return mapVersion(requireRecord(response.data, 'version'));
+}
+
+/**
+ * Count the issues that reference a version —
+ * `GET /version/{id}/relatedIssueCounts`.
+ *
+ * Three counts, three fields (`fixVersion`, `affectedVersion`, and custom
+ * version pickers). Hand-built (D41): `customFieldUsage` and `self` arrive on
+ * the wire and are dropped; a count Jira does not send is absent, not zero
+ * (CC-66).
+ */
+export async function getVersionRelatedIssueCounts(
+  options: GetVersionOptions,
+): Promise<VersionRelatedIssueCounts> {
+  const id = positiveId(options.versionId, 'versionId', VERSION_ID_REMEDIATION);
+  const response = await collabCall(PROJECT_READ_HINT, () =>
+    sendOne(options, {
+      method: 'GET',
+      path: `${VERSION_COLLECTION_PATH}/${id}/relatedIssueCounts`,
+      pathTemplate: VERSION_RELATED_COUNTS_PATH_TEMPLATE,
+    }),
+  );
+  const body = requireRecord(response.data, 'version issue counts');
+  return compact({
+    issuesFixedCount: readNumber(body, 'issuesFixedCount'),
+    issuesAffectedCount: readNumber(body, 'issuesAffectedCount'),
+    issueCountWithCustomFieldsShowingVersion: readNumber(
+      body,
+      'issueCountWithCustomFieldsShowingVersion',
+    ),
+  });
 }
 
 /**
@@ -522,7 +716,8 @@ export async function getProjectRole(
 }
 
 // ---------------------------------------------------------------------------
-// 5. Writes — all reversible, all standard tier
+// 5. Writes — all reversible, all standard tier. The two deletes are NOT here:
+//    they are irreversible and live in §9 (Phase 11, D102).
 // ---------------------------------------------------------------------------
 
 /**
@@ -1013,10 +1208,10 @@ const ROLE_READ_HINT =
   'so a wrong key and a missing permission look identical there.';
 
 const PROJECT_ADMIN_HINT =
-  'Creating or changing components and versions needs the "Administer projects" ' +
-  'project permission (or "Administer Jira" globally); Jira answers 404 for a ' +
-  'project you may not administer, so a wrong id and a missing permission look ' +
-  'identical here.';
+  'Creating, changing or deleting components and versions needs the "Administer ' +
+  'projects" project permission (or "Administer Jira" globally); Jira answers 404 ' +
+  'for a project you may not administer, so a wrong id and a missing permission ' +
+  'look identical here.';
 
 /**
  * Run a collaboration call, naming the permission a 403/404 may really be about.
@@ -1325,4 +1520,134 @@ function mapActor(entry: Record<string, unknown>): RoleActor {
     accountId: user === undefined ? undefined : readString(user, 'accountId'),
     displayName: readString(entry, 'displayName'),
   });
+}
+
+// ---------------------------------------------------------------------------
+// 9. Deletes (Phase 11, D102 / WP-110) — appended, following the issues.ts §13
+//    precedent: builder + executor per route, receipts built locally because
+//    Jira answers 204 with no body. The TOOLS that call these live in the
+//    irreversible `issues-delete` package behind JIRA_ALLOW_IRREVERSIBLE
+//    (D50/CC-48), never in the `collab` package — module header rule 3.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the spec of a component delete — `DELETE /component/{id}`, with an
+ * optional `moveIssuesTo` query naming the component that inherits the issues.
+ * Without it, Jira strips the component off every issue that referenced it.
+ *
+ * Pure builder (issues.ts §13): the plan/apply gate calls it twice — once to
+ * SHOW the request, once to send it — so it validates and builds but never
+ * touches the wire, and the spec carries no signal/deadline (the executor
+ * stamps those).
+ */
+export function deleteComponentRequest(input: DeleteComponentInput): JiraRequestSpec {
+  const id = positiveId(input.componentId, 'componentId', COMPONENT_ID_REMEDIATION);
+  const moveIssuesTo =
+    input.moveIssuesTo === undefined
+      ? undefined
+      : positiveId(input.moveIssuesTo, 'moveIssuesTo', COMPONENT_ID_REMEDIATION);
+  return {
+    method: 'DELETE',
+    path: `${COMPONENT_COLLECTION_PATH}/${id}`,
+    pathTemplate: COMPONENT_PATH_TEMPLATE,
+    // No target ⇒ no `query` key at all: `?moveIssuesTo=` would be a different
+    // request upstream, not a spelling of "strip the field".
+    ...(moveIssuesTo === undefined ? {} : { query: { moveIssuesTo } }),
+  };
+}
+
+/**
+ * Delete a component. Jira answers 204 with no body, so the receipt is built
+ * locally from the validated inputs. No `safe` flag on the spec: an unsafe
+ * write is never replayed on an ambiguous failure (CC-12/13).
+ */
+export async function deleteComponent(
+  options: DeleteComponentOptions,
+): Promise<DeleteComponentResult> {
+  const componentId = positiveId(
+    options.componentId,
+    'componentId',
+    COMPONENT_ID_REMEDIATION,
+  );
+  const movedIssuesTo =
+    options.moveIssuesTo === undefined
+      ? undefined
+      : positiveId(options.moveIssuesTo, 'moveIssuesTo', COMPONENT_ID_REMEDIATION);
+  await collabCall(PROJECT_ADMIN_HINT, () =>
+    options.jira({ ...deleteComponentRequest(options), ...writeControls(options) }),
+  );
+  return {
+    componentId,
+    deleted: true,
+    ...(movedIssuesTo === undefined ? {} : { movedIssuesTo }),
+  };
+}
+
+/**
+ * Build the spec of a version delete —
+ * `POST /version/{id}/removeAndSwap` (CC-122). The bare `DELETE /version/{id}`
+ * is DEPRECATED upstream and must never appear here.
+ *
+ * The body carries only the provided swap targets, as the NUMERIC ids the
+ * endpoint documents (the same coercion {@link createVersion} applies to
+ * `projectId`). An empty body is not a mistake: `{}` means "clear this version
+ * from every `fixVersion` and `affectedVersion` field", which is exactly what a
+ * delete without targets asks for — so `{}` is SENT, and {@link requireChange}
+ * deliberately does not apply.
+ */
+export function deleteVersionRequest(input: DeleteVersionInput): JiraRequestSpec {
+  const id = positiveId(input.versionId, 'versionId', VERSION_ID_REMEDIATION);
+  const body: Record<string, unknown> = {};
+  if (input.moveFixIssuesTo !== undefined) {
+    body.moveFixIssuesTo = Number(
+      positiveId(input.moveFixIssuesTo, 'moveFixIssuesTo', VERSION_ID_REMEDIATION),
+    );
+  }
+  if (input.moveAffectedIssuesTo !== undefined) {
+    body.moveAffectedIssuesTo = Number(
+      positiveId(
+        input.moveAffectedIssuesTo,
+        'moveAffectedIssuesTo',
+        VERSION_ID_REMEDIATION,
+      ),
+    );
+  }
+  return {
+    method: 'POST',
+    path: `${VERSION_COLLECTION_PATH}/${id}/removeAndSwap`,
+    pathTemplate: VERSION_REMOVE_AND_SWAP_PATH_TEMPLATE,
+    body,
+  };
+}
+
+/**
+ * Delete a version through the removeAndSwap route. Jira answers 204 with no
+ * body, so the receipt is built locally. No `safe` flag: never replayed
+ * (CC-12/13).
+ */
+export async function deleteVersion(
+  options: DeleteVersionOptions,
+): Promise<DeleteVersionResult> {
+  const versionId = positiveId(options.versionId, 'versionId', VERSION_ID_REMEDIATION);
+  const movedFixIssuesTo =
+    options.moveFixIssuesTo === undefined
+      ? undefined
+      : positiveId(options.moveFixIssuesTo, 'moveFixIssuesTo', VERSION_ID_REMEDIATION);
+  const movedAffectedIssuesTo =
+    options.moveAffectedIssuesTo === undefined
+      ? undefined
+      : positiveId(
+          options.moveAffectedIssuesTo,
+          'moveAffectedIssuesTo',
+          VERSION_ID_REMEDIATION,
+        );
+  await collabCall(PROJECT_ADMIN_HINT, () =>
+    options.jira({ ...deleteVersionRequest(options), ...writeControls(options) }),
+  );
+  return {
+    versionId,
+    deleted: true,
+    ...(movedFixIssuesTo === undefined ? {} : { movedFixIssuesTo }),
+    ...(movedAffectedIssuesTo === undefined ? {} : { movedAffectedIssuesTo }),
+  };
 }
