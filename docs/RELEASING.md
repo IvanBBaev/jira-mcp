@@ -332,16 +332,27 @@ than explaining a gap later.
   update, comment add and edit, worklog add, assign, attachment upload, both vote
   directions, transition, link, and the comment and worklog deletes. With the 27
   reads the earlier phase proved, that is **40 of the 52 tools answered by a real
-  Jira site**; count it from the run log rather than by adding phases together,
-  because a claim may exercise a write in *plan* mode, where nothing is sent and
-  nothing is proven (C14 and C15 do exactly that). Twelve are
-  still unproven, and they do not fail for the same reason: seven wait on a
-  permission this account does not have on `SAN` (both watcher writes, both
-  version writes, both component writes, the issue delete), and five — sprint
-  create, start and close, plus the sprint and backlog moves — never got a
-  request sent, because the name the gate chose was refused. Those five should
-  clear on the next run against any board; the seven will not clear anywhere the
-  account is not a project administrator.
+  Jira site** — 52 being every tool the server shipped on the day of the run;
+  count it from the run log rather than by adding phases together, because a
+  claim may exercise a write in *plan* mode, where nothing is sent and nothing is
+  proven (C14 and C15 do exactly that). Twelve were unproven then, and they did
+  not fail for the same reason: seven wait on a permission this account does not
+  have on `SAN` (both watcher writes, both version writes, both component writes,
+  the issue delete), and five — sprint create, start and close, plus the sprint
+  and backlog moves — never got a request sent, because the name the gate chose
+  was refused. Those five should clear on the next run against any board; the
+  seven will not clear anywhere the account is not a project administrator.
+
+  **Six more tools have landed since that run, so the unproven count is now
+  eighteen of fifty-eight.** D102's three deletes (component, version, sprint)
+  and D103's three bulk tools (bulk delete, bulk edit, the queue read) have never
+  executed against Atlassian, and the two bulk writes additionally need the
+  site-wide *Make bulk changes* permission, which is not implied by project
+  administration. All six do run end to end in the offline rehearsal — C42 and
+  C43 exercise the bulk pair through the queue read, and C33's purge removes a
+  sprint, a component and a version — so what is missing is a tenant, not a
+  driver. Point the next run at a site where the account administers the project
+  and holds *Make bulk changes*, and the same command closes all eighteen.
 
   Read the run as three separate results. The write path works — plan → apply,
   fingerprint binding, the bare-string watcher body, the multipart upload, links,
