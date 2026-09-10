@@ -30,7 +30,12 @@ TypeScript. It follows the house template established by its sibling repos:
 ## Non-goals (v1)
 
 - Jira Data Center / Server support (architecture keeps the door open via the host
-  allowlist; auth for DC is a v2 item).
+  allowlist, and OAuth incidentally widened it further — the credential union has
+  a `bearer` arm and `HostRef` carries a path prefix). **Parked by D104**, not
+  scheduled: the unblocking event is a real DC host plus a closed Gate C on
+  Cloud, and ROADMAP.md carries the measured cost. The seam that is still
+  missing is a domain-level one — `JiraRequestFn` is transport-level, so a route
+  *shape* difference has nowhere to plug in today.
 - Confluence, JSM operations, Bitbucket, Compass.
 - Full markdown ↔ ADF fidelity. A **subset** ships (headings, lists, code fences,
   inline code, bold/italic, links, mentions — D38); anything outside it degrades

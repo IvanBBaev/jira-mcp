@@ -64,6 +64,44 @@ scope call:
 
 - **Jira Data Center adapter**: PAT bearer auth, v2 REST (wiki-markup, not ADF),
   `JIRA_ALLOWED_HOSTS`-driven host policy. Separate api adapter, shared core.
+  **Parked by D104 (2026-09-10) with a named unblocking event** — a real DC host
+  to build against, *and* a closed Gate C on Cloud — rather than left as an open
+  intention. The shape above is unchanged; what follows is the price, measured
+  against the tree rather than guessed, so the question does not have to be
+  re-costed the next time it is asked.
+
+  The cheap half is already paid for, and OAuth (D99) is what paid it.
+  `authorizationHeader` is one exhaustive switch and its `bearer` arm exists, so
+  a PAT is a resolver, not a header change. `HostRef.pathPrefix` is plumbed end
+  to end and re-validated where the URL is built. `JIRA_ALLOWED_HOSTS` already
+  admits a self-hosted host, and a non-443 port on one, by design. The classic
+  `startAt`/`maxResults` loop is not merely written but is what 9 of the 11 api
+  modules already use, so only the JQL endpoint's `nextPageToken` loop is
+  Cloud-shaped. `JIRA_ROOT_PATHS` is one frozen map, so a `v2` root is two
+  lines. One cheap thing is genuinely missing: `resolveHost` hardcodes an empty
+  path prefix and downgrades a context path to a *warning*, so
+  `https://jira.corp.example/jira` starts and then misses `/jira` on every
+  request.
+
+  The expensive half is not the wiring. A wiki-markup twin of `api/adf.ts` is
+  1273 production lines and 73 tests of net-new bidirectional converter, with a
+  hand-rolled markdown parser and a mention grammar; only three modules import
+  it, so what is costly is writing it, not attaching it. `accountId` is 182
+  non-test references across 24 files and 9 of the 58 tool input schemas, and
+  DC identifies users by `username`/`key`. The 63 request specs in `src/api/*`
+  each need an individual DC-availability verdict, and `src/api/bulk.ts` has
+  none — those endpoints are Cloud-only. `scripts/fake-jira.mjs` is ~100 KB with
+  105 hardcoded Cloud routes and would need a twin before a single DC test could
+  run offline. Realistic test blast radius: 500-700 of 1778.
+
+  The finding that decides the order, though, is structural rather than
+  arithmetic. The seam this codebase has is `JiraRequestFn`, which is
+  transport-level; there is no domain-level port. Tools import concrete
+  functions out of `src/api/*`, and `PackagesDeps` has no slot for an api
+  implementation, so a difference in *route shape* — as opposed to root prefix —
+  has nowhere to plug in without branching inside every api function or
+  inventing a port that does not exist. Until that port exists, "separate api
+  adapter" names an intention, not an available seam.
 
 ## Considered and parked
 
