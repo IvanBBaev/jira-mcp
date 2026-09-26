@@ -260,6 +260,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_AUTH_MODE', (s: Settings) => s.authMode],
   ['JIRA_DEPLOYMENT', (s: Settings) => s.deployment],
   ['JIRA_PAT', (s: Settings) => s.pat],
+  ['JIRA_DATACENTER_PREVIEW', (s: Settings) => String(s.datacenterPreview)],
   ['JIRA_OAUTH_CLIENT_ID', (s: Settings) => s.oauth.clientId],
   ['JIRA_OAUTH_CLIENT_SECRET', (s: Settings) => s.oauth.clientSecret],
   ['JIRA_OAUTH_SCOPES', (s: Settings) => list(s.oauth.scopes)],

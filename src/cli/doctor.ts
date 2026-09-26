@@ -23,7 +23,11 @@ import { closeSync, openSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 
 import { systemClock } from '../core/clock.js';
-import { effectiveCredentials, profileOf } from '../core/credentials.js';
+import {
+  buildPatResolver,
+  effectiveCredentials,
+  profileOf,
+} from '../core/credentials.js';
 import {
   nodeEnvFileHost,
   preferredEnvFilePath,
@@ -850,6 +854,41 @@ function oauthStoreFindings(ctx: DoctorContext): readonly DoctorFinding[] {
   return findings;
 }
 
+/**
+ * Probe 4 on Jira Data Center (D106): `GET /rest/api/2/myself`, whose identity
+ * is `name` + `key` — there is no `accountId` to look for.
+ */
+async function dataCenterIdentity(ctx: DoctorContext): Promise<readonly DoctorFinding[]> {
+  const response = await ctx.request?.({ method: 'GET', root: 'v2', path: '/myself' });
+  const data: unknown = response?.data;
+  const name = readString(data, 'name');
+  const key = readString(data, 'key');
+  if (name === undefined && key === undefined) {
+    return [
+      {
+        status: 'fail',
+        text: '/rest/api/2/myself answered without a name or key',
+        remediation:
+          'The site returned an unexpected body — check that JIRA_SITE is the Data Center base URL (with its context path) and not a proxy page.',
+      },
+    ];
+  }
+  const displayName = readString(data, 'displayName');
+  const timeZone = readString(data, 'timeZone');
+  return [
+    {
+      status: 'ok',
+      text: `${displayName ?? 'unnamed account'} (name ${name ?? '?'}, key ${key ?? '?'})`,
+    },
+    timeZone === undefined
+      ? { status: 'warn', text: 'the account has no timezone' }
+      : { status: 'info', text: `timezone ${timeZone}` },
+  ];
+}
+
+/** The network probes that have a Data Center form; the rest are skipped there. */
+const DATACENTER_PROBES: ReadonlySet<string> = new Set(['identity', 'deployment']);
+
 const PROBES: readonly Probe[] = [
   {
     id: 'settings',
@@ -952,6 +991,7 @@ const PROBES: readonly Probe[] = [
     title: 'identity',
     network: true,
     async run(ctx) {
+      if (ctx.settings.deployment === 'datacenter') return dataCenterIdentity(ctx);
       const response = await ctx.request?.({ method: 'GET', path: '/myself' });
       const data: unknown = response?.data;
       const accountId = readString(data, 'accountId');
@@ -989,7 +1029,12 @@ const PROBES: readonly Probe[] = [
     title: 'deployment',
     network: true,
     async run(ctx) {
-      const response = await ctx.request?.({ method: 'GET', path: '/serverInfo' });
+      const datacenter = ctx.settings.deployment === 'datacenter';
+      const response = await ctx.request?.({
+        method: 'GET',
+        path: '/serverInfo',
+        ...(datacenter ? { root: 'v2' as const } : {}),
+      });
       const data: unknown = response?.data;
       const deployment = readString(data, 'deploymentType');
       const version = readString(data, 'version');
@@ -997,6 +1042,21 @@ const PROBES: readonly Probe[] = [
       if (deployment === undefined) {
         return [
           { status: 'warn', text: `/serverInfo reported no deploymentType${suffix}` },
+        ];
+      }
+      if (datacenter) {
+        return [
+          deployment === 'Cloud'
+            ? {
+                status: 'fail',
+                text: `the site reports Jira Cloud${suffix}, but JIRA_DEPLOYMENT=datacenter`,
+                remediation:
+                  'Unset JIRA_DEPLOYMENT (and use basic or oauth auth) for a Cloud site.',
+              }
+            : {
+                status: 'ok',
+                text: `Jira ${deployment}${suffix} — served by the unverified Data Center preview (D106)`,
+              },
         ];
       }
       return [
@@ -1475,6 +1535,16 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
             allowedHosts: loaded.settings.allowedHosts,
             activeProfile: loaded.settings.activeProfile,
           });
+  } else if (loaded.settings.authMode === 'pat') {
+    // The resolver the server installs (D106), so doctor fails the way the
+    // server would. Only when the pairing is right: a PAT is never sent to a
+    // host settings has not accepted as a Data Center one.
+    source =
+      host === undefined ||
+      loaded.settings.pat === undefined ||
+      loaded.settings.deployment !== 'datacenter'
+        ? undefined
+        : buildPatResolver({ settings: loaded.settings, host });
   } else if (
     // Only in basic mode: a leftover JIRA_EMAIL/JIRA_API_TOKEN pair under `pat`
     // must not become Basic credentials sent to a Data Center host (D106).
@@ -1638,17 +1708,16 @@ async function runProbe(
   if (probe.network && ctx.offline) {
     return [{ status: 'skip', text: 'skipped (--offline)' }];
   }
-  // Every network probe speaks Cloud routes (`/rest/api/3`), which a Data
-  // Center host does not serve. Until the adapter exists they are skipped by
-  // name rather than fired at a host that can only answer 404 (D106).
-  if (probe.network && ctx.settings.deployment === 'datacenter') {
+  // The search and agile probes speak Cloud routes (`/search/jql`) or have no
+  // Data Center form yet; they are skipped by name rather than fired at a host
+  // that can only answer 404 (D106). Identity and deployment have a DC form.
+  if (
+    probe.network &&
+    ctx.settings.deployment === 'datacenter' &&
+    !DATACENTER_PROBES.has(probe.id)
+  ) {
     return [
-      {
-        status: 'skip',
-        text: 'skipped: JIRA_DEPLOYMENT=datacenter has no adapter yet',
-        remediation:
-          'See the settings finding above; unset JIRA_DEPLOYMENT to probe Jira Cloud.',
-      },
+      { status: 'skip', text: 'skipped: no Jira Data Center form of this probe yet' },
     ];
   }
   if (probe.network && ctx.request === undefined) {

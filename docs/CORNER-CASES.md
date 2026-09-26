@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-262`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-270`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -1313,8 +1313,9 @@ with a note, and gaps stay gaps.
 ## Appended with the Data Center settings surface (2026-09-26, D106 stage 13.2)
 
 - **CC-254** `JIRA_DEPLOYMENT=datacenter` is a startup error
-  (`deployment_unavailable`, field `JIRA_DEPLOYMENT`) until the Data Center
-  adapter's read stage exists — even when every other finding is clean. It is
+  (`deployment_unavailable`, field `JIRA_DEPLOYMENT`) — even when every other
+  finding is clean — unless `JIRA_DATACENTER_PREVIEW=true` (since stage 13.3,
+  CC-269). It is
   reported alongside every other finding, and the settings, the PAT and the
   resolved host are still parsed, so doctor can check a prepared configuration.
 - **CC-255** The deployment and the auth mode must agree: `pat` with `cloud`,
@@ -1344,11 +1345,55 @@ with a note, and gaps stay gaps.
   host and its context path. A requested profile — named per call or through
   `JIRA_ACTIVE_PROFILE` — is a `config` error rather than being answered with
   the default PAT; a missing PAT or host names `JIRA_PAT`.
-- **CC-261** Under `datacenter` doctor builds no request function and fires no
-  request, not even through an injected one: its network probes speak Cloud
-  routes and are skipped by name. A leftover `JIRA_EMAIL`/`JIRA_API_TOKEN` pair
-  under `pat` does not become Basic credentials. The host line shows the
-  context path.
+- **CC-261** Under `pat` a leftover `JIRA_EMAIL`/`JIRA_API_TOKEN` pair never
+  becomes the Basic credentials doctor sends, and doctor's host line shows the
+  context path. (As written at stage 13.2 this case also said doctor fires no
+  request under `datacenter`; stage 13.3 replaced that half with real Data
+  Center probes — CC-266.)
 - **CC-262** `doctor --save` is refused under `pat`: it writes an API token,
   which this mode never signs with.
+
+## Appended with the Data Center read adapter (2026-09-26, D106/D107 stage 13.3)
+
+- **CC-263** Under `datacenter` the registry lists exactly the tools the
+  adapter serves; every other manifest tool is excluded with reason
+  `deployment_unsupported`, and calling one answers `unsupported` naming Data
+  Center with nothing sent. `jira_capabilities` carries
+  `deployment: { product: "datacenter", verified: false, note }`; on Cloud the
+  field is absent and nothing is excluded by the adapter step.
+- **CC-264** The Data Center user projection is an allowlist: `name`, `key`,
+  `displayName`, `active`. It recognises a user by a string `displayName` next
+  to a string `name` or `key` and no `accountId`, so a project (`key` + `name`),
+  a status or a version is not mistaken for one. Without it a DC user falls
+  through the Cloud rule with `emailAddress` and `avatarUrls` intact.
+- **CC-265** Every tool the adapter serves reaches only `/rest/api/2` or
+  `/rest/agile/1.0`, returns users as `name`/`key` and never an email, avatar
+  or invented `accountId`. Wiki markup comes back as Jira sent it, and
+  `format: "markdown"` is refused as `validation` before any request.
+- **CC-266** Under `datacenter` doctor probes `identity`
+  (`GET /rest/api/2/myself`, `name`/`key`) and `deployment`
+  (`GET /rest/api/2/serverInfo`) with the PAT resolver — also while the preview
+  flag is unset, so a site can be checked before the server is turned on — and
+  skips `search` and `agile` by name. A site that reports `Cloud` fails the
+  deployment probe; a `/myself` without `name` or `key` fails identity; a PAT is
+  never sent while the deployment is `cloud`.
+- **CC-267** `jira_search` on Data Center posts to `/rest/api/2/search` by
+  `startAt` and hands the offset back as an opaque `dc1:<startAt>` cursor; the
+  last page carries none. A cursor this server did not issue (`dc1:-1`,
+  `dc1:01`, `dc2:5`, a Cloud token) is `validation` before any request, and
+  `reconcileIssues` is refused rather than dropped.
+- **CC-268** `/project` and `/status` answer whole arrays on Data Center, so
+  `query`, `typeKey`, `searchString` and `statusCategory` are applied here and
+  the result is one complete page; the status category `key` (`new`,
+  `indeterminate`, `done`) maps to `TODO`/`IN_PROGRESS`/`DONE`. `orderBy`,
+  `projectId` and status `expand` have no Data Center equivalent and are
+  refused as `validation` before any request.
+- **CC-269** `JIRA_DATACENTER_PREVIEW=true` turns `deployment_unavailable` into
+  the warning `deployment_unverified` and the server starts; it does not excuse
+  a wrong deployment/auth pairing. Set on Cloud it is
+  `datacenter_preview_ignored`.
+- **CC-270** `/myself` on Data Center (`GET /rest/api/2/myself`) returns
+  `name`, `key`, `displayName`, `active`, `timeZone`, `locale`; a body with
+  neither `name` nor `key` is `unexpected_shape`. `jira_get_myself` reports
+  `name`/`key` and no `accountId`.
 

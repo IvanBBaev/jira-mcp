@@ -74,20 +74,24 @@ Jira site a call is about, whether or not the credentials came from a token.
 | `JIRA_OAUTH_AUTH_ORIGIN` | no | `https://auth.atlassian.com` | Origin of the authorization server the browser is sent to and tokens are exchanged at. Must be an **https origin with no path, query, fragment or credentials** — this is where the client secret is sent, so anything beyond an origin is a typo or somebody's redirect target. It exists so the offline test harness can point the flow at a local fake; there is no reason to set it against a real tenant. |
 | `JIRA_OAUTH_GATEWAY_ORIGIN` | no | `https://api.atlassian.com` | Origin of the OAuth API gateway `oauth`-mode requests are routed through instead of the site host. Same origin rules and same test-harness reason as `JIRA_OAUTH_AUTH_ORIGIN`. Every Jira call goes to this host, so it must not be loopback, private, link-local or a metadata address — the SSRF blocklist refuses those even when allowlisted, and the resolver says so before anything is sent (CC-230). In `oauth` mode the hostnames of both origins are appended to the effective egress allowlist, so a redirected flow still cannot reach a host you did not configure; in `basic` mode the allowlist is byte-for-byte what `JIRA_ALLOWED_HOSTS` says. |
 
-## Jira Data Center (Phase 13 — recognised, not served yet)
+## Jira Data Center (Phase 13 — unverified read-only preview)
 
-The Data Center adapter is being built in stages (D106, IMPLEMENTATION-PLAN.md
-Phase 13). These variables are parsed and validated today so a configuration
-can be prepared and checked with `jira-mcp-ai doctor`, but **selecting
-`datacenter` is a startup error** (`deployment_unavailable`) until the read
-stage lands: the server refuses to start rather than send Jira Cloud requests to
-a Data Center host. Doctor reports every other finding and skips its network
-probes by name.
+The Data Center adapter is being built in stages (D106, D107,
+IMPLEMENTATION-PLAN.md Phase 13). Stage 13.3 serves a **read-only** subset of
+the tools (`jira_capabilities` lists them; the rest are excluded as
+`deployment_unsupported`), built from Atlassian's Data Center documentation and
+**never run against a Data Center instance**. It therefore fails closed:
+selecting `datacenter` is a startup error (`deployment_unavailable`) unless
+`JIRA_DATACENTER_PREVIEW=true` says you accept that, in which case the server
+starts with a `deployment_unverified` warning. `jira-mcp-ai doctor` probes a
+Data Center site either way (`/rest/api/2/myself` and `/serverInfo`, with the
+PAT), which is the way to check a site before turning the preview on.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JIRA_DEPLOYMENT` | no | `cloud` | `cloud` or `datacenter`. `datacenter` requires `JIRA_AUTH_MODE=pat`, and `pat` requires `datacenter` — each other combination is a startup error (`auth_mode_deployment`), because the two products share no credential. Under `datacenter`, `JIRA_SITE` must name a host listed in `JIRA_ALLOWED_HOSTS` (an `.atlassian.net` host is refused, `host_deployment_mismatch`); a dot-less name is never completed to `.atlassian.net`; and a **context path is kept** — `https://jira.example.com/jira` sends requests under `/jira` — where on Cloud it is stripped. A context path containing the REST root (`/rest/…`) or a path that could not be a request prefix is a startup error (`site_context_path`). |
 | `JIRA_PAT` | no | — | **Required when `JIRA_AUTH_MODE=pat`**. A Data Center personal access token, sent as `Authorization: Bearer` to the site host (secret; registered with the redactor whenever it is set). Set under any other mode it is ignored with a warning (`pat_ignored`). |
+| `JIRA_DATACENTER_PREVIEW` | no | `false` | Required for `JIRA_DEPLOYMENT=datacenter` to start: your acknowledgement that the Data Center adapter is an unverified read-only preview (D107). Set with `cloud` it is ignored with a warning (`datacenter_preview_ignored`). |
 
 ## Profiles
 

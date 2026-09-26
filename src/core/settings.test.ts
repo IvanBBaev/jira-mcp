@@ -986,3 +986,37 @@ describe('loadSettings — Data Center (D106)', () => {
     assert.equal(report.findings[0]?.field, 'JIRA_DEPLOYMENT');
   });
 });
+
+describe('loadSettings — the Data Center preview gate (D106)', () => {
+  it('CC-269: JIRA_DATACENTER_PREVIEW=true starts Data Center with an unverified warning', () => {
+    const { settings, report } = load({ ...VALID_DC, JIRA_DATACENTER_PREVIEW: 'true' });
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), ['deployment_unverified']);
+    assert.equal(report.findings[0]?.severity, 'warning');
+    assert.match(report.findings[0]?.message ?? '', /never verified/);
+    assert.equal(settings.datacenterPreview, true);
+  });
+
+  it('CC-269: without the flag Data Center stays a startup error naming it', () => {
+    const { report } = load(VALID_DC);
+    assert.equal(report.ok, false);
+    assert.match(report.findings[0]?.message ?? '', /JIRA_DATACENTER_PREVIEW=true/);
+  });
+
+  it('CC-269: the flag on Cloud is ignored with a warning, and defaults to false', () => {
+    assert.equal(load(VALID).settings.datacenterPreview, false);
+    const { report } = load({ ...VALID, JIRA_DATACENTER_PREVIEW: 'true' });
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), ['datacenter_preview_ignored']);
+  });
+
+  it('CC-269: the flag does not excuse a wrong pairing', () => {
+    const { report } = load({
+      ...VALID_DC,
+      JIRA_DATACENTER_PREVIEW: 'true',
+      JIRA_AUTH_MODE: 'basic',
+    });
+    assert.equal(report.ok, false);
+    assert.ok(codes(report).includes('auth_mode_deployment'));
+  });
+});

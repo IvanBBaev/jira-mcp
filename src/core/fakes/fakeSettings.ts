@@ -46,9 +46,12 @@ export const FAKE_OAUTH_SETTINGS: OAuthSettings = Object.freeze({
 });
 
 /** Spread into a `Settings` literal that does not care how it authenticates. */
-export const FAKE_AUTH_SETTINGS: Pick<Settings, 'authMode' | 'oauth' | 'deployment'> =
-  Object.freeze({
-    authMode: DEFAULT_AUTH_MODE,
-    oauth: FAKE_OAUTH_SETTINGS,
-    deployment: 'cloud',
-  });
+export const FAKE_AUTH_SETTINGS: Pick<
+  Settings,
+  'authMode' | 'oauth' | 'deployment' | 'datacenterPreview'
+> = Object.freeze({
+  authMode: DEFAULT_AUTH_MODE,
+  oauth: FAKE_OAUTH_SETTINGS,
+  deployment: 'cloud',
+  datacenterPreview: false,
+});

@@ -28,6 +28,7 @@
 // {@link journalingGate}.
 // ---------------------------------------------------------------------------
 
+import type { JiraApi } from '../api/port.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
 import type { AnyObjectSchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
@@ -99,6 +100,12 @@ export interface BuildServerDeps {
   readonly journal?: Journal | undefined;
   /** Injectable for tests; built from `settings.writeMode` otherwise. */
   readonly gate?: WriteGate | undefined;
+  /**
+   * The api-ring adapter (D106). Absent means Jira Cloud's. It must be the
+   * same adapter the capabilities selection was computed with, or the report
+   * and the callable surface disagree.
+   */
+  readonly api?: JiraApi | undefined;
   /**
    * CC-02 — where applied writes leave their issue ids for `jira_search` to
    * reconcile. Defaults to the ambient `sessionRecentWrites`. Every tool call
@@ -438,6 +445,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     clock: deps.clock,
     rng: deps.rng,
     redactor: deps.redactor,
+    ...(deps.api === undefined ? {} : { api: deps.api }),
     // CC-02 outermost: it observes the result the journal may already have
     // hinted on, and journaling stays the last thing that can touch an envelope.
     gate: recordingGate(journaled, {

@@ -3,7 +3,7 @@
 > Status: normative and implemented — this document and the code ship together;
 > drift is a bug. Phases 0–13 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished. Phases 0–12 are closed; Phase 13 is open (stages 13.1–13.2 done).
+> finished. Phases 0–12 are closed; Phase 13 is open (stages 13.1–13.3 done).
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -866,12 +866,26 @@ Center mode reachable by a user.
       doctor's credential source — which let a leftover `JIRA_EMAIL`/
       `JIRA_API_TOKEN` under `pat` become Basic credentials for the DC host —
       fails CC-261.
-- [ ] 13.3 — a read-only DC adapter: a per-spec DC verdict for the read
-      request specs (JIRA-API.md), v2 routes, the classic search loop, wiki
-      markup flattened to text on read, `name`/`key` user identity, and a way
-      for an adapter to declare a tool unavailable so the registry excludes it
-      rather than letting it fail (bulk has no DC twin). A DC twin of the
-      offline fake.
+- [x] 13.3 — a read-only DC adapter, as an unverified preview behind
+      `JIRA_DATACENTER_PREVIEW=true` (D107, CC-269). `api/datacenter.ts` serves
+      15 read tools (`DATACENTER_TOOLS`); `JiraApi.serves` lets an adapter
+      declare them and the registry excludes the rest as
+      `deployment_unsupported` (CC-263). Same-shape routes reuse the Cloud
+      function through `onV2`; users are projected by a `deployment` dialect
+      (`shapeDataCenterUser`, CC-264) threaded through the issue and project
+      shaping; `/search`, `/project`, `/status` and `/myself` have DC twins
+      (CC-267, CC-268, CC-270). The per-route verdicts are JIRA-API.md §Jira Data
+      Center. Doctor probes a DC site with the PAT (CC-266). Pinned by
+      `tools/datacenter.test.ts`, which runs every served tool end to end
+      against Data Center-shaped responses (CC-265). Deliberate mutations:
+      dropping the dialect from `getIssue` fails 2 tests (an email address
+      reached the result), disabling the v2 rewrite fails 8.
+- [ ] 13.3b — what 13.3 did not do, stated rather than dropped: wiki markup
+      is returned as Jira sent it, not flattened to text; there is no Data
+      Center twin of `scripts/fake-jira.mjs`, so the offline rehearsal still
+      covers Cloud only (the DC tests use the in-process fake); and the reads
+      that need a release-specific verdict (create metadata, filters, users,
+      watchers, components and versions, roles) are not served.
 - [ ] 13.4 — DC writes: a markdown → wiki-markup writer (the counterpart of
       `adfFromMarkdown`) and the write request specs.
 
@@ -879,6 +893,12 @@ Exit (whole phase): a Data Center deployment serves the tools its adapter
 declares, refuses the rest by exclusion, and is labelled UNVERIFIED in every
 place the Cloud surface is called proven — until a real DC host runs the live
 gate (D104's condition, carried by D106, not waived).
+
+Exit (13.3): with the preview flag a Data Center deployment serves exactly the
+tools `DATACENTER_TOOLS` names, each on `/rest/api/2` or `/rest/agile/1.0` only,
+with users as `name`/`key` and no email on any result; every other tool is
+excluded by name; without the flag it does not start; Cloud output, manifest
+and README are unchanged; gate green.
 
 Exit (13.2): a Data Center configuration can be written and checked by
 doctor, every invalid pairing is a startup error naming the variable to fix,

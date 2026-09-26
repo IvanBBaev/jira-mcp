@@ -280,10 +280,9 @@ export const DEPLOYMENTS = ['cloud', 'datacenter'] as const;
 
 /**
  * Which Jira product the server talks to (D106, IMPLEMENTATION-PLAN.md Phase
- * 13). `cloud` is everything v1 shipped. `datacenter` is recognised so that the
- * settings, host and credential rules can be built and tested, but until the
- * Data Center adapter exists (stage 13.3) selecting it is a startup error —
- * fail closed, so no Cloud-shaped request ever reaches a Data Center host.
+ * 13). `cloud` is everything v1 shipped. `datacenter` selects the read-only
+ * Data Center adapter, which is UNVERIFIED and therefore fails closed: it
+ * starts only with `JIRA_DATACENTER_PREVIEW=true`.
  *
  * Produced by: `core/settings.ts`.
  * Consumed by: `core/host.ts` (context path, Cloud-host refusal),
@@ -399,8 +398,17 @@ export interface Settings {
   readonly authMode: AuthMode;
   /** `JIRA_OAUTH_*`. Meaningful only when `authMode` is `oauth`. */
   readonly oauth: OAuthSettings;
-  /** `JIRA_DEPLOYMENT` (default `cloud`). `datacenter` fails startup until 13.3. */
+  /**
+   * `JIRA_DEPLOYMENT` (default `cloud`). `datacenter` is a startup error unless
+   * {@link Settings.datacenterPreview} is set (D106).
+   */
   readonly deployment: JiraDeployment;
+  /**
+   * `JIRA_DATACENTER_PREVIEW` (default false). The operator's explicit
+   * acknowledgement that the Data Center adapter is UNVERIFIED — built from
+   * Atlassian's documentation, never run against a Data Center instance.
+   */
+  readonly datacenterPreview: boolean;
   /**
    * `JIRA_PAT`. A Data Center personal access token, sent as
    * `Authorization: Bearer`. Secret; registered with the redactor. Required

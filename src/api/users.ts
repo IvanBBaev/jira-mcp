@@ -119,6 +119,51 @@ export interface JiraUser {
   readonly locale?: string;
 }
 
+/**
+ * A Jira Data Center user, narrowed the same way (D106). Data Center has no
+ * `accountId`: a user is identified by `name` (the login) and `key` (stable
+ * across renames). `emailAddress`, `avatarUrls` and `timeZone` are dropped on
+ * every read result exactly as they are for Cloud users (TOOLS.md §Read
+ * shaping) — the projection is an allowlist in both dialects.
+ */
+export interface DataCenterUser {
+  readonly name?: string;
+  readonly key?: string;
+  readonly displayName?: string;
+  readonly active?: boolean;
+}
+
+/** A user on a read result, in whichever dialect the site speaks. */
+export type ShapedUser = JiraUser | DataCenterUser;
+
+/**
+ * A Jira Data Center user object, or `undefined` when this record is not one
+ * (D106). Data Center has no `accountId`, so the Cloud rule above would miss
+ * every DC user — and a missed user falls through to the generic walk, which
+ * keeps `emailAddress`, `avatarUrls` and `timeZone`. This is the DC allowlist.
+ *
+ * Recognised by a string `displayName` next to a string `name` or `key`, and
+ * no `accountId`. `displayName` is what separates a user from the many other
+ * `{ name, key }` objects on an issue — a project carries `key` and `name`, a
+ * status or a version carries `name`; none of them carries `displayName`.
+ */
+export function shapeDataCenterUser(value: unknown): DataCenterUser | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.displayName !== 'string') return undefined;
+  if (record.accountId !== undefined) return undefined;
+  const name = typeof record.name === 'string' ? record.name : undefined;
+  const key = typeof record.key === 'string' ? record.key : undefined;
+  if (name === undefined && key === undefined) return undefined;
+  return {
+    ...(name === undefined ? {} : { name }),
+    ...(key === undefined ? {} : { key }),
+    displayName: record.displayName,
+    ...(typeof record.active === 'boolean' ? { active: record.active } : {}),
+  };
+}
+
 /** The non-budget half of {@link GetMyselfOptions}. */
 export interface GetMyselfBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
@@ -138,9 +183,23 @@ export interface GetMyselfBase {
 export type GetMyselfOptions = GetMyselfBase & BudgetGuard;
 
 /** What {@link getMyself} returns. */
+/**
+ * `/myself` on Jira Data Center (D106): the DC identity plus the settings the
+ * worklog path reads (D16). `emailAddress` is kept only to answer
+ * {@link MyselfResult.emailHidden}, as it is for {@link JiraUser}.
+ */
+export interface DataCenterSelf extends DataCenterUser {
+  readonly emailAddress?: string;
+  readonly timeZone?: string;
+  readonly locale?: string;
+}
+
 export interface MyselfResult {
-  /** The authenticated identity, including `timeZone` when the site reports one. */
-  readonly user: JiraUser;
+  /**
+   * The authenticated identity, including `timeZone` when the site reports one.
+   * A {@link DataCenterSelf} only from the Data Center adapter.
+   */
+  readonly user: JiraUser | DataCenterSelf;
   /** CC-19 — the tenant disclosed no email address for the caller's own account. */
   readonly emailHidden: boolean;
 }
@@ -286,6 +345,46 @@ export async function getMyself(options: GetMyselfOptions): Promise<MyselfResult
   const result: MyselfResult = { user, emailHidden: user.emailAddress === undefined };
   myselfCache.set(options.jira, result);
   return result;
+}
+
+/**
+ * `/myself` on Jira Data Center — `GET /rest/api/2/myself` (D106).
+ *
+ * Not cached, unlike {@link getMyself}: the Data Center adapter serves no write
+ * that reads the identity on every call, so there is nothing to amortise. The
+ * identity is `name` + `key`; a body with neither is not a Data Center user and
+ * is reported as `unexpected_shape` rather than returned half-empty.
+ */
+export async function getMyselfDataCenter(
+  options: GetMyselfOptions,
+): Promise<MyselfResult> {
+  const response = await options.jira({
+    method: 'GET',
+    root: 'v2',
+    path: MYSELF_PATH,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
+  });
+  const row = response.data;
+  const what = `${MYSELF_PATH} response`;
+  if (!isRecord(row)) throw shapeError(`${what} is not a JSON object`);
+  const name =
+    typeof row['name'] === 'string' && row['name'] !== '' ? row['name'] : undefined;
+  const key =
+    typeof row['key'] === 'string' && row['key'] !== '' ? row['key'] : undefined;
+  if (name === undefined && key === undefined) {
+    throw shapeError(`${what} has neither a string "name" nor a string "key"`);
+  }
+  const user: DataCenterSelf = {
+    ...(name === undefined ? {} : { name }),
+    ...(key === undefined ? {} : { key }),
+    ...optionalString(row, 'displayName'),
+    ...(typeof row['active'] === 'boolean' ? { active: row['active'] } : {}),
+    ...optionalString(row, 'emailAddress'),
+    ...optionalString(row, 'timeZone'),
+    ...optionalString(row, 'locale'),
+  };
+  return { user, emailHidden: user.emailAddress === undefined };
 }
 
 // ---------------------------------------------------------------------------

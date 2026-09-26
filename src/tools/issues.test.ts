@@ -779,7 +779,11 @@ test('jira_get_comments renders bodies as markdown without changing the page sha
   assert.equal(result.ok, true);
   assert.equal(result.data?.comments[0]?.body, RICH_AS_MARKDOWN);
   // Only the rendering moved: paging facts and the author projection are the same.
-  assert.equal(result.data?.comments[0]?.author?.accountId, ACCOUNT_ID);
+  const author = result.data?.comments[0]?.author;
+  assert.equal(
+    author !== undefined && 'accountId' in author ? author.accountId : '',
+    ACCOUNT_ID,
+  );
   assert.equal(result.data?.partial, false);
   assert.equal(result.data?.total, 1);
 });

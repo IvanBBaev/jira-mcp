@@ -20,13 +20,14 @@ must encode these rules.
 - Auth, oauth mode: `Authorization: Bearer <access token>` **and a different
   origin** — see §OAuth 2.0 (3LO) below. The paths above are unchanged; they are
   prefixed, not replaced.
-- Jira Data Center (D106, not served yet — CC-254): platform root
+- Jira Data Center (D106, D107 — read-only preview): platform root
   `/rest/api/2` (there is no v3 on Data Center, and v2 bodies are wiki markup),
   under the instance's context path when it has one
   (`https://jira.example.com/jira/rest/api/2/...`); auth with a personal access
-  token as `Authorization: Bearer <PAT>` to the site host. **UNVERIFIED**: taken
-  from Atlassian's Data Center documentation, never exercised against a Data
-  Center instance (D104's condition).
+  token as `Authorization: Bearer <PAT>` to the site host. Route verdicts:
+  §Jira Data Center below. **UNVERIFIED**: taken from Atlassian's Data Center
+  documentation, never exercised against a Data Center instance (D104's
+  condition).
 
 ## Hosts
 
@@ -527,6 +528,37 @@ Reference groups consulted 2026-08-13:
   here says nothing actionable on its own, so the api ring appends the missing
   permission by name to `remediation` — the CC-34 pattern — while leaving the
   Jira messages verbatim.
+
+## Jira Data Center (D106, D107)
+
+**UNVERIFIED** — every verdict below comes from Atlassian's Data Center REST
+documentation and has never met a Data Center instance. The adapter
+(`api/datacenter.ts`) serves only the rows marked *served*; the registry
+excludes every other tool (CC-263).
+
+| Cloud route (v3 root unless noted) | Data Center | Verdict |
+|---|---|---|
+| `GET /myself` | `GET /rest/api/2/myself` — `name` + `key`, no `accountId` | served, own mapper (CC-270) |
+| `POST /search/jql` (`nextPageToken`) | `POST /rest/api/2/search` (`startAt`, `total`) | served, twin + `dc1:` cursor (CC-267) |
+| `POST /search/approximate-count` | none | not served |
+| `GET /issue/{key}`, `/comment`, `/worklog`, `/transitions` | same paths under `/rest/api/2` | served, same function on the v2 root, DC user dialect |
+| `GET /issue/{key}/changelog` | none (only `expand=changelog`) | not served |
+| `GET /project/search` | `GET /rest/api/2/project` — one bare array | served, twin, filters applied here (CC-268) |
+| `GET /project/{key}` | same path | served, DC `lead` |
+| `GET /field`, `GET /issueLinkType` | same paths | served |
+| `GET /statuses/search` | `GET /rest/api/2/status` — array, category as an object | served, twin (CC-268) |
+| `GET /issue/createmeta/{p}/issuetypes[/{id}]` | exists on newer Data Center releases | not served — needs a version verdict |
+| `/filter/search`, `/filter/{id}` | `/filter/search` absent on many releases | not served |
+| `/user/search`, `/user/assignable/search` | `username=` instead of `query=` | not served |
+| `/issue/{key}/watchers`, `/votes` | same paths, DC users | not served |
+| `/project/{p}/component`, `/project/{p}/version` (paged) | `/components`, `/versions` (arrays) | not served |
+| `/project/{p}/role` | same path, DC actors | not served |
+| `/bulk/*` | none | not served |
+| Agile `/board`, `/board/{id}/sprint`, `/sprint/{id}/issue` | same, Jira Software Data Center | served, DC user dialect on issue fields |
+| Every write | wiki-markup bodies, `name` users | not served (stage 13.4) |
+
+Rich text on Data Center is wiki markup and is returned as Jira sent it;
+`format: "markdown"` is refused rather than mislabelled (CC-265).
 
 ## Rate limiting and retries
 

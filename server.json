@@ -195,7 +195,7 @@
         },
         {
           "name": "JIRA_DEPLOYMENT",
-          "description": "cloud or datacenter. datacenter is recognised but not served yet: selecting it is a startup error until the Data Center adapter exists.",
+          "description": "cloud or datacenter. datacenter selects a read-only Data Center preview that has never been verified against a Data Center instance; it starts only with JIRA_DATACENTER_PREVIEW=true.",
           "isRequired": false,
           "default": "cloud",
           "choices": ["cloud", "datacenter"],
@@ -207,6 +207,13 @@
           "isRequired": false,
           "isSecret": true,
           "format": "string"
+        },
+        {
+          "name": "JIRA_DATACENTER_PREVIEW",
+          "description": "Acknowledges that the Data Center adapter is an unverified read-only preview. Without it JIRA_DEPLOYMENT=datacenter does not start.",
+          "isRequired": false,
+          "default": "false",
+          "format": "boolean"
         },
         {
           "name": "JIRA_OAUTH_CLIENT_ID",
