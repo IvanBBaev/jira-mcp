@@ -1,9 +1,9 @@
 # Implementation plan
 
 > Status: normative and implemented — this document and the code ship together;
-> drift is a bug. Phases 0–12 with their exits are the milestone truth for this
+> drift is a bug. Phases 0–13 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished. Phases 0–12 are closed.
+> finished. Phases 0–12 are closed; Phase 13 is open (stage 13.1 done).
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -833,6 +833,48 @@ allowed to SKIP on a tenant that withholds it. Both claims have run only
 against the fake, whose queue reaches COMPLETE in three polls; a real queue
 that answers slowly, reorders, or dies with FAILED is territory only Gate C
 can survey.
+
+## Phase 13 — Jira Data Center adapter (un-parked by D106)
+
+D104 priced this and parked it; D106 lifts the park on the owner's direction
+while keeping D104's order and its verification condition. The phase is cut
+into stages so that each one lands green and none leaves a half-working Data
+Center mode reachable by a user.
+
+- [x] 13.1 — the domain-level port. `api/port.ts`: `JiraApi` and `CLOUD_API`
+      (the existing functions by identity); `ToolCtx.api`; `RegistryDeps.api`
+      defaulting to `CLOUD_API`; every tool handler calls through `ctx.api`.
+      Converters that are ADF-specific (`adfFromMarkdown`, `extractMentions`,
+      `shapeIssueFields`) are port members; backend-neutral pure helpers and
+      constants are not. Pinned by `api/port.test.ts` (identity, freeze),
+      `tools/port-boundary.test.ts` (no direct import of an api-ring function
+      from a tool — named, aliased or `import * as`; a deliberate mutation of
+      `tools/core.ts` showed the first draft let an aliased import through,
+      and each of the three checks was then seen to fail on a mutated tool) and two registry
+      tests (default adapter, injected adapter reaches the handler).
+- [ ] 13.2 — the settings surface, fail-closed. A deployment selector, a PAT
+      credential resolver on the existing `bearer` arm, the context path
+      `resolveHost` currently strips (D104's one cheap missing thing — honoured
+      only for a non-Cloud deployment), and a `v2` root in `JIRA_ROOT_PATHS`.
+      Until 13.3 lands, selecting Data Center is a startup error that names
+      this phase, so nothing reaches a DC host with Cloud routes.
+- [ ] 13.3 — a read-only DC adapter: a per-spec DC verdict for the read
+      request specs (JIRA-API.md), v2 routes, the classic search loop, wiki
+      markup flattened to text on read, `name`/`key` user identity, and a way
+      for an adapter to declare a tool unavailable so the registry excludes it
+      rather than letting it fail (bulk has no DC twin). A DC twin of the
+      offline fake.
+- [ ] 13.4 — DC writes: a markdown → wiki-markup writer (the counterpart of
+      `adfFromMarkdown`) and the write request specs.
+
+Exit (whole phase): a Data Center deployment serves the tools its adapter
+declares, refuses the rest by exclusion, and is labelled UNVERIFIED in every
+place the Cloud surface is called proven — until a real DC host runs the live
+gate (D104's condition, carried by D106, not waived).
+
+Exit (13.1): `ctx.api` is the only path from a tool to an api-ring function
+that talks to Jira or speaks a wire body format; the Cloud manifest snapshot is
+byte-identical; gate green.
 
 ## Risks
 

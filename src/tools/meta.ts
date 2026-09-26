@@ -37,16 +37,7 @@
 // `ctx.jira`, which `api/meta.ts` receives as its `jira` seam.
 // ---------------------------------------------------------------------------
 
-import {
-  filterFields,
-  getCreateMeta,
-  getProject,
-  listCreateMetaIssueTypes,
-  listFields,
-  listLinkTypes,
-  listProjects,
-  listStatuses,
-} from '../api/meta.js';
+import { filterFields } from '../api/meta.js';
 import type {
   CreateMetaField,
   FieldInfo,
@@ -153,7 +144,7 @@ export const listProjectsTool = defineTool<
   input: listProjectsInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listProjects({
+      const loop = await ctx.api.listProjects({
         ...pagedOptions(ctx),
         ...(args.query === undefined ? {} : { query: args.query }),
       });
@@ -208,7 +199,7 @@ export const getProjectTool = defineTool<
   input: getProjectInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const project = await getProject({
+      const project = await ctx.api.getProject({
         ...callBase(ctx),
         project: args.project,
         ...(args.expand === undefined ? {} : { expand: args.expand }),
@@ -294,7 +285,7 @@ export const listFieldsTool = defineTool<z.infer<typeof listFieldsInput>, FieldL
   input: listFieldsInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const catalog = await listFields(callBase(ctx));
+      const catalog = await ctx.api.listFields(callBase(ctx));
       const fields = filterFields(catalog.fields, args.query);
       return ok<FieldListData>({
         fields,
@@ -414,7 +405,7 @@ export const getCreateMetaTool = defineTool<
   handler(args, ctx) {
     return guarded(async () => {
       if (args.issueTypeId === undefined) {
-        const loop = await listCreateMetaIssueTypes({
+        const loop = await ctx.api.listCreateMetaIssueTypes({
           ...pagedOptions(ctx),
           project: args.project,
         });
@@ -430,7 +421,7 @@ export const getCreateMetaTool = defineTool<
         );
       }
 
-      const screen = await getCreateMeta({
+      const screen = await ctx.api.getCreateMeta({
         ...pagedOptions(ctx),
         project: args.project,
         issueTypeId: args.issueTypeId,
@@ -506,7 +497,7 @@ export const listStatusesTool = defineTool<
   input: listStatusesInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listStatuses({
+      const loop = await ctx.api.listStatuses({
         ...pagedOptions(ctx),
         ...(args.projectId === undefined ? {} : { projectId: args.projectId }),
       });
@@ -549,7 +540,7 @@ export const listLinkTypesTool = defineTool<
   input: listLinkTypesInput,
   handler(_args, ctx) {
     return guarded(async () => {
-      const linkTypes = await listLinkTypes(callBase(ctx));
+      const linkTypes = await ctx.api.listLinkTypes(callBase(ctx));
       return ok<LinkTypeListData>({ linkTypes, count: linkTypes.length });
     });
   },

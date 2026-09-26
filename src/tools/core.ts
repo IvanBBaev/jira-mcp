@@ -26,7 +26,6 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { getMyself } from '../api/users.js';
 import type { JiraUser } from '../api/users.js';
 import type { Counters } from '../core/telemetry.js';
 import type { TransportKind, WriteMode } from '../core/types.js';
@@ -256,7 +255,7 @@ export const getMyselfTool = defineTool({
   input: getMyselfInput,
   handler: async (_args, ctx): Promise<ToolResult<MyselfData>> =>
     guarded(async () => {
-      const myself = await getMyself(callBase(ctx));
+      const myself = await ctx.api.getMyself(callBase(ctx));
       // An account record is metadata, not Jira free text: no D15 brand.
       return ok(myselfData(myself.user));
     }),

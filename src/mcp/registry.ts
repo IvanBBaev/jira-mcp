@@ -31,6 +31,8 @@
 // built on the spec), no SDK.
 // ---------------------------------------------------------------------------
 
+import { CLOUD_API } from '../api/port.js';
+import type { JiraApi } from '../api/port.js';
 import { isJiraError, toLogFields } from '../core/errors.js';
 import { newCorrelationId, runWithCid } from '../core/log.js';
 import { JiraError } from '../core/types.js';
@@ -249,6 +251,8 @@ export interface RegistryDeps {
   readonly redactor: Redactor;
   /** Injectable for tests; built from `settings.writeMode` otherwise. */
   readonly gate?: WriteGate | undefined;
+  /** The api-ring adapter every tool call gets (D106); {@link CLOUD_API} when absent. */
+  readonly api?: JiraApi | undefined;
 }
 
 /** Per-call inputs the transport knows and the registry does not. */
@@ -355,6 +359,7 @@ export function createRegistry(
 ): ToolRegistry {
   const { settings } = deps;
   const selection = selectPackages(manifest, settings);
+  const api = deps.api ?? CLOUD_API;
   const gate =
     deps.gate ??
     createWriteGate({
@@ -461,6 +466,7 @@ export function createRegistry(
       control.profile === undefined ? deps.jira : withProfile(deps.jira, control.profile);
     const ctx = (seam: JiraRequestFn): ToolCtx => ({
       jira: seam,
+      api,
       log,
       clock: deps.clock,
       cid,

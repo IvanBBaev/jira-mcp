@@ -438,7 +438,8 @@ Contract (D11 in DECISIONS.md):
 - **Data Center PATs**: `Authorization: Bearer <pat>`, host via
   `JIRA_ALLOWED_HOSTS`, API version differences (v2 endpoints, no ADF —
   wiki-markup) make this a genuinely separate adapter, not just an auth switch.
-  **Parked by D104** with a named unblocking event rather than left open. Note
+  Parked by D104 and **un-parked in stages by D106**; nothing of it is
+  reachable yet, and PAT auth is stage 13.2 (IMPLEMENTATION-PLAN.md). Note
   what OAuth changed and what it did not: the bearer *header* is now free —
   `authorizationHeader` switches on `kind` and the `bearer` arm ships — so the
   auth half of a DC build is a resolver, and the branch that picks a resolver by
