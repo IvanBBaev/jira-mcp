@@ -30,6 +30,7 @@ import type { Rng, Settings } from '../core/types.js';
 import { createRegistry, selectPackages } from '../mcp/registry.js';
 import type { AnyToolSpec, ToolCtx, ToolResult } from '../mcp/types.js';
 import { getSprintIssuesTool, listBoardsTool, listSprintsTool } from './agile.js';
+import { listComponentsTool, listVersionsTool, listWatchersTool } from './collab.js';
 import { getMyselfTool } from './core.js';
 import { buildCapabilitiesInfo, createPackages } from './index.js';
 import {
@@ -307,6 +308,51 @@ const CASES: readonly Case[] = [
     hasUser: false,
   },
   {
+    tool: listWatchersTool,
+    args: { issue: 'ABC-1' },
+    routes: [
+      [
+        'GET /rest/api/2/issue/ABC-1/watchers',
+        { isWatching: false, watchCount: 1, watchers: [DC_USER] },
+      ],
+    ],
+    hasUser: true,
+  },
+  {
+    tool: listComponentsTool,
+    args: { project: 'ABC' },
+    routes: [
+      [
+        'GET /rest/api/2/project/ABC/components',
+        [
+          {
+            id: '10500',
+            name: 'Backend',
+            description: 'API and jobs',
+            lead: DC_USER,
+            leadUserName: 'jdoe',
+            assigneeType: 'PROJECT_LEAD',
+            realAssignee: DC_USER,
+            project: 'ABC',
+            projectId: 10000,
+          },
+        ],
+      ],
+    ],
+    hasUser: true,
+  },
+  {
+    tool: listVersionsTool,
+    args: { project: 'ABC' },
+    routes: [
+      [
+        'GET /rest/api/2/project/ABC/versions',
+        [{ id: '100', name: '1.0', released: true, archived: false, projectId: 10000 }],
+      ],
+    ],
+    hasUser: false,
+  },
+  {
     tool: listBoardsTool,
     args: {},
     routes: [
@@ -378,14 +424,75 @@ for (const { tool, args, routes, hasUser } of CASES) {
   });
 }
 
-test('CC-265: wiki markup comes back as Jira sent it, not rendered or re-labelled', async () => {
-  const jira = createFakeJiraRequest().on('GET /rest/api/2/issue/ABC-1', jiraOk(ISSUE));
-  const result = await run(getIssueTool, { issue: 'ABC-1' }, ctxOf(jira));
-  const fields = (result.data as { fields: Record<string, unknown> }).fields;
-  assert.equal(fields.description, 'h1. Steps\n*Bold* and {{code}}');
+test('CC-274: rich text is flattened from wiki markup; raw returns it as Jira sent it', async () => {
+  const issue = {
+    ...ISSUE,
+    fields: {
+      ...ISSUE.fields,
+      summary: 'Fix *all* the_things',
+      environment: '* Linux\n* {{x86}}',
+    },
+  };
+  const jira = createFakeJiraRequest().on('GET /rest/api/2/issue/ABC-1', jiraOk(issue));
+  const text = await run(getIssueTool, { issue: 'ABC-1' }, ctxOf(jira));
+  const fields = (text.data as { fields: Record<string, unknown> }).fields;
+  assert.equal(fields.description, 'Steps\nBold and code');
+  assert.equal(fields.environment, '- Linux\n- x86');
+  // A summary is not rich text: its asterisks are the user's, not markup.
+  assert.equal(fields.summary, 'Fix *all* the_things');
   assert.deepEqual(fields.reporter, PROJECTED_USER);
   // Not a user: a project has key + name but no displayName.
   assert.deepEqual(fields.project, ISSUE.fields.project);
+
+  const raw = await run(getIssueTool, { issue: 'ABC-1', raw: true }, ctxOf(jira));
+  const rawFields = (raw.data as { fields: Record<string, unknown> }).fields;
+  assert.equal(rawFields.description, 'h1. Steps\n*Bold* and {{code}}');
+  assert.deepEqual(rawFields.reporter, PROJECTED_USER, 'raw never un-projects a user');
+});
+
+test('CC-274: comment bodies and worklog comments are flattened too', async () => {
+  const comments = createFakeJiraRequest().on(
+    'GET /rest/api/2/issue/ABC-1/comment',
+    jiraOk({
+      startAt: 0,
+      maxResults: 50,
+      total: 1,
+      comments: [{ id: '200', author: DC_USER, body: 'Hi [~jdoe], see *this*' }],
+    }),
+  );
+  const c = await run(getCommentsTool, { issue: 'ABC-1' }, ctxOf(comments));
+  assert.equal(
+    (c.data as { comments: { body: string }[] }).comments[0]?.body,
+    'Hi @jdoe, see this',
+  );
+  const worklogs = createFakeJiraRequest().on(
+    'GET /rest/api/2/issue/ABC-1/worklog',
+    jiraOk({
+      startAt: 0,
+      maxResults: 20,
+      total: 1,
+      worklogs: [
+        { id: '300', author: DC_USER, comment: 'did _it_', timeSpentSeconds: 60 },
+      ],
+    }),
+  );
+  const w = await run(getWorklogsTool, { issue: 'ABC-1' }, ctxOf(worklogs));
+  assert.equal(
+    (w.data as { worklogs: { comment?: string }[] }).worklogs[0]?.comment,
+    'did it',
+  );
+});
+
+test('CC-274: Cloud reads are untouched by the wiki flattener', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/api/3/issue/ABC-1',
+    jiraOk({ id: '1', key: 'ABC-1', fields: { description: 'h1. *not* wiki on Cloud' } }),
+  );
+  const result = await run(getIssueTool, { issue: 'ABC-1' }, ctxOf(jira, CLOUD_API));
+  assert.equal(
+    (result.data as { fields: Record<string, unknown> }).fields.description,
+    'h1. *not* wiki on Cloud',
+  );
 });
 
 test('CC-265: format "markdown" is refused before any request on Data Center', async () => {
@@ -646,6 +753,59 @@ test('CC-263: capabilities flag the Data Center preview as unverified; Cloud car
   assert.equal('deployment' in cloud, false);
 });
 
+test('CC-275: components and versions are filtered here over the Data Center arrays', async () => {
+  const versions = [
+    { id: '1', name: '1.0', description: 'first cut', released: true, archived: false },
+    { id: '2', name: '2.0', released: false, archived: false },
+    { id: '3', name: '0.9', released: true, archived: true },
+  ];
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/api/2/project/ABC/versions',
+    jiraOk(versions),
+  );
+  const names = async (args: Record<string, unknown>): Promise<string[]> => {
+    const result = await run(listVersionsTool, { project: 'ABC', ...args }, ctxOf(jira));
+    return (result.data as { versions: { name: string }[] }).versions.map((v) => v.name);
+  };
+  assert.deepEqual(await names({}), ['1.0', '2.0', '0.9']);
+  assert.deepEqual(await names({ status: ['released'] }), ['1.0']);
+  // Archived wins over released: 0.9 is archived, not released.
+  assert.deepEqual(await names({ status: ['archived'] }), ['0.9']);
+  assert.deepEqual(await names({ status: ['unreleased', 'archived'] }), ['2.0', '0.9']);
+  assert.deepEqual(await names({ query: 'FIRST' }), ['1.0']);
+
+  const components = createFakeJiraRequest().on(
+    'GET /rest/api/2/project/ABC/components',
+    jiraOk([
+      { id: '1', name: 'Backend', description: 'API' },
+      { id: '2', name: 'Web' },
+    ]),
+  );
+  const c = await run(
+    listComponentsTool,
+    { project: 'ABC', query: 'api' },
+    ctxOf(components),
+  );
+  assert.deepEqual(
+    (c.data as { components: { name: string }[] }).components.map((x) => x.name),
+    ['Backend'],
+  );
+  for (const route of [...jira.routes(), ...components.routes()]) {
+    assert.match(route, /^GET \/rest\/api\/2\/project\/ABC\/(versions|components)$/);
+  }
+});
+
+test('CC-275: a watcher list withheld on Data Center stays withheld, not empty', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/api/2/issue/ABC-1/watchers',
+    jiraOk({ isWatching: true, watchCount: 4 }),
+  );
+  const result = await run(listWatchersTool, { issue: 'ABC-1' }, ctxOf(jira));
+  const data = result.data as { watchersVisible: boolean; watchCount: number };
+  assert.equal(data.watchersVisible, false);
+  assert.equal(data.watchCount, 4);
+});
+
 // ---------------------------------------------------------------------------
 // The adapter's own edges
 // ---------------------------------------------------------------------------
@@ -690,6 +850,16 @@ test('CC-268: a Data Center list endpoint answering a non-array is an unexpected
     [
       'GET /rest/api/2/status',
       (fn: FakeJiraRequest['fn']) => listStatusesDataCenter({ jira: fn }),
+    ],
+    [
+      'GET /rest/api/2/project/ABC/components',
+      (fn: FakeJiraRequest['fn']) =>
+        DATACENTER_API.listComponents({ jira: fn, project: 'ABC' }),
+    ],
+    [
+      'GET /rest/api/2/project/ABC/versions',
+      (fn: FakeJiraRequest['fn']) =>
+        DATACENTER_API.listVersions({ jira: fn, project: 'ABC' }),
     ],
     [
       'POST /rest/api/2/search',

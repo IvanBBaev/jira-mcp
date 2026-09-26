@@ -880,12 +880,16 @@ Center mode reachable by a user.
       against Data Center-shaped responses (CC-265). Deliberate mutations:
       dropping the dialect from `getIssue` fails 2 tests (an email address
       reached the result), disabling the v2 rewrite fails 8.
-- [ ] 13.3b — what 13.3 did not do, stated rather than dropped: wiki markup
-      is returned as Jira sent it, not flattened to text; there is no Data
-      Center twin of `scripts/fake-jira.mjs`, so the offline rehearsal still
-      covers Cloud only (the DC tests use the in-process fake); and the reads
-      that need a release-specific verdict (create metadata, filters, users,
-      watchers, components and versions, roles) are not served.
+- [ ] 13.3b — what 13.3 did not do, stated rather than dropped. **Done:**
+      wiki markup flattened to text by `api/wiki.ts` (CC-271…CC-274; a
+      mutation that switches the flattening off fails CC-274), and
+      `jira_list_watchers`, `jira_list_components`, `jira_list_versions`
+      served over their long-standing Data Center routes (D108, CC-275) — 18
+      tools. **Still open:** there is no Data Center twin of
+      `scripts/fake-jira.mjs`, so the offline rehearsal still covers Cloud only
+      (the DC tests use the in-process fake); and the reads whose route depends
+      on the Data Center release (create metadata, filters, users, roles) are
+      not served.
 - [ ] 13.4 — DC writes: a markdown → wiki-markup writer (the counterpart of
       `adfFromMarkdown`) and the write request specs.
 

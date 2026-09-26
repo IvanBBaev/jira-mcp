@@ -409,7 +409,9 @@ function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
  * display name, so whichever half is here is a non-empty string.
  */
 function leadBefore(lead: ProjectComponent['lead']): string | undefined {
-  return lead === undefined ? undefined : (lead.displayName ?? lead.accountId);
+  if (lead === undefined) return undefined;
+  // Deletes are Cloud-only (D106); the lead type spans both dialects.
+  return lead.displayName ?? ('accountId' in lead ? lead.accountId : undefined);
 }
 
 function componentBefore(

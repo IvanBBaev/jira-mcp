@@ -60,6 +60,7 @@ import {
   type PageStopReason,
 } from './shared.js';
 import { shapeDataCenterUser } from './users.js';
+import { wikiToText } from './wiki.js';
 import type { JiraUser, ShapedUser } from './users.js';
 
 // ---------------------------------------------------------------------------
@@ -1318,14 +1319,27 @@ export function shapeIssueFields(
   if (fields === undefined) return {};
   const render = raw ? undefined : format === 'markdown' ? adfToMarkdown : adfToText;
   const user = userProjection(deployment);
+  const wiki = deployment === 'datacenter' && render !== undefined;
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(fields)) {
-    if (key === 'issuelinks') out[key] = shapeIssueLinks(entry, render, user);
+    // Data Center rich text is a wiki-markup STRING, which nothing about the
+    // value marks as rich text (an ADF document marks itself). Only the system
+    // fields known to carry it are flattened; any other string passes as sent.
+    if (wiki && typeof entry === 'string' && WIKI_TEXT_FIELDS.has(key)) {
+      out[key] = wikiToText(entry);
+    } else if (key === 'issuelinks') out[key] = shapeIssueLinks(entry, render, user);
     else if (key === 'parent') out[key] = shapeLinkedIssue(entry) ?? null;
     else out[key] = shapeValue(entry, render, 0, user);
   }
   return out;
 }
+
+/**
+ * The system fields whose Data Center value is wiki markup (D106, 13.3b). A
+ * custom multi-line text field carries it too, but its id says nothing about
+ * that, so it is returned as sent rather than guessed at.
+ */
+const WIKI_TEXT_FIELDS: ReadonlySet<string> = new Set(['description', 'environment']);
 
 /** Recognises and narrows a user object; `undefined` when the record is not one. */
 type UserProjection = (value: unknown) => ShapedUser | undefined;
@@ -1477,7 +1491,7 @@ function shapeComment(
     id: record.id,
     ...(author === undefined ? {} : { author }),
     ...(updateAuthor === undefined ? {} : { updateAuthor }),
-    body: render(record.body),
+    body: deployment === 'datacenter' ? wikiToText(record.body) : render(record.body),
     ...(typeof record.created === 'string' ? { created: record.created } : {}),
     ...(typeof record.updated === 'string' ? { updated: record.updated } : {}),
     ...(visibility === undefined ? {} : { visibility }),
@@ -1495,7 +1509,12 @@ function shapeWorklog(
   const author = projectUser(record.author);
   const updateAuthor = projectUser(record.updateAuthor);
   const visibility = shapeVisibility(record.visibility);
-  const comment = record.comment === undefined ? undefined : adfToText(record.comment);
+  const comment =
+    record.comment === undefined
+      ? undefined
+      : deployment === 'datacenter'
+        ? wikiToText(record.comment)
+        : adfToText(record.comment);
   return {
     id: record.id,
     ...(typeof record.issueId === 'string' ? { issueId: record.issueId } : {}),

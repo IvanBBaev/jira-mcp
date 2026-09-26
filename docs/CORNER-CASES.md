@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-270`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-275`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -1368,8 +1368,10 @@ with a note, and gaps stay gaps.
   through the Cloud rule with `emailAddress` and `avatarUrls` intact.
 - **CC-265** Every tool the adapter serves reaches only `/rest/api/2` or
   `/rest/agile/1.0`, returns users as `name`/`key` and never an email, avatar
-  or invented `accountId`. Wiki markup comes back as Jira sent it, and
-  `format: "markdown"` is refused as `validation` before any request.
+  or invented `accountId`. `format: "markdown"` is refused as `validation`
+  before any request. (Written at stage 13.3, when wiki markup still came back
+  as Jira sent it; since 13.3b the known rich-text fields are flattened —
+  CC-274.)
 - **CC-266** Under `datacenter` doctor probes `identity`
   (`GET /rest/api/2/myself`, `name`/`key`) and `deployment`
   (`GET /rest/api/2/serverInfo`) with the PAT resolver — also while the preview
@@ -1396,4 +1398,38 @@ with a note, and gaps stay gaps.
   `name`, `key`, `displayName`, `active`, `timeZone`, `locale`; a body with
   neither `name` nor `key` is `unexpected_shape`. `jira_get_myself` reports
   `name`/`key` and no `accountId`.
+
+## Appended with the Data Center wiki flattener and collab reads (2026-09-26, stage 13.3b)
+
+- **CC-271** `wikiToText` renders Jira wiki markup in `adfToText`'s
+  conventions: headings as their text, `- ` / `1. ` lists with two-space
+  nesting (a bullet list and a numbered one at the same depth are separate
+  lists, and a blank line restarts numbering), `a | b` table rows (a link's own
+  `|` inside a cell does not split it), `[text|url]` as its text, `[~name]` as
+  `@name`, `!file.png!` as `[media: file.png]`, `{code:lang}` / `{noformat}` as
+  a fence with the content verbatim, `{info}` / `{panel}` as `[panel:info]` /
+  `[panel]` once per panel, `----` as `---`, `\\` as a line break and `\*` as
+  a literal `*`.
+- **CC-272** Text that only looks like markup is left alone: a mark is removed
+  only when paired on one line with a non-word character or the line edge
+  outside and a non-space inside (`2026-09-26`, `a*b*c`, `x - y - z`,
+  `snake_case`, `Wow!Great!`, `what?? ok??` survive), an image needs a file
+  extension or a URL, and an unknown `{macro}` stays visible. A non-string
+  input is `''`.
+- **CC-273** Hostile input stays bounded and total: an unclosed code block
+  keeps its content, a line longer than `MAX_INLINE_LINE_CHARS` passes
+  verbatim instead of being scanned, text carrying the private-use sentinel
+  characters is not rewritten, and arbitrary strings never throw.
+- **CC-274** On Data Center the known rich-text fields — `description`,
+  `environment`, comment bodies, worklog comments — are flattened with
+  `wikiToText`; any other string (a `summary` with asterisks, a custom text
+  field whose id says nothing) is returned as sent. `raw: true` returns the
+  markup as Jira sent it, and still projects users. Cloud reads never pass
+  through the flattener.
+- **CC-275** `jira_list_components` and `jira_list_versions` on Data Center
+  read the `/project/{p}/components` and `/versions` arrays and apply `query`
+  (name and description) and `status` here — an archived version is
+  `archived`, not `released`; `jira_list_watchers` reads the same
+  `/issue/{key}/watchers` route with DC users, and a withheld list stays
+  `watchersVisible: false`.
 
