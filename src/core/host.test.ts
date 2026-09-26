@@ -372,3 +372,95 @@ describe('the OAuth gateway address', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Data Center host rules (D106, stage 13.2)
+// ---------------------------------------------------------------------------
+
+describe('resolveHost under JIRA_DEPLOYMENT=datacenter', () => {
+  const ALLOWED = ['jira.corp.example'];
+  const dc = (site: string, allowed: readonly string[] = ALLOWED) =>
+    resolveHost(site, allowed, 'JIRA_SITE', 'datacenter');
+
+  it('CC-257: keeps the context path as the path prefix, where Cloud strips it', () => {
+    assert.deepEqual(dc('https://jira.corp.example/jira').host, {
+      origin: 'https://jira.corp.example',
+      pathPrefix: '/jira',
+    });
+    // A trailing slash is the browser's spelling of the same base URL.
+    assert.equal(dc('https://jira.corp.example/jira/').host?.pathPrefix, '/jira');
+    assert.equal(
+      dc('jira.corp.example:8443/jira').host?.origin,
+      'https://jira.corp.example:8443',
+    );
+    assert.equal(dc('https://jira.corp.example').host?.pathPrefix, '');
+    assert.deepEqual(dc('https://jira.corp.example/jira').problems, []);
+    // Cloud behaviour is untouched (CC-27): same shape of URL, path stripped.
+    const cloud = resolveHost('https://jira.corp.example/jira', ALLOWED);
+    assert.equal(cloud.host?.pathPrefix, '');
+    assert.deepEqual(codes(cloud.problems), ['site_path_stripped']);
+  });
+
+  it('CC-257: a query or fragment is still stripped with a warning, the path kept', () => {
+    const result = dc('https://jira.corp.example/jira?os_authType=basic#x');
+    assert.equal(result.host?.pathPrefix, '/jira');
+    assert.deepEqual(codes(result.problems), ['site_path_stripped']);
+    assert.equal(result.problems[0]?.severity, 'warning');
+    assert.match(result.problems[0]?.message ?? '', /context path, if any, is kept/);
+  });
+
+  it('CC-257: the context path composes with the v2 root into one request URL', () => {
+    const host = dc('https://jira.corp.example/jira').host;
+    assert.ok(host !== undefined);
+    assert.equal(
+      buildRequestUrl(host, 'v2', '/issue/ABC-1'),
+      'https://jira.corp.example/jira/rest/api/2/issue/ABC-1',
+    );
+  });
+
+  it('CC-258: an Atlassian Cloud host is refused, naming JIRA_DEPLOYMENT', () => {
+    for (const site of [
+      'mycompany.atlassian.net',
+      'https://mycompany.atlassian.net/jira',
+    ]) {
+      const result = dc(site);
+      assert.equal(result.host, undefined);
+      assert.deepEqual(codes(result.problems), ['host_deployment_mismatch'], site);
+      assert.equal(result.problems.at(-1)?.field, 'JIRA_DEPLOYMENT');
+    }
+  });
+
+  it('CC-258: a dot-less name is never completed to an Atlassian Cloud host', () => {
+    // On Cloud "mycompany" means mycompany.atlassian.net; on Data Center that
+    // completion would send the PAT to somebody else's Cloud tenant.
+    const result = dc('mycompany', []);
+    assert.equal(result.host, undefined);
+    assert.equal(result.hostname, 'mycompany');
+    assert.deepEqual(codes(result.problems), ['host_not_allowed']);
+  });
+
+  it('CC-259: a context path that already carries the REST root is refused', () => {
+    for (const site of [
+      'https://jira.corp.example/rest/api/2',
+      'https://jira.corp.example/jira/REST/api/latest',
+    ]) {
+      const result = dc(site);
+      assert.equal(result.host, undefined, site);
+      assert.deepEqual(codes(result.problems), ['site_context_path'], site);
+      assert.match(result.problems[0]?.message ?? '', /base URL/);
+    }
+    // A segment that merely starts with "rest" is a real context path.
+    assert.equal(
+      dc('https://jira.corp.example/restricted').host?.pathPrefix,
+      '/restricted',
+    );
+  });
+
+  it('CC-259: a context path the request builder would reject is refused at startup', () => {
+    // `%2e` survives URL parsing inside a segment, and `assertApiPath` refuses
+    // an escaped dot on every request — so the same predicate refuses it here.
+    const result = dc('https://jira.corp.example/a%2eb');
+    assert.equal(result.host, undefined);
+    assert.deepEqual(codes(result.problems), ['site_context_path']);
+  });
+});

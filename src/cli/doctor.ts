@@ -490,6 +490,8 @@ const HOST_CODES: ReadonlySet<string> = new Set([
   'site_scheme',
   'site_port',
   'site_path_stripped',
+  'site_context_path',
+  'host_deployment_mismatch',
   'host_not_allowed',
   'host_blocked',
   'allowlist_invalid_pattern',
@@ -759,7 +761,10 @@ function oauthStoreFindings(ctx: DoctorContext): readonly DoctorFinding[] {
     // configured the app and forgot `JIRA_AUTH_MODE` has exactly one symptom: a
     // green basic-auth report. Naming the mode here is that symptom's only cure.
     return [
-      { status: 'info', text: 'auth mode is basic; the OAuth token store is not used' },
+      {
+        status: 'info',
+        text: `auth mode is ${settings.authMode}; the OAuth token store is not used`,
+      },
       ...problems,
     ];
   }
@@ -882,13 +887,12 @@ const PROBES: readonly Probe[] = [
         ];
       }
       const hostname = new URL(host.origin).hostname;
-      // `host.pathPrefix` is `V1_PATH_PREFIX` — the empty string, and
-      // `core/host.ts` is its only producer. There is nothing to report about it
-      // until a deployment that needs a prefix (Data Center, v2) exists.
+      // `host.pathPrefix` is empty on Cloud; under `datacenter` it is the
+      // instance's context path (D106), which is worth seeing spelled out.
       return [
         {
           status: 'ok',
-          text: `${host.origin} — ${
+          text: `${host.origin}${host.pathPrefix} — ${
             isCanonicalCloudHost(hostname)
               ? 'canonical Atlassian Cloud host'
               : `allowed by JIRA_ALLOWED_HOSTS (${unit(ctx.settings.allowedHosts.length, 'entry', 'entries')})`
@@ -1138,6 +1142,17 @@ const PROBES: readonly Probe[] = [
       // probe 11's subject; this probe reports only the clock.
       if (ctx.settings.authMode === 'oauth') {
         return [...oauthHorizon(ctx), ...problems];
+      }
+      if (ctx.settings.authMode === 'pat') {
+        // Settings already reports a set JIRA_TOKEN_EXPIRES as ignored in this
+        // mode; the horizon below would describe an API token nobody sends.
+        return [
+          {
+            status: 'info',
+            text: 'auth mode is pat; personal access token expiry is not tracked',
+          },
+          ...problems,
+        ];
       }
       const raw = ctx.settings.tokenExpires;
       if (raw === undefined) {
@@ -1461,6 +1476,9 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
             activeProfile: loaded.settings.activeProfile,
           });
   } else if (
+    // Only in basic mode: a leftover JIRA_EMAIL/JIRA_API_TOKEN pair under `pat`
+    // must not become Basic credentials sent to a Data Center host (D106).
+    loaded.settings.authMode === 'basic' &&
     host !== undefined &&
     credentials.email !== undefined &&
     credentials.apiToken !== undefined
@@ -1620,6 +1638,19 @@ async function runProbe(
   if (probe.network && ctx.offline) {
     return [{ status: 'skip', text: 'skipped (--offline)' }];
   }
+  // Every network probe speaks Cloud routes (`/rest/api/3`), which a Data
+  // Center host does not serve. Until the adapter exists they are skipped by
+  // name rather than fired at a host that can only answer 404 (D106).
+  if (probe.network && ctx.settings.deployment === 'datacenter') {
+    return [
+      {
+        status: 'skip',
+        text: 'skipped: JIRA_DEPLOYMENT=datacenter has no adapter yet',
+        remediation:
+          'See the settings finding above; unset JIRA_DEPLOYMENT to probe Jira Cloud.',
+      },
+    ];
+  }
   if (probe.network && ctx.request === undefined) {
     return [
       {
@@ -1663,6 +1694,13 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
     err(
       '--save writes an API token, and JIRA_AUTH_MODE=oauth signs nothing with one.\n' +
         'Run `jira-mcp-ai login` to authorize, or unset JIRA_AUTH_MODE to use a token.\n',
+    );
+    return EXIT_CONFIG;
+  }
+  if (loaded.settings.authMode === 'pat') {
+    err(
+      '--save writes an API token, and JIRA_AUTH_MODE=pat signs nothing with one.\n' +
+        'Put the personal access token in JIRA_PAT in the env file instead.\n',
     );
     return EXIT_CONFIG;
   }

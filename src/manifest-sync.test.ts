@@ -332,10 +332,11 @@ function expectedRows(): readonly DocRow[] {
  * `_SECRET` joined the rule with the OAuth client secret (D98). Widening the
  * suffix list rather than naming `JIRA_OAUTH_CLIENT_SECRET` keeps this a rule:
  * the next credential to arrive is covered by being named like one, instead of
- * shipping unmarked until somebody remembers to extend a literal set.
+ * shipping unmarked until somebody remembers to extend a literal set. `_PAT`
+ * joined the same way with the Data Center personal access token (D106).
  */
 function shouldBeSecret(name: string): boolean {
-  return name.endsWith('_TOKEN') || name.endsWith('_SECRET');
+  return name.endsWith('_TOKEN') || name.endsWith('_SECRET') || name.endsWith('_PAT');
 }
 
 /** The `format` vocabulary of the 2025-12-11 registry schema. */

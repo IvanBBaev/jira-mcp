@@ -106,7 +106,9 @@ scope call:
   **Un-parked by D106 (2026-09-26)** on the owner's direction, in stages, as
   IMPLEMENTATION-PLAN.md Phase 13. The structural finding above is answered
   first: stage 13.1 shipped the port (`api/port.ts`, `ctx.api`), which changes
-  nothing on Cloud. The price above is unchanged, and D104's verification
+  nothing on Cloud, and stage 13.2 the settings surface (`JIRA_DEPLOYMENT`,
+  PAT auth, the context path) — still fail-closed, so Data Center does not
+  start. The price above is unchanged, and D104's verification
   condition is carried rather than waived — with no DC host, every DC stage
   ships fail-closed and labelled UNVERIFIED.
 

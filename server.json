@@ -187,10 +187,25 @@
         },
         {
           "name": "JIRA_AUTH_MODE",
-          "description": "Where credentials come from: basic (email + API token) or oauth (OAuth 2.0 3LO, via jira-mcp-ai login).",
+          "description": "Where credentials come from: basic (email + API token), oauth (OAuth 2.0 3LO, via jira-mcp-ai login) or pat (a Jira Data Center personal access token; only with JIRA_DEPLOYMENT=datacenter).",
           "isRequired": false,
           "default": "basic",
-          "choices": ["basic", "oauth"],
+          "choices": ["basic", "oauth", "pat"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_DEPLOYMENT",
+          "description": "cloud or datacenter. datacenter is recognised but not served yet: selecting it is a startup error until the Data Center adapter exists.",
+          "isRequired": false,
+          "default": "cloud",
+          "choices": ["cloud", "datacenter"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_PAT",
+          "description": "Jira Data Center personal access token, sent as a bearer. Required when JIRA_AUTH_MODE=pat.",
+          "isRequired": false,
+          "isSecret": true,
           "format": "string"
         },
         {

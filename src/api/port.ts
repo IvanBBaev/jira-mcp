@@ -103,9 +103,10 @@ import {
 } from './meta.js';
 import { approximateCount, searchIssues } from './search.js';
 import { getMyself, resolveMentionNames, searchUsers } from './users.js';
+import type { JiraDeployment } from '../core/types.js';
 
-/** Which backend an adapter speaks to. Only `cloud` has an adapter (D2, D106). */
-export type JiraDeployment = 'cloud';
+/** Which backend an adapter speaks to. Only `cloud` has an adapter so far (D106). */
+export type { JiraDeployment };
 
 /**
  * Every api-ring function the tools ring may call. One flat namespace: the

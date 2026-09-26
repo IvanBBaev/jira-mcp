@@ -20,12 +20,22 @@ must encode these rules.
 - Auth, oauth mode: `Authorization: Bearer <access token>` **and a different
   origin** — see §OAuth 2.0 (3LO) below. The paths above are unchanged; they are
   prefixed, not replaced.
+- Jira Data Center (D106, not served yet — CC-254): platform root
+  `/rest/api/2` (there is no v3 on Data Center, and v2 bodies are wiki markup),
+  under the instance's context path when it has one
+  (`https://jira.example.com/jira/rest/api/2/...`); auth with a personal access
+  token as `Authorization: Bearer <PAT>` to the site host. **UNVERIFIED**: taken
+  from Atlassian's Data Center documentation, never exercised against a Data
+  Center instance (D104's condition).
 
 ## Hosts
 
 - Site host canonical suffix: `.atlassian.net`. Anything else — Server/DC,
   vanity domains — requires explicit `JIRA_ALLOWED_HOSTS` opt-in (SSRF guard,
   see THREAT-MODEL.md §SSRF / egress).
+- A path on the site URL is stripped on Cloud (CC-27) and kept as the context
+  path under `JIRA_DEPLOYMENT=datacenter` (CC-257); a Cloud host is refused
+  there (CC-258).
 - Matching is exact host or anchored regex. Suffix matching (`endsWith`) is
   banned: `evil-atlassian.net` ends with the donor's check string.
 - This is the wire rule; the env var that carries the opt-in is
