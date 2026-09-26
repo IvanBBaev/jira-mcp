@@ -481,8 +481,10 @@ read differently there, and the tool descriptions above describe Cloud:
 - **Users** are `{ name, key, displayName?, active? }` — there is no
   `accountId` on Data Center. The projection is the same allowlist idea:
   email, avatars and time zones never appear (CC-264).
-- **Rich text** is wiki markup, returned as Jira sent it; `format: "markdown"`
-  is refused (CC-265).
+- **Rich text** is wiki markup. `description`, `environment`, comment bodies and
+  worklog comments are flattened to text in the same conventions as Cloud's
+  (CC-274); `raw: true` returns the markup itself (there is no ADF on Data
+  Center); `format: "markdown"` is refused (CC-265).
 - **`jira_search`** cursors are `dc1:<offset>` strings — still opaque, still
   passed back verbatim; `reconcileIssues` is refused (CC-267).
 

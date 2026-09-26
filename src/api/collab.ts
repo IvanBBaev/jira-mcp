@@ -63,6 +63,7 @@ import { createJiraError } from '../core/errors.js';
 import { encodeSegment } from '../core/http-util.js';
 import {
   JiraError,
+  type JiraDeployment,
   type JiraRequestFn,
   type JiraRequestSpec,
   type JiraResponse,
@@ -75,6 +76,8 @@ import {
   type ClassicLoopResult,
   type ClassicPage,
 } from './shared.js';
+import { shapeDataCenterUser } from './users.js';
+import type { DataCenterUser } from './users.js';
 
 // ---------------------------------------------------------------------------
 // 1. Endpoints, page size and closed vocabularies
@@ -169,6 +172,8 @@ export interface CollabBase {
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request issued. */
   readonly signal?: AbortSignal;
+  /** The user dialect watchers and component leads are read in (D106). */
+  readonly deployment?: JiraDeployment;
 }
 
 /** The paging controls of the two paginated reads. */
@@ -353,7 +358,7 @@ export interface WatcherList {
    * lacks "View voters and watchers", which is NOT the same as "nobody watches
    * this issue" — {@link WatcherList.watchersVisible} is what says which it was.
    */
-  readonly watchers: readonly CollabUser[];
+  readonly watchers: readonly (CollabUser | DataCenterUser)[];
   /** `false` ⇒ Jira sent no `watchers` array: the list was withheld, not empty. */
   readonly watchersVisible: boolean;
 }
@@ -382,7 +387,7 @@ export interface ProjectComponent {
   /** The project key Jira echoes back on the row. */
   readonly project?: string;
   readonly projectId?: number;
-  readonly lead?: CollabUser;
+  readonly lead?: CollabUser | DataCenterUser;
   readonly assigneeType?: string;
   /** `false` ⇒ Jira will fall back to the project default when assigning. */
   readonly isAssigneeTypeValid?: boolean;
@@ -504,7 +509,7 @@ export async function listWatchers(options: ListWatchersOptions): Promise<Watche
       pathTemplate: WATCHERS_PATH_TEMPLATE,
     }),
   );
-  return mapWatchers(requireRecord(response.data, 'watcher list'));
+  return mapWatchers(requireRecord(response.data, 'watcher list'), options.deployment);
 }
 
 /**
@@ -533,7 +538,7 @@ export function listComponents(
           query: trimmed(options.query),
         },
       }),
-      (response) => classicPage(response, 'component', mapComponent),
+      (response) => classicPage(response, 'component', (entry) => mapComponent(entry)),
     ),
   );
 }
@@ -611,6 +616,115 @@ export function listVersions(
       }),
       (response) => classicPage(response, 'version', mapVersion),
     ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The Data Center twins (D106, stage 13.3b)
+// ---------------------------------------------------------------------------
+
+/** One complete, unpaginated read reported in the classic loop's own terms. */
+function wholeList<T>(items: readonly T[]): ClassicLoopResult<T> {
+  return {
+    items,
+    pages: 1,
+    stopReason: 'exhausted',
+    partial: false,
+    total: items.length,
+  };
+}
+
+/** Case-insensitive substring over a row's name and description. */
+function matchesQuery(
+  row: { readonly name: string; readonly description?: string },
+  query: string | undefined,
+): boolean {
+  const needle = trimmed(query)?.toLowerCase();
+  if (needle === undefined) return true;
+  return (
+    row.name.toLowerCase().includes(needle) ||
+    (row.description?.toLowerCase().includes(needle) ?? false)
+  );
+}
+
+/** A Data Center list endpoint's bare array, or `unexpected_shape`. */
+async function dataCenterArray(
+  options: CollabBase & BudgetGuard,
+  path: string,
+  pathTemplate: string,
+  what: string,
+): Promise<readonly Record<string, unknown>[]> {
+  const response = await collabCall(PROJECT_READ_HINT, () =>
+    sendOne(options, { method: 'GET', root: 'v2', path, pathTemplate }),
+  );
+  if (!Array.isArray(response.data)) {
+    throw shapeError(
+      `GET ${pathTemplate} answered with something other than a JSON array of ${what}s.`,
+    );
+  }
+  return response.data.map((entry, index) =>
+    requireRecord(entry, `${what} #${String(index)}`),
+  );
+}
+
+/**
+ * {@link listComponents} on Jira Data Center — `GET /rest/api/2/project/{p}/components`.
+ *
+ * The paginated `/component` route is not relied on for Data Center; the
+ * documented `/components` array is, and `query` is applied here over name and
+ * description — what Cloud's server-side `query` matches. One complete page.
+ */
+export async function listComponentsDataCenter(
+  options: ListComponentsOptions,
+): Promise<ClassicLoopResult<ProjectComponent>> {
+  const project = pathSegment(options.project, 'project key or id', PROJECT_REMEDIATION);
+  const rows = await dataCenterArray(
+    options,
+    `/project/${project}/components`,
+    '/project/{projectIdOrKey}/components',
+    'component',
+  );
+  return wholeList(
+    rows
+      .map((row) => mapComponent(row, 'datacenter'))
+      .filter((component) => matchesQuery(component, options.query)),
+  );
+}
+
+/** A Data Center version's lifecycle state, in {@link VERSION_STATUSES}' words. */
+function versionStatus(version: ProjectVersion): VersionStatus {
+  if (version.archived === true) return 'archived';
+  return version.released === true ? 'released' : 'unreleased';
+}
+
+/**
+ * {@link listVersions} on Jira Data Center — `GET /rest/api/2/project/{p}/versions`.
+ *
+ * The documented array route; `query` (name and description) and `status`
+ * (archived wins over released, as Jira's own lifecycle has it) are applied
+ * here. One complete page.
+ */
+export async function listVersionsDataCenter(
+  options: ListVersionsOptions,
+): Promise<ClassicLoopResult<ProjectVersion>> {
+  const project = pathSegment(options.project, 'project key or id', PROJECT_REMEDIATION);
+  const rows = await dataCenterArray(
+    options,
+    `/project/${project}/versions`,
+    '/project/{projectIdOrKey}/versions',
+    'version',
+  );
+  const statuses = options.status;
+  return wholeList(
+    rows
+      .map((row) => mapVersion(row))
+      .filter(
+        (version) =>
+          matchesQuery(version, options.query) &&
+          (statuses === undefined ||
+            statuses.length === 0 ||
+            statuses.includes(versionStatus(version))),
+      ),
   );
 }
 
@@ -1427,7 +1541,11 @@ function classicPage<T>(
  * The watcher allowlist. What is NOT here: `self`, `avatarUrls`, `emailAddress`,
  * `timeZone`, `accountType`. Built, never spread (D41).
  */
-function mapUser(value: unknown): CollabUser | undefined {
+function mapUser(
+  value: unknown,
+  deployment?: JiraDeployment,
+): CollabUser | DataCenterUser | undefined {
+  if (deployment === 'datacenter') return shapeDataCenterUser(value);
   const record = asRecord(value);
   if (record === undefined) return undefined;
   const accountId = readString(record, 'accountId');
@@ -1441,13 +1559,16 @@ function mapUser(value: unknown): CollabUser | undefined {
   });
 }
 
-function mapWatchers(body: Record<string, unknown>): WatcherList {
+function mapWatchers(
+  body: Record<string, unknown>,
+  deployment?: JiraDeployment,
+): WatcherList {
   const raw = body.watchers;
   const visible = Array.isArray(raw);
   const watchers = visible
     ? raw
-        .map((entry) => mapUser(entry))
-        .filter((entry): entry is CollabUser => entry !== undefined)
+        .map((entry) => mapUser(entry, deployment))
+        .filter((entry): entry is CollabUser | DataCenterUser => entry !== undefined)
     : [];
   return compact({
     isWatching: readBoolean(body, 'isWatching'),
@@ -1462,14 +1583,17 @@ function mapWatchers(body: Record<string, unknown>): WatcherList {
  * `realAssignee`, `assignee`, `realAssigneeType`, `issueCount`, `componentBean`
  * extras. Built, never spread (D41).
  */
-function mapComponent(entry: Record<string, unknown>): ProjectComponent {
+function mapComponent(
+  entry: Record<string, unknown>,
+  deployment?: JiraDeployment,
+): ProjectComponent {
   return compact({
     id: requireField(readId(entry, 'id'), 'id', 'component'),
     name: requireField(readString(entry, 'name'), 'name', 'component'),
     description: readString(entry, 'description'),
     project: readString(entry, 'project'),
     projectId: readNumber(entry, 'projectId'),
-    lead: mapUser(entry.lead),
+    lead: mapUser(entry.lead, deployment),
     assigneeType: readString(entry, 'assigneeType'),
     isAssigneeTypeValid: readBoolean(entry, 'isAssigneeTypeValid'),
   });

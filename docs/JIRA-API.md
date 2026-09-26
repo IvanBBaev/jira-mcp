@@ -550,15 +550,18 @@ excludes every other tool (CC-263).
 | `GET /issue/createmeta/{p}/issuetypes[/{id}]` | exists on newer Data Center releases | not served — needs a version verdict |
 | `/filter/search`, `/filter/{id}` | `/filter/search` absent on many releases | not served |
 | `/user/search`, `/user/assignable/search` | `username=` instead of `query=` | not served |
-| `/issue/{key}/watchers`, `/votes` | same paths, DC users | not served |
-| `/project/{p}/component`, `/project/{p}/version` (paged) | `/components`, `/versions` (arrays) | not served |
+| `/issue/{key}/watchers` | same path, DC users | served, DC user dialect (D108, CC-275) |
+| `/issue/{key}/votes` (write) | same path | not served (writes are stage 13.4) |
+| `/project/{p}/component`, `/project/{p}/version` (paged) | `/components`, `/versions` (arrays, long-standing) | served over the arrays, filters applied here (D108, CC-275) |
 | `/project/{p}/role` | same path, DC actors | not served |
 | `/bulk/*` | none | not served |
 | Agile `/board`, `/board/{id}/sprint`, `/sprint/{id}/issue` | same, Jira Software Data Center | served, DC user dialect on issue fields |
 | Every write | wiki-markup bodies, `name` users | not served (stage 13.4) |
 
-Rich text on Data Center is wiki markup and is returned as Jira sent it;
-`format: "markdown"` is refused rather than mislabelled (CC-265).
+Rich text on Data Center is wiki markup. The known rich-text fields are
+flattened by `api/wiki.ts` in `adfToText`'s conventions (CC-271…CC-274);
+`raw: true` returns the markup as sent, and `format: "markdown"` is refused
+rather than mislabelled (CC-265).
 
 ## Rate limiting and retries
 

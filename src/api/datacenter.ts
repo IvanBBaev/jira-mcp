@@ -19,13 +19,17 @@
 //     users gets `deployment: 'datacenter'`, which switches the projection to
 //     the Data Center allowlist — without it a DC user would fall through the
 //     Cloud rule with its `emailAddress` intact.
-//   * Rich text is wiki markup, not ADF. It passes through as the string Jira
-//     sent; `format: "markdown"` is refused, because the text is not markdown
-//     and labelling it so would be a lie the model would repeat.
-//   * `/search/jql`, `/project/search` and `/statuses/search` are Cloud-only;
-//     their Data Center twins live next to the Cloud functions
-//     (`searchIssuesDataCenter`, `listProjectsDataCenter`,
-//     `listStatusesDataCenter`), where the private mappers are.
+//   * Rich text is wiki markup, not ADF. The known rich-text fields are
+//     flattened to text by `api/wiki.ts` in `adfToText`'s conventions (`raw`
+//     returns the markup as sent); `format: "markdown"` is refused, because
+//     there is no wiki → markdown renderer and a mislabelled answer would be
+//     a lie the model would repeat.
+//   * `/search/jql`, `/project/search` and `/statuses/search` are Cloud-only,
+//     and the paginated component/version routes are not relied on; their Data
+//     Center twins live next to the Cloud functions (`searchIssuesDataCenter`,
+//     `listProjectsDataCenter`, `listStatusesDataCenter`,
+//     `listComponentsDataCenter`, `listVersionsDataCenter`), where the private
+//     mappers are.
 //
 // Everything else is not served: {@link DATACENTER_TOOLS} is the allowlist the
 // registry enforces, and every port member outside it throws `unsupported`
@@ -33,6 +37,11 @@
 // ---------------------------------------------------------------------------
 
 import { createJiraError } from '../core/errors.js';
+import {
+  listComponentsDataCenter,
+  listVersionsDataCenter,
+  listWatchers,
+} from './collab.js';
 import type {
   JiraError,
   JiraRequestFn,
@@ -75,6 +84,9 @@ export const DATACENTER_TOOLS: ReadonlySet<string> = new Set([
   'jira_list_fields',
   'jira_list_statuses',
   'jira_list_link_types',
+  'jira_list_watchers',
+  'jira_list_components',
+  'jira_list_versions',
   'jira_list_boards',
   'jira_list_sprints',
   'jira_get_sprint_issues',
@@ -145,6 +157,10 @@ const served: Partial<JiraApi> = {
     refuseMarkdown(format);
     return shapeIssueFields(value, raw, format, 'datacenter');
   },
+  listWatchers: (options) =>
+    listWatchers({ ...options, jira: onV2(options.jira), deployment: 'datacenter' }),
+  listComponents: listComponentsDataCenter,
+  listVersions: listVersionsDataCenter,
   listBoards: CLOUD_API.listBoards,
   listSprints: CLOUD_API.listSprints,
   listSprintIssues: CLOUD_API.listSprintIssues,

@@ -56,7 +56,7 @@ import {
   ASSIGNEE_TYPES,
   COLLAB_PAGE_SIZE,
   VERSION_STATUSES,
-  type CollabUser,
+  type WatcherList,
   type ProjectComponent,
   type ProjectRole,
   type ProjectVersion,
@@ -210,7 +210,8 @@ interface WatcherListData {
   readonly isWatching?: boolean;
   /** Jira's own count; it can exceed `watchers.length` on a restricted read. */
   readonly watchCount?: number;
-  readonly watchers: readonly CollabUser[];
+  /** Cloud users by accountId; on Data Center, by name/key (D106). */
+  readonly watchers: WatcherList['watchers'];
   /** `false` ⇒ Jira withheld the list; it does NOT mean nobody is watching. */
   readonly watchersVisible: boolean;
   /** Prose for `watchersVisible: false`, so a reader who skips booleans sees it. */

@@ -17,12 +17,13 @@ env var names — not internal refactors.
 - **Jira Data Center, as an unverified read-only preview.** Set
   `JIRA_DEPLOYMENT=datacenter`, `JIRA_AUTH_MODE=pat` with `JIRA_PAT` (a Data
   Center personal access token), and `JIRA_DATACENTER_PREVIEW=true`. The
-  server then serves 15 read tools — `jira_get_myself`, `jira_search`, the
+  server then serves 18 read tools — `jira_get_myself`, `jira_search`, the
   issue, comment, transition and worklog reads, projects, fields, statuses,
-  link types, boards, sprints and sprint issues; `jira_capabilities` lists
-  them and names the rest as unavailable. A context path such as
-  `https://jira.example.com/jira` is kept. Users come back as `name`/`key`,
-  rich text as wiki markup. **It has never been run against a Data Center
+  link types, watchers, components, versions, boards, sprints and sprint
+  issues; `jira_capabilities` lists them and names the rest as unavailable. A
+  context path such as `https://jira.example.com/jira` is kept. Users come
+  back as `name`/`key`; descriptions, comments and worklog comments are
+  flattened from wiki markup to text (`raw: true` returns the markup). **It has never been run against a Data Center
   instance** — which is why it needs the preview flag, and why
   `jira-mcp-ai doctor` (which probes a Data Center site with your PAT) is the
   first thing to run. **Nothing changes for a Cloud setup** unless you set
