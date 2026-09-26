@@ -44,9 +44,6 @@ import { join, resolve, sep } from 'node:path';
 import {
   DEFAULT_ATTACHMENT_MIME,
   MAX_MEDIA_NAME_CHARS,
-  downloadAttachment,
-  listAttachments,
-  uploadAttachment,
   type JiraAttachment,
   type MediaReadResult,
   type MediaStore,
@@ -414,7 +411,10 @@ export const listAttachmentsTool = defineTool<
   input: listAttachmentsInput,
   handler: async (args, ctx): Promise<ToolResult<AttachmentListData>> =>
     guarded(async () => {
-      const result = await listAttachments({ ...callBase(ctx), issueKey: args.issue });
+      const result = await ctx.api.listAttachments({
+        ...callBase(ctx),
+        issueKey: args.issue,
+      });
       return ok<AttachmentListData>(
         {
           issue: result.issueKey,
@@ -480,7 +480,7 @@ function downloadAttachmentTool(
     handler: async (args, ctx): Promise<ToolResult<AttachmentDownloadData>> =>
       guarded(async () => {
         const attachmentId = String(args.attachmentId);
-        const result = await downloadAttachment({
+        const result = await ctx.api.downloadAttachment({
           ...callBase(ctx),
           attachmentId,
           ...(store === undefined ? {} : { store }),
@@ -555,7 +555,7 @@ function uploadAttachmentTool(
     input: uploadAttachmentInput,
     handler: async (args, ctx): Promise<ToolResult<AttachmentUploadData>> =>
       guarded(async () => {
-        const result = await uploadAttachment({
+        const result = await ctx.api.uploadAttachment({
           ...callBase(ctx),
           issueKey: args.issue,
           name: args.name,

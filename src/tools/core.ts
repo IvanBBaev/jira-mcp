@@ -26,8 +26,7 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { getMyself } from '../api/users.js';
-import type { JiraUser } from '../api/users.js';
+import type { MyselfResult } from '../api/users.js';
 import type { Counters } from '../core/telemetry.js';
 import type { TransportKind, WriteMode } from '../core/types.js';
 import { defineTool, toolInput } from '../mcp/define.js';
@@ -119,6 +118,16 @@ export interface CapabilitiesInfo {
   readonly version: string;
   /** The Jira site this process talks to; absent when unconfigured. */
   readonly site?: string;
+  /**
+   * Present only on Jira Data Center (D106): the adapter serving this server is
+   * a read-only preview that has never been verified against a Data Center
+   * instance. Absent on Cloud, whose report is unchanged.
+   */
+  readonly deployment?: {
+    readonly product: 'datacenter';
+    readonly verified: false;
+    readonly note: string;
+  };
   readonly transport: TransportKind;
   /** `plan` (default) or `apply` — the write gate a write tool will meet. */
   readonly writeMode: WriteMode;
@@ -216,8 +225,16 @@ export function capabilitiesTool(
  * (D16).
  */
 export interface MyselfData {
-  /** The only identity Jira accepts on a write — there are no usernames. */
-  readonly accountId: string;
+  /**
+   * The only identity Jira Cloud accepts on a write — there are no usernames.
+   * Always present on Cloud; absent on Data Center, which reports `name` and
+   * `key` instead (D106).
+   */
+  readonly accountId?: string;
+  /** Data Center login name. Absent on Cloud. */
+  readonly name?: string;
+  /** Data Center user key, stable across renames. Absent on Cloud. */
+  readonly key?: string;
   readonly displayName?: string;
   readonly active?: boolean;
   /** `atlassian`, `app`, `customer` — a customer account is a JSM portal user. */
@@ -228,7 +245,17 @@ export interface MyselfData {
 }
 
 /** Absent keys are omitted rather than set to `undefined` (envelope hygiene). */
-function myselfData(user: JiraUser): MyselfData {
+function myselfData(user: MyselfResult['user']): MyselfData {
+  if (!('accountId' in user)) {
+    return {
+      ...(user.name === undefined ? {} : { name: user.name }),
+      ...(user.key === undefined ? {} : { key: user.key }),
+      ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
+      ...(user.active === undefined ? {} : { active: user.active }),
+      ...(user.timeZone === undefined ? {} : { timeZone: user.timeZone }),
+      ...(user.locale === undefined ? {} : { locale: user.locale }),
+    };
+  }
   return {
     accountId: user.accountId,
     ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
@@ -256,7 +283,7 @@ export const getMyselfTool = defineTool({
   input: getMyselfInput,
   handler: async (_args, ctx): Promise<ToolResult<MyselfData>> =>
     guarded(async () => {
-      const myself = await getMyself(callBase(ctx));
+      const myself = await ctx.api.getMyself(callBase(ctx));
       // An account record is metadata, not Jira free text: no D15 brand.
       return ok(myselfData(myself.user));
     }),

@@ -879,3 +879,144 @@ describe('loadSettings — process.env path', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Data Center settings (D106, stage 13.2)
+// ---------------------------------------------------------------------------
+
+/** A Data Center configuration that is valid in every respect but one. */
+const VALID_DC = {
+  JIRA_SITE: 'https://jira.corp.example/jira',
+  JIRA_ALLOWED_HOSTS: 'jira.corp.example',
+  JIRA_DEPLOYMENT: 'datacenter',
+  JIRA_AUTH_MODE: 'pat',
+  JIRA_PAT: 'pat-value-0123456789',
+} as const;
+
+describe('loadSettings — Data Center (D106)', () => {
+  it('defaults to cloud and changes nothing about a Cloud configuration', () => {
+    const { settings, report } = load(VALID);
+    assert.equal(settings.deployment, 'cloud');
+    assert.equal(settings.pat, undefined);
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), []);
+  });
+
+  it('CC-254: datacenter fails closed even when every other finding is clean', () => {
+    const { settings, report, host } = load(VALID_DC);
+    assert.equal(report.ok, false);
+    assert.deepEqual(codes(report), ['deployment_unavailable']);
+    const finding = report.findings[0];
+    assert.equal(finding?.severity, 'error');
+    assert.equal(finding?.field, 'JIRA_DEPLOYMENT');
+    assert.match(finding?.message ?? '', /Phase 13/);
+    // Everything the adapter will need is still parsed and resolved, so doctor
+    // can check a prepared configuration.
+    assert.equal(settings.deployment, 'datacenter');
+    assert.equal(settings.authMode, 'pat');
+    assert.equal(settings.pat, 'pat-value-0123456789');
+    assert.deepEqual(host, { origin: 'https://jira.corp.example', pathPrefix: '/jira' });
+  });
+
+  it('CC-254: the fail-closed error rides alongside every other problem', () => {
+    const { report } = load({ ...VALID_DC, JIRA_PAT: undefined, JIRA_ALLOWED_HOSTS: '' });
+    assert.deepEqual(
+      new Set(codes(report)),
+      new Set(['missing_credential', 'deployment_unavailable', 'host_not_allowed']),
+    );
+  });
+
+  it('CC-255: pat on Cloud is refused — Cloud has no personal access tokens', () => {
+    const { report } = load({
+      JIRA_SITE: 'mycompany',
+      JIRA_AUTH_MODE: 'pat',
+      JIRA_PAT: 'pat-value-0123456789',
+    });
+    assert.deepEqual(codes(report), ['auth_mode_deployment']);
+    assert.equal(report.findings[0]?.field, 'JIRA_AUTH_MODE');
+    assert.match(
+      report.findings[0]?.message ?? '',
+      /Jira Cloud has no personal access tokens/,
+    );
+  });
+
+  it('CC-255: datacenter with basic or oauth is refused, naming the mode', () => {
+    for (const mode of ['basic', 'oauth'] as const) {
+      const { report } = load({
+        ...VALID_DC,
+        ...(mode === 'basic' ? VALID : VALID_OAUTH),
+        JIRA_SITE: VALID_DC.JIRA_SITE,
+        JIRA_AUTH_MODE: mode,
+        JIRA_PAT: undefined,
+      });
+      const mismatch = report.findings.find((f) => f.code === 'auth_mode_deployment');
+      assert.ok(mismatch !== undefined, mode);
+      assert.match(mismatch.message, new RegExp(`JIRA_AUTH_MODE is ${mode}`));
+      assert.ok(codes(report).includes('deployment_unavailable'), mode);
+    }
+  });
+
+  it('CC-255: pat without JIRA_PAT names JIRA_PAT, not the Basic-auth variables', () => {
+    const { report } = load({ ...VALID_DC, JIRA_PAT: undefined });
+    const missing = report.findings.filter((f) => f.code === 'missing_credential');
+    assert.deepEqual(
+      missing.map((f) => f.field),
+      ['JIRA_PAT'],
+    );
+  });
+
+  it('CC-256: a JIRA_PAT another mode does not use is ignored with a warning, and still redacted', () => {
+    const { report, secrets } = load({ ...VALID, JIRA_PAT: 'pat-value-0123456789' });
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), ['pat_ignored']);
+    assert.equal(report.findings[0]?.severity, 'warning');
+    assert.ok(secrets.includes('pat-value-0123456789'));
+  });
+
+  it('CC-256: under pat, JIRA_TOKEN_EXPIRES is reported as ignored, not parsed', () => {
+    const { report } = load({ ...VALID_DC, JIRA_TOKEN_EXPIRES: 'not-a-date' });
+    const finding = report.findings.find((f) => f.field === 'JIRA_TOKEN_EXPIRES');
+    assert.equal(finding?.code, 'token_expires_ignored');
+    assert.equal(finding?.severity, 'warning');
+  });
+
+  it('refuses an unknown JIRA_DEPLOYMENT rather than falling back to cloud', () => {
+    const { report } = load({ ...VALID, JIRA_DEPLOYMENT: 'server' });
+    assert.equal(report.ok, false);
+    assert.equal(report.findings[0]?.field, 'JIRA_DEPLOYMENT');
+  });
+});
+
+describe('loadSettings — the Data Center preview gate (D106)', () => {
+  it('CC-269: JIRA_DATACENTER_PREVIEW=true starts Data Center with an unverified warning', () => {
+    const { settings, report } = load({ ...VALID_DC, JIRA_DATACENTER_PREVIEW: 'true' });
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), ['deployment_unverified']);
+    assert.equal(report.findings[0]?.severity, 'warning');
+    assert.match(report.findings[0]?.message ?? '', /never verified/);
+    assert.equal(settings.datacenterPreview, true);
+  });
+
+  it('CC-269: without the flag Data Center stays a startup error naming it', () => {
+    const { report } = load(VALID_DC);
+    assert.equal(report.ok, false);
+    assert.match(report.findings[0]?.message ?? '', /JIRA_DATACENTER_PREVIEW=true/);
+  });
+
+  it('CC-269: the flag on Cloud is ignored with a warning, and defaults to false', () => {
+    assert.equal(load(VALID).settings.datacenterPreview, false);
+    const { report } = load({ ...VALID, JIRA_DATACENTER_PREVIEW: 'true' });
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), ['datacenter_preview_ignored']);
+  });
+
+  it('CC-269: the flag does not excuse a wrong pairing', () => {
+    const { report } = load({
+      ...VALID_DC,
+      JIRA_DATACENTER_PREVIEW: 'true',
+      JIRA_AUTH_MODE: 'basic',
+    });
+    assert.equal(report.ok, false);
+    assert.ok(codes(report).includes('auth_mode_deployment'));
+  });
+});

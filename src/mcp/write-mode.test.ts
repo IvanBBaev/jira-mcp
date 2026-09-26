@@ -11,6 +11,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { CLOUD_API } from '../api/port.js';
 import { createFakeClock } from '../core/fakes/fakeClock.js';
 import { createFakeJiraRequest, jiraOk } from '../core/fakes/fakeJiraRequest.js';
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
@@ -57,6 +58,7 @@ function constantRng(value = 0): Rng {
 function makeCtx(jira: JiraRequestFn): ToolCtx {
   return {
     jira,
+    api: CLOUD_API,
     log: createFakeLogger(),
     clock: createFakeClock(1_000),
     cid: 'c-abc123',

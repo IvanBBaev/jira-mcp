@@ -26,6 +26,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { DEFAULT_SPRINT_ISSUE_FIELDS, MAX_MOVE_ISSUES } from '../api/agile.js';
+import { CLOUD_API } from '../api/port.js';
 import {
   createFakeClock,
   createFakeJiraRequest,
@@ -67,6 +68,7 @@ function createCtx(jira: JiraRequestFn): ToolCtx {
   const clock = createFakeClock(1_000);
   return {
     jira,
+    api: CLOUD_API,
     log: createFakeLogger({ clock }),
     clock,
     cid: 'c-test01',

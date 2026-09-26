@@ -26,7 +26,11 @@
 // stdio transport means a half-written JSON-RPC message on the client's side.
 // ---------------------------------------------------------------------------
 
-import { buildCredentialResolver, configError } from './core/credentials.js';
+import {
+  buildCredentialResolver,
+  buildPatResolver,
+  configError,
+} from './core/credentials.js';
 import type { CredentialResolver } from './core/http.js';
 import type { Clock, Journal, Logger, Redactor, Rng, Settings } from './core/types.js';
 import type { ShutdownReason, TransportHandle } from './mcp/transport.js';
@@ -258,14 +262,30 @@ async function serve(): Promise<void> {
     // the token store `jira-mcp-ai login` wrote, and the two are mutually
     // exclusive — `JIRA_API_TOKEN` signs nothing under oauth, and settings has
     // already refused to start without the app's own client credentials.
-    const credentials: CredentialResolver =
-      settings.authMode === 'oauth'
-        ? await buildOAuthResolver({ settings, clock, rng, logger, redactor })
-        : buildCredentialResolver({
-            settings,
-            ...(loaded.host === undefined ? {} : { host: loaded.host }),
-            resolveHost,
-          });
+    // An exhaustive switch, not a ternary: a third mode (`pat`, D106) must not
+    // fall into the basic resolver by default.
+    let credentials: CredentialResolver;
+    switch (settings.authMode) {
+      case 'oauth':
+        credentials = await buildOAuthResolver({
+          settings,
+          clock,
+          rng,
+          logger,
+          redactor,
+        });
+        break;
+      case 'pat':
+        credentials = buildPatResolver({ settings, host: loaded.host });
+        break;
+      case 'basic':
+        credentials = buildCredentialResolver({
+          settings,
+          ...(loaded.host === undefined ? {} : { host: loaded.host }),
+          resolveHost,
+        });
+        break;
+    }
 
     const jira = createJiraRequest({
       credentials,
@@ -316,7 +336,11 @@ async function serve(): Promise<void> {
     // (it reports what a deny list removed), and the report needs the SELECTION.
     // `selectPackages` is pure, so the second pass costs a few array walks and
     // buys a report that cannot drift from the registered surface.
-    const selection = selectPackages(packages, settings);
+    // One adapter for both passes (D106): the report and the registry must agree
+    // on which tools this backend can serve.
+    const { adapterFor } = await import('./api/adapters.js');
+    const api = adapterFor(settings.deployment);
+    const selection = selectPackages(packages, settings, api);
     assembled.report = buildCapabilitiesInfo({
       settings,
       selection,
@@ -336,6 +360,7 @@ async function serve(): Promise<void> {
       clock,
       rng,
       journal,
+      api,
     };
 
     // WHICH transport is this file's one branch on `settings.transport` (D101).

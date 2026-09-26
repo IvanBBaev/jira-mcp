@@ -62,7 +62,14 @@
   header override at all, so `authorization`/`accept`/`content-type` are set
   in exactly one place and nothing upstream can replace them. The bearer
   header of oauth mode is built by the same function, switching on the
-  credential's `kind` — one Authorization producer, not two.
+  credential's `kind` — one Authorization producer, not two. A Data Center PAT
+  (`JIRA_AUTH_MODE=pat`, D106) rides the same `bearer` arm; it is registered
+  with the redactor whenever it is set, and the deployment/mode pairing is
+  enforced at startup so a Cloud credential is never sent to a Data Center host
+  or the reverse (CC-255, CC-258). The Data Center adapter is an unverified
+  preview and does not start without `JIRA_DATACENTER_PREVIEW=true` (CC-254,
+  CC-269); its user projection is an allowlist like Cloud's, so a DC user's
+  `emailAddress` never reaches a result (CC-264).
 - Env files 0600, atomic writes, cross-process lock.
 
 ### OAuth 2.0 (3LO) — oauth mode only

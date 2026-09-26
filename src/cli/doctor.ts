@@ -23,7 +23,11 @@ import { closeSync, openSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 
 import { systemClock } from '../core/clock.js';
-import { effectiveCredentials, profileOf } from '../core/credentials.js';
+import {
+  buildPatResolver,
+  effectiveCredentials,
+  profileOf,
+} from '../core/credentials.js';
 import {
   nodeEnvFileHost,
   preferredEnvFilePath,
@@ -490,6 +494,8 @@ const HOST_CODES: ReadonlySet<string> = new Set([
   'site_scheme',
   'site_port',
   'site_path_stripped',
+  'site_context_path',
+  'host_deployment_mismatch',
   'host_not_allowed',
   'host_blocked',
   'allowlist_invalid_pattern',
@@ -759,7 +765,10 @@ function oauthStoreFindings(ctx: DoctorContext): readonly DoctorFinding[] {
     // configured the app and forgot `JIRA_AUTH_MODE` has exactly one symptom: a
     // green basic-auth report. Naming the mode here is that symptom's only cure.
     return [
-      { status: 'info', text: 'auth mode is basic; the OAuth token store is not used' },
+      {
+        status: 'info',
+        text: `auth mode is ${settings.authMode}; the OAuth token store is not used`,
+      },
       ...problems,
     ];
   }
@@ -845,6 +854,41 @@ function oauthStoreFindings(ctx: DoctorContext): readonly DoctorFinding[] {
   return findings;
 }
 
+/**
+ * Probe 4 on Jira Data Center (D106): `GET /rest/api/2/myself`, whose identity
+ * is `name` + `key` — there is no `accountId` to look for.
+ */
+async function dataCenterIdentity(ctx: DoctorContext): Promise<readonly DoctorFinding[]> {
+  const response = await ctx.request?.({ method: 'GET', root: 'v2', path: '/myself' });
+  const data: unknown = response?.data;
+  const name = readString(data, 'name');
+  const key = readString(data, 'key');
+  if (name === undefined && key === undefined) {
+    return [
+      {
+        status: 'fail',
+        text: '/rest/api/2/myself answered without a name or key',
+        remediation:
+          'The site returned an unexpected body — check that JIRA_SITE is the Data Center base URL (with its context path) and not a proxy page.',
+      },
+    ];
+  }
+  const displayName = readString(data, 'displayName');
+  const timeZone = readString(data, 'timeZone');
+  return [
+    {
+      status: 'ok',
+      text: `${displayName ?? 'unnamed account'} (name ${name ?? '?'}, key ${key ?? '?'})`,
+    },
+    timeZone === undefined
+      ? { status: 'warn', text: 'the account has no timezone' }
+      : { status: 'info', text: `timezone ${timeZone}` },
+  ];
+}
+
+/** The network probes that have a Data Center form; the rest are skipped there. */
+const DATACENTER_PROBES: ReadonlySet<string> = new Set(['identity', 'deployment']);
+
 const PROBES: readonly Probe[] = [
   {
     id: 'settings',
@@ -882,13 +926,12 @@ const PROBES: readonly Probe[] = [
         ];
       }
       const hostname = new URL(host.origin).hostname;
-      // `host.pathPrefix` is `V1_PATH_PREFIX` — the empty string, and
-      // `core/host.ts` is its only producer. There is nothing to report about it
-      // until a deployment that needs a prefix (Data Center, v2) exists.
+      // `host.pathPrefix` is empty on Cloud; under `datacenter` it is the
+      // instance's context path (D106), which is worth seeing spelled out.
       return [
         {
           status: 'ok',
-          text: `${host.origin} — ${
+          text: `${host.origin}${host.pathPrefix} — ${
             isCanonicalCloudHost(hostname)
               ? 'canonical Atlassian Cloud host'
               : `allowed by JIRA_ALLOWED_HOSTS (${unit(ctx.settings.allowedHosts.length, 'entry', 'entries')})`
@@ -948,6 +991,7 @@ const PROBES: readonly Probe[] = [
     title: 'identity',
     network: true,
     async run(ctx) {
+      if (ctx.settings.deployment === 'datacenter') return dataCenterIdentity(ctx);
       const response = await ctx.request?.({ method: 'GET', path: '/myself' });
       const data: unknown = response?.data;
       const accountId = readString(data, 'accountId');
@@ -985,7 +1029,12 @@ const PROBES: readonly Probe[] = [
     title: 'deployment',
     network: true,
     async run(ctx) {
-      const response = await ctx.request?.({ method: 'GET', path: '/serverInfo' });
+      const datacenter = ctx.settings.deployment === 'datacenter';
+      const response = await ctx.request?.({
+        method: 'GET',
+        path: '/serverInfo',
+        ...(datacenter ? { root: 'v2' as const } : {}),
+      });
       const data: unknown = response?.data;
       const deployment = readString(data, 'deploymentType');
       const version = readString(data, 'version');
@@ -993,6 +1042,21 @@ const PROBES: readonly Probe[] = [
       if (deployment === undefined) {
         return [
           { status: 'warn', text: `/serverInfo reported no deploymentType${suffix}` },
+        ];
+      }
+      if (datacenter) {
+        return [
+          deployment === 'Cloud'
+            ? {
+                status: 'fail',
+                text: `the site reports Jira Cloud${suffix}, but JIRA_DEPLOYMENT=datacenter`,
+                remediation:
+                  'Unset JIRA_DEPLOYMENT (and use basic or oauth auth) for a Cloud site.',
+              }
+            : {
+                status: 'ok',
+                text: `Jira ${deployment}${suffix} — served by the unverified Data Center preview (D106)`,
+              },
         ];
       }
       return [
@@ -1138,6 +1202,17 @@ const PROBES: readonly Probe[] = [
       // probe 11's subject; this probe reports only the clock.
       if (ctx.settings.authMode === 'oauth') {
         return [...oauthHorizon(ctx), ...problems];
+      }
+      if (ctx.settings.authMode === 'pat') {
+        // Settings already reports a set JIRA_TOKEN_EXPIRES as ignored in this
+        // mode; the horizon below would describe an API token nobody sends.
+        return [
+          {
+            status: 'info',
+            text: 'auth mode is pat; personal access token expiry is not tracked',
+          },
+          ...problems,
+        ];
       }
       const raw = ctx.settings.tokenExpires;
       if (raw === undefined) {
@@ -1460,7 +1535,20 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
             allowedHosts: loaded.settings.allowedHosts,
             activeProfile: loaded.settings.activeProfile,
           });
+  } else if (loaded.settings.authMode === 'pat') {
+    // The resolver the server installs (D106), so doctor fails the way the
+    // server would. Only when the pairing is right: a PAT is never sent to a
+    // host settings has not accepted as a Data Center one.
+    source =
+      host === undefined ||
+      loaded.settings.pat === undefined ||
+      loaded.settings.deployment !== 'datacenter'
+        ? undefined
+        : buildPatResolver({ settings: loaded.settings, host });
   } else if (
+    // Only in basic mode: a leftover JIRA_EMAIL/JIRA_API_TOKEN pair under `pat`
+    // must not become Basic credentials sent to a Data Center host (D106).
+    loaded.settings.authMode === 'basic' &&
     host !== undefined &&
     credentials.email !== undefined &&
     credentials.apiToken !== undefined
@@ -1620,6 +1708,18 @@ async function runProbe(
   if (probe.network && ctx.offline) {
     return [{ status: 'skip', text: 'skipped (--offline)' }];
   }
+  // The search and agile probes speak Cloud routes (`/search/jql`) or have no
+  // Data Center form yet; they are skipped by name rather than fired at a host
+  // that can only answer 404 (D106). Identity and deployment have a DC form.
+  if (
+    probe.network &&
+    ctx.settings.deployment === 'datacenter' &&
+    !DATACENTER_PROBES.has(probe.id)
+  ) {
+    return [
+      { status: 'skip', text: 'skipped: no Jira Data Center form of this probe yet' },
+    ];
+  }
   if (probe.network && ctx.request === undefined) {
     return [
       {
@@ -1663,6 +1763,13 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
     err(
       '--save writes an API token, and JIRA_AUTH_MODE=oauth signs nothing with one.\n' +
         'Run `jira-mcp-ai login` to authorize, or unset JIRA_AUTH_MODE to use a token.\n',
+    );
+    return EXIT_CONFIG;
+  }
+  if (loaded.settings.authMode === 'pat') {
+    err(
+      '--save writes an API token, and JIRA_AUTH_MODE=pat signs nothing with one.\n' +
+        'Put the personal access token in JIRA_PAT in the env file instead.\n',
     );
     return EXIT_CONFIG;
   }

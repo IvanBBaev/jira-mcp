@@ -31,6 +31,8 @@
 // built on the spec), no SDK.
 // ---------------------------------------------------------------------------
 
+import { CLOUD_API } from '../api/port.js';
+import type { JiraApi } from '../api/port.js';
 import { isJiraError, toLogFields } from '../core/errors.js';
 import { newCorrelationId, runWithCid } from '../core/log.js';
 import { JiraError } from '../core/types.js';
@@ -140,7 +142,7 @@ export function expandSelection(
 }
 
 /** Why a manifest tool is not callable in this configuration. */
-export type ExclusionReason = 'package_disabled' | 'readonly';
+export type ExclusionReason = 'package_disabled' | 'readonly' | 'deployment_unsupported';
 
 /** The gated surface, plus enough detail to explain a refusal. */
 export interface PackageSelection {
@@ -190,6 +192,7 @@ function assertManifest(manifest: readonly PackageSpec[]): void {
 export function selectPackages(
   manifest: readonly PackageSpec[],
   settings: Settings,
+  api: JiraApi = CLOUD_API,
 ): PackageSelection {
   assertManifest(manifest);
 
@@ -218,6 +221,13 @@ export function selectPackages(
 
     const stripWrites = readerProfile || readOnly.has(id);
     const tools = pkg.tools.filter((tool) => {
+      // The backend first: a tool the adapter cannot serve is out whatever the
+      // gating says, and naming that reason is what tells the operator that no
+      // package setting will bring it back (D106).
+      if (api.serves !== undefined && !api.serves.has(tool.name)) {
+        excludedTools.set(tool.name, 'deployment_unsupported');
+        return false;
+      }
       const drop = stripWrites && tool.writeTier !== undefined;
       if (drop) excludedTools.set(tool.name, 'readonly');
       return !drop;
@@ -249,6 +259,8 @@ export interface RegistryDeps {
   readonly redactor: Redactor;
   /** Injectable for tests; built from `settings.writeMode` otherwise. */
   readonly gate?: WriteGate | undefined;
+  /** The api-ring adapter every tool call gets (D106); {@link CLOUD_API} when absent. */
+  readonly api?: JiraApi | undefined;
 }
 
 /** Per-call inputs the transport knows and the registry does not. */
@@ -354,7 +366,8 @@ export function createRegistry(
   deps: RegistryDeps,
 ): ToolRegistry {
   const { settings } = deps;
-  const selection = selectPackages(manifest, settings);
+  const api = deps.api ?? CLOUD_API;
+  const selection = selectPackages(manifest, settings, api);
   const gate =
     deps.gate ??
     createWriteGate({
@@ -411,6 +424,18 @@ export function createRegistry(
         },
       );
     }
+    if (reason === 'deployment_unsupported') {
+      return errorResultOf(
+        'unsupported',
+        `Tool "${name}" is not available on Jira ${settings.deployment === 'datacenter' ? 'Data Center' : 'Cloud'} in this version of the server. Nothing was sent to Jira.`,
+        {
+          retryable: false,
+          remediation:
+            'Call jira_capabilities: it lists the tools this server serves here, and ' +
+            'excludedTools names the rest with their reason.',
+        },
+      );
+    }
     if (reason === 'package_disabled') {
       return errorResultOf(
         'config',
@@ -461,6 +486,7 @@ export function createRegistry(
       control.profile === undefined ? deps.jira : withProfile(deps.jira, control.profile);
     const ctx = (seam: JiraRequestFn): ToolCtx => ({
       jira: seam,
+      api,
       log,
       clock: deps.clock,
       cid,

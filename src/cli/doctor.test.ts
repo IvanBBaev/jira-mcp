@@ -49,6 +49,7 @@ import {
   type DoctorFsHost,
   type DoctorOptions,
   type DoctorReport,
+  type ProbeReport,
 } from './doctor.js';
 
 const TOKEN = 'super-secret-token-value';
@@ -2013,4 +2014,147 @@ test('CC-80: a real env file on disk is loaded, reported once, and its mode judg
     Object.assign(process.env, saved);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Data Center (D106, stage 13.2)
+// ---------------------------------------------------------------------------
+
+const DC_PAT = 'dc-personal-access-token-value';
+
+function dcEnv(extra: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
+  return {
+    JIRA_SITE: 'https://jira.corp.example/jira',
+    JIRA_ALLOWED_HOSTS: 'jira.corp.example',
+    JIRA_DEPLOYMENT: 'datacenter',
+    JIRA_AUTH_MODE: 'pat',
+    JIRA_PAT: DC_PAT,
+    ...extra,
+  };
+}
+
+function probeOf(report: DoctorReport, id: string): ProbeReport {
+  const probe = report.probes.find((p) => p.id === id);
+  assert.ok(probe !== undefined, id);
+  return probe;
+}
+
+test('CC-261/CC-266: under datacenter, doctor probes identity and deployment on v2 with the PAT', async () => {
+  // A leftover Basic-auth pair must not become the credentials doctor sends.
+  const r = rig({
+    env: dcEnv({ JIRA_EMAIL: 'ops@example.com', JIRA_API_TOKEN: TOKEN }),
+  });
+  const jira = r.jira
+    .on(
+      'GET /rest/api/2/myself',
+      jiraOk({
+        name: 'jdoe',
+        key: 'JIRAUSER10100',
+        displayName: 'Jane Doe',
+        timeZone: 'UTC',
+      }),
+    )
+    .on(
+      'GET /rest/api/2/serverInfo',
+      jiraOk({ deploymentType: 'DataCenter', version: '9.12.0' }),
+    );
+  let credentials: JiraHttpOptions['credentials'] | undefined;
+  const code = await run({
+    ...r.options,
+    argv: ['--json'],
+    createRequest: (options) => {
+      credentials = options.credentials;
+      return jira.fn;
+    },
+  });
+
+  // The settings error (no JIRA_DATACENTER_PREVIEW) still sets the exit code.
+  assert.equal(code, EXIT_CONFIG);
+  assert.equal(
+    typeof credentials,
+    'function',
+    'the PAT resolver, not static Basic credentials',
+  );
+  const resolved = await (credentials as () => unknown)();
+  assert.deepEqual(resolved, {
+    kind: 'bearer',
+    host: { origin: 'https://jira.corp.example', pathPrefix: '/jira' },
+    accessToken: DC_PAT,
+  });
+  assert.deepEqual([...jira.routes()].sort(), [
+    'GET /rest/api/2/myself',
+    'GET /rest/api/2/serverInfo',
+  ]);
+
+  const report = JSON.parse(r.stdout()) as DoctorReport;
+  assert.match(
+    probeOf(report, 'host').findings[0]?.text ?? '',
+    /^https:\/\/jira\.corp\.example\/jira — /,
+  );
+  assert.match(
+    probeOf(report, 'identity').findings[0]?.text ?? '',
+    /Jane Doe \(name jdoe, key JIRAUSER10100\)/,
+  );
+  assert.match(
+    probeOf(report, 'deployment').findings[0]?.text ?? '',
+    /Jira DataCenter \(version 9\.12\.0\).*unverified/,
+  );
+  for (const id of ['search', 'agile']) {
+    const probe = probeOf(report, id);
+    assert.equal(probe.status, 'skip', id);
+    assert.match(probe.findings[0]?.text ?? '', /no Jira Data Center form/, id);
+  }
+  assert.match(
+    probeOf(report, 'token-expiry').findings[0]?.text ?? '',
+    /auth mode is pat/,
+  );
+  assert.match(probeOf(report, 'oauth').findings[0]?.text ?? '', /^auth mode is pat;/);
+  assert.doesNotMatch(r.stdout(), new RegExp(DC_PAT));
+});
+
+test('CC-266: a site that reports Jira Cloud fails the Data Center deployment probe', async () => {
+  const r = rig({ env: dcEnv() });
+  r.jira
+    .on('GET /rest/api/2/myself', jiraOk({ name: 'jdoe', key: 'k', displayName: 'J' }))
+    .on('GET /rest/api/2/serverInfo', jiraOk({ deploymentType: 'Cloud' }));
+  await run({ ...r.options, argv: ['--json'], jiraRequest: r.jira.fn });
+  const report = JSON.parse(r.stdout()) as DoctorReport;
+  const probe = probeOf(report, 'deployment');
+  assert.equal(probe.status, 'fail');
+  assert.match(probe.findings[0]?.text ?? '', /reports Jira Cloud/);
+});
+
+test('CC-266: a Data Center /myself without name or key fails the identity probe', async () => {
+  const r = rig({ env: dcEnv() });
+  r.jira
+    .on('GET /rest/api/2/myself', jiraOk({ displayName: 'proxy page' }))
+    .on('GET /rest/api/2/serverInfo', jiraOk({ deploymentType: 'DataCenter' }));
+  await run({ ...r.options, argv: ['--json'], jiraRequest: r.jira.fn });
+  const report = JSON.parse(r.stdout()) as DoctorReport;
+  assert.equal(probeOf(report, 'identity').status, 'fail');
+});
+
+test('CC-266: a PAT is never sent while the deployment is cloud', async () => {
+  // pat + cloud is a settings error; doctor builds no request for it.
+  const r = rig({ env: dcEnv({ JIRA_DEPLOYMENT: 'cloud' }) });
+  let built = 0;
+  await run({
+    ...r.options,
+    argv: ['--json'],
+    createRequest: () => {
+      built += 1;
+      return r.jira.fn;
+    },
+  });
+  assert.equal(built, 0);
+  assert.equal(r.jira.calls.length, 0);
+});
+
+test('CC-262: --save is refused under pat — it writes an API token nothing signs with', async () => {
+  const r = rig({ env: dcEnv() });
+  const code = await run({ ...r.options, argv: ['--save'] });
+  assert.equal(code, EXIT_CONFIG);
+  assert.equal(r.written.path, undefined);
+  assert.match(r.stderr(), /JIRA_AUTH_MODE=pat/);
+  assert.match(r.stderr(), /JIRA_PAT/);
 });

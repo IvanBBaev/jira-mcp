@@ -39,7 +39,7 @@ are created atomically with mode `0600`, guarded by a cross-process env lock.
 | `JIRA_SITE` | yes | — | `"mycompany"`, `"mycompany.atlassian.net"`, or full URL. Which host forms are accepted without an allowlist is a wire rule — JIRA-API.md §Hosts; other hosts need `JIRA_ALLOWED_HOSTS`. |
 | `JIRA_EMAIL` | yes | — | Atlassian account email for Basic auth. Not used under `JIRA_AUTH_MODE=oauth`. |
 | `JIRA_API_TOKEN` | yes | — | API token (secret; registered with the redactor). Not used under `JIRA_AUTH_MODE=oauth` — still redacted if it is left set. |
-| `JIRA_TOKEN_EXPIRES` | no | — | ISO date of the token's expiry (Cloud tokens expire ≤ 1 year). When set, doctor and the startup report warn ≤ 30 days out (`token_expiry_warning`, OBSERVABILITY.md). Ignored under `JIRA_AUTH_MODE=oauth`, which says so rather than pretending to honour it. |
+| `JIRA_TOKEN_EXPIRES` | no | — | ISO date of the token's expiry (Cloud tokens expire ≤ 1 year). When set, doctor and the startup report warn ≤ 30 days out (`token_expiry_warning`, OBSERVABILITY.md). Ignored under `JIRA_AUTH_MODE=oauth` and `pat`, each of which says so rather than pretending to honour it. |
 | `JIRA_ALLOWED_HOSTS` | no | — | Comma list of extra allowed hosts (Server/DC or vanity domains). Exact host or anchored regex (`/^jira\.example\.com$/`); suffix matching banned. A suffix form (`*.example.com`, `.example.com`) or a regex without both `^` and `$` is a startup error naming the entry (CC-231). The SSRF blocklist (loopback, private, link-local, metadata) wins over this list: an entry cannot make such a host reachable, and a `JIRA_SITE` naming one is a startup error (`host_blocked`, CC-233). |
 
 The Required column describes the **default** mode, `basic`, which is what an
@@ -64,7 +64,7 @@ Jira site a call is about, whether or not the credentials came from a token.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JIRA_AUTH_MODE` | no | `basic` | `basic` (email + API token) or `oauth` (OAuth 2.0 3LO with PKCE). Selecting `oauth` changes which variables below are required, silences `JIRA_TOKEN_EXPIRES` — it describes an API token this mode never uses — and extends the egress allowlist as described under `JIRA_OAUTH_GATEWAY_ORIGIN`. |
+| `JIRA_AUTH_MODE` | no | `basic` | `basic` (email + API token), `oauth` (OAuth 2.0 3LO with PKCE), or `pat` (a Jira Data Center personal access token — only with `JIRA_DEPLOYMENT=datacenter`, see the next section). Selecting `oauth` changes which variables below are required, silences `JIRA_TOKEN_EXPIRES` — it describes an API token this mode never uses — and extends the egress allowlist as described under `JIRA_OAUTH_GATEWAY_ORIGIN`. |
 | `JIRA_OAUTH_CLIENT_ID` | no | — | **Required in `oauth` mode**, ignored in `basic` — which is why the column says no. Client id of the OAuth 2.0 (3LO) app consent is asked for; create the app in the Atlassian developer console (AUTH.md §"Registering the app" covers what that costs you). |
 | `JIRA_OAUTH_CLIENT_SECRET` | no | — | **Required in `oauth` mode** too (secret; registered with the redactor). Required despite PKCE, which is why it is not optional: Atlassian authenticates the client on the token endpoint, on the first exchange and on every refresh. |
 | `JIRA_OAUTH_SCOPES` | no | `read:jira-work,write:jira-work,read:jira-user,manage:jira-project,read:board-scope:jira-software,write:board-scope:jira-software,read:sprint:jira-software,write:sprint:jira-software,read:epic:jira-software,write:epic:jira-software,read:issue:jira-software,write:issue:jira-software,offline_access` | Comma list of scopes `login` asks consent for. The default covers the v1 tool surface and deliberately leaves out global admin and sprint deletes (AUTH.md §Scopes). **Changing this list after a successful login forces a re-consent** — Atlassian never widens a stored grant silently, so run `login` again after editing it. |
@@ -73,6 +73,25 @@ Jira site a call is about, whether or not the credentials came from a token.
 | `JIRA_OAUTH_REDIRECT_PORT` | no | `8250` | Loopback port `login` binds for the redirect callback. It must match the callback URL registered on the app character for character — AUTH.md §"The redirect URI is the unverified part of this feature" spells the URL. Unprivileged ports only (1024–65535). |
 | `JIRA_OAUTH_AUTH_ORIGIN` | no | `https://auth.atlassian.com` | Origin of the authorization server the browser is sent to and tokens are exchanged at. Must be an **https origin with no path, query, fragment or credentials** — this is where the client secret is sent, so anything beyond an origin is a typo or somebody's redirect target. It exists so the offline test harness can point the flow at a local fake; there is no reason to set it against a real tenant. |
 | `JIRA_OAUTH_GATEWAY_ORIGIN` | no | `https://api.atlassian.com` | Origin of the OAuth API gateway `oauth`-mode requests are routed through instead of the site host. Same origin rules and same test-harness reason as `JIRA_OAUTH_AUTH_ORIGIN`. Every Jira call goes to this host, so it must not be loopback, private, link-local or a metadata address — the SSRF blocklist refuses those even when allowlisted, and the resolver says so before anything is sent (CC-230). In `oauth` mode the hostnames of both origins are appended to the effective egress allowlist, so a redirected flow still cannot reach a host you did not configure; in `basic` mode the allowlist is byte-for-byte what `JIRA_ALLOWED_HOSTS` says. |
+
+## Jira Data Center (Phase 13 — unverified read-only preview)
+
+The Data Center adapter is being built in stages (D106, D107,
+IMPLEMENTATION-PLAN.md Phase 13). Stage 13.3 serves a **read-only** subset of
+the tools (`jira_capabilities` lists them; the rest are excluded as
+`deployment_unsupported`), built from Atlassian's Data Center documentation and
+**never run against a Data Center instance**. It therefore fails closed:
+selecting `datacenter` is a startup error (`deployment_unavailable`) unless
+`JIRA_DATACENTER_PREVIEW=true` says you accept that, in which case the server
+starts with a `deployment_unverified` warning. `jira-mcp-ai doctor` probes a
+Data Center site either way (`/rest/api/2/myself` and `/serverInfo`, with the
+PAT), which is the way to check a site before turning the preview on.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `JIRA_DEPLOYMENT` | no | `cloud` | `cloud` or `datacenter`. `datacenter` requires `JIRA_AUTH_MODE=pat`, and `pat` requires `datacenter` — each other combination is a startup error (`auth_mode_deployment`), because the two products share no credential. Under `datacenter`, `JIRA_SITE` must name a host listed in `JIRA_ALLOWED_HOSTS` (an `.atlassian.net` host is refused, `host_deployment_mismatch`); a dot-less name is never completed to `.atlassian.net`; and a **context path is kept** — `https://jira.example.com/jira` sends requests under `/jira` — where on Cloud it is stripped. A context path containing the REST root (`/rest/…`) or a path that could not be a request prefix is a startup error (`site_context_path`). |
+| `JIRA_PAT` | no | — | **Required when `JIRA_AUTH_MODE=pat`**. A Data Center personal access token, sent as `Authorization: Bearer` to the site host (secret; registered with the redactor whenever it is set). Set under any other mode it is ignored with a warning (`pat_ignored`). |
+| `JIRA_DATACENTER_PREVIEW` | no | `false` | Required for `JIRA_DEPLOYMENT=datacenter` to start: your acknowledgement that the Data Center adapter is an unverified read-only preview (D107). Set with `cloud` it is ignored with a warning (`datacenter_preview_ignored`). |
 
 ## Profiles
 

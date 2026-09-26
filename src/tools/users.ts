@@ -35,7 +35,6 @@ import type { PageStopReason } from '../api/shared.js';
 import {
   DEFAULT_USER_SEARCH_MAX_RESULTS,
   MAX_USER_SEARCH_RESULTS,
-  searchUsers,
   type JiraUser,
 } from '../api/users.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
@@ -212,7 +211,7 @@ export const searchUsersTool = defineTool<
   input: searchUsersInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await searchUsers({
+      const result = await ctx.api.searchUsers({
         ...callBase(ctx),
         query: args.query,
         issueKey: args.issue,

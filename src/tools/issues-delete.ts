@@ -48,18 +48,8 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { deleteSprint, getSprint } from '../api/agile.js';
 import type { AgileSprint, DeleteSprintResult } from '../api/agile.js';
-import { submitBulkDelete, submitBulkEdit } from '../api/bulk.js';
 import type { BulkEditAction, BulkSubmitResult } from '../api/bulk.js';
-import {
-  deleteComponent,
-  deleteVersion,
-  getComponent,
-  getComponentRelatedIssueCounts,
-  getVersion,
-  getVersionRelatedIssueCounts,
-} from '../api/collab.js';
 import type {
   ComponentRelatedIssueCounts,
   DeleteComponentResult,
@@ -68,14 +58,6 @@ import type {
   ProjectVersion,
   VersionRelatedIssueCounts,
 } from '../api/collab.js';
-import {
-  deleteComment,
-  deleteIssue,
-  deleteWorklog,
-  getComment,
-  getIssue,
-  getWorklog,
-} from '../api/issues.js';
 import type {
   DeleteCommentResult,
   DeleteIssueResult,
@@ -309,8 +291,11 @@ function excerpt(text: string): { readonly text: string; readonly truncated: boo
 /** `{accountId?, displayName?}` from an already-projected user, or nothing. */
 function userBefore(user: IssueComment['author']): UserBefore | undefined {
   if (user === undefined) return undefined;
+  // Deletes are Cloud-only (the Data Center adapter does not serve them, D106),
+  // but the author type spans both dialects, so the Cloud half is named.
+  const accountId = 'accountId' in user ? user.accountId : '';
   const projected: UserBefore = {
-    ...(user.accountId === '' ? {} : { accountId: user.accountId }),
+    ...(accountId === '' ? {} : { accountId }),
     ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
   };
   // Jira can send an author object both of whose halves we then drop — a user
@@ -424,7 +409,9 @@ function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
  * display name, so whichever half is here is a non-empty string.
  */
 function leadBefore(lead: ProjectComponent['lead']): string | undefined {
-  return lead === undefined ? undefined : (lead.displayName ?? lead.accountId);
+  if (lead === undefined) return undefined;
+  // Deletes are Cloud-only (D106); the lead type spans both dialects.
+  return lead.displayName ?? ('accountId' in lead ? lead.accountId : undefined);
 }
 
 function componentBefore(
@@ -700,7 +687,7 @@ export const deleteIssueTool = defineTool({
       const deleteSubtasks = args.deleteSubtasks === true;
       // A GET: it travels to Jira in plan mode too, so the plan describes the
       // issue as it is NOW rather than as the caller remembers it.
-      const detail = await getIssue({
+      const detail = await ctx.api.getIssue({
         ...base,
         issue: args.issue,
         fields: ISSUE_BEFORE_FIELDS,
@@ -708,7 +695,11 @@ export const deleteIssueTool = defineTool({
       const before = issueBefore(detail, deleteSubtasks);
       noteBeforeState(ctx.jira, before);
 
-      const deleted = await deleteIssue({ ...base, issue: args.issue, deleteSubtasks });
+      const deleted = await ctx.api.deleteIssue({
+        ...base,
+        issue: args.issue,
+        deleteSubtasks,
+      });
       return ok({ ...deleted, before }, { untrusted: true });
     }),
 });
@@ -738,7 +729,7 @@ export const deleteCommentTool = defineTool({
   handler: async (args, ctx): Promise<ToolResult<DeletedComment>> =>
     guarded(async () => {
       const base = callBase(ctx);
-      const comment = await getComment({
+      const comment = await ctx.api.getComment({
         ...base,
         issue: args.issue,
         commentId: args.commentId,
@@ -746,7 +737,7 @@ export const deleteCommentTool = defineTool({
       const before = commentBefore(args.issue, comment);
       noteBeforeState(ctx.jira, before);
 
-      const deleted = await deleteComment({
+      const deleted = await ctx.api.deleteComment({
         ...base,
         issue: args.issue,
         commentId: args.commentId,
@@ -779,7 +770,7 @@ export const deleteWorklogTool = defineTool({
   handler: async (args, ctx): Promise<ToolResult<DeletedWorklog>> =>
     guarded(async () => {
       const base = callBase(ctx);
-      const worklog = await getWorklog({
+      const worklog = await ctx.api.getWorklog({
         ...base,
         issue: args.issue,
         worklogId: args.worklogId,
@@ -787,7 +778,7 @@ export const deleteWorklogTool = defineTool({
       const before = worklogBefore(args.issue, worklog);
       noteBeforeState(ctx.jira, before);
 
-      const deleted = await deleteWorklog({
+      const deleted = await ctx.api.deleteWorklog({
         ...base,
         issue: args.issue,
         worklogId: args.worklogId,
@@ -831,13 +822,16 @@ export const deleteComponentTool = defineTool({
       // component itself, and the count of issues that reference it — the
       // blast radius is the number the approver reads (CC-121).
       const [component, counts] = await Promise.all([
-        getComponent({ ...base, componentId: args.componentId }),
-        getComponentRelatedIssueCounts({ ...base, componentId: args.componentId }),
+        ctx.api.getComponent({ ...base, componentId: args.componentId }),
+        ctx.api.getComponentRelatedIssueCounts({
+          ...base,
+          componentId: args.componentId,
+        }),
       ]);
       const before = componentBefore(component, counts, args.moveIssuesTo);
       noteBeforeState(ctx.jira, before);
 
-      const deleted = await deleteComponent({
+      const deleted = await ctx.api.deleteComponent({
         ...base,
         componentId: args.componentId,
         moveIssuesTo: args.moveIssuesTo,
@@ -890,8 +884,8 @@ export const deleteVersionTool = defineTool({
       // itself, and all three reference counts — fixVersion, affectedVersion
       // and custom pickers (CC-123).
       const [version, counts] = await Promise.all([
-        getVersion({ ...base, versionId: args.versionId }),
-        getVersionRelatedIssueCounts({ ...base, versionId: args.versionId }),
+        ctx.api.getVersion({ ...base, versionId: args.versionId }),
+        ctx.api.getVersionRelatedIssueCounts({ ...base, versionId: args.versionId }),
       ]);
       const before = versionBefore(
         version,
@@ -901,7 +895,7 @@ export const deleteVersionTool = defineTool({
       );
       noteBeforeState(ctx.jira, before);
 
-      const deleted = await deleteVersion({
+      const deleted = await ctx.api.deleteVersion({
         ...base,
         versionId: args.versionId,
         moveFixIssuesTo: args.moveFixIssuesTo,
@@ -941,11 +935,11 @@ export const deleteSprintTool = defineTool({
       // the delete in any state, and refusing `active` here would only push
       // callers to close-then-delete without making the loss smaller. The
       // snapshot's `state` field is the audit record instead.
-      const sprint = await getSprint({ ...base, sprintId: args.sprintId });
+      const sprint = await ctx.api.getSprint({ ...base, sprintId: args.sprintId });
       const before = sprintBefore(sprint);
       noteBeforeState(ctx.jira, before);
 
-      const deleted = await deleteSprint({ ...base, sprintId: args.sprintId });
+      const deleted = await ctx.api.deleteSprint({ ...base, sprintId: args.sprintId });
       return ok({ ...deleted, before }, { untrusted: true });
     }),
 });
@@ -995,7 +989,7 @@ export const bulkDeleteIssuesTool = defineTool({
       const before = bulkDeleteBefore(args.issues);
       noteBeforeState(ctx.jira, before);
 
-      const submitted = await submitBulkDelete({
+      const submitted = await ctx.api.submitBulkDelete({
         ...callBase(ctx),
         issues: args.issues,
         ...(args.notifyUsers === undefined
@@ -1152,7 +1146,7 @@ export const bulkEditIssuesTool = defineTool({
       const before = bulkEditBefore(args);
       noteBeforeState(ctx.jira, before);
 
-      const submitted = await submitBulkEdit({
+      const submitted = await ctx.api.submitBulkEdit({
         ...callBase(ctx),
         issues: args.issues,
         ...(args.labels === undefined || args.labelsAction === undefined
