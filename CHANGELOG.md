@@ -14,6 +14,18 @@ env var names — not internal refactors.
 
 ### Added
 
+- **Jira Data Center settings, recognised but not served yet.**
+  `JIRA_DEPLOYMENT` (`cloud`, the default, or `datacenter`) and
+  `JIRA_AUTH_MODE=pat` with `JIRA_PAT` (a Data Center personal access token)
+  are parsed and validated, and `jira-mcp-ai doctor` checks such a
+  configuration — including a context path such as
+  `https://jira.example.com/jira`, which is kept under `datacenter`. Selecting
+  `datacenter` is still a startup error: the Data Center adapter is being
+  built in stages, and until it can serve requests the server refuses to
+  start rather than send Jira Cloud requests to a Data Center host. **Nothing
+  changes for a Cloud setup** unless you set `JIRA_PAT` there, which is now
+  reported as ignored.
+
 - **OAuth 2.0 (3LO) as an alternative to the API token.** Set
   `JIRA_AUTH_MODE=oauth`, register a 3LO app in the Atlassian developer console,
   and run `jira-mcp-ai login`; the server then authenticates with a rotating

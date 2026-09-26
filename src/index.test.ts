@@ -76,6 +76,7 @@ const BASE_SETTINGS: Settings = {
   email: 'default@example.com',
   apiToken: 'default-token',
   authMode: 'basic',
+  deployment: 'cloud',
   oauth: BASE_OAUTH,
   allowedHosts: [],
   profiles: {},

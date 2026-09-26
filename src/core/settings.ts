@@ -37,6 +37,7 @@ import {
 } from './redact.js';
 import {
   AUTH_MODES,
+  DEPLOYMENTS,
   JiraError,
   LOG_LEVELS,
   TRANSPORT_KINDS,
@@ -44,6 +45,7 @@ import {
   type AuthMode,
   type Clock,
   type HostRef,
+  type JiraDeployment,
   type LogLevel,
   type ProfileConfig,
   type Settings,
@@ -87,6 +89,8 @@ export const DEFAULT_LOCK_PROFILE = true;
 export const TOKEN_EXPIRY_WARNING_DAYS = 30;
 /** `JIRA_AUTH_MODE` default: v1's Basic auth, unchanged (D91). */
 export const DEFAULT_AUTH_MODE: AuthMode = 'basic';
+/** `JIRA_DEPLOYMENT` default: Jira Cloud, which is all v1 serves (D2, D106). */
+export const DEFAULT_DEPLOYMENT: JiraDeployment = 'cloud';
 /**
  * `JIRA_OAUTH_SCOPES` default — what `login` asks consent for.
  *
@@ -413,6 +417,12 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   // the MODE decides is which variables are *required* (below, with the
   // credentials) and whether the OAuth hosts join the egress allowlist (D97).
   const authMode = enumOf<AuthMode>('JIRA_AUTH_MODE', AUTH_MODES, DEFAULT_AUTH_MODE);
+  const deployment = enumOf<JiraDeployment>(
+    'JIRA_DEPLOYMENT',
+    DEPLOYMENTS,
+    DEFAULT_DEPLOYMENT,
+  );
+  const pat = str('JIRA_PAT');
   const oauthClientId = str('JIRA_OAUTH_CLIENT_ID');
   const oauthClientSecret = str('JIRA_OAUTH_CLIENT_SECRET');
   const oauthScopes = csv('JIRA_OAUTH_SCOPES');
@@ -550,6 +560,18 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
         field: 'JIRA_API_TOKEN',
       });
     }
+  } else if (authMode === 'pat') {
+    // A Data Center personal access token is the whole credential: no email,
+    // no app. Its absence is the one thing to report in this mode.
+    if (pat === undefined) {
+      add({
+        severity: 'error',
+        code: 'missing_credential',
+        message:
+          'JIRA_AUTH_MODE=pat needs JIRA_PAT: the personal access token created in Jira Data Center under Profile → Personal Access Tokens. It is sent as a bearer token to the site host.',
+        field: 'JIRA_PAT',
+      });
+    }
   } else {
     // In oauth mode the email/token pair signs nothing, so their absence is not
     // a problem to report — sending an operator to fix `JIRA_API_TOKEN` when the
@@ -578,8 +600,51 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     }
   }
 
+  // --- Deployment (D106) ---------------------------------------------------
+  // The two products do not share a credential: a PAT exists only on Data
+  // Center, and an API token with an email, or a 3LO grant, only on Cloud. A
+  // mismatch is an error rather than a guess, because the guess would send one
+  // product's secret to the other's host.
+  if (authMode === 'pat' && deployment !== 'datacenter') {
+    add({
+      severity: 'error',
+      code: 'auth_mode_deployment',
+      message:
+        'JIRA_AUTH_MODE=pat is a Jira Data Center credential, and JIRA_DEPLOYMENT is cloud. Jira Cloud has no personal access tokens: use JIRA_AUTH_MODE=basic (email + API token) or oauth, or set JIRA_DEPLOYMENT=datacenter.',
+      field: 'JIRA_AUTH_MODE',
+    });
+  }
+  if (deployment === 'datacenter' && authMode !== 'pat') {
+    add({
+      severity: 'error',
+      code: 'auth_mode_deployment',
+      message: `JIRA_DEPLOYMENT=datacenter authenticates with a personal access token, and JIRA_AUTH_MODE is ${authMode}. Set JIRA_AUTH_MODE=pat and JIRA_PAT.`,
+      field: 'JIRA_AUTH_MODE',
+    });
+  }
+  if (pat !== undefined && authMode !== 'pat') {
+    add({
+      severity: 'warning',
+      code: 'pat_ignored',
+      message: `JIRA_PAT is set, but JIRA_AUTH_MODE is ${authMode}, which does not use it; it is ignored. Unset it to silence this.`,
+      field: 'JIRA_PAT',
+    });
+  }
+  // Fail closed until the adapter exists. Everything above still runs, so an
+  // operator preparing a Data Center configuration sees every other problem in
+  // the same report — this is the one that remains once they are fixed.
+  if (deployment === 'datacenter') {
+    add({
+      severity: 'error',
+      code: 'deployment_unavailable',
+      message:
+        'JIRA_DEPLOYMENT=datacenter is recognised but not served yet: the Data Center adapter is being built in stages (IMPLEMENTATION-PLAN.md Phase 13, D106), and until its read stage lands the server refuses to start rather than send Jira Cloud requests to a Data Center host. Unset JIRA_DEPLOYMENT to use Jira Cloud.',
+      field: 'JIRA_DEPLOYMENT',
+    });
+  }
+
   // --- Host ----------------------------------------------------------------
-  const resolution = resolveHost(effectiveSite, allowedHosts, siteVariable);
+  const resolution = resolveHost(effectiveSite, allowedHosts, siteVariable, deployment);
   for (const problem of resolution.problems) add(fromHostProblem(problem));
 
   // --- Token expiry horizon ------------------------------------------------
@@ -587,7 +652,15 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   // such token, so the variable is reported as inert rather than parsed: an
   // operator who left it behind should hear "this does nothing now", not an
   // `invalid_date` about a value that no longer has a meaning to be wrong about.
-  if (tokenExpires !== undefined && authMode === 'oauth') {
+  if (tokenExpires !== undefined && authMode === 'pat') {
+    add({
+      severity: 'warning',
+      code: 'token_expires_ignored',
+      message:
+        'JIRA_TOKEN_EXPIRES describes the API token of basic auth; JIRA_AUTH_MODE=pat does not track a personal access token expiry yet, so it is ignored. Unset the variable to silence this.',
+      field: 'JIRA_TOKEN_EXPIRES',
+    });
+  } else if (tokenExpires !== undefined && authMode === 'oauth') {
     add({
       severity: 'warning',
       code: 'token_expires_ignored',
@@ -708,6 +781,8 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     apiToken,
     tokenExpires,
     authMode,
+    deployment,
+    ...(pat === undefined ? {} : { pat }),
     oauth: {
       ...(oauthClientId === undefined ? {} : { clientId: oauthClientId }),
       ...(oauthClientSecret === undefined ? {} : { clientSecret: oauthClientSecret }),
@@ -899,6 +974,7 @@ function secretVariables(settings: Settings): Array<{ field: string; value: stri
   }
   push('JIRA_HTTP_TOKEN', settings.httpToken);
   push('JIRA_OAUTH_CLIENT_SECRET', settings.oauth.clientSecret);
+  push('JIRA_PAT', settings.pat);
   return out;
 }
 

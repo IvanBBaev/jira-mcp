@@ -28,9 +28,9 @@
 // enables OAuth, and it would move the decision out of the configuration an
 // operator can read into a constant nobody looks at.
 
-import { isBlockedHost } from './http-util.js';
+import { assertApiPath, isBlockedHost } from './http-util.js';
 import { JiraError } from './types.js';
-import type { HostRef } from './types.js';
+import type { HostRef, JiraDeployment } from './types.js';
 
 /** The one host suffix that needs no allowlist entry (JIRA-API.md §Hosts). */
 export const CANONICAL_SITE_SUFFIX = '.atlassian.net';
@@ -69,6 +69,8 @@ export type HostProblemCode =
   | 'site_scheme'
   | 'site_port'
   | 'site_path_stripped'
+  | 'site_context_path'
+  | 'host_deployment_mismatch'
   | 'host_not_allowed'
   | 'host_blocked'
   | 'allowlist_invalid_pattern';
@@ -237,7 +239,9 @@ export function resolveHost(
   rawSite: string | undefined,
   allowedHosts: readonly string[] = [],
   siteVariable = 'JIRA_SITE',
+  deployment: JiraDeployment = 'cloud',
 ): HostResolution {
+  const datacenter = deployment === 'datacenter';
   const problems: HostProblem[] = [];
   const allowlist = compileAllowlist(allowedHosts);
   problems.push(...allowlist.problems);
@@ -297,19 +301,32 @@ export function resolveHost(
     return { problems };
   }
 
-  if (
-    (url.pathname !== '' && url.pathname !== '/') ||
-    url.search !== '' ||
-    url.hash !== ''
-  ) {
+  // Cloud serves Jira at the root of its host, so a path there is noise and is
+  // stripped (CC-27). A Data Center instance is commonly deployed under a
+  // context path (`https://jira.corp.example/jira`), and dropping it would miss
+  // it on every request (D104's one missing cheap thing) — so under
+  // `datacenter` the path is KEPT as the host's path prefix. A query or a
+  // fragment is noise on either product.
+  const hasPath = url.pathname !== '' && url.pathname !== '/';
+  const contextPath = datacenter && hasPath ? url.pathname.replace(/\/+$/, '') : '';
+  if ((hasPath && !datacenter) || url.search !== '' || url.hash !== '') {
     problems.push(
       problem(
         'warning',
         'site_path_stripped',
-        `${siteVariable} ${JSON.stringify(site)} carries a path/query; only the origin is used. Requests are built from the API root, so the extra part is ignored.`,
+        datacenter
+          ? `${siteVariable} ${JSON.stringify(site)} carries a query or fragment; it is ignored. The context path, if any, is kept.`
+          : `${siteVariable} ${JSON.stringify(site)} carries a path/query; only the origin is used. Requests are built from the API root, so the extra part is ignored.`,
         siteVariable,
       ),
     );
+  }
+  if (contextPath !== '') {
+    const refusal = contextPathProblem(contextPath, site, siteVariable);
+    if (refusal !== undefined) {
+      problems.push(refusal);
+      return { problems };
+    }
   }
 
   let hostname = url.hostname.toLowerCase();
@@ -330,13 +347,27 @@ export function resolveHost(
   // the operator allowlisted that very name (an internal single-label host) or
   // gave it a port: completing either would send the credentials to somebody
   // else's Cloud site (CC-179).
+  // Never under `datacenter`: completing a Data Center host name to an
+  // Atlassian Cloud one would send its credentials to somebody else's tenant.
   const allowlistedAsGiven = allowlist.matchers.some((m) => m.matches(hostname));
-  if (!hostname.includes('.') && url.port === '' && !allowlistedAsGiven) {
+  if (!datacenter && !hostname.includes('.') && url.port === '' && !allowlistedAsGiven) {
     hostname = `${hostname}${CANONICAL_SITE_SUFFIX}`;
   }
 
   const canonical = isCanonicalCloudHost(hostname);
   const allowlisted = allowlist.matchers.some((m) => m.matches(hostname));
+
+  if (datacenter && canonical) {
+    problems.push(
+      problem(
+        'error',
+        'host_deployment_mismatch',
+        `JIRA_DEPLOYMENT=datacenter, but ${siteVariable} host ${JSON.stringify(hostname)} is an Atlassian Cloud site. Point ${siteVariable} at your Data Center base URL, or unset JIRA_DEPLOYMENT for Cloud.`,
+        'JIRA_DEPLOYMENT',
+      ),
+    );
+    return { hostname, problems };
+  }
 
   if (!canonical && !allowlisted) {
     problems.push(
@@ -383,10 +414,46 @@ export function resolveHost(
 
   const origin = `https://${hostname}${url.port === '' ? '' : `:${url.port}`}`;
   return {
-    host: { origin, pathPrefix: V1_PATH_PREFIX },
+    host: { origin, pathPrefix: contextPath === '' ? V1_PATH_PREFIX : contextPath },
     hostname,
     problems,
   };
+}
+
+/**
+ * Why a Data Center context path cannot be used, or `undefined` when it can.
+ *
+ * The request builder re-validates `HostRef.pathPrefix` with `assertApiPath`
+ * on every call; running the same predicate here turns what would be a failure
+ * on the first tool call into one startup finding (the CC-101 rule: one
+ * spelling of the check). A path that already contains the REST root is the
+ * other mistake worth naming — `https://jira.corp/rest/api/2` would otherwise
+ * build `/rest/api/2/rest/api/2/...`.
+ */
+function contextPathProblem(
+  contextPath: string,
+  site: string,
+  siteVariable: string,
+): HostProblem | undefined {
+  if (/(^|\/)rest(\/|$)/i.test(contextPath)) {
+    return problem(
+      'error',
+      'site_context_path',
+      `${siteVariable} ${JSON.stringify(site)} includes the REST API path. Give the base URL of the Jira instance — what you open in a browser, e.g. https://jira.example.com/jira — and the API root is added per request.`,
+      siteVariable,
+    );
+  }
+  try {
+    assertApiPath(contextPath);
+  } catch {
+    return problem(
+      'error',
+      'site_context_path',
+      `${siteVariable} ${JSON.stringify(site)} has a context path that cannot be used as a request prefix (a dot segment, an escaped dot, a backslash, whitespace or a control character). Use the base URL exactly as the browser shows it.`,
+      siteVariable,
+    );
+  }
+  return undefined;
 }
 
 /* ------------------------------------------------------------------------- *

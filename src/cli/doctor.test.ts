@@ -49,6 +49,7 @@ import {
   type DoctorFsHost,
   type DoctorOptions,
   type DoctorReport,
+  type ProbeReport,
 } from './doctor.js';
 
 const TOKEN = 'super-secret-token-value';
@@ -2013,4 +2014,86 @@ test('CC-80: a real env file on disk is loaded, reported once, and its mode judg
     Object.assign(process.env, saved);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Data Center (D106, stage 13.2)
+// ---------------------------------------------------------------------------
+
+const DC_PAT = 'dc-personal-access-token-value';
+
+function dcEnv(extra: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
+  return {
+    JIRA_SITE: 'https://jira.corp.example/jira',
+    JIRA_ALLOWED_HOSTS: 'jira.corp.example',
+    JIRA_DEPLOYMENT: 'datacenter',
+    JIRA_AUTH_MODE: 'pat',
+    JIRA_PAT: DC_PAT,
+    ...extra,
+  };
+}
+
+function probeOf(report: DoctorReport, id: string): ProbeReport {
+  const probe = report.probes.find((p) => p.id === id);
+  assert.ok(probe !== undefined, id);
+  return probe;
+}
+
+test('CC-261: under datacenter, doctor reports the configuration and fires no request', async () => {
+  // A leftover Basic-auth pair must not become credentials sent to the DC host.
+  const r = rig({
+    env: dcEnv({ JIRA_EMAIL: 'ops@example.com', JIRA_API_TOKEN: TOKEN }),
+  });
+  let built = 0;
+  const code = await run({
+    ...r.options,
+    argv: ['--json'],
+    createRequest: () => {
+      built += 1;
+      return r.jira.fn;
+    },
+  });
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.equal(built, 0, 'no request function may be built for a DC host yet');
+  assert.equal(r.jira.calls.length, 0);
+  const report = JSON.parse(r.stdout()) as DoctorReport;
+  assert.equal(report.host, 'https://jira.corp.example');
+  assert.match(
+    probeOf(report, 'host').findings[0]?.text ?? '',
+    /^https:\/\/jira\.corp\.example\/jira — /,
+  );
+  assert.ok(
+    probeOf(report, 'settings').findings.some((f) =>
+      /JIRA_DEPLOYMENT=datacenter/.test(f.text),
+    ),
+  );
+  for (const id of ['identity', 'deployment', 'search', 'agile']) {
+    const probe = probeOf(report, id);
+    assert.equal(probe.status, 'skip', id);
+    assert.match(probe.findings[0]?.text ?? '', /datacenter has no adapter yet/, id);
+  }
+  assert.match(
+    probeOf(report, 'token-expiry').findings[0]?.text ?? '',
+    /auth mode is pat/,
+  );
+  assert.match(probeOf(report, 'oauth').findings[0]?.text ?? '', /^auth mode is pat;/);
+  // The PAT and the leftover token were registered with the redactor.
+  assert.doesNotMatch(r.stdout(), new RegExp(DC_PAT));
+});
+
+test('CC-261: an injected request is not fired at a DC host either', async () => {
+  const r = rig({ env: dcEnv() });
+  const code = await run({ ...r.options, argv: ['--json'], jiraRequest: r.jira.fn });
+  assert.equal(code, EXIT_CONFIG);
+  assert.equal(r.jira.calls.length, 0);
+});
+
+test('CC-262: --save is refused under pat — it writes an API token nothing signs with', async () => {
+  const r = rig({ env: dcEnv() });
+  const code = await run({ ...r.options, argv: ['--save'] });
+  assert.equal(code, EXIT_CONFIG);
+  assert.equal(r.written.path, undefined);
+  assert.match(r.stderr(), /JIRA_AUTH_MODE=pat/);
+  assert.match(r.stderr(), /JIRA_PAT/);
 });

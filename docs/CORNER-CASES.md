@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-253`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-262`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -95,7 +95,8 @@ with a note, and gaps stay gaps.
 ## Config
 
 - **CC-27** `JIRA_SITE` given as full URL with path → path stripped, warning
-  in report.
+  in report. On Cloud; under `JIRA_DEPLOYMENT=datacenter` the path is the
+  context path and is kept (CC-257).
 - **CC-28** Site host not `.atlassian.net` and not allowlisted → startup error
   naming `JIRA_ALLOWED_HOSTS`.
 - **CC-29** `JIRA_TOOL_PACKAGES=reader` + `JIRA_PACKAGES_DENY=core` → core
@@ -1308,3 +1309,46 @@ with a note, and gaps stay gaps.
   is complete unless a `truncated` hint is present. They said "always
   complete", which is false once the character budget trims the array, and a
   model told so would not look for the hint.
+
+## Appended with the Data Center settings surface (2026-09-26, D106 stage 13.2)
+
+- **CC-254** `JIRA_DEPLOYMENT=datacenter` is a startup error
+  (`deployment_unavailable`, field `JIRA_DEPLOYMENT`) until the Data Center
+  adapter's read stage exists — even when every other finding is clean. It is
+  reported alongside every other finding, and the settings, the PAT and the
+  resolved host are still parsed, so doctor can check a prepared configuration.
+- **CC-255** The deployment and the auth mode must agree: `pat` with `cloud`,
+  and `datacenter` with `basic` or `oauth`, are startup errors
+  (`auth_mode_deployment`, field `JIRA_AUTH_MODE`) — the products share no
+  credential, and a guess would send one product's secret to the other's host.
+  `pat` without `JIRA_PAT` is `missing_credential` naming `JIRA_PAT`, not the
+  Basic-auth variables.
+- **CC-256** A `JIRA_PAT` the active mode does not use is a `pat_ignored`
+  warning and is still registered with the redactor. Under `pat`,
+  `JIRA_TOKEN_EXPIRES` is `token_expires_ignored`, not parsed.
+- **CC-257** Under `datacenter` the site's context path is kept as
+  `HostRef.pathPrefix` (`https://jira.corp.example/jira/` → `/jira`, trailing
+  slash dropped) and composes with the root: `…/jira/rest/api/2/issue/ABC-1`. A
+  query or fragment is still stripped with `site_path_stripped`. On Cloud the
+  same URL is still stripped (CC-27 unchanged).
+- **CC-258** Under `datacenter` an `.atlassian.net` host is refused
+  (`host_deployment_mismatch`, field `JIRA_DEPLOYMENT`), and a dot-less name is
+  never completed to `.atlassian.net` — it must be allowlisted as given, or it
+  is `host_not_allowed`.
+- **CC-259** A context path that contains a `rest` segment
+  (`/rest/api/2`, `/jira/REST/api/latest`) is refused as `site_context_path`,
+  because it would double the API root; `/restricted` is a real context path. A
+  path the request builder's `assertApiPath` would reject (an escaped dot that
+  survives URL parsing) is refused at startup with the same code.
+- **CC-260** The PAT resolver sends `Authorization: Bearer <PAT>` to the site
+  host and its context path. A requested profile — named per call or through
+  `JIRA_ACTIVE_PROFILE` — is a `config` error rather than being answered with
+  the default PAT; a missing PAT or host names `JIRA_PAT`.
+- **CC-261** Under `datacenter` doctor builds no request function and fires no
+  request, not even through an injected one: its network probes speak Cloud
+  routes and are skipped by name. A leftover `JIRA_EMAIL`/`JIRA_API_TOKEN` pair
+  under `pat` does not become Basic credentials. The host line shows the
+  context path.
+- **CC-262** `doctor --save` is refused under `pat`: it writes an API token,
+  which this mode never signs with.
+

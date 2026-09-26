@@ -13,6 +13,7 @@ import { describe, it } from 'node:test';
 
 import {
   buildCredentialResolver,
+  buildPatResolver,
   configError,
   effectiveCredentials,
   profileOf,
@@ -27,6 +28,7 @@ const BASE_SETTINGS: Settings = {
   email: 'default@example.com',
   apiToken: 'default-token',
   authMode: 'basic',
+  deployment: 'cloud',
   oauth: {
     scopes: [],
     tokenFile: '/home/tester/.config/jira-mcp-ai/oauth.json',
@@ -270,5 +272,44 @@ describe('configError', () => {
         remediation: 'do this instead',
       },
     );
+  });
+});
+
+describe('buildPatResolver (D106)', () => {
+  const DC_HOST: HostRef = { origin: 'https://jira.corp.example', pathPrefix: '/jira' };
+
+  it('CC-260: signs with the PAT as a bearer against the site host and its context path', () => {
+    const resolve = buildPatResolver({ settings: { pat: 'pat-value' }, host: DC_HOST });
+    assert.deepEqual(resolve(), {
+      kind: 'bearer',
+      host: DC_HOST,
+      accessToken: 'pat-value',
+    });
+  });
+
+  it('CC-260: refuses a profile instead of answering it with the default PAT', () => {
+    const named = buildPatResolver({ settings: { pat: 'pat-value' }, host: DC_HOST });
+    assert.throws(() => named('work'), /Profile "work" was requested/);
+    const active = buildPatResolver({
+      settings: { pat: 'pat-value', activeProfile: 'work' },
+      host: DC_HOST,
+    });
+    assert.throws(
+      () => active(),
+      (error: unknown) => {
+        assert.equal((error as { kind?: string }).kind, 'config');
+        return true;
+      },
+    );
+  });
+
+  it('CC-260: a missing PAT or host is a config error naming JIRA_PAT', () => {
+    for (const deps of [
+      { settings: {}, host: DC_HOST },
+      { settings: { pat: '' }, host: DC_HOST },
+      { settings: { pat: 'pat-value' } },
+    ]) {
+      assert.throws(() => buildPatResolver(deps)(), /JIRA_PAT/);
+    }
   });
 });

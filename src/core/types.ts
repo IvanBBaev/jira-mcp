@@ -256,7 +256,7 @@ export const TRANSPORT_KINDS = ['stdio', 'http'] as const;
 export type TransportKind = (typeof TRANSPORT_KINDS)[number];
 
 /** Value space of `JIRA_AUTH_MODE` (default `basic`). */
-export const AUTH_MODES = ['basic', 'oauth'] as const;
+export const AUTH_MODES = ['basic', 'oauth', 'pat'] as const;
 
 /**
  * Where a request's credentials come from (AUTH.md, D91).
@@ -264,13 +264,33 @@ export const AUTH_MODES = ['basic', 'oauth'] as const;
  * `basic` is v1's `Authorization: Basic base64(email:apiToken)` against the site
  * host. `oauth` is the 3LO bearer token against the
  * `api.atlassian.com/ex/jira/{cloudId}` gateway — a different origin AND a path
- * prefix, which is why {@link HostRef} has always carried both.
+ * prefix, which is why {@link HostRef} has always carried both. `pat` is a Data
+ * Center personal access token sent as a bearer to the site host (D106); it is
+ * valid only with `JIRA_DEPLOYMENT=datacenter`, and `datacenter` accepts no
+ * other mode.
  *
  * Produced by: `core/settings.ts`.
  * Consumed by: `src/index.ts` and `cli/doctor.ts` when they choose which
  * credential resolver to build.
  */
 export type AuthMode = (typeof AUTH_MODES)[number];
+
+/** Value space of `JIRA_DEPLOYMENT` (default `cloud`). */
+export const DEPLOYMENTS = ['cloud', 'datacenter'] as const;
+
+/**
+ * Which Jira product the server talks to (D106, IMPLEMENTATION-PLAN.md Phase
+ * 13). `cloud` is everything v1 shipped. `datacenter` is recognised so that the
+ * settings, host and credential rules can be built and tested, but until the
+ * Data Center adapter exists (stage 13.3) selecting it is a startup error —
+ * fail closed, so no Cloud-shaped request ever reaches a Data Center host.
+ *
+ * Produced by: `core/settings.ts`.
+ * Consumed by: `core/host.ts` (context path, Cloud-host refusal),
+ * `src/index.ts` and `cli/doctor.ts` (credential resolver choice), and
+ * `api/port.ts` (which adapter a `JiraApi` is).
+ */
+export type JiraDeployment = (typeof DEPLOYMENTS)[number];
 
 /**
  * The `JIRA_OAUTH_*` block, nested rather than nine more flat `Settings` fields
@@ -328,9 +348,9 @@ export interface ProfileConfig {
 
 /**
  * A Jira host resolved once, never a bare string (ARCHITECTURE.md
- * §Cross-cutting seams). v1 always produces an empty `pathPrefix`; the v2 OAuth
- * gateway (`api.atlassian.com/ex/jira/{cloudId}`) is exactly a different origin
- * plus a prefix, so this shape keeps that door open without touching call sites.
+ * §Cross-cutting seams). A Cloud site host has an empty `pathPrefix`; the OAuth
+ * gateway (`api.atlassian.com/ex/jira/{cloudId}`) is a different origin plus a
+ * prefix, and a Data Center host carries its context path here (CC-257).
  *
  * Produced by: `core/host.ts` (WP-11) from `settings.site` + `allowedHosts`.
  * Consumed by: `core/http.ts` URL assembly (WP-10), `server_start` logging,
@@ -339,7 +359,7 @@ export interface ProfileConfig {
 export interface HostRef {
   /** Scheme + host, no trailing slash — e.g. `https://mycompany.atlassian.net`. */
   readonly origin: string;
-  /** Path segment prefixed before the API root; `''` in v1. */
+  /** Path prefixed before the API root; `''` for a Cloud site host. */
   readonly pathPrefix: string;
 }
 
@@ -361,7 +381,10 @@ export interface HostRef {
  * explicitly.
  */
 export interface Settings {
-  /** `JIRA_SITE` (required). Short name, host, or full URL; path stripped (CC-27). */
+  /**
+   * `JIRA_SITE` (required). Short name, host, or full URL; a path is stripped on
+   * Cloud (CC-27) and kept as the context path under `datacenter` (CC-257).
+   */
   readonly site?: string;
   /** `JIRA_EMAIL` (required). Atlassian account email for Basic auth. */
   readonly email?: string;
@@ -376,6 +399,14 @@ export interface Settings {
   readonly authMode: AuthMode;
   /** `JIRA_OAUTH_*`. Meaningful only when `authMode` is `oauth`. */
   readonly oauth: OAuthSettings;
+  /** `JIRA_DEPLOYMENT` (default `cloud`). `datacenter` fails startup until 13.3. */
+  readonly deployment: JiraDeployment;
+  /**
+   * `JIRA_PAT`. A Data Center personal access token, sent as
+   * `Authorization: Bearer`. Secret; registered with the redactor. Required
+   * when `authMode` is `pat`, read in no other mode.
+   */
+  readonly pat?: string;
   /** `JIRA_ALLOWED_HOSTS`. Extra exact hosts or anchored regexes; suffix match banned. */
   readonly allowedHosts: readonly string[];
 
@@ -585,8 +616,11 @@ export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'] as const;
  */
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
-/** The two Jira API roots v1 speaks. */
-export const JIRA_API_ROOTS = ['v3', 'agile'] as const;
+/**
+ * The Jira API roots. v1 speaks `v3` and `agile`; `v2` exists for the Data
+ * Center adapter (D106) and no Cloud api function uses it.
+ */
+export const JIRA_API_ROOTS = ['v3', 'agile', 'v2'] as const;
 
 /**
  * Which Jira API a request targets: `v3` is the platform REST API (ADF bodies,
@@ -601,9 +635,10 @@ export const JIRA_API_ROOTS = ['v3', 'agile'] as const;
 export type JiraApiRoot = (typeof JIRA_API_ROOTS)[number];
 
 /**
- * Path prefix per root, appended after `HostRef.pathPrefix`. v3 only — the
- * legacy `/rest/api/2` root is never used, and `/rest/api/3/search` (without
- * `/jql`) was removed server-side on 2025-08-01.
+ * Path prefix per root, appended after `HostRef.pathPrefix`. On Cloud only `v3`
+ * and `agile` are used — `/rest/api/3/search` (without `/jql`) was removed
+ * server-side on 2025-08-01. `v2` is Data Center's platform root (D106): Data
+ * Center has no `/rest/api/3`, and its v2 speaks wiki markup, not ADF.
  *
  * Produced by: this module (frozen data).
  * Consumed by: `core/http.ts` (WP-10) and the fake request client.
@@ -611,6 +646,7 @@ export type JiraApiRoot = (typeof JIRA_API_ROOTS)[number];
 export const JIRA_ROOT_PATHS: Readonly<Record<JiraApiRoot, string>> = Object.freeze({
   v3: '/rest/api/3',
   agile: '/rest/agile/1.0',
+  v2: '/rest/api/2',
 });
 
 /** A single query-string value; arrays are joined by the caller (Jira uses CSV). */

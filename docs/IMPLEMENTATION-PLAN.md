@@ -3,7 +3,7 @@
 > Status: normative and implemented — this document and the code ship together;
 > drift is a bug. Phases 0–13 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished. Phases 0–12 are closed; Phase 13 is open (stage 13.1 done).
+> finished. Phases 0–12 are closed; Phase 13 is open (stages 13.1–13.2 done).
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -852,12 +852,20 @@ Center mode reachable by a user.
       `tools/core.ts` showed the first draft let an aliased import through,
       and each of the three checks was then seen to fail on a mutated tool) and two registry
       tests (default adapter, injected adapter reaches the handler).
-- [ ] 13.2 — the settings surface, fail-closed. A deployment selector, a PAT
-      credential resolver on the existing `bearer` arm, the context path
-      `resolveHost` currently strips (D104's one cheap missing thing — honoured
-      only for a non-Cloud deployment), and a `v2` root in `JIRA_ROOT_PATHS`.
-      Until 13.3 lands, selecting Data Center is a startup error that names
-      this phase, so nothing reaches a DC host with Cloud routes.
+- [x] 13.2 — the settings surface, fail-closed. `JIRA_DEPLOYMENT`
+      (`cloud` | `datacenter`), `JIRA_AUTH_MODE=pat` with `JIRA_PAT`, and the
+      pairing rule between them (CC-255); `buildPatResolver` on the existing
+      `bearer` arm (CC-260), chosen by an exhaustive switch in `src/index.ts`;
+      the context path `resolveHost` used to strip, now kept under
+      `datacenter` only, with a Cloud host refused and no `.atlassian.net`
+      completion (CC-257…CC-259); a `v2` root in `JIRA_ROOT_PATHS`. Selecting
+      `datacenter` is a startup error (CC-254), and doctor under it builds no
+      request and skips its Cloud-route probes by name (CC-261). A deliberate
+      mutation confirmed two guards are load-bearing: removing the fail-closed
+      error fails three tests, and removing the basic-only condition on
+      doctor's credential source — which let a leftover `JIRA_EMAIL`/
+      `JIRA_API_TOKEN` under `pat` become Basic credentials for the DC host —
+      fails CC-261.
 - [ ] 13.3 — a read-only DC adapter: a per-spec DC verdict for the read
       request specs (JIRA-API.md), v2 routes, the classic search loop, wiki
       markup flattened to text on read, `name`/`key` user identity, and a way
@@ -871,6 +879,12 @@ Exit (whole phase): a Data Center deployment serves the tools its adapter
 declares, refuses the rest by exclusion, and is labelled UNVERIFIED in every
 place the Cloud surface is called proven — until a real DC host runs the live
 gate (D104's condition, carried by D106, not waived).
+
+Exit (13.2): a Data Center configuration can be written and checked by
+doctor, every invalid pairing is a startup error naming the variable to fix,
+Cloud settings, host resolution and requests are unchanged (the pre-existing
+suite passes untouched apart from fixtures gaining the new required field),
+and the server still refuses to start on Data Center.
 
 Exit (13.1): `ctx.api` is the only path from a tool to an api-ring function
 that talks to Jira or speaks a wire body format; the Cloud manifest snapshot is

@@ -1,4 +1,4 @@
-// The `authMode` + `oauth` half of a `Settings` fixture, for the suites that
+// The `authMode` + `oauth` + `deployment` part of a `Settings` fixture, for the suites that
 // build a settings literal by hand and do not exercise OAuth at all.
 //
 // It exists because `Settings.authMode` and `Settings.oauth` are REQUIRED:
@@ -46,7 +46,9 @@ export const FAKE_OAUTH_SETTINGS: OAuthSettings = Object.freeze({
 });
 
 /** Spread into a `Settings` literal that does not care how it authenticates. */
-export const FAKE_AUTH_SETTINGS: Pick<Settings, 'authMode' | 'oauth'> = Object.freeze({
-  authMode: DEFAULT_AUTH_MODE,
-  oauth: FAKE_OAUTH_SETTINGS,
-});
+export const FAKE_AUTH_SETTINGS: Pick<Settings, 'authMode' | 'oauth' | 'deployment'> =
+  Object.freeze({
+    authMode: DEFAULT_AUTH_MODE,
+    oauth: FAKE_OAUTH_SETTINGS,
+    deployment: 'cloud',
+  });
