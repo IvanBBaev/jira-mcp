@@ -34,10 +34,12 @@ TypeScript. It follows the house template established by its sibling repos:
 - Jira Data Center / Server support (architecture keeps the door open via the host
   allowlist, and OAuth incidentally widened it further — the credential union has
   a `bearer` arm and `HostRef` carries a path prefix). Parked by D104 and
-  **un-parked in stages by D106** (IMPLEMENTATION-PLAN.md Phase 13): no Data
-  Center code is reachable yet. The domain-level seam D104 found missing now
-  exists — `api/port.ts` (§Layering) — so a route *shape* difference has a place
-  to plug in.
+  **un-parked in stages by D106** (IMPLEMENTATION-PLAN.md Phase 13). The
+  domain-level seam D104 found missing now exists — `api/port.ts` (§Layering) —
+  and a second adapter plugs into it: `api/datacenter.ts`, a read-only,
+  unverified preview reachable only behind `JIRA_DATACENTER_PREVIEW=true`
+  (D107). An adapter declares the tools it serves (`JiraApi.serves`), and the
+  registry excludes the rest.
 - Confluence, JSM operations, Bitbucket, Compass.
 - Full markdown ↔ ADF fidelity. A **subset** ships (headings, lists, code fences,
   inline code, bold/italic, links, mentions — D38); anything outside it degrades

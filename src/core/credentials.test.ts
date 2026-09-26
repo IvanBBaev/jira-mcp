@@ -29,6 +29,7 @@ const BASE_SETTINGS: Settings = {
   apiToken: 'default-token',
   authMode: 'basic',
   deployment: 'cloud',
+  datacenterPreview: false,
   oauth: {
     scopes: [],
     tokenFile: '/home/tester/.config/jira-mcp-ai/oauth.json',

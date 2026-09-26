@@ -423,6 +423,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     DEFAULT_DEPLOYMENT,
   );
   const pat = str('JIRA_PAT');
+  const datacenterPreview = bool('JIRA_DATACENTER_PREVIEW', false);
   const oauthClientId = str('JIRA_OAUTH_CLIENT_ID');
   const oauthClientSecret = str('JIRA_OAUTH_CLIENT_SECRET');
   const oauthScopes = csv('JIRA_OAUTH_SCOPES');
@@ -630,16 +631,34 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
       field: 'JIRA_PAT',
     });
   }
-  // Fail closed until the adapter exists. Everything above still runs, so an
-  // operator preparing a Data Center configuration sees every other problem in
-  // the same report — this is the one that remains once they are fixed.
-  if (deployment === 'datacenter') {
+  // Fail closed: the Data Center adapter is UNVERIFIED (D106, D104's
+  // condition), so it runs only on the operator's explicit acknowledgement.
+  // Everything above still runs, so an operator preparing a Data Center
+  // configuration sees every other problem in the same report.
+  if (deployment === 'datacenter' && !datacenterPreview) {
     add({
       severity: 'error',
       code: 'deployment_unavailable',
       message:
-        'JIRA_DEPLOYMENT=datacenter is recognised but not served yet: the Data Center adapter is being built in stages (IMPLEMENTATION-PLAN.md Phase 13, D106), and until its read stage lands the server refuses to start rather than send Jira Cloud requests to a Data Center host. Unset JIRA_DEPLOYMENT to use Jira Cloud.',
+        'JIRA_DEPLOYMENT=datacenter selects a read-only Data Center adapter that has never been run against a Data Center instance (IMPLEMENTATION-PLAN.md Phase 13, D106). It starts only with JIRA_DATACENTER_PREVIEW=true, which says you accept that. Unset JIRA_DEPLOYMENT to use Jira Cloud.',
       field: 'JIRA_DEPLOYMENT',
+    });
+  } else if (deployment === 'datacenter') {
+    add({
+      severity: 'warning',
+      code: 'deployment_unverified',
+      message:
+        "Jira Data Center preview: a read-only adapter built from Atlassian's documentation and never verified against a Data Center instance. jira_capabilities lists the tools it serves; report what breaks.",
+      field: 'JIRA_DATACENTER_PREVIEW',
+    });
+  }
+  if (datacenterPreview && deployment !== 'datacenter') {
+    add({
+      severity: 'warning',
+      code: 'datacenter_preview_ignored',
+      message:
+        'JIRA_DATACENTER_PREVIEW is set, but JIRA_DEPLOYMENT is cloud; it is ignored. Unset it to silence this.',
+      field: 'JIRA_DATACENTER_PREVIEW',
     });
   }
 
@@ -782,6 +801,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     tokenExpires,
     authMode,
     deployment,
+    datacenterPreview,
     ...(pat === undefined ? {} : { pat }),
     oauth: {
       ...(oauthClientId === undefined ? {} : { clientId: oauthClientId }),

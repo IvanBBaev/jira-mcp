@@ -142,7 +142,7 @@ export function expandSelection(
 }
 
 /** Why a manifest tool is not callable in this configuration. */
-export type ExclusionReason = 'package_disabled' | 'readonly';
+export type ExclusionReason = 'package_disabled' | 'readonly' | 'deployment_unsupported';
 
 /** The gated surface, plus enough detail to explain a refusal. */
 export interface PackageSelection {
@@ -192,6 +192,7 @@ function assertManifest(manifest: readonly PackageSpec[]): void {
 export function selectPackages(
   manifest: readonly PackageSpec[],
   settings: Settings,
+  api: JiraApi = CLOUD_API,
 ): PackageSelection {
   assertManifest(manifest);
 
@@ -220,6 +221,13 @@ export function selectPackages(
 
     const stripWrites = readerProfile || readOnly.has(id);
     const tools = pkg.tools.filter((tool) => {
+      // The backend first: a tool the adapter cannot serve is out whatever the
+      // gating says, and naming that reason is what tells the operator that no
+      // package setting will bring it back (D106).
+      if (api.serves !== undefined && !api.serves.has(tool.name)) {
+        excludedTools.set(tool.name, 'deployment_unsupported');
+        return false;
+      }
       const drop = stripWrites && tool.writeTier !== undefined;
       if (drop) excludedTools.set(tool.name, 'readonly');
       return !drop;
@@ -358,8 +366,8 @@ export function createRegistry(
   deps: RegistryDeps,
 ): ToolRegistry {
   const { settings } = deps;
-  const selection = selectPackages(manifest, settings);
   const api = deps.api ?? CLOUD_API;
+  const selection = selectPackages(manifest, settings, api);
   const gate =
     deps.gate ??
     createWriteGate({
@@ -413,6 +421,18 @@ export function createRegistry(
             'Remove the package from JIRA_PACKAGES_READONLY (or widen ' +
             'JIRA_TOOL_PACKAGES beyond the reader profile) and restart the server, ' +
             'or use a read tool.',
+        },
+      );
+    }
+    if (reason === 'deployment_unsupported') {
+      return errorResultOf(
+        'unsupported',
+        `Tool "${name}" is not available on Jira ${settings.deployment === 'datacenter' ? 'Data Center' : 'Cloud'} in this version of the server. Nothing was sent to Jira.`,
+        {
+          retryable: false,
+          remediation:
+            'Call jira_capabilities: it lists the tools this server serves here, and ' +
+            'excludedTools names the rest with their reason.',
         },
       );
     }

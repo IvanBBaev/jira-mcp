@@ -40,8 +40,10 @@ import type {
 } from '../core/types.js';
 import {
   budgetOf,
+  fetchAll,
   searchPages,
   type BudgetGuard,
+  type ClassicPage,
   type PageStopReason,
   type TokenCursor,
   type TokenLoopResult,
@@ -342,6 +344,137 @@ export async function searchIssues(
     ...(recentIds.length === 0
       ? {}
       : { missingRecentIssueIds: recentIds.filter((id) => !returnedIds.has(id)) }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 3b. Search on Jira Data Center (D106)
+// ---------------------------------------------------------------------------
+
+/** Data Center's search route, under the `v2` root. */
+export const DATACENTER_SEARCH_PATH = '/search';
+
+/**
+ * The prefix of a Data Center cursor. Data Center pages by `startAt`, but the
+ * tool contract is an opaque `nextPageToken` handed back verbatim; the offset
+ * is carried inside one. Versioned, so a later format can refuse this one
+ * explicitly instead of misreading it.
+ */
+export const DATACENTER_CURSOR_PREFIX = 'dc1:';
+
+const DATACENTER_CURSOR_RE = /^dc1:(0|[1-9][0-9]{0,8})$/;
+
+function encodeDataCenterCursor(startAt: number): string {
+  return `${DATACENTER_CURSOR_PREFIX}${String(startAt)}`;
+}
+
+function decodeDataCenterCursor(token: string): number {
+  const match = DATACENTER_CURSOR_RE.exec(token);
+  if (match === null) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `nextPageToken ${JSON.stringify(token)} is not a cursor this server issued for a Jira Data Center search.`,
+      remediation:
+        'Pass back data.nextPageToken exactly as the previous jira_search returned it, or omit it to start from the first page.',
+    });
+  }
+  return Number(match[1]);
+}
+
+/**
+ * {@link searchIssues} on Jira Data Center — `POST /rest/api/2/search`.
+ *
+ * Data Center has no `/search/jql`: it pages by `startAt` and reports a
+ * `total`. The classic loop does the paging (so the budget, abort and page-cap
+ * rules are the shared ones), and the offset travels to the caller inside an
+ * opaque `dc1:` cursor so `jira_search` keeps one contract on both products.
+ * There is no expiring cursor on Data Center, so `restarted` is always false.
+ *
+ * `reconcileIssues` is a Cloud feature of `/search/jql` and is refused when
+ * the caller names ids; the session's own recent writes are only compared
+ * against the rows (there are no Data Center writes yet, so that list is empty
+ * in practice).
+ */
+export async function searchIssuesDataCenter(
+  options: SearchIssuesOptions,
+): Promise<SearchIssuesResult> {
+  if (options.reconcileIssues !== undefined && options.reconcileIssues.length > 0) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'reconcileIssues is not available on Jira Data Center: it is a feature of the Cloud search endpoint.',
+      remediation: 'Drop reconcileIssues.',
+    });
+  }
+  const fields = resolveFields(options.fields);
+  const maxResults = resolveMaxResults(options.maxResults);
+  const expand = normalizeExpand(options.expand);
+  const recentIds = normalizeIssueIds(
+    options.recentlyWrittenIssueIds,
+    'recentlyWrittenIssueIds',
+  );
+  const token = normalizeToken(options.nextPageToken);
+  const startAt = token === undefined ? 0 : decodeDataCenterCursor(token);
+  const maxPages = options.maxPages ?? DEFAULT_SEARCH_MAX_PAGES;
+
+  const loop = await fetchAll<SearchIssue>({
+    jira: options.jira,
+    request: (cursor) => ({
+      method: 'POST',
+      root: 'v2',
+      path: DATACENTER_SEARCH_PATH,
+      // A read that uses POST for the JQL body — replayable like a GET.
+      safe: true,
+      body: {
+        jql: options.jql,
+        startAt: cursor.startAt,
+        maxResults: cursor.maxResults,
+        fields: [...fields.value],
+        ...(expand === undefined ? {} : { expand: expand.split(',') }),
+      },
+    }),
+    readPage: readDataCenterSearchPage,
+    startAt,
+    pageSize: maxResults.value,
+    maxPages,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...budgetOf(options),
+  });
+
+  const returnedIds = new Set(loop.items.map((issue) => issue.id));
+  return {
+    issues: loop.items,
+    ...(loop.nextStartAt === undefined
+      ? {}
+      : { nextPageToken: encodeDataCenterCursor(loop.nextStartAt) }),
+    pages: loop.pages,
+    maxPages,
+    stopReason: loop.stopReason,
+    partial: loop.partial,
+    fields: fields.value,
+    fieldsDefaulted: fields.defaulted,
+    maxResults: maxResults.value,
+    clamped: maxResults.clamped,
+    restarted: false,
+    ...(recentIds.length === 0
+      ? {}
+      : { missingRecentIssueIds: recentIds.filter((id) => !returnedIds.has(id)) }),
+  };
+}
+
+function readDataCenterSearchPage(response: JiraResponse): ClassicPage<SearchIssue> {
+  const data = response.data;
+  const where = `/rest/api/2${DATACENTER_SEARCH_PATH}`;
+  if (!isRecord(data)) throw shapeError(`${where} did not return a JSON object`);
+  const rows = data.issues ?? [];
+  if (!Array.isArray(rows)) {
+    throw shapeError(`${where} returned a non-array "issues" property`);
+  }
+  return {
+    items: rows.map(toSearchIssue),
+    ...(typeof data.total === 'number' ? { total: data.total } : {}),
+    ...(typeof data.startAt === 'number' ? { startAt: data.startAt } : {}),
+    ...(typeof data.maxResults === 'number' ? { maxResults: data.maxResults } : {}),
   };
 }
 

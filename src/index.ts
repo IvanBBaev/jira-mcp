@@ -336,7 +336,11 @@ async function serve(): Promise<void> {
     // (it reports what a deny list removed), and the report needs the SELECTION.
     // `selectPackages` is pure, so the second pass costs a few array walks and
     // buys a report that cannot drift from the registered surface.
-    const selection = selectPackages(packages, settings);
+    // One adapter for both passes (D106): the report and the registry must agree
+    // on which tools this backend can serve.
+    const { adapterFor } = await import('./api/adapters.js');
+    const api = adapterFor(settings.deployment);
+    const selection = selectPackages(packages, settings, api);
     assembled.report = buildCapabilitiesInfo({
       settings,
       selection,
@@ -356,6 +360,7 @@ async function serve(): Promise<void> {
       clock,
       rng,
       journal,
+      api,
     };
 
     // WHICH transport is this file's one branch on `settings.transport` (D101).

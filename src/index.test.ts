@@ -77,6 +77,7 @@ const BASE_SETTINGS: Settings = {
   apiToken: 'default-token',
   authMode: 'basic',
   deployment: 'cloud',
+  datacenterPreview: false,
   oauth: BASE_OAUTH,
   allowedHosts: [],
   profiles: {},

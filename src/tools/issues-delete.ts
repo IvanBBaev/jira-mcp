@@ -291,8 +291,11 @@ function excerpt(text: string): { readonly text: string; readonly truncated: boo
 /** `{accountId?, displayName?}` from an already-projected user, or nothing. */
 function userBefore(user: IssueComment['author']): UserBefore | undefined {
   if (user === undefined) return undefined;
+  // Deletes are Cloud-only (the Data Center adapter does not serve them, D106),
+  // but the author type spans both dialects, so the Cloud half is named.
+  const accountId = 'accountId' in user ? user.accountId : '';
   const projected: UserBefore = {
-    ...(user.accountId === '' ? {} : { accountId: user.accountId }),
+    ...(accountId === '' ? {} : { accountId }),
     ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
   };
   // Jira can send an author object both of whose halves we then drop — a user

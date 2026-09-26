@@ -20,9 +20,17 @@ import {
   MYSELF_PATH,
   USER_SEARCH_PATH,
   getMyself,
+  getMyselfDataCenter,
   resolveMentionNames,
   searchUsers,
+  shapeDataCenterUser,
 } from './users.js';
+import type { MyselfResult } from './users.js';
+
+/** The Cloud `accountId` of a `/myself` user; `undefined` for a Data Center one. */
+function cloudId(user: MyselfResult['user']): string | undefined {
+  return 'accountId' in user ? user.accountId : undefined;
+}
 
 const MYSELF_ROUTE = `GET /rest/api/3${MYSELF_PATH}`;
 const SEARCH_ROUTE = `GET /rest/api/3${USER_SEARCH_PATH}`;
@@ -69,7 +77,7 @@ test('getMyself returns the caller identity including the Jira timezone (D16)', 
   const result = await getMyself({ jira: jira.fn });
 
   assert.deepEqual(jira.routes(), [MYSELF_ROUTE]);
-  assert.equal(result.user.accountId, '5b10a2844c20165700ede21g');
+  assert.equal(cloudId(result.user), '5b10a2844c20165700ede21g');
   assert.equal(result.user.displayName, 'User One');
   assert.equal(result.user.active, true);
   assert.equal(result.user.timeZone, 'Australia/Sydney', 'D16 reads this field');
@@ -86,7 +94,7 @@ test('CC-19: getMyself reports a masked email as hidden, not as a failure', asyn
 
   assert.equal(result.emailHidden, true);
   assert.equal(result.user.emailAddress, undefined);
-  assert.equal(result.user.accountId, '5b10a2844c20165700ede21g');
+  assert.equal(cloudId(result.user), '5b10a2844c20165700ede21g');
 });
 
 test('getMyself treats an empty email string as masked', async () => {
@@ -159,8 +167,8 @@ test('D16: distinct request functions never share a cached identity', async () =
   const one = await getMyself({ jira: alpha.fn });
   const two = await getMyself({ jira: beta.fn });
 
-  assert.equal(one.user.accountId, '5b10a2844c20165700ede21g');
-  assert.equal(two.user.accountId, '5b10ac8d82e05b22cc7d4ef5');
+  assert.equal(cloudId(one.user), '5b10a2844c20165700ede21g');
+  assert.equal(cloudId(two.user), '5b10ac8d82e05b22cc7d4ef5');
   assert.equal(two.user.timeZone, 'Australia/Sydney', 'no cross-tenant bleed');
   assert.deepEqual(alpha.routes(), [MYSELF_ROUTE]);
   assert.deepEqual(beta.routes(), [MYSELF_ROUTE]);
@@ -179,7 +187,7 @@ test('D16: a failed read is never cached', async () => {
   );
   const recovered = await getMyself({ jira: jira.fn });
 
-  assert.equal(recovered.user.accountId, '5b10a2844c20165700ede21g');
+  assert.equal(cloudId(recovered.user), '5b10a2844c20165700ede21g');
   assert.deepEqual(jira.routes(), [MYSELF_ROUTE, MYSELF_ROUTE], 'the retry hit Jira');
 });
 
@@ -815,4 +823,83 @@ test('an ambiguity refusal names a candidate with no display name as such', asyn
       /User Two \(5b10ac8d82e05b22cc7d4ef5\)/,
     ),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Jira Data Center (D106)
+// ---------------------------------------------------------------------------
+
+test('CC-264: a Data Center user is projected to name/key/displayName/active, email dropped', () => {
+  assert.deepEqual(
+    shapeDataCenterUser({
+      self: 'https://jira.corp.example/rest/api/2/user?username=jdoe',
+      name: 'jdoe',
+      key: 'JIRAUSER10100',
+      emailAddress: 'jdoe@corp.example',
+      avatarUrls: { '48x48': 'x' },
+      displayName: 'Jane Doe',
+      active: false,
+      timeZone: 'Europe/Sofia',
+    }),
+    { name: 'jdoe', key: 'JIRAUSER10100', displayName: 'Jane Doe', active: false },
+  );
+  // A renamed or legacy user may carry only one half of the identity.
+  assert.deepEqual(shapeDataCenterUser({ key: 'k1', displayName: 'K' }), {
+    key: 'k1',
+    displayName: 'K',
+  });
+});
+
+test('CC-264: records that are not Data Center users are not mistaken for one', () => {
+  for (const value of [
+    { key: 'ABC', name: 'Alpha', projectTypeKey: 'software' }, // a project
+    { id: '1', name: 'To Do' }, // a status
+    { name: '1.0', released: false }, // a version
+    { accountId: 'a1', displayName: 'Cloud user', name: 'x' }, // a Cloud user
+    { displayName: 'No identity' },
+    'jdoe',
+    null,
+    ['jdoe'],
+  ]) {
+    assert.equal(shapeDataCenterUser(value), undefined, JSON.stringify(value));
+  }
+});
+
+test('CC-270: /myself on Data Center reads name and key from the v2 root', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/api/2/myself',
+    jiraOk({
+      name: 'jdoe',
+      key: 'JIRAUSER10100',
+      displayName: 'Jane Doe',
+      active: true,
+      emailAddress: 'jdoe@corp.example',
+      timeZone: 'Europe/Sofia',
+      locale: 'en_US',
+      groups: { size: 3 },
+    }),
+  );
+  const result = await getMyselfDataCenter({ jira: jira.fn });
+  assert.deepEqual(result.user, {
+    name: 'jdoe',
+    key: 'JIRAUSER10100',
+    displayName: 'Jane Doe',
+    active: true,
+    emailAddress: 'jdoe@corp.example',
+    timeZone: 'Europe/Sofia',
+    locale: 'en_US',
+  });
+  assert.equal(result.emailHidden, false);
+  assert.deepEqual(jira.routes(), ['GET /rest/api/2/myself']);
+});
+
+test('CC-270: a Data Center /myself with neither name nor key is an unexpected shape', async () => {
+  for (const body of [{ displayName: 'x' }, { name: '', key: '' }, 'nope']) {
+    const jira = createFakeJiraRequest().on('GET /rest/api/2/myself', jiraOk(body));
+    await assert.rejects(getMyselfDataCenter({ jira: jira.fn }), (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'unexpected_shape');
+      return true;
+    });
+  }
 });

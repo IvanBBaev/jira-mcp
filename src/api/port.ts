@@ -118,6 +118,12 @@ export type { JiraDeployment };
  */
 export interface JiraApi {
   readonly deployment: JiraDeployment;
+  /**
+   * The tool names this adapter can serve; absent means every tool. The
+   * registry excludes the rest (`deployment_unsupported`), so a tool whose
+   * routes the backend lacks is never listed rather than failing when called.
+   */
+  readonly serves?: ReadonlySet<string>;
 
   // --- wire body format (ADF on Cloud) ---
   readonly adfFromMarkdown: typeof adfFromMarkdown;

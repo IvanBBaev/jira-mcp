@@ -14,17 +14,20 @@ env var names — not internal refactors.
 
 ### Added
 
-- **Jira Data Center settings, recognised but not served yet.**
-  `JIRA_DEPLOYMENT` (`cloud`, the default, or `datacenter`) and
-  `JIRA_AUTH_MODE=pat` with `JIRA_PAT` (a Data Center personal access token)
-  are parsed and validated, and `jira-mcp-ai doctor` checks such a
-  configuration — including a context path such as
-  `https://jira.example.com/jira`, which is kept under `datacenter`. Selecting
-  `datacenter` is still a startup error: the Data Center adapter is being
-  built in stages, and until it can serve requests the server refuses to
-  start rather than send Jira Cloud requests to a Data Center host. **Nothing
-  changes for a Cloud setup** unless you set `JIRA_PAT` there, which is now
-  reported as ignored.
+- **Jira Data Center, as an unverified read-only preview.** Set
+  `JIRA_DEPLOYMENT=datacenter`, `JIRA_AUTH_MODE=pat` with `JIRA_PAT` (a Data
+  Center personal access token), and `JIRA_DATACENTER_PREVIEW=true`. The
+  server then serves 15 read tools — `jira_get_myself`, `jira_search`, the
+  issue, comment, transition and worklog reads, projects, fields, statuses,
+  link types, boards, sprints and sprint issues; `jira_capabilities` lists
+  them and names the rest as unavailable. A context path such as
+  `https://jira.example.com/jira` is kept. Users come back as `name`/`key`,
+  rich text as wiki markup. **It has never been run against a Data Center
+  instance** — which is why it needs the preview flag, and why
+  `jira-mcp-ai doctor` (which probes a Data Center site with your PAT) is the
+  first thing to run. **Nothing changes for a Cloud setup** unless you set
+  `JIRA_PAT` or `JIRA_DATACENTER_PREVIEW` there, which are reported as
+  ignored.
 
 - **OAuth 2.0 (3LO) as an alternative to the API token.** Set
   `JIRA_AUTH_MODE=oauth`, register a 3LO app in the Atlassian developer console,
