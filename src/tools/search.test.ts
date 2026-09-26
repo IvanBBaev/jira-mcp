@@ -21,6 +21,7 @@ import {
   FILTER_SEARCH_EXPAND,
   FILTER_SEARCH_PATH,
 } from '../api/filters.js';
+import { CLOUD_API } from '../api/port.js';
 import {
   APPROXIMATE_COUNT_PATH,
   DEFAULT_SEARCH_FIELDS,
@@ -107,6 +108,7 @@ type FakeJira = ReturnType<typeof createFakeJiraRequest>;
 function ctxOf(fake: FakeJira, maxResultChars = 100_000): ToolCtx {
   return {
     jira: fake.fn,
+    api: CLOUD_API,
     log: createFakeLogger(),
     clock: createFakeClock(NOW),
     cid: 'c-4f9a01',

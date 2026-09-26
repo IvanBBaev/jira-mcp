@@ -47,21 +47,14 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import {
-  FILTER_PAGE_SIZE,
-  getFilter,
-  searchFilters,
-  type SavedFilter,
-} from '../api/filters.js';
-import { shapeIssueFields } from '../api/issues.js';
+import { FILTER_PAGE_SIZE, type SavedFilter } from '../api/filters.js';
+import type { JiraApi } from '../api/port.js';
 import {
   DEFAULT_SEARCH_FIELDS,
   DEFAULT_SEARCH_MAX_RESULTS,
   JQL_REMEDIATION,
   MAX_RECONCILE_ISSUES,
   MAX_SEARCH_RESULTS,
-  approximateCount,
-  searchIssues,
 } from '../api/search.js';
 import type { SearchIssue, SearchIssuesResult } from '../api/search.js';
 import type { PageStopReason } from '../api/shared.js';
@@ -255,23 +248,23 @@ export interface SearchData {
   readonly reconciledIssueIds?: readonly string[];
 }
 
-function shapeRow(issue: SearchIssue): SearchIssueRow {
+function shapeRow(api: JiraApi, issue: SearchIssue): SearchIssueRow {
   // Every section is shaped, not only `fields`: an expanded `changelog` or
   // `versionedRepresentations` carries full user objects, email included, and
   // the user projection holds everywhere (TOOLS.md §Read shaping). `self` and
   // `expand` are strings, which the projection leaves untouched.
   const { id, key, fields, ...rest } = issue;
   return {
-    ...shapeIssueFields(rest, false),
+    ...api.shapeIssueFields(rest, false),
     id,
     key,
-    fields: shapeIssueFields(fields, false),
+    fields: api.shapeIssueFields(fields, false),
   };
 }
 
-function searchData(result: SearchIssuesResult): SearchData {
+function searchData(api: JiraApi, result: SearchIssuesResult): SearchData {
   return {
-    issues: result.issues.map(shapeRow),
+    issues: result.issues.map((issue) => shapeRow(api, issue)),
     ...(result.nextPageToken === undefined
       ? {}
       : { nextPageToken: result.nextPageToken }),
@@ -356,7 +349,7 @@ export const searchTool = defineTool({
       // `undefined` and `[]` are deliberately not the same thing here.
       const recentlyWrittenIssueIds =
         args.reconcileIssues === undefined ? currentRecentWrites().snapshot() : undefined;
-      const result = await searchIssues({
+      const result = await ctx.api.searchIssues({
         ...callBase(ctx),
         jql: args.jql,
         fields: args.fields,
@@ -368,7 +361,7 @@ export const searchTool = defineTool({
       });
       // Summaries, descriptions and comments are Jira free text (D15, CC-35):
       // `ok` brands the envelope and appends `untrusted_content` itself.
-      return ok(searchData(result), {
+      return ok(searchData(ctx.api, result), {
         hints: searchHints(result, {
           callerReconciled: args.reconcileIssues !== undefined,
         }),
@@ -414,7 +407,7 @@ export const countTool = defineTool({
   input: countInput,
   handler: async (args, ctx): Promise<ToolResult<CountData>> => {
     try {
-      const result = await approximateCount({ ...callBase(ctx), jql: args.jql });
+      const result = await ctx.api.approximateCount({ ...callBase(ctx), jql: args.jql });
       // A number is not Jira free text: no D15 brand here (CC-35).
       return ok(
         { count: result.count, approximate: result.approximate },
@@ -539,7 +532,7 @@ export const listFiltersTool = defineTool<
   input: listFiltersInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await searchFilters({
+      const loop = await ctx.api.searchFilters({
         ...filterPageOptions(ctx, args),
         ...(args.filterName === undefined ? {} : { filterName: args.filterName }),
         ...(args.accountId === undefined ? {} : { accountId: args.accountId }),
@@ -594,7 +587,10 @@ export const getFilterTool = defineTool<z.infer<typeof getFilterInput>, FilterDa
   input: getFilterInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const filter = await getFilter({ ...callBase(ctx), filterId: args.filterId });
+      const filter = await ctx.api.getFilter({
+        ...callBase(ctx),
+        filterId: args.filterId,
+      });
       // Branded for the same reason as the list (D15/CC-35): this is the tool
       // whose whole purpose is to hand a model a JQL string to run.
       return ok<FilterData>({ filter }, { untrusted: true });

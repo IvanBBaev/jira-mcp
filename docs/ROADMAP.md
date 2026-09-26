@@ -103,6 +103,13 @@ scope call:
   inventing a port that does not exist. Until that port exists, "separate api
   adapter" names an intention, not an available seam.
 
+  **Un-parked by D106 (2026-09-26)** on the owner's direction, in stages, as
+  IMPLEMENTATION-PLAN.md Phase 13. The structural finding above is answered
+  first: stage 13.1 shipped the port (`api/port.ts`, `ctx.api`), which changes
+  nothing on Cloud. The price above is unchanged, and D104's verification
+  condition is carried rather than waived — with no DC host, every DC stage
+  ships fail-closed and labelled UNVERIFIED.
+
 ## Considered and parked
 
 - Confluence tools — separate server (`confluence-mcp`), not scope creep here.

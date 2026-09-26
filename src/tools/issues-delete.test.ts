@@ -26,6 +26,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { CLOUD_API } from '../api/port.js';
 import {
   createFakeClock,
   createFakeJiraRequest,
@@ -238,6 +239,7 @@ function countingRng(): () => number {
 function ctxOf(jira: JiraRequestFn): ToolCtx {
   return {
     jira,
+    api: CLOUD_API,
     log: createFakeLogger(),
     clock: createFakeClock(NOW),
     cid: 'c-7b2e04',

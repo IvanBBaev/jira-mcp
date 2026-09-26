@@ -41,17 +41,8 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { getBulkStatus } from '../api/bulk.js';
 import type { BulkStatusResult } from '../api/bulk.js';
-import {
-  DEFAULT_COMMENT_ORDER_BY,
-  MAX_PAGE_SIZE,
-  getIssue,
-  listChangelog,
-  listComments,
-  listTransitions,
-  listWorklogs,
-} from '../api/issues.js';
+import { DEFAULT_COMMENT_ORDER_BY, MAX_PAGE_SIZE } from '../api/issues.js';
 import type {
   ChangelogResult,
   CommentsResult,
@@ -207,7 +198,7 @@ export const getIssueTool = defineTool({
   input: getIssueInput,
   handler: async (args, ctx): Promise<ToolResult<IssueDetail>> =>
     guarded(async () => {
-      const issue = await getIssue({
+      const issue = await ctx.api.getIssue({
         ...callBase(ctx),
         issue: args.issue,
         fields: args.fields,
@@ -259,7 +250,7 @@ export const getCommentsTool = defineTool({
   input: getCommentsInput,
   handler: async (args, ctx): Promise<ToolResult<CommentsResult>> =>
     guarded(async () => {
-      const comments = await listComments({
+      const comments = await ctx.api.listComments({
         ...callBase(ctx),
         issue: args.issue,
         startAt: args.startAt,
@@ -291,7 +282,7 @@ export const getTransitionsTool = defineTool({
   input: getTransitionsInput,
   handler: async (args, ctx): Promise<ToolResult<TransitionsResult>> =>
     guarded(async () => {
-      const transitions = await listTransitions({
+      const transitions = await ctx.api.listTransitions({
         ...callBase(ctx),
         issue: args.issue,
       });
@@ -325,7 +316,7 @@ export const getChangelogTool = defineTool({
   input: getChangelogInput,
   handler: async (args, ctx): Promise<ToolResult<ChangelogResult>> =>
     guarded(async () => {
-      const changelog = await listChangelog({
+      const changelog = await ctx.api.listChangelog({
         ...callBase(ctx),
         issue: args.issue,
         startAt: args.startAt,
@@ -359,7 +350,7 @@ export const getWorklogsTool = defineTool({
   input: getWorklogsInput,
   handler: async (args, ctx): Promise<ToolResult<WorklogsResult>> =>
     guarded(async () => {
-      const worklogs = await listWorklogs({
+      const worklogs = await ctx.api.listWorklogs({
         ...callBase(ctx),
         issue: args.issue,
         startAt: args.startAt,
@@ -399,7 +390,10 @@ export const getBulkStatusTool = defineTool({
   input: getBulkStatusInput,
   handler: async (args, ctx): Promise<ToolResult<BulkStatusResult>> =>
     guarded(async () => {
-      const status = await getBulkStatus({ ...callBase(ctx), taskId: args.taskId });
+      const status = await ctx.api.getBulkStatus({
+        ...callBase(ctx),
+        taskId: args.taskId,
+      });
       // Queue metadata, not Jira free text: no D15 brand here (CC-35/CC-132).
       return ok(status);
     }),

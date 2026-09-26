@@ -33,26 +33,12 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import {
-  adfFromMarkdown,
-  extractMentions,
-  type AdfNode,
-  type MentionTarget,
-} from '../api/adf.js';
+import { type AdfNode, type MentionTarget } from '../api/adf.js';
 import {
   NO_TRANSITION_MATCHES,
   WORKLOG_STARTED_PATTERN,
-  addComment,
-  addWorklog,
-  assignIssue,
-  createIssue,
-  linkIssues,
-  listTransitions,
   resolveTransitionId,
   startedInstant,
-  transitionIssue,
-  updateComment,
-  updateIssue,
 } from '../api/issues.js';
 import type {
   AssignIssueResult,
@@ -64,7 +50,7 @@ import type {
   TransitionIssueResult,
   UpdateIssueResult,
 } from '../api/issues.js';
-import { getMyself, resolveMentionNames } from '../api/users.js';
+import type { JiraApi } from '../api/port.js';
 import type { JiraError } from '../core/types.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';
 import { errorResultOf } from '../mcp/errors.js';
@@ -258,6 +244,7 @@ const visibilityArg = z
  * no map its output stays byte-identical to the pre-mention grammar (CC-108).
  */
 function asRichText(
+  api: JiraApi,
   value: string | Record<string, unknown>,
   format?: 'text' | 'markdown',
   mentions?: ReadonlyMap<string, MentionTarget>,
@@ -265,28 +252,30 @@ function asRichText(
   if (typeof value !== 'string') return value as AdfNode;
   if (format !== 'markdown') return value;
   return mentions === undefined
-    ? adfFromMarkdown(value)
-    : adfFromMarkdown(value, { mentions });
+    ? api.adfFromMarkdown(value)
+    : api.adfFromMarkdown(value, { mentions });
 }
 
 /** `asRichText` for an optional argument, keeping `undefined` distinct. */
 function optionalRichText(
+  api: JiraApi,
   value: string | Record<string, unknown> | undefined,
   format?: 'text' | 'markdown',
   mentions?: ReadonlyMap<string, MentionTarget>,
 ): string | AdfNode | undefined {
-  return value === undefined ? undefined : asRichText(value, format, mentions);
+  return value === undefined ? undefined : asRichText(api, value, format, mentions);
 }
 
 /** `asRichText` for a nullable argument — `null` CLEARS the field (CC-31). */
 function nullableRichText(
+  api: JiraApi,
   value: string | Record<string, unknown> | null | undefined,
   format?: 'text' | 'markdown',
   mentions?: ReadonlyMap<string, MentionTarget>,
 ): string | AdfNode | null | undefined {
   return value === null || value === undefined
     ? value
-    : asRichText(value, format, mentions);
+    : asRichText(api, value, format, mentions);
 }
 
 /**
@@ -369,10 +358,10 @@ async function resolveCallMentions(
   // Only a markdown STRING has the @[...] grammar: raw ADF is never re-read
   // (CC-46), and null/absent carry no text (CC-31 keeps null clearing).
   if (format !== 'markdown' || typeof value !== 'string') return { hints: [] };
-  const names = extractMentions(value);
+  const names = ctx.api.extractMentions(value);
   if (names.length === 0) return { hints: [] };
   if (resolveMentions !== true) return { hints: [MENTIONS_SKIPPED_HINT] };
-  const mentions = await resolveMentionNames({
+  const mentions = await ctx.api.resolveMentionNames({
     jira: ctx.jira,
     names,
     ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
@@ -450,12 +439,17 @@ export const createIssueTool = defineTool({
         args.format,
         args.resolveMentions,
       );
-      const created = await createIssue({
+      const created = await ctx.api.createIssue({
         ...callBase(ctx),
         project: args.project,
         issueType: args.issueType,
         summary: args.summary,
-        description: optionalRichText(args.description, args.format, resolution.mentions),
+        description: optionalRichText(
+          ctx.api,
+          args.description,
+          args.format,
+          resolution.mentions,
+        ),
         assigneeAccountId: args.assigneeAccountId,
         labels: args.labels,
         priority: args.priority,
@@ -541,11 +535,16 @@ export const updateIssueTool = defineTool({
         args.format,
         args.resolveMentions,
       );
-      const updated = await updateIssue({
+      const updated = await ctx.api.updateIssue({
         ...callBase(ctx),
         issue: args.issue,
         summary: args.summary,
-        description: nullableRichText(args.description, args.format, resolution.mentions),
+        description: nullableRichText(
+          ctx.api,
+          args.description,
+          args.format,
+          resolution.mentions,
+        ),
         assigneeAccountId: args.assigneeAccountId,
         labels: args.labels,
         labelsAdd: args.labelsAdd,
@@ -612,14 +611,22 @@ export const transitionIssueTool = defineTool({
       );
       // A GET, so it runs for real in plan mode too — the plan then shows the id
       // the apply would really send instead of the caller's name.
-      const { transitions } = await listTransitions({ ...base, issue: args.issue });
+      const { transitions } = await ctx.api.listTransitions({
+        ...base,
+        issue: args.issue,
+      });
       const transitionId = resolveTransitionId(transitions, args.transition);
-      const result = await transitionIssue({
+      const result = await ctx.api.transitionIssue({
         ...base,
         issue: args.issue,
         transitionId,
         fields: args.fields,
-        comment: optionalRichText(args.comment, args.format, resolution.mentions),
+        comment: optionalRichText(
+          ctx.api,
+          args.comment,
+          args.format,
+          resolution.mentions,
+        ),
       });
       return ok(result, { hints: resolution.hints });
     }, transitionErrorHints),
@@ -663,10 +670,10 @@ export const addCommentTool = defineTool({
         args.format,
         args.resolveMentions,
       );
-      const comment = await addComment({
+      const comment = await ctx.api.addComment({
         ...callBase(ctx),
         issue: args.issue,
-        body: asRichText(args.body, args.format, resolution.mentions),
+        body: asRichText(ctx.api, args.body, args.format, resolution.mentions),
         visibility: asVisibility(args.visibility),
       });
       return ok(comment, { hints: resolution.hints });
@@ -731,11 +738,11 @@ export const updateCommentTool = defineTool({
         args.format,
         args.resolveMentions,
       );
-      const comment = await updateComment({
+      const comment = await ctx.api.updateComment({
         ...callBase(ctx),
         issue: args.issue,
         commentId: args.commentId,
-        body: asRichText(args.body, args.format, resolution.mentions),
+        body: asRichText(ctx.api, args.body, args.format, resolution.mentions),
         visibility: asVisibility(args.visibility),
       });
       return ok(comment, { hints: resolution.hints });
@@ -798,7 +805,7 @@ export const assignIssueTool = defineTool({
   input: assignIssueInput,
   handler: async (args, ctx): Promise<ToolResult<AssignIssueResult>> =>
     guarded(async () => {
-      const assigned = await assignIssue({
+      const assigned = await ctx.api.assignIssue({
         ...callBase(ctx),
         issue: args.issue,
         accountId: args.accountId,
@@ -884,7 +891,7 @@ export const addWorklogTool = defineTool({
       );
       // D16: the offset belongs to the authenticated user, so it is FETCHED, not
       // observed. A GET, so plan mode passes it through and plans a real offset.
-      const myself = await getMyself(base);
+      const myself = await ctx.api.getMyself(base);
       const instant = startedInstant(
         args.started,
         myself.user.timeZone ?? hostTimeZone(),
@@ -902,14 +909,19 @@ export const addWorklogTool = defineTool({
         );
       }
 
-      const worklog = await addWorklog({
+      const worklog = await ctx.api.addWorklog({
         ...base,
         issue: args.issue,
         timeSpentSeconds: args.timeSpentSeconds,
         timeSpent: args.timeSpent,
         startedAt: instant.epochMs,
         utcOffsetMinutes: instant.offsetMinutes,
-        comment: optionalRichText(args.comment, args.format, resolution.mentions),
+        comment: optionalRichText(
+          ctx.api,
+          args.comment,
+          args.format,
+          resolution.mentions,
+        ),
       });
       return ok(worklog, { hints: resolution.hints });
     }),
@@ -961,12 +973,17 @@ export const linkIssuesTool = defineTool({
         args.format,
         args.resolveMentions,
       );
-      const linked = await linkIssues({
+      const linked = await ctx.api.linkIssues({
         ...callBase(ctx),
         linkType: args.linkType,
         inwardIssue: args.inwardIssue,
         outwardIssue: args.outwardIssue,
-        comment: optionalRichText(args.comment, args.format, resolution.mentions),
+        comment: optionalRichText(
+          ctx.api,
+          args.comment,
+          args.format,
+          resolution.mentions,
+        ),
       });
       return ok(linked, { hints: resolution.hints });
     }, linkErrorHints),

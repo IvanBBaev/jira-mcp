@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { CLOUD_API } from '../api/port.js';
 import { createFakeClock } from '../core/fakes/fakeClock.js';
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { JiraError } from '../core/types.js';
@@ -40,6 +41,7 @@ function createCtx(overrides: Partial<ToolCtx> = {}): ToolCtx {
   const clock = createFakeClock(1_000);
   return {
     jira: unusedJira,
+    api: CLOUD_API,
     log: createFakeLogger({ cid: 'c-test01', clock }),
     clock,
     cid: 'c-test01',
