@@ -10,6 +10,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { CLOUD_API } from '../api/port.js';
+import type { JiraApi } from '../api/port.js';
+
 import { FAKE_PLACEHOLDER, createFakeRedactor } from '../core/fakes/fakeRedactor.js';
 import { createFakeClock } from '../core/fakes/fakeClock.js';
 import { FAKE_AUTH_SETTINGS } from '../core/fakes/fakeSettings.js';
@@ -362,6 +365,56 @@ test('duplicate package ids and duplicate tool names are startup errors', () => 
       (error: unknown) => error instanceof JiraError && error.kind === 'config',
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// The api-ring port (D106)
+// ---------------------------------------------------------------------------
+
+/** A core tool that reports which adapter its context carried. */
+function apiProbe(seen: JiraApi[]): AnyToolSpec {
+  return defineTool({
+    name: 'jira_capabilities',
+    title: 'Capabilities',
+    description: 'Reports the adapter.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    input: toolInput({}),
+    handler(_args, ctx: ToolCtx) {
+      seen.push(ctx.api);
+      return Promise.resolve(ok({ deployment: ctx.api.deployment }));
+    },
+  });
+}
+
+test('a tool context carries the Cloud adapter when the registry is given none', async () => {
+  const seen: JiraApi[] = [];
+  const registry = createRegistry(
+    [packageOf('core', [apiProbe(seen)])],
+    harness(settingsOf()).deps,
+  );
+  await registry.call('jira_capabilities', {});
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], CLOUD_API);
+});
+
+test('a tool context carries exactly the adapter the registry was built with', async () => {
+  const seen: JiraApi[] = [];
+  const adapter: JiraApi = Object.freeze({ ...CLOUD_API });
+  const registry = createRegistry([packageOf('core', [apiProbe(seen)])], {
+    ...harness(settingsOf()).deps,
+    api: adapter,
+  });
+  await registry.call('jira_capabilities', {});
+  await registry.call('jira_capabilities', {});
+  assert.equal(seen.length, 2);
+  assert.ok(seen.every((api) => api === adapter));
+  assert.notEqual(adapter, CLOUD_API);
 });
 
 // ---------------------------------------------------------------------------

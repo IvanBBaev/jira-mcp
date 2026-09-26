@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { MAX_PAGE_SIZE } from '../api/issues.js';
+import { CLOUD_API } from '../api/port.js';
 import { errorFromResponse } from '../core/errors.js';
 import {
   createFakeClock,
@@ -298,6 +299,7 @@ type FakeJira = ReturnType<typeof createFakeJiraRequest>;
 function ctxOf(fake: FakeJira, maxResultChars = 100_000): ToolCtx {
   return {
     jira: fake.fn,
+    api: CLOUD_API,
     log: createFakeLogger(),
     clock: createFakeClock(NOW),
     cid: 'c-4f9a01',
@@ -777,7 +779,11 @@ test('jira_get_comments renders bodies as markdown without changing the page sha
   assert.equal(result.ok, true);
   assert.equal(result.data?.comments[0]?.body, RICH_AS_MARKDOWN);
   // Only the rendering moved: paging facts and the author projection are the same.
-  assert.equal(result.data?.comments[0]?.author?.accountId, ACCOUNT_ID);
+  const author = result.data?.comments[0]?.author;
+  assert.equal(
+    author !== undefined && 'accountId' in author ? author.accountId : '',
+    ACCOUNT_ID,
+  );
   assert.equal(result.data?.partial, false);
   assert.equal(result.data?.total, 1);
 });

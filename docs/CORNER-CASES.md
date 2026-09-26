@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-253`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-275`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -95,7 +95,8 @@ with a note, and gaps stay gaps.
 ## Config
 
 - **CC-27** `JIRA_SITE` given as full URL with path → path stripped, warning
-  in report.
+  in report. On Cloud; under `JIRA_DEPLOYMENT=datacenter` the path is the
+  context path and is kept (CC-257).
 - **CC-28** Site host not `.atlassian.net` and not allowlisted → startup error
   naming `JIRA_ALLOWED_HOSTS`.
 - **CC-29** `JIRA_TOOL_PACKAGES=reader` + `JIRA_PACKAGES_DENY=core` → core
@@ -1308,3 +1309,127 @@ with a note, and gaps stay gaps.
   is complete unless a `truncated` hint is present. They said "always
   complete", which is false once the character budget trims the array, and a
   model told so would not look for the hint.
+
+## Appended with the Data Center settings surface (2026-09-26, D106 stage 13.2)
+
+- **CC-254** `JIRA_DEPLOYMENT=datacenter` is a startup error
+  (`deployment_unavailable`, field `JIRA_DEPLOYMENT`) — even when every other
+  finding is clean — unless `JIRA_DATACENTER_PREVIEW=true` (since stage 13.3,
+  CC-269). It is
+  reported alongside every other finding, and the settings, the PAT and the
+  resolved host are still parsed, so doctor can check a prepared configuration.
+- **CC-255** The deployment and the auth mode must agree: `pat` with `cloud`,
+  and `datacenter` with `basic` or `oauth`, are startup errors
+  (`auth_mode_deployment`, field `JIRA_AUTH_MODE`) — the products share no
+  credential, and a guess would send one product's secret to the other's host.
+  `pat` without `JIRA_PAT` is `missing_credential` naming `JIRA_PAT`, not the
+  Basic-auth variables.
+- **CC-256** A `JIRA_PAT` the active mode does not use is a `pat_ignored`
+  warning and is still registered with the redactor. Under `pat`,
+  `JIRA_TOKEN_EXPIRES` is `token_expires_ignored`, not parsed.
+- **CC-257** Under `datacenter` the site's context path is kept as
+  `HostRef.pathPrefix` (`https://jira.corp.example/jira/` → `/jira`, trailing
+  slash dropped) and composes with the root: `…/jira/rest/api/2/issue/ABC-1`. A
+  query or fragment is still stripped with `site_path_stripped`. On Cloud the
+  same URL is still stripped (CC-27 unchanged).
+- **CC-258** Under `datacenter` an `.atlassian.net` host is refused
+  (`host_deployment_mismatch`, field `JIRA_DEPLOYMENT`), and a dot-less name is
+  never completed to `.atlassian.net` — it must be allowlisted as given, or it
+  is `host_not_allowed`.
+- **CC-259** A context path that contains a `rest` segment
+  (`/rest/api/2`, `/jira/REST/api/latest`) is refused as `site_context_path`,
+  because it would double the API root; `/restricted` is a real context path. A
+  path the request builder's `assertApiPath` would reject (an escaped dot that
+  survives URL parsing) is refused at startup with the same code.
+- **CC-260** The PAT resolver sends `Authorization: Bearer <PAT>` to the site
+  host and its context path. A requested profile — named per call or through
+  `JIRA_ACTIVE_PROFILE` — is a `config` error rather than being answered with
+  the default PAT; a missing PAT or host names `JIRA_PAT`.
+- **CC-261** Under `pat` a leftover `JIRA_EMAIL`/`JIRA_API_TOKEN` pair never
+  becomes the Basic credentials doctor sends, and doctor's host line shows the
+  context path. (As written at stage 13.2 this case also said doctor fires no
+  request under `datacenter`; stage 13.3 replaced that half with real Data
+  Center probes — CC-266.)
+- **CC-262** `doctor --save` is refused under `pat`: it writes an API token,
+  which this mode never signs with.
+
+## Appended with the Data Center read adapter (2026-09-26, D106/D107 stage 13.3)
+
+- **CC-263** Under `datacenter` the registry lists exactly the tools the
+  adapter serves; every other manifest tool is excluded with reason
+  `deployment_unsupported`, and calling one answers `unsupported` naming Data
+  Center with nothing sent. `jira_capabilities` carries
+  `deployment: { product: "datacenter", verified: false, note }`; on Cloud the
+  field is absent and nothing is excluded by the adapter step.
+- **CC-264** The Data Center user projection is an allowlist: `name`, `key`,
+  `displayName`, `active`. It recognises a user by a string `displayName` next
+  to a string `name` or `key` and no `accountId`, so a project (`key` + `name`),
+  a status or a version is not mistaken for one. Without it a DC user falls
+  through the Cloud rule with `emailAddress` and `avatarUrls` intact.
+- **CC-265** Every tool the adapter serves reaches only `/rest/api/2` or
+  `/rest/agile/1.0`, returns users as `name`/`key` and never an email, avatar
+  or invented `accountId`. `format: "markdown"` is refused as `validation`
+  before any request. (Written at stage 13.3, when wiki markup still came back
+  as Jira sent it; since 13.3b the known rich-text fields are flattened —
+  CC-274.)
+- **CC-266** Under `datacenter` doctor probes `identity`
+  (`GET /rest/api/2/myself`, `name`/`key`) and `deployment`
+  (`GET /rest/api/2/serverInfo`) with the PAT resolver — also while the preview
+  flag is unset, so a site can be checked before the server is turned on — and
+  skips `search` and `agile` by name. A site that reports `Cloud` fails the
+  deployment probe; a `/myself` without `name` or `key` fails identity; a PAT is
+  never sent while the deployment is `cloud`.
+- **CC-267** `jira_search` on Data Center posts to `/rest/api/2/search` by
+  `startAt` and hands the offset back as an opaque `dc1:<startAt>` cursor; the
+  last page carries none. A cursor this server did not issue (`dc1:-1`,
+  `dc1:01`, `dc2:5`, a Cloud token) is `validation` before any request, and
+  `reconcileIssues` is refused rather than dropped.
+- **CC-268** `/project` and `/status` answer whole arrays on Data Center, so
+  `query`, `typeKey`, `searchString` and `statusCategory` are applied here and
+  the result is one complete page; the status category `key` (`new`,
+  `indeterminate`, `done`) maps to `TODO`/`IN_PROGRESS`/`DONE`. `orderBy`,
+  `projectId` and status `expand` have no Data Center equivalent and are
+  refused as `validation` before any request.
+- **CC-269** `JIRA_DATACENTER_PREVIEW=true` turns `deployment_unavailable` into
+  the warning `deployment_unverified` and the server starts; it does not excuse
+  a wrong deployment/auth pairing. Set on Cloud it is
+  `datacenter_preview_ignored`.
+- **CC-270** `/myself` on Data Center (`GET /rest/api/2/myself`) returns
+  `name`, `key`, `displayName`, `active`, `timeZone`, `locale`; a body with
+  neither `name` nor `key` is `unexpected_shape`. `jira_get_myself` reports
+  `name`/`key` and no `accountId`.
+
+## Appended with the Data Center wiki flattener and collab reads (2026-09-26, stage 13.3b)
+
+- **CC-271** `wikiToText` renders Jira wiki markup in `adfToText`'s
+  conventions: headings as their text, `- ` / `1. ` lists with two-space
+  nesting (a bullet list and a numbered one at the same depth are separate
+  lists, and a blank line restarts numbering), `a | b` table rows (a link's own
+  `|` inside a cell does not split it), `[text|url]` as its text, `[~name]` as
+  `@name`, `!file.png!` as `[media: file.png]`, `{code:lang}` / `{noformat}` as
+  a fence with the content verbatim, `{info}` / `{panel}` as `[panel:info]` /
+  `[panel]` once per panel, `----` as `---`, `\\` as a line break and `\*` as
+  a literal `*`.
+- **CC-272** Text that only looks like markup is left alone: a mark is removed
+  only when paired on one line with a non-word character or the line edge
+  outside and a non-space inside (`2026-09-26`, `a*b*c`, `x - y - z`,
+  `snake_case`, `Wow!Great!`, `what?? ok??` survive), an image needs a file
+  extension or a URL, and an unknown `{macro}` stays visible. A non-string
+  input is `''`.
+- **CC-273** Hostile input stays bounded and total: an unclosed code block
+  keeps its content, a line longer than `MAX_INLINE_LINE_CHARS` passes
+  verbatim instead of being scanned, text carrying the private-use sentinel
+  characters is not rewritten, and arbitrary strings never throw.
+- **CC-274** On Data Center the known rich-text fields — `description`,
+  `environment`, comment bodies, worklog comments — are flattened with
+  `wikiToText`; any other string (a `summary` with asterisks, a custom text
+  field whose id says nothing) is returned as sent. `raw: true` returns the
+  markup as Jira sent it, and still projects users. Cloud reads never pass
+  through the flattener.
+- **CC-275** `jira_list_components` and `jira_list_versions` on Data Center
+  read the `/project/{p}/components` and `/versions` arrays and apply `query`
+  (name and description) and `status` here — an archived version is
+  `archived`, not `released`; `jira_list_watchers` reads the same
+  `/issue/{key}/watchers` route with DC users, and a withheld list stays
+  `watchersVisible: false`.
+

@@ -255,6 +255,18 @@ export function buildCapabilitiesInfo(input: CapabilitiesInput): CapabilitiesInf
     serverName: input.serverName ?? SERVER_NAME,
     version: input.version ?? SERVER_VERSION,
     ...(settings.site === undefined ? {} : { site: settings.site }),
+    ...(settings.deployment === 'datacenter'
+      ? {
+          deployment: {
+            product: 'datacenter' as const,
+            verified: false as const,
+            note:
+              'Read-only Jira Data Center preview, never verified against a Data Center ' +
+              'instance. Users are name/key (no accountId); rich text is wiki markup; ' +
+              'format "markdown" is refused.',
+          },
+        }
+      : {}),
     transport: settings.transport,
     writeMode: settings.writeMode,
     ...(settings.activeProfile === undefined

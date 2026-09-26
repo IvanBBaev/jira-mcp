@@ -19,6 +19,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { CLOUD_API } from '../api/port.js';
 import {
   createFakeClock,
   createFakeJiraRequest,
@@ -59,6 +60,7 @@ function createCtx(jira: FakeJiraRequest, maxPages = 20): ToolCtx {
   const clock = createFakeClock(1_000);
   return {
     jira: jira.fn,
+    api: CLOUD_API,
     log: createFakeLogger({ cid: 'c-test01', clock }),
     clock,
     cid: 'c-test01',

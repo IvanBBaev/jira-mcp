@@ -53,20 +53,12 @@ import {
   DEFAULT_SPRINT_ISSUE_FIELDS,
   MAX_MOVE_ISSUES,
   SPRINT_STATES,
-  closeSprint,
-  createSprint,
-  listBoards,
-  listSprintIssues,
-  listSprints,
-  moveIssuesToBacklog,
-  moveIssuesToSprint,
-  startSprint,
   type AgileBoard,
   type AgileIssue,
   type AgileSprint,
   type SprintLifecycleState,
 } from '../api/agile.js';
-import { shapeIssueFields } from '../api/issues.js';
+import type { JiraApi } from '../api/port.js';
 import type { PageStopReason } from '../api/shared.js';
 import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
@@ -205,7 +197,7 @@ export const listBoardsTool = defineTool<z.infer<typeof listBoardsInput>, BoardL
   input: listBoardsInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listBoards({
+      const loop = await ctx.api.listBoards({
         ...pagedOptions(ctx, args.startAt, args.maxResults),
         projectKeyOrId: args.projectKeyOrId,
         type: args.type,
@@ -261,7 +253,7 @@ export const listSprintsTool = defineTool<
   input: listSprintsInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listSprints({
+      const loop = await ctx.api.listSprints({
         ...pagedOptions(ctx, args.startAt, args.maxResults),
         boardId: args.boardId,
         state: args.state,
@@ -342,11 +334,11 @@ interface SprintIssuesData {
  * search are indistinguishable. `raw` is fixed to `false` — `jira_get_issue` is
  * the only tool in the catalog that may return ADF (TOOLS.md §Read shaping).
  */
-function shapeSprintIssue(issue: AgileIssue): SprintIssueRow {
+function shapeSprintIssue(api: JiraApi, issue: AgileIssue): SprintIssueRow {
   return {
     key: issue.key,
     ...(issue.id === undefined ? {} : { id: issue.id }),
-    fields: shapeIssueFields(issue.fields, false),
+    fields: api.shapeIssueFields(issue.fields, false),
   };
 }
 
@@ -368,7 +360,7 @@ export const getSprintIssuesTool = defineTool<
   input: getSprintIssuesInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listSprintIssues({
+      const loop = await ctx.api.listSprintIssues({
         ...pagedOptions(ctx, args.startAt, args.maxResults),
         sprintId: args.sprintId,
         fields: args.fields,
@@ -379,7 +371,7 @@ export const getSprintIssuesTool = defineTool<
       // truncation. See the DOC GAP note in the module header.
       return ok<SprintIssuesData>(
         {
-          issues: loop.items.map(shapeSprintIssue),
+          issues: loop.items.map((issue) => shapeSprintIssue(ctx.api, issue)),
           count: loop.items.length,
           sprintId: args.sprintId,
           fields: loop.fields,
@@ -440,7 +432,7 @@ export const moveToSprintTool = defineTool<
   input: moveToSprintInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await moveIssuesToSprint({
+      const result = await ctx.api.moveIssuesToSprint({
         ...callBase(ctx),
         sprintId: args.sprintId,
         issues: args.issues,
@@ -502,7 +494,7 @@ export const moveToBacklogTool = defineTool<
   input: moveToBacklogInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await moveIssuesToBacklog({
+      const result = await ctx.api.moveIssuesToBacklog({
         ...callBase(ctx),
         issues: args.issues,
       });
@@ -578,7 +570,7 @@ export const createSprintTool = defineTool<
   input: createSprintInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await createSprint({
+      const result = await ctx.api.createSprint({
         ...callBase(ctx),
         name: args.name,
         originBoardId: args.originBoardId,
@@ -638,7 +630,7 @@ export const startSprintTool = defineTool<
   input: startSprintInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await startSprint({
+      const result = await ctx.api.startSprint({
         ...callBase(ctx),
         sprintId: args.sprintId,
         startDate: args.startDate,
@@ -678,7 +670,10 @@ export const closeSprintTool = defineTool<
   input: closeSprintInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await closeSprint({ ...callBase(ctx), sprintId: args.sprintId });
+      const result = await ctx.api.closeSprint({
+        ...callBase(ctx),
+        sprintId: args.sprintId,
+      });
       return sprintStateResult(result);
     });
   },

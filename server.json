@@ -187,11 +187,33 @@
         },
         {
           "name": "JIRA_AUTH_MODE",
-          "description": "Where credentials come from: basic (email + API token) or oauth (OAuth 2.0 3LO, via jira-mcp-ai login).",
+          "description": "Where credentials come from: basic (email + API token), oauth (OAuth 2.0 3LO, via jira-mcp-ai login) or pat (a Jira Data Center personal access token; only with JIRA_DEPLOYMENT=datacenter).",
           "isRequired": false,
           "default": "basic",
-          "choices": ["basic", "oauth"],
+          "choices": ["basic", "oauth", "pat"],
           "format": "string"
+        },
+        {
+          "name": "JIRA_DEPLOYMENT",
+          "description": "cloud or datacenter. datacenter selects a read-only Data Center preview that has never been verified against a Data Center instance; it starts only with JIRA_DATACENTER_PREVIEW=true.",
+          "isRequired": false,
+          "default": "cloud",
+          "choices": ["cloud", "datacenter"],
+          "format": "string"
+        },
+        {
+          "name": "JIRA_PAT",
+          "description": "Jira Data Center personal access token, sent as a bearer. Required when JIRA_AUTH_MODE=pat.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "JIRA_DATACENTER_PREVIEW",
+          "description": "Acknowledges that the Data Center adapter is an unverified read-only preview. Without it JIRA_DEPLOYMENT=datacenter does not start.",
+          "isRequired": false,
+          "default": "false",
+          "format": "boolean"
         },
         {
           "name": "JIRA_OAUTH_CLIENT_ID",

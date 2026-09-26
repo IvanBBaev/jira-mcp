@@ -20,7 +20,7 @@
 // Layering: `core` is layer 0; type-only imports are the only ones present.
 // ---------------------------------------------------------------------------
 
-import type { BasicCredentials } from './http.js';
+import type { BasicCredentials, BearerCredentials } from './http.js';
 import type { HostResolution } from './host.js';
 import type { HostRef, ProfileConfig, Settings } from './types.js';
 
@@ -209,5 +209,37 @@ export function buildCredentialResolver(deps: CredentialDeps): BasicCredentialRe
     }
 
     return { kind: 'basic', host, email, apiToken };
+  };
+}
+
+/**
+ * The credential lookup for `JIRA_AUTH_MODE=pat` (D106): one Data Center
+ * personal access token, sent as a bearer to the site host.
+ *
+ * Profiles are refused rather than ignored. A profile is a site + email + API
+ * token triple — Basic-auth material — and silently answering a call that named
+ * one with the default PAT would run it against a tenant the caller did not
+ * ask for.
+ */
+export function buildPatResolver(deps: {
+  readonly settings: Pick<Settings, 'pat' | 'activeProfile'>;
+  readonly host?: HostRef | undefined;
+}): (profileName?: string) => BearerCredentials {
+  const { settings, host } = deps;
+  return (profileName?: string): BearerCredentials => {
+    const requested = profileName ?? settings.activeProfile;
+    if (requested !== undefined) {
+      throw configError(
+        `Profile "${requested}" was requested, but JIRA_AUTH_MODE=pat has no profiles: a profile carries Basic-auth credentials, and this server signs with one personal access token.`,
+        'Call without a profile, and unset JIRA_ACTIVE_PROFILE.',
+      );
+    }
+    if (host === undefined || settings.pat === undefined || settings.pat === '') {
+      throw configError(
+        'This server has no usable Jira credentials: JIRA_AUTH_MODE=pat needs JIRA_SITE and JIRA_PAT.',
+        'Run `jira-mcp-ai doctor` — it reports which of the two is missing.',
+      );
+    }
+    return { kind: 'bearer', host, accessToken: settings.pat };
   };
 }

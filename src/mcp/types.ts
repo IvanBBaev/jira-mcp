@@ -22,6 +22,7 @@
 
 import type { ZodType } from 'zod';
 
+import type { JiraApi } from '../api/port.js';
 import type {
   Clock,
   ErrorRecord,
@@ -270,6 +271,13 @@ export interface ToolCtx {
    * implementation, which is why tools contain no plan-mode branch.
    */
   readonly jira: JiraRequestFn;
+  /**
+   * The api-ring adapter (D106): the only way a tool reaches an api-ring
+   * function that talks to Jira or speaks a wire body format. Every function
+   * on it still issues its requests through {@link ToolCtx.jira}, so plan
+   * mode's capturing seam sees exactly what it saw before the port existed.
+   */
+  readonly api: JiraApi;
   /** Logger with this call's correlation id already bound. */
   readonly log: Logger;
   readonly clock: Clock;

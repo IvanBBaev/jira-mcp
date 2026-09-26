@@ -56,20 +56,7 @@ import {
   ASSIGNEE_TYPES,
   COLLAB_PAGE_SIZE,
   VERSION_STATUSES,
-  addVote,
-  addWatcher,
-  createComponent,
-  createVersion,
-  getProjectRole,
-  listComponents,
-  listProjectRoles,
-  listVersions,
-  listWatchers,
-  removeVote,
-  removeWatcher,
-  updateComponent,
-  updateVersion,
-  type CollabUser,
+  type WatcherList,
   type ProjectComponent,
   type ProjectRole,
   type ProjectVersion,
@@ -223,7 +210,8 @@ interface WatcherListData {
   readonly isWatching?: boolean;
   /** Jira's own count; it can exceed `watchers.length` on a restricted read. */
   readonly watchCount?: number;
-  readonly watchers: readonly CollabUser[];
+  /** Cloud users by accountId; on Data Center, by name/key (D106). */
+  readonly watchers: WatcherList['watchers'];
   /** `false` ⇒ Jira withheld the list; it does NOT mean nobody is watching. */
   readonly watchersVisible: boolean;
   /** Prose for `watchersVisible: false`, so a reader who skips booleans sees it. */
@@ -262,7 +250,7 @@ export const listWatchersTool = defineTool<
   input: listWatchersInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await listWatchers({ ...callBase(ctx), issue: args.issue });
+      const result = await ctx.api.listWatchers({ ...callBase(ctx), issue: args.issue });
       return ok<WatcherListData>(
         {
           issue: args.issue,
@@ -310,7 +298,7 @@ export const addWatcherTool = defineTool<
   input: watcherWriteInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await addWatcher({
+      const result = await ctx.api.addWatcher({
         ...callBase(ctx),
         issue: args.issue,
         accountId: args.accountId,
@@ -340,7 +328,7 @@ export const removeWatcherTool = defineTool<
   input: watcherWriteInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await removeWatcher({
+      const result = await ctx.api.removeWatcher({
         ...callBase(ctx),
         issue: args.issue,
         accountId: args.accountId,
@@ -378,7 +366,7 @@ export const addVoteTool = defineTool<z.infer<typeof voteInput>, VoteChangeData>
   input: voteInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await addVote({ ...callBase(ctx), issue: args.issue });
+      const result = await ctx.api.addVote({ ...callBase(ctx), issue: args.issue });
       return ok<VoteChangeData>({ ...result, voted: true });
     });
   },
@@ -400,7 +388,7 @@ export const removeVoteTool = defineTool<z.infer<typeof voteInput>, VoteChangeDa
   input: voteInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await removeVote({ ...callBase(ctx), issue: args.issue });
+      const result = await ctx.api.removeVote({ ...callBase(ctx), issue: args.issue });
       return ok<VoteChangeData>({ ...result, voted: false });
     });
   },
@@ -447,7 +435,7 @@ export const listComponentsTool = defineTool<
   input: listComponentsInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listComponents({
+      const loop = await ctx.api.listComponents({
         ...pagedOptions(ctx, args.startAt, args.maxResults),
         project: args.project,
         query: args.query,
@@ -526,7 +514,7 @@ export const createComponentTool = defineTool<
   input: createComponentInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await createComponent({
+      const result = await ctx.api.createComponent({
         ...callBase(ctx),
         project: args.project,
         name: args.name,
@@ -567,7 +555,7 @@ export const updateComponentTool = defineTool<
   input: updateComponentInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await updateComponent({
+      const result = await ctx.api.updateComponent({
         ...callBase(ctx),
         componentId: args.componentId,
         name: args.name,
@@ -629,7 +617,7 @@ export const listVersionsTool = defineTool<
   input: listVersionsInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const loop = await listVersions({
+      const loop = await ctx.api.listVersions({
         ...pagedOptions(ctx, args.startAt, args.maxResults),
         project: args.project,
         query: args.query,
@@ -699,7 +687,7 @@ export const createVersionTool = defineTool<
   input: createVersionInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await createVersion({
+      const result = await ctx.api.createVersion({
         ...callBase(ctx),
         projectId: args.projectId,
         name: args.name,
@@ -750,7 +738,7 @@ export const updateVersionTool = defineTool<
   input: updateVersionInput,
   handler(args, ctx) {
     return guarded(async () => {
-      const result = await updateVersion({
+      const result = await ctx.api.updateVersion({
         ...callBase(ctx),
         versionId: args.versionId,
         name: args.name,
@@ -820,13 +808,13 @@ export const listProjectRolesTool = defineTool<
     return guarded(async () => {
       const base = { ...callBase(ctx), project: args.project };
       if (args.roleId === undefined) {
-        const roles = await listProjectRoles(base);
+        const roles = await ctx.api.listProjectRoles(base);
         return ok<ProjectRolesData>(
           { project: args.project, roles, count: roles.length },
           { untrusted: true },
         );
       }
-      const role = await getProjectRole({ ...base, roleId: args.roleId });
+      const role = await ctx.api.getProjectRole({ ...base, roleId: args.roleId });
       return ok<ProjectRolesData>(
         {
           project: args.project,

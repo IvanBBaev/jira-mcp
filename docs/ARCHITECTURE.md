@@ -33,11 +33,13 @@ TypeScript. It follows the house template established by its sibling repos:
 
 - Jira Data Center / Server support (architecture keeps the door open via the host
   allowlist, and OAuth incidentally widened it further — the credential union has
-  a `bearer` arm and `HostRef` carries a path prefix). **Parked by D104**, not
-  scheduled: the unblocking event is a real DC host plus a closed Gate C on
-  Cloud, and ROADMAP.md carries the measured cost. The seam that is still
-  missing is a domain-level one — `JiraRequestFn` is transport-level, so a route
-  *shape* difference has nowhere to plug in today.
+  a `bearer` arm and `HostRef` carries a path prefix). Parked by D104 and
+  **un-parked in stages by D106** (IMPLEMENTATION-PLAN.md Phase 13). The
+  domain-level seam D104 found missing now exists — `api/port.ts` (§Layering) —
+  and a second adapter plugs into it: `api/datacenter.ts`, a read-only,
+  unverified preview reachable only behind `JIRA_DATACENTER_PREVIEW=true`
+  (D107). An adapter declares the tools it serves (`JiraApi.serves`), and the
+  registry excludes the rest.
 - Confluence, JSM operations, Bitbucket, Compass.
 - Full markdown ↔ ADF fidelity. A **subset** ships (headings, lists, code fences,
   inline code, bold/italic, links, mentions — D38); anything outside it degrades
@@ -77,13 +79,19 @@ core  ←  api  ←  mcp  ←  tools
   (`search.ts`, `issues.ts`, `collab.ts`, `attachments.ts`, `filters.ts`,
   `meta.ts`, `users.ts`, `agile.ts`, `adf.ts`, `shared.ts` for pagination
   helpers). No MCP concepts here.
+  - **`api/port.ts`** is the domain-level port (D106): `JiraApi` names every
+    api-ring function a tool may call — each one that talks to Jira, and the
+    converters that speak a wire body format — and `CLOUD_API` is the existing
+    functions by identity. Tools reach them only as `ctx.api.<fn>`; the
+    registry picks the adapter once per server. `tools/port-boundary.test.ts`
+    refuses a direct import that would go around it.
 - **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
   `result.ts`, `taint.ts`, `transport.ts`, `transport-http.ts`, `write-mode.ts`,
   `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`. No Jira
   endpoint knowledge.
 - **`src/tools/`** — one file per package, each exporting a `PackageSpec`
   (`searchPackage`, `issuesPackage`, …) that `index.ts` composes into
-  `PACKAGES`; thin glue from validated input → api call → shaped result. One
+  `PACKAGES`; thin glue from validated input → `ctx.api` call → shaped result. One
   exception earns its size: `attachments.ts` also holds the media store, because
   the rules that keep tenant-authored filenames inside one directory belong next
   to the only tools that move bytes.

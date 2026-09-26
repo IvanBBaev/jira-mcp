@@ -46,11 +46,14 @@
 import { createJiraError } from '../core/errors.js';
 import { encodeSegment } from '../core/http-util.js';
 import {
+  type JiraDeployment,
   type JiraError,
   type JiraRequestFn,
   type JiraRequestSpec,
   type JiraResponse,
 } from '../core/types.js';
+import { shapeDataCenterUser } from './users.js';
+import type { DataCenterUser } from './users.js';
 import {
   budgetOf,
   fetchAll,
@@ -106,6 +109,8 @@ export interface MetaBase {
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request issued. */
   readonly signal?: AbortSignal;
+  /** The user dialect a project `lead` is read in (D106); absent means `cloud`. */
+  readonly deployment?: JiraDeployment;
 }
 
 /** Paged calls additionally accept the two loop caps. */
@@ -208,8 +213,8 @@ export interface ProjectSummary {
   /** True for team-managed (next-gen) projects. */
   readonly simplified?: boolean;
   readonly isPrivate?: boolean;
-  /** Present only when the request expanded `lead`. */
-  readonly lead?: UserRef;
+  /** Present only when the request expanded `lead`. A DC user on Data Center. */
+  readonly lead?: UserRef | DataCenterUser;
 }
 
 /** An issue type, as `/project/{key}` and the createmeta endpoints report one. */
@@ -401,7 +406,8 @@ export function listProjects(
         orderBy: trimmed(options.orderBy),
       },
     }),
-    (response) => classicPage(response, 'values', 'project search', mapProject),
+    (response) =>
+      classicPage(response, 'values', 'project search', (entry) => mapProject(entry)),
   );
 }
 
@@ -421,7 +427,7 @@ export async function getProject(options: GetProjectOptions): Promise<ProjectDet
     pathTemplate: '/project/{projectIdOrKey}',
     query: { expand: options.expand ?? DEFAULT_PROJECT_DETAIL_EXPAND },
   });
-  return mapProjectDetail(requireRecord(response.data, 'project'));
+  return mapProjectDetail(requireRecord(response.data, 'project'), options.deployment);
 }
 
 // ---------------------------------------------------------------------------
@@ -574,6 +580,138 @@ export function listStatuses(
     }),
     (response) => classicPage(response, 'values', 'status search', mapStatus),
   );
+}
+
+// ---------------------------------------------------------------------------
+// 7b. The Data Center twins (D106)
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuse a filter the Data Center endpoint cannot apply, rather than ignoring
+ * it: a silently dropped filter answers a narrower question than the caller
+ * asked, with rows that look like the answer to the one they did ask.
+ */
+function notOnDataCenter(what: string, remediation: string): JiraError {
+  return createJiraError({
+    kind: 'validation',
+    reason: `${what} is not available on Jira Data Center.`,
+    remediation,
+  });
+}
+
+/** One complete, unpaginated read reported in the classic loop's own terms. */
+function wholeList<T>(items: readonly T[]): ClassicLoopResult<T> {
+  return {
+    items,
+    pages: 1,
+    stopReason: 'exhausted',
+    partial: false,
+    total: items.length,
+  };
+}
+
+/**
+ * {@link listProjects} on Jira Data Center — `GET /rest/api/2/project`.
+ *
+ * Data Center has no `/project/search`: `/project` answers every visible
+ * project in one bare array. `query` and `typeKey` are therefore applied here
+ * (case-insensitive substring over key and name, which is what Cloud's
+ * `query` matches; exact `projectTypeKey`), and the result is one complete
+ * page. `orderBy` has no Data Center equivalent and is refused.
+ */
+export async function listProjectsDataCenter(
+  options: ListProjectsOptions,
+): Promise<ClassicLoopResult<ProjectSummary>> {
+  if (trimmed(options.orderBy) !== undefined) {
+    throw notOnDataCenter(
+      'Ordering projects (orderBy)',
+      "Drop orderBy; the list comes back in the server's order.",
+    );
+  }
+  const response = await sendOne(options, {
+    method: 'GET',
+    root: 'v2',
+    path: '/project',
+    query: { expand: options.expand ?? DEFAULT_PROJECT_EXPAND },
+  });
+  if (!Array.isArray(response.data)) {
+    throw shapeError(
+      'GET /project answered with something other than a JSON array of projects.',
+      'Re-run; if it persists the site may be behind a proxy rewriting responses.',
+    );
+  }
+  const needle = trimmed(options.query)?.toLowerCase();
+  const typeKey = trimmed(options.typeKey);
+  const projects = response.data
+    .map((entry, index) =>
+      mapProject(requireRecord(entry, `project #${index}`), 'datacenter'),
+    )
+    .filter(
+      (project) =>
+        (needle === undefined ||
+          project.key.toLowerCase().includes(needle) ||
+          project.name.toLowerCase().includes(needle)) &&
+        (typeKey === undefined || project.projectTypeKey === typeKey),
+    );
+  return wholeList(projects);
+}
+
+/** Data Center's status-category `key` → the Cloud category word (JIRA-API.md). */
+const DC_STATUS_CATEGORY: Readonly<Record<string, string>> = Object.freeze({
+  new: 'TODO',
+  indeterminate: 'IN_PROGRESS',
+  done: 'DONE',
+});
+
+/**
+ * {@link listStatuses} on Jira Data Center — `GET /rest/api/2/status`.
+ *
+ * Data Center has no `/statuses/search`. `/status` answers every status in one
+ * array with the category as a nested object; its `key` (`new`,
+ * `indeterminate`, `done`) is mapped to the `TODO` / `IN_PROGRESS` / `DONE`
+ * word the Cloud read returns, so `statusCategory` means one thing on both.
+ * `searchString` and `statusCategory` are applied here; `projectId` and
+ * `expand` have no equivalent on this endpoint and are refused.
+ */
+export async function listStatusesDataCenter(
+  options: ListStatusesOptions,
+): Promise<ClassicLoopResult<StatusInfo>> {
+  if (trimmed(options.projectId) !== undefined) {
+    throw notOnDataCenter(
+      'Filtering statuses by projectId',
+      'Drop projectId; Data Center statuses are global, and jira_get_transitions lists the ones an issue can move to.',
+    );
+  }
+  if (trimmed(options.expand) !== undefined) {
+    throw notOnDataCenter('Expanding statuses (expand)', 'Drop expand.');
+  }
+  const response = await sendOne(options, { method: 'GET', root: 'v2', path: '/status' });
+  if (!Array.isArray(response.data)) {
+    throw shapeError(
+      'GET /status answered with something other than a JSON array of statuses.',
+      'Re-run; if it persists the site may be behind a proxy rewriting responses.',
+    );
+  }
+  const needle = trimmed(options.searchString)?.toLowerCase();
+  const category = trimmed(options.statusCategory)?.toUpperCase();
+  const statuses = response.data
+    .map((entry, index) => {
+      const record = requireRecord(entry, `status #${index}`);
+      const categoryKey = readString(asRecord(record.statusCategory) ?? {}, 'key');
+      return compact({
+        id: requireField(readId(record, 'id'), 'id', 'status'),
+        name: requireField(readString(record, 'name'), 'name', 'status'),
+        description: readString(record, 'description'),
+        statusCategory:
+          categoryKey === undefined ? undefined : DC_STATUS_CATEGORY[categoryKey],
+      });
+    })
+    .filter(
+      (status) =>
+        (needle === undefined || status.name.toLowerCase().includes(needle)) &&
+        (category === undefined || status.statusCategory === category),
+    );
+  return wholeList(statuses);
 }
 
 /**
@@ -776,7 +914,11 @@ function classicPage<T>(
   };
 }
 
-function mapUser(value: unknown): UserRef | undefined {
+function mapUser(
+  value: unknown,
+  deployment?: JiraDeployment,
+): UserRef | DataCenterUser | undefined {
+  if (deployment === 'datacenter') return shapeDataCenterUser(value);
   const record = asRecord(value);
   if (record === undefined) return undefined;
   const accountId = readString(record, 'accountId');
@@ -790,7 +932,10 @@ function mapUser(value: unknown): UserRef | undefined {
   });
 }
 
-function mapProject(entry: Record<string, unknown>): ProjectSummary {
+function mapProject(
+  entry: Record<string, unknown>,
+  deployment?: JiraDeployment,
+): ProjectSummary {
   return compact({
     id: requireField(readId(entry, 'id'), 'id', 'project'),
     key: requireField(readString(entry, 'key'), 'key', 'project'),
@@ -799,13 +944,16 @@ function mapProject(entry: Record<string, unknown>): ProjectSummary {
     style: readString(entry, 'style'),
     simplified: readBoolean(entry, 'simplified'),
     isPrivate: readBoolean(entry, 'isPrivate'),
-    lead: mapUser(entry.lead),
+    lead: mapUser(entry.lead, deployment),
   });
 }
 
-function mapProjectDetail(entry: Record<string, unknown>): ProjectDetail {
+function mapProjectDetail(
+  entry: Record<string, unknown>,
+  deployment?: JiraDeployment,
+): ProjectDetail {
   return compact({
-    ...mapProject(entry),
+    ...mapProject(entry, deployment),
     description: readString(entry, 'description'),
     issueTypes: mapList(entry.issueTypes, 'issue type', mapIssueType),
     components: mapList(entry.components, 'component', mapComponent),

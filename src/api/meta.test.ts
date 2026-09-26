@@ -258,7 +258,11 @@ test('getProject reads the detail expands, components and versions', async () =>
   assert.equal(jira.lastRequest()?.query?.expand, DEFAULT_PROJECT_DETAIL_EXPAND);
   assert.equal(project.key, 'ABC');
   assert.equal(project.description, 'The alpha delivery board.');
-  assert.equal(project.lead?.accountId, '5b10a2844c20165700ede21g');
+  const lead = project.lead;
+  assert.equal(
+    lead !== undefined && 'accountId' in lead ? lead.accountId : undefined,
+    '5b10a2844c20165700ede21g',
+  );
   assert.deepEqual(
     (project.issueTypes ?? []).map((type) => type.name),
     ['Task', 'Sub-task'],

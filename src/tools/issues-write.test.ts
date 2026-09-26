@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { adfFromMarkdown } from '../api/adf.js';
+import { CLOUD_API } from '../api/port.js';
 import { errorFromResponse } from '../core/errors.js';
 import {
   createFakeClock,
@@ -147,6 +148,7 @@ type FakeJira = ReturnType<typeof createFakeJiraRequest>;
 function ctxOf(fake: FakeJira): ToolCtx {
   return {
     jira: fake.fn,
+    api: CLOUD_API,
     log: createFakeLogger(),
     clock: createFakeClock(NOW),
     cid: 'c-7b2e04',

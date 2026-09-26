@@ -44,6 +44,7 @@
 import { createJiraError, isJiraError } from '../core/errors.js';
 import { encodeSegment } from '../core/http-util.js';
 import type {
+  JiraDeployment,
   JiraError,
   JiraRequestFn,
   JiraRequestSpec,
@@ -58,7 +59,9 @@ import {
   type ClassicPage,
   type PageStopReason,
 } from './shared.js';
-import type { JiraUser } from './users.js';
+import { shapeDataCenterUser } from './users.js';
+import { wikiToText } from './wiki.js';
+import type { JiraUser, ShapedUser } from './users.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants
@@ -171,7 +174,7 @@ export interface IssueLink {
 export interface ChangelogEntry {
   readonly id?: string;
   readonly created?: string;
-  readonly author?: JiraUser;
+  readonly author?: ShapedUser;
   readonly items: readonly Readonly<Record<string, unknown>>[];
 }
 
@@ -218,8 +221,8 @@ export interface IssueDetail {
 /** One comment, body already flattened. */
 export interface IssueComment {
   readonly id: string;
-  readonly author?: JiraUser;
-  readonly updateAuthor?: JiraUser;
+  readonly author?: ShapedUser;
+  readonly updateAuthor?: ShapedUser;
   readonly body: string;
   readonly created?: string;
   readonly updated?: string;
@@ -232,8 +235,8 @@ export interface IssueComment {
 export interface IssueWorklog {
   readonly id: string;
   readonly issueId?: string;
-  readonly author?: JiraUser;
-  readonly updateAuthor?: JiraUser;
+  readonly author?: ShapedUser;
+  readonly updateAuthor?: ShapedUser;
   readonly comment?: string;
   readonly started?: string;
   readonly timeSpent?: string;
@@ -306,6 +309,12 @@ export interface IssueRequestBase {
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request. */
   readonly signal?: AbortSignal;
+  /**
+   * Which user dialect the read shaping projects (D106). Absent means `cloud`,
+   * so every existing caller is unchanged; the Data Center adapter passes
+   * `datacenter`. It changes how users are recognised and nothing else.
+   */
+  readonly deployment?: JiraDeployment;
 }
 
 /** Offsets and caps shared by the three classic lists. */
@@ -410,19 +419,19 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
   const data = requireRecord(response.data, 'issue');
   const id = requireString(data.id, 'issue.id');
   const key = requireString(data.key, 'issue.key');
-  const changelog = shapeChangelogBlock(data.changelog);
+  const changelog = shapeChangelogBlock(data.changelog, options.deployment);
   const props = asRecord(data.properties);
   const extras: Record<string, unknown> = {};
   for (const [section, value] of Object.entries(data)) {
     if (!ISSUE_ENVELOPE_KEYS.has(section)) extras[section] = value;
   }
-  const expanded = shapeIssueFields(extras, raw, options.format);
+  const expanded = shapeIssueFields(extras, raw, options.format, options.deployment);
 
   return {
     id,
     key,
     ...(typeof data.self === 'string' ? { self: data.self } : {}),
-    fields: shapeIssueFields(data.fields, raw, options.format),
+    fields: shapeIssueFields(data.fields, raw, options.format, options.deployment),
     ...(changelog === undefined ? {} : { changelog }),
     ...(props === undefined ? {} : { properties: props }),
     ...(Object.keys(expanded).length === 0 ? {} : { expanded }),
@@ -446,7 +455,7 @@ export async function listComments(
     pathTemplate: ISSUE_COMMENT_PATH_TEMPLATE,
     query: { orderBy },
     collection: 'comments',
-    map: (value) => shapeComment(value, options.format),
+    map: (value) => shapeComment(value, options.format, options.deployment),
   });
   return { ...page.meta, comments: page.items, orderBy };
 }
@@ -462,7 +471,7 @@ export async function listWorklogs(
     suffix: '/worklog',
     pathTemplate: ISSUE_WORKLOG_PATH_TEMPLATE,
     collection: 'worklogs',
-    map: shapeWorklog,
+    map: (value) => shapeWorklog(value, options.deployment),
   });
   return { ...page.meta, worklogs: page.items };
 }
@@ -481,7 +490,7 @@ export async function listChangelog(
     suffix: '/changelog',
     pathTemplate: ISSUE_CHANGELOG_PATH_TEMPLATE,
     collection: 'values',
-    map: shapeChangelogEntry,
+    map: (value) => shapeChangelogEntry(value, options.deployment),
   });
   return { ...page.meta, histories: page.items };
 }
@@ -1304,17 +1313,40 @@ export function shapeIssueFields(
   value: unknown,
   raw: boolean,
   format?: 'text' | 'markdown',
+  deployment?: JiraDeployment,
 ): Record<string, unknown> {
   const fields = asRecord(value);
   if (fields === undefined) return {};
   const render = raw ? undefined : format === 'markdown' ? adfToMarkdown : adfToText;
+  const user = userProjection(deployment);
+  const wiki = deployment === 'datacenter' && render !== undefined;
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(fields)) {
-    if (key === 'issuelinks') out[key] = shapeIssueLinks(entry, render);
+    // Data Center rich text is a wiki-markup STRING, which nothing about the
+    // value marks as rich text (an ADF document marks itself). Only the system
+    // fields known to carry it are flattened; any other string passes as sent.
+    if (wiki && typeof entry === 'string' && WIKI_TEXT_FIELDS.has(key)) {
+      out[key] = wikiToText(entry);
+    } else if (key === 'issuelinks') out[key] = shapeIssueLinks(entry, render, user);
     else if (key === 'parent') out[key] = shapeLinkedIssue(entry) ?? null;
-    else out[key] = shapeValue(entry, render, 0);
+    else out[key] = shapeValue(entry, render, 0, user);
   }
   return out;
+}
+
+/**
+ * The system fields whose Data Center value is wiki markup (D106, 13.3b). A
+ * custom multi-line text field carries it too, but its id says nothing about
+ * that, so it is returned as sent rather than guessed at.
+ */
+const WIKI_TEXT_FIELDS: ReadonlySet<string> = new Set(['description', 'environment']);
+
+/** Recognises and narrows a user object; `undefined` when the record is not one. */
+type UserProjection = (value: unknown) => ShapedUser | undefined;
+
+/** The user projection for a dialect: `accountId` on Cloud, `name`/`key` on DC. */
+function userProjection(deployment: JiraDeployment | undefined): UserProjection {
+  return deployment === 'datacenter' ? shapeDataCenterUser : shapeUser;
 }
 
 /**
@@ -1328,19 +1360,20 @@ function shapeValue(
   value: unknown,
   render: ((node: unknown) => string) | undefined,
   depth: number,
+  projectUser: UserProjection,
 ): unknown {
   if (depth >= MAX_SHAPE_DEPTH) return value;
   if (isUnknownArray(value)) {
-    return value.map((entry) => shapeValue(entry, render, depth + 1));
+    return value.map((entry) => shapeValue(entry, render, depth + 1, projectUser));
   }
   if (!isRecord(value)) return value;
   if (isAdfDoc(value)) return render === undefined ? value : render(value);
-  const user = shapeUser(value);
+  const user = projectUser(value);
   if (user !== undefined) return user;
 
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    out[key] = shapeValue(entry, render, depth + 1);
+    out[key] = shapeValue(entry, render, depth + 1, projectUser);
   }
   return out;
 }
@@ -1377,8 +1410,9 @@ function shapeVisibility(value: unknown): JiraVisibility | undefined {
 function shapeIssueLinks(
   value: unknown,
   render: ((node: unknown) => string) | undefined,
+  projectUser: UserProjection,
 ): unknown {
-  if (!isUnknownArray(value)) return shapeValue(value, render, 0);
+  if (!isUnknownArray(value)) return shapeValue(value, render, 0, projectUser);
   const links: IssueLink[] = [];
   for (const entry of value) {
     const link = shapeIssueLink(entry);
@@ -1444,18 +1478,20 @@ function namedOf(value: unknown): string | undefined {
 function shapeComment(
   value: unknown,
   format?: 'text' | 'markdown',
+  deployment?: JiraDeployment,
 ): IssueComment | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.id !== 'string') return undefined;
-  const author = shapeUser(record.author);
-  const updateAuthor = shapeUser(record.updateAuthor);
+  const projectUser = userProjection(deployment);
+  const author = projectUser(record.author);
+  const updateAuthor = projectUser(record.updateAuthor);
   const visibility = shapeVisibility(record.visibility);
   const render = format === 'markdown' ? adfToMarkdown : adfToText;
   return {
     id: record.id,
     ...(author === undefined ? {} : { author }),
     ...(updateAuthor === undefined ? {} : { updateAuthor }),
-    body: render(record.body),
+    body: deployment === 'datacenter' ? wikiToText(record.body) : render(record.body),
     ...(typeof record.created === 'string' ? { created: record.created } : {}),
     ...(typeof record.updated === 'string' ? { updated: record.updated } : {}),
     ...(visibility === undefined ? {} : { visibility }),
@@ -1463,13 +1499,22 @@ function shapeComment(
   };
 }
 
-function shapeWorklog(value: unknown): IssueWorklog | undefined {
+function shapeWorklog(
+  value: unknown,
+  deployment?: JiraDeployment,
+): IssueWorklog | undefined {
   const record = asRecord(value);
   if (record === undefined || typeof record.id !== 'string') return undefined;
-  const author = shapeUser(record.author);
-  const updateAuthor = shapeUser(record.updateAuthor);
+  const projectUser = userProjection(deployment);
+  const author = projectUser(record.author);
+  const updateAuthor = projectUser(record.updateAuthor);
   const visibility = shapeVisibility(record.visibility);
-  const comment = record.comment === undefined ? undefined : adfToText(record.comment);
+  const comment =
+    record.comment === undefined
+      ? undefined
+      : deployment === 'datacenter'
+        ? wikiToText(record.comment)
+        : adfToText(record.comment);
   return {
     id: record.id,
     ...(typeof record.issueId === 'string' ? { issueId: record.issueId } : {}),
@@ -1541,10 +1586,13 @@ function boolField(
   return typeof value === 'boolean' ? { [key]: value } : {};
 }
 
-function shapeChangelogEntry(value: unknown): ChangelogEntry | undefined {
+function shapeChangelogEntry(
+  value: unknown,
+  deployment?: JiraDeployment,
+): ChangelogEntry | undefined {
   const record = asRecord(value);
   if (record === undefined) return undefined;
-  const author = shapeUser(record.author);
+  const author = userProjection(deployment)(record.author);
   const items: Readonly<Record<string, unknown>>[] = isUnknownArray(record.items)
     ? record.items.filter(isRecord)
     : [];
@@ -1557,13 +1605,16 @@ function shapeChangelogEntry(value: unknown): ChangelogEntry | undefined {
 }
 
 /** The `changelog` block `expand=changelog` embeds in an issue read. */
-function shapeChangelogBlock(value: unknown): IssueChangelog | undefined {
+function shapeChangelogBlock(
+  value: unknown,
+  deployment?: JiraDeployment,
+): IssueChangelog | undefined {
   const record = asRecord(value);
   if (record === undefined) return undefined;
   const rows = isUnknownArray(record.histories) ? record.histories : [];
   const histories: ChangelogEntry[] = [];
   for (const row of rows) {
-    const entry = shapeChangelogEntry(row);
+    const entry = shapeChangelogEntry(row, deployment);
     if (entry !== undefined) histories.push(entry);
   }
   return {

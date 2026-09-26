@@ -40,6 +40,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { MAX_MEDIA_NAME_CHARS, UPLOAD_FIELD_NAME } from '../api/attachments.js';
+import { CLOUD_API } from '../api/port.js';
 import { createFakeClock, createFakeJiraRequest, jiraOk } from '../core/fakes/index.js';
 import { MAX_ATTACHMENT_BYTES } from '../core/http-util.js';
 import { JiraError } from '../core/types.js';
@@ -72,6 +73,7 @@ function createCtx(jira: JiraRequestFn): ToolCtx {
   const clock = createFakeClock(1_000);
   return {
     jira,
+    api: CLOUD_API,
     log: createFakeLogger({ clock }),
     clock,
     cid: 'c-test01',
