@@ -73,8 +73,8 @@ attestation).
 
 ## 2. The version bump is a set, not a field
 
-Twelve places carry the version or a pin of it, and they move **together**. Five
-are manifest fields, in four files:
+Thirteen places carry the version or a pin of it, and they move **together**.
+Five are manifest fields, in four files:
 
 - `package.json` — `version`
 - `server.json` — `version` **and** `packages[0].version` (two fields, one file)
@@ -89,10 +89,10 @@ cannot tell you is whether the number is the *right* one — it checks agreement
 not intent, and every field agreeing at `0.0.0` is exactly the state this
 document exists to get you out of.
 
-The other seven are registration pins — copy-pasteable `jira-mcp-ai@<version>`
+The other eight are registration pins — copy-pasteable `jira-mcp-ai@<version>`
 snippets — and those are machine-checked too: the canonical one lives in
 [CONFIGURATION.md](CONFIGURATION.md), and `scripts/docs-lint.mjs` check 5 asserts
-that the other six mirror it exactly (two in `README.md`, three on the GitHub
+that the other seven mirror it exactly (two in `README.md`, four on the GitHub
 Pages page, one in `.claude-plugin/plugin.json` — D61, D68). A drifted pin is a
 copy-pasteable snippet that 404s, which is the worst possible first-run
 experience — so the lint fails rather than the user.
@@ -272,8 +272,9 @@ than explaining a gap later.
   eslint 10 all landed before 1.0.0 (D82, closing O-14), and re-validating the
   emitted schema of every tool is now the manifest snapshot's job rather than a
   release-day errand (CC-82). What stays deferred is named in
-  `.github/dependabot.yml` with the event that unblocks it — `typescript` 7 and
-  `@types/node` above the supported Node floor.
+  `.github/dependabot.yml` with the event that unblocks it — `typescript` from 6.1
+  upward (the road to the 7.0 compiler) and `@types/node` above the supported
+  Node floor.
 - **Gate C** — verification against a live Jira site. It does not block *a*
   release: 0.9.0 shipped before it had ever run and 0.9.4 shipped with it half
   done, deliberately and visibly, because a pre-1.0 version number is how a

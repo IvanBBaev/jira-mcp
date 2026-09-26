@@ -15,11 +15,12 @@
 // string. It re-serializes candidate trees instead:
 //
 //   1. fits                      → no marker, nothing touched;
-//   2. drop whole items from the tail of the largest array under `data`,
-//      binary-searching the longest prefix that fits  → reason `budget` (CC-25);
-//   3. one item alone over budget → keep that item, ellipsize its longest
-//      string leaf                                    → reason `item_too_large`
-//      with `field` naming the path (CC-26);
+//   2. drop whole items from the tail of the largest array at any depth under
+//      `data`, binary-searching the longest prefix that fits → reason `budget`
+//      with `field` naming the array (CC-25, CC-249);
+//   3. one item alone over budget → keep that item, cap every string leaf
+//      under `data` at the longest common length that fits → reason
+//      `item_too_large` with `field` naming the longest leaf (CC-26, CC-250);
 //   4. floor: drop `data` entirely. `ok`/`error`/`hints`/`_untrusted`/
 //      `_truncation` always survive — the caller must still be able to tell
 //      success from failure and see that something was cut.
@@ -50,9 +51,9 @@ import type { Hint, ToolResult, TruncationMarker } from './types.js';
 
 /** TOOLS.md hint catalog — `truncated`. */
 export const TRUNCATED_HINT_MESSAGE =
-  'The result exceeded the character budget and was cut. Narrow fields/maxResults ' +
-  'and call again — and do NOT page on with a nextPageToken from this page: the ' +
-  'tail it names was never seen.';
+  'Cut to fit the budget (see _truncation). Do NOT follow nextPageToken or ' +
+  'nextStartAt from this page: they skip the dropped rows. Resume at startAt + ' +
+  'rows received, or narrow fields/maxResults.';
 
 /** TOOLS.md hint catalog — `untrusted_content`. */
 export const UNTRUSTED_HINT_MESSAGE =
@@ -210,8 +211,9 @@ function normalizeBudget(maxResultChars: number): number {
   return Math.max(0, Math.floor(maxResultChars));
 }
 
-/** The array the ladder trims: `data` itself, or the largest array one level in. */
+/** The array the ladder trims, addressable by its path under `data`. */
 interface Collection {
+  readonly path: string;
   readonly items: readonly unknown[];
   readonly set: (next: readonly unknown[]) => void;
 }
@@ -221,33 +223,64 @@ function asItems(value: unknown): readonly unknown[] {
   return value as readonly unknown[];
 }
 
+/**
+ * The largest non-empty array anywhere under `data`, by serialized size — or
+ * `undefined` when no array is the bulk of the result.
+ *
+ * Any depth, because a single record hides its bulk: `jira_get_issue` carries
+ * it in `fields.comment.comments`, `fields.worklog.worklogs` and
+ * `changelog.histories`, never one level in. Largest by size and not by length,
+ * so an enclosing array always wins over one nested inside it (`data.issues`
+ * contains everything the search found) and a short list of names cannot beat
+ * a long list of comments.
+ *
+ * An array that is less than half of `data` is not the collection: it cannot be
+ * what made the result too large, so trimming it buys little space and loses
+ * information the caller relies on — cutting `fieldsRequested` would silently
+ * misreport which fields were asked for (CC-249). Such a result goes to rung 3,
+ * which shortens strings instead of dropping rows.
+ */
 function collectionOf(envelope: JsonRecord): Collection | undefined {
   const data = envelope['data'];
-  if (Array.isArray(data)) {
-    return {
-      items: asItems(data),
-      set: (next) => {
-        envelope['data'] = [...next];
-      },
-    };
-  }
-  if (!isRecord(data)) return undefined;
-
   let best: Collection | undefined;
   let bestSize = -1;
-  for (const [key, value] of Object.entries(data)) {
-    if (!Array.isArray(value) || value.length === 0) continue;
-    const size = serialize(value).length;
-    if (size <= bestSize) continue;
-    bestSize = size;
-    best = {
-      items: asItems(value),
-      set: (next) => {
-        data[key] = [...next];
-      },
-    };
-  }
-  return best;
+
+  const visit = (
+    value: unknown,
+    at: string,
+    set: (next: readonly unknown[]) => void,
+  ): void => {
+    if (Array.isArray(value)) {
+      const items = asItems(value);
+      if (items.length > 0) {
+        const size = serialize(items).length;
+        // Strictly larger: on a tie the enclosing array, visited first, stays.
+        if (size > bestSize) {
+          bestSize = size;
+          best = { path: at, items, set };
+        }
+      }
+      items.forEach((item, index) => {
+        visit(item, `${at}[${String(index)}]`, (next) => {
+          (value as unknown[])[index] = [...next];
+        });
+      });
+      return;
+    }
+    if (isRecord(value)) {
+      for (const [key, child] of Object.entries(value)) {
+        visit(child, `${at}.${key}`, (next) => {
+          value[key] = [...next];
+        });
+      }
+    }
+  };
+
+  visit(data, 'data', (next) => {
+    envelope['data'] = [...next];
+  });
+  if (best === undefined) return undefined;
+  return bestSize * 2 >= serialize(data).length ? best : undefined;
 }
 
 /** A string leaf under `data`, addressable for ellipsizing. */
@@ -258,27 +291,25 @@ interface StringLeaf {
 }
 
 /**
- * Longest string anywhere under `data`. Only `data` is walked: `error`, `hints`
- * and the markers are the part of the envelope that must survive intact, so
- * they are never candidates for elision.
+ * Every string anywhere under `data`, in document order. Only `data` is walked:
+ * `error`, `hints` and the markers are the part of the envelope that must
+ * survive intact, so they are never candidates for elision.
  *
  * `setRoot` writes the root back, for the case where `data` IS the string — a
  * tool that answers with rendered text rather than a record. Without it that
  * shape had no addressable leaf at all and fell straight to the floor, losing
  * an answer that rung 3 could have kept a prefix of.
  */
-function longestStringLeaf(
+function stringLeaves(
   root: unknown,
   path: string,
   setRoot: (next: string) => void,
-): StringLeaf | undefined {
-  let best: StringLeaf | undefined;
+): StringLeaf[] {
+  const leaves: StringLeaf[] = [];
 
   const visit = (value: unknown, at: string, set: (next: string) => void): void => {
     if (typeof value === 'string') {
-      if (best === undefined || value.length > best.value.length) {
-        best = { path: at, value, set };
-      }
+      leaves.push({ path: at, value, set });
       return;
     }
     if (Array.isArray(value)) {
@@ -299,7 +330,7 @@ function longestStringLeaf(
   };
 
   visit(root, path, setRoot);
-  return best;
+  return leaves;
 }
 
 function setMarker(envelope: JsonRecord, marker: TruncationMarker): void {
@@ -383,7 +414,12 @@ export function truncateResult(
   if (collection !== undefined && total > 1) {
     const applyKeep = (keep: number): void => {
       collection.set(original.slice(0, keep));
-      setMarker(envelope, { dropped: total - keep, of: total, reason: 'budget' });
+      setMarker(envelope, {
+        dropped: total - keep,
+        of: total,
+        reason: 'budget',
+        field: collection.path,
+      });
     };
     let low = 1;
     let high = total - 1;
@@ -404,41 +440,54 @@ export function truncateResult(
     }
   }
 
-  // 3 — a single item is already over budget: keep one and ellipsize its
-  //     longest string (CC-26). The dropped siblings are reported by the hint;
-  //     the marker names the field, which is the actionable half.
+  // 3 — a single item is already over budget: keep one and cap EVERY string
+  //     under `data` at one common length, the largest that fits (CC-26,
+  //     CC-250). Capping only the longest string was not enough: a result made
+  //     of hundreds of medium strings has no single leaf whose cut can save it,
+  //     and fell to the floor with its data deleted. The dropped siblings are
+  //     reported by the hint; the marker names the longest field, which is the
+  //     actionable half.
   if (collection !== undefined && total > 0) {
     collection.set(original.slice(0, 1));
   }
-  const leaf = longestStringLeaf(envelope['data'], 'data', (next) => {
+  const leaves = stringLeaves(envelope['data'], 'data', (next) => {
     envelope['data'] = next;
   });
-  if (leaf !== undefined && leaf.value.length > 0) {
-    const size = leaf.value.length;
-    const applyCut = (keep: number): void => {
-      leaf.set(leaf.value.slice(0, keep) + ELLIPSIS);
+  let longest: StringLeaf | undefined;
+  for (const leaf of leaves) {
+    if (longest === undefined || leaf.value.length > longest.value.length) longest = leaf;
+  }
+  if (longest !== undefined && longest.value.length > 0) {
+    const named = longest;
+    const size = named.value.length;
+    const applyCap = (cap: number): void => {
+      for (const leaf of leaves) {
+        leaf.set(
+          leaf.value.length > cap ? leaf.value.slice(0, cap) + ELLIPSIS : leaf.value,
+        );
+      }
       setMarker(envelope, {
-        dropped: size - keep,
+        dropped: size - cap,
         of: size,
         reason: 'item_too_large',
-        field: leaf.path,
+        field: named.path,
       });
     };
     let low = 0;
     let high = size - 1;
-    let bestKeep = -1;
+    let bestCap = -1;
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      applyCut(mid);
+      applyCap(mid);
       if (serialize(envelope).length <= budget) {
-        bestKeep = mid;
+        bestCap = mid;
         low = mid + 1;
       } else {
         high = mid - 1;
       }
     }
-    if (bestKeep >= 0) {
-      applyCut(bestKeep);
+    if (bestCap >= 0) {
+      applyCap(bestCap);
       return done();
     }
   }

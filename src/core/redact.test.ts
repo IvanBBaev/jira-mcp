@@ -210,6 +210,40 @@ describe('stripCredentialShapes', () => {
     assert.ok(!output.includes('8A1B2C3D4E5F'));
   });
 
+  it('[CC-155] leaves prose that merely follows an auth word intact', () => {
+    // The shape pass runs over every tool result: an issue summary is not a header.
+    for (const text of [
+      'Fix basic navigation in settings',
+      'Bearer instruments review',
+      'Authorization: pending manager approval',
+      'Cookie: chocolate chip',
+    ]) {
+      assert.equal(stripCredentialShapes(text), text);
+    }
+    assert.equal(
+      stripCredentialShapes('Basic dXNlckBleC5jb20='),
+      `Basic ${DEFAULT_PLACEHOLDER}`,
+    );
+    assert.equal(
+      stripCredentialShapes('Bearer abcDEFghiJKL'),
+      `Bearer ${DEFAULT_PLACEHOLDER}`,
+    );
+  });
+
+  it('[CC-159] masks every cookie pair and the password in URL userinfo', () => {
+    const cookies = stripCredentialShapes(
+      'cookie: JSESSIONID=8A1B; atl.xsrf.token=abc|x; cloud.session.token=eyJhbGci',
+    );
+    assert.equal(cookies, `cookie: ${DEFAULT_PLACEHOLDER}`);
+
+    const url = stripCredentialShapes('clone https://bob:hunter2@git.example/x now');
+    assert.equal(url, `clone https://bob:${DEFAULT_PLACEHOLDER}@git.example/x now`);
+    assert.equal(
+      stripCredentialShapes('https://host:8080/path'),
+      'https://host:8080/path',
+    );
+  });
+
   it('leaves ordinary text alone', () => {
     const text = 'GET /rest/api/3/issue/{key} → 200 in 143 ms';
     assert.equal(stripCredentialShapes(text), text);
@@ -377,9 +411,61 @@ describe('createRedactor — deep values', () => {
     assert.equal(output.safe, 'kept');
   });
 
+  it('survives an Error whose name or message is not a string, or throws', () => {
+    // `name` / `message` are read through the same defensive path as any
+    // other property: a non-string becomes an empty string, a throwing getter
+    // the unreadable marker — and the redactor itself never throws.
+    const redactor = createRedactor({ secrets: [TOKEN] });
+
+    const oddName = new Error(`with ${TOKEN}`);
+    Object.defineProperty(oddName, 'name', { value: 42, enumerable: false });
+    const oddOutput = redactor.redact(oddName) as Record<string, unknown>;
+    assert.equal(oddOutput.name, '');
+    assert.equal(oddOutput.message, `with ${DEFAULT_PLACEHOLDER}`);
+
+    const hostile = new Error('irrelevant');
+    Object.defineProperty(hostile, 'message', {
+      get(): string {
+        throw new Error('nope');
+      },
+      enumerable: false,
+    });
+    const hostileOutput = redactor.redact(hostile) as Record<string, unknown>;
+    assert.equal(hostileOutput.name, 'Error');
+    assert.equal(hostileOutput.message, '[UNREADABLE]');
+  });
+
   it('redacts a bare string or leaves a primitive untouched', () => {
     const redactor = createRedactor({ secrets: [TOKEN] });
     assert.equal(redactor.redact(TOKEN), DEFAULT_PLACEHOLDER);
     assert.equal(redactor.redact(7), 7);
+  });
+});
+
+describe('createRedactor — serialized JSON', () => {
+  it('[CC-197] a credential parameter before an escaped quote leaves the line parseable', () => {
+    const redactor = createRedactor();
+    const line = JSON.stringify({ issueKey: 'ABC-1 token=x"', tool: 'x password=a"y' });
+
+    const redacted = redactor.redactString(line);
+
+    assert.deepEqual(JSON.parse(redacted), {
+      issueKey: 'ABC-1 token=[REDACTED]"',
+      tool: 'x password=[REDACTED]"y',
+    });
+  });
+
+  it('[CC-198] a __proto__ key survives redaction as an own property', () => {
+    const redactor = createRedactor();
+    const data: unknown = JSON.parse(
+      '{"properties":{"__proto__":{"note":"tenant value"},"other":1}}',
+    );
+
+    const redacted = redactor.redact(data);
+
+    assert.equal(
+      JSON.stringify(redacted),
+      '{"properties":{"__proto__":{"note":"tenant value"},"other":1}}',
+    );
   });
 });

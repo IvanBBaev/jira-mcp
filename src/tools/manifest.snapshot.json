@@ -297,7 +297,7 @@
               },
               "orderBy": {
                 "type": "string",
-                "enum": ["-created", "created", "-updated", "updated"]
+                "enum": ["-created", "created"]
               },
               "format": {
                 "type": "string",
@@ -470,7 +470,8 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
                 }
               },
               "priority": {
@@ -547,21 +548,24 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
                 }
               },
               "labelsAdd": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
                 }
               },
               "labelsRemove": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
                 }
               },
               "priority": {
@@ -643,7 +647,8 @@
               "comment": {
                 "anyOf": [
                   {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 65536
                   },
                   {
                     "type": "object",
@@ -697,7 +702,8 @@
               "body": {
                 "anyOf": [
                   {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 65536
                   },
                   {
                     "type": "object",
@@ -779,7 +785,8 @@
               "body": {
                 "anyOf": [
                   {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 65536
                   },
                   {
                     "type": "object",
@@ -901,7 +908,8 @@
               "comment": {
                 "anyOf": [
                   {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 65536
                   },
                   {
                     "type": "object",
@@ -963,7 +971,8 @@
               "comment": {
                 "anyOf": [
                   {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 65536
                   },
                   {
                     "type": "object",
@@ -1126,14 +1135,30 @@
             "type": "object",
             "properties": {
               "componentId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "moveIssuesTo": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "apply": {
                 "type": "boolean"
@@ -1165,19 +1190,43 @@
             "type": "object",
             "properties": {
               "versionId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "moveFixIssuesTo": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "moveAffectedIssuesTo": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "apply": {
                 "type": "boolean"
@@ -1209,9 +1258,17 @@
             "type": "object",
             "properties": {
               "sprintId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "apply": {
                 "type": "boolean"
@@ -1244,7 +1301,6 @@
             "properties": {
               "issues": {
                 "minItems": 1,
-                "maxItems": 1000,
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -1285,7 +1341,6 @@
             "properties": {
               "issues": {
                 "minItems": 1,
-                "maxItems": 1000,
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -1296,7 +1351,8 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
                 }
               },
               "labelsAction": {
@@ -1727,9 +1783,17 @@
             "type": "object",
             "properties": {
               "componentId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "name": {
                 "type": "string",
@@ -1825,9 +1889,17 @@
             "type": "object",
             "properties": {
               "projectId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "name": {
                 "type": "string",
@@ -1877,9 +1949,17 @@
             "type": "object",
             "properties": {
               "versionId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "name": {
                 "type": "string",
@@ -1932,9 +2012,17 @@
                 "minLength": 1
               },
               "roleId": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
               },
               "profile": {
                 "type": "string",
@@ -2070,7 +2158,7 @@
             "properties": {
               "projectId": {
                 "type": "string",
-                "minLength": 1
+                "pattern": "^[1-9]\\d*$"
               },
               "profile": {
                 "type": "string",

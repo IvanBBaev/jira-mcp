@@ -58,7 +58,16 @@ export const MAX_DEPTH = 128;
  * carried Basic auth is diagnostic, the credential after it never is.
  */
 const AUTH_HEADER_RE =
-  /\b(authorization|proxy-authorization|cookie|set-cookie)(["']?\s*[:=]\s*["']?)((?:basic|bearer|digest)\s+)?([^\s"',;]+)/gi;
+  /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)((?:basic|bearer|digest)\s+)?([^\s"',;]+)/gi;
+
+/**
+ * `Cookie: a=1; b=2` — every pair is a session credential, so the whole value
+ * to the end of the line goes, not just the first pair (CC-159).
+ */
+const COOKIE_HEADER_RE = /\b(cookie|set-cookie)(["']?\s*[:=]\s*["']?)([^\r\n"']+)/gi;
+
+/** `https://user:password@host` — the user survives, the password does not. */
+const URL_USERINFO_RE = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s:/@]*):([^\s/@]+)@/gi;
 
 /** A bare `Basic <blob>` / `Bearer <token>` anywhere, header name or not. */
 const AUTH_SCHEME_RE = /\b(basic|bearer)(\s+)([A-Za-z0-9\-._~+/=]{8,})/gi;
@@ -68,9 +77,25 @@ const AUTH_SCHEME_RE = /\b(basic|bearer)(\s+)([A-Za-z0-9\-._~+/=]{8,})/gi;
  * `os_authType`/`os_username`/`os_password` are Atlassian's own URL-auth
  * parameters, named explicitly in ARCHITECTURE.md. Jira's `key`/`id`/`jql`
  * parameters are deliberately absent: they are workspace data, not secrets.
+ * A backslash ends the value too: the redactor also runs over serialized JSON,
+ * where swallowing the `\` of an escaped quote left a line that no longer
+ * parsed (CC-197).
  */
 const SENSITIVE_PARAM_RE =
-  /(^|[?&;\s])(os_authtype|os_username|os_password|api[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|pwd|token|secret|jwt|jsessionid)(=)([^&\s"'#]*)/gi;
+  /(^|[?&;\s])(os_authtype|os_username|os_password|api[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|pwd|token|secret|jwt|jsessionid)(=)([^&\s"'#\\]*)/gi;
+
+/**
+ * Define `key` as an own data property. Plain assignment of `__proto__` sets
+ * the prototype instead, and a tenant-named key silently vanished (CC-198).
+ */
+function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
 
 /** Own `Error` properties handled explicitly (or dropped, for `stack`). */
 const ERROR_INTRINSIC_KEYS: ReadonlySet<string> = new Set(['name', 'message', 'stack']);
@@ -107,6 +132,17 @@ function safeString(object: object, key: string): string {
 }
 
 /**
+ * Whether a word after an auth header or scheme looks like a credential rather
+ * than prose. The shape pass runs over every tool RESULT and planned body, not
+ * only log lines, so "Fix basic navigation" or "Cookie: chocolate chip" in an
+ * issue summary must survive (CC-155). Tokens, base64 blobs and JWTs carry a
+ * digit, a token symbol or an internal case change; English words do not.
+ */
+function looksLikeCredential(word: string): boolean {
+  return /\d/.test(word) || /[+/=._~-]/.test(word) || /[a-z][A-Z]/.test(word);
+}
+
+/**
  * Mask credential SHAPES in free text without any registered secret. Exported
  * because `core/errors.ts` needs a floor of protection for the case where no
  * redactor was injected — a missing seam must degrade to less redaction, never
@@ -122,12 +158,30 @@ export function stripCredentialShapes(
   return text
     .replace(
       AUTH_HEADER_RE,
-      (_match, name: string, separator: string, scheme: string | undefined) =>
-        `${name}${separator}${scheme ?? ''}${placeholder}`,
+      (
+        match: string,
+        name: string,
+        separator: string,
+        scheme: string | undefined,
+        value: string,
+      ) =>
+        looksLikeCredential(value)
+          ? `${name}${separator}${scheme ?? ''}${placeholder}`
+          : match,
+    )
+    .replace(
+      COOKIE_HEADER_RE,
+      (match: string, name: string, separator: string, value: string) =>
+        looksLikeCredential(value) ? `${name}${separator}${placeholder}` : match,
+    )
+    .replace(
+      URL_USERINFO_RE,
+      (_match, scheme: string, user: string) => `${scheme}${user}:${placeholder}@`,
     )
     .replace(
       AUTH_SCHEME_RE,
-      (_match, scheme: string, gap: string) => `${scheme}${gap}${placeholder}`,
+      (match: string, scheme: string, gap: string, value: string) =>
+        looksLikeCredential(value) ? `${scheme}${gap}${placeholder}` : match,
     )
     .replace(
       SENSITIVE_PARAM_RE,
@@ -312,7 +366,7 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
         // internals, and log events are metadata-only (OBSERVABILITY.md).
         for (const [key, item] of safeEntries(object)) {
           if (ERROR_INTRINSIC_KEYS.has(key)) continue;
-          out[scrub(key)] = walk(item, depth + 1, seen);
+          setOwn(out, scrub(key), walk(item, depth + 1, seen));
         }
         return out;
       }
@@ -327,7 +381,7 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
       for (const [key, item] of safeEntries(object)) {
         // The KEY is scrubbed too — a secret used as a property name leaks
         // exactly as loudly as one used as a value.
-        out[scrub(key)] = walk(item, depth + 1, seen);
+        setOwn(out, scrub(key), walk(item, depth + 1, seen));
       }
       return out;
     } finally {

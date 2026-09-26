@@ -16,10 +16,10 @@
 // check string minus the dot, and every regex compiled here is wrapped in
 // `^(?: … )$` so even a sloppy operator pattern cannot match a suffix.
 //
-// Private/loopback hosts are NOT blocked separately: the allowlist is
-// default-deny and `JIRA_SITE` comes from the operator's environment, not from
-// model-controlled input, so a second blocklist would only break the legitimate
-// on-prem case without closing a hole the allowlist leaves open.
+// Private/loopback hosts are NOT blocked here — this module only decides what
+// the allowlist covers. The blocklist lives in `http-util.ts` (`checkHost`) and
+// runs at request time BEFORE the allowlist, so an entry here can make a public
+// host reachable but never a loopback, private, link-local or metadata one.
 //
 // The two Atlassian OAuth hosts named below are deliberately NOT blanket-allowed
 // by `isAllowedHost`: in oauth mode `loadSettings` appends them to the effective
@@ -28,6 +28,7 @@
 // enables OAuth, and it would move the decision out of the configuration an
 // operator can read into a constant nobody looks at.
 
+import { isBlockedHost } from './http-util.js';
 import { JiraError } from './types.js';
 import type { HostRef } from './types.js';
 
@@ -69,6 +70,7 @@ export type HostProblemCode =
   | 'site_port'
   | 'site_path_stripped'
   | 'host_not_allowed'
+  | 'host_blocked'
   | 'allowlist_invalid_pattern';
 
 /** Severity of a host problem; mirrors the startup-report severities. */
@@ -128,9 +130,12 @@ export function isCanonicalCloudHost(hostname: string): boolean {
  *
  * Two forms are accepted:
  * - `jira.example.com` — an exact host, compared case-insensitively;
- * - `/pattern/` — a regular expression, slash-delimited. The source is wrapped
- *   in `^(?: … )$` before compilation, so an operator who forgets the anchors
- *   still gets whole-host matching instead of an accidental suffix rule.
+ * - `/^pattern$/` — a regular expression, slash-delimited and anchored with
+ *   `^` and `$`. An unanchored `/pattern/` is refused here, at startup, because
+ *   the request-time check (`checkHost` in `http-util.ts`) refuses it too: a
+ *   pattern that passes startup and then fails every call is a deferred crash,
+ *   not an allowlist (CC-231). The source is still wrapped in `^(?: … )$`
+ *   before compilation, so `^a|b$` cannot match a suffix either.
  *
  * An unparseable entry is an error-severity problem, never a silently dropped
  * one: a typo in an allowlist must fail startup, not quietly deny.
@@ -145,6 +150,17 @@ export function compileAllowlist(entries: readonly string[]): CompiledAllowlist 
 
     if (entry.length > 2 && entry.startsWith('/') && entry.endsWith('/')) {
       const source = entry.slice(1, -1);
+      if (!source.startsWith('^') || !source.endsWith('$')) {
+        problems.push(
+          problem(
+            'error',
+            'allowlist_invalid_pattern',
+            `JIRA_ALLOWED_HOSTS entry ${JSON.stringify(entry)} is not anchored. Write it as /^${source.replace(/^\^/, '').replace(/\$$/, '')}$/ — an unanchored pattern matches substrings, which defeats the allowlist.`,
+            'JIRA_ALLOWED_HOSTS',
+          ),
+        );
+        continue;
+      }
       let re: RegExp;
       try {
         re = new RegExp(`^(?:${source})$`, 'i');
@@ -211,10 +227,16 @@ export function isAllowedHost(
  * Accepted inputs: `mycompany`, `mycompany.atlassian.net`,
  * `https://mycompany.atlassian.net`, `https://mycompany.atlassian.net/jira/x`
  * (path stripped with a warning — CC-27).
+ *
+ * `siteVariable` is the variable the value was read from, for the messages: an
+ * active profile's `JIRA_PROFILE_<NAME>_SITE` overrides `JIRA_SITE`, and a
+ * message naming the variable that was NOT used sends the operator to edit the
+ * wrong line (CC-189).
  */
 export function resolveHost(
   rawSite: string | undefined,
   allowedHosts: readonly string[] = [],
+  siteVariable = 'JIRA_SITE',
 ): HostResolution {
   const problems: HostProblem[] = [];
   const allowlist = compileAllowlist(allowedHosts);
@@ -226,14 +248,16 @@ export function resolveHost(
       problem(
         'error',
         'site_missing',
-        'JIRA_SITE is not set. Set it to your site name ("mycompany"), host ("mycompany.atlassian.net") or full URL.',
-        'JIRA_SITE',
+        `${siteVariable} is not set. Set it to your site name ("mycompany"), host ("mycompany.atlassian.net") or full URL.`,
+        siteVariable,
       ),
     );
     return { problems };
   }
 
-  const hasScheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(site);
+  // A scheme is `name://`: a bare `host:port` also matches `name:`, and would be
+  // read as a URL with the scheme `host:` (CC-143).
+  const hasScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(site);
   let url: URL;
   try {
     url = new URL(hasScheme ? site : `https://${site}`);
@@ -242,8 +266,8 @@ export function resolveHost(
       problem(
         'error',
         'site_malformed',
-        `JIRA_SITE ${JSON.stringify(site)} is not a usable site name, host or URL. Use "mycompany", "mycompany.atlassian.net" or "https://mycompany.atlassian.net".`,
-        'JIRA_SITE',
+        `${siteVariable} ${JSON.stringify(site)} is not a usable site name, host or URL. Use "mycompany", "mycompany.atlassian.net" or "https://mycompany.atlassian.net".`,
+        siteVariable,
       ),
     );
     return { problems };
@@ -254,8 +278,8 @@ export function resolveHost(
       problem(
         'error',
         'site_scheme',
-        `JIRA_SITE uses the ${url.protocol} scheme; only https is accepted (the API token travels in an Authorization header). Drop the scheme or use https://.`,
-        'JIRA_SITE',
+        `${siteVariable} uses the ${url.protocol} scheme; only https is accepted (the API token travels in an Authorization header). Drop the scheme or use https://.`,
+        siteVariable,
       ),
     );
     return { problems };
@@ -266,8 +290,8 @@ export function resolveHost(
       problem(
         'error',
         'site_credentials',
-        'JIRA_SITE must not embed credentials (user:password@host). Put the account in JIRA_EMAIL and the token in JIRA_API_TOKEN.',
-        'JIRA_SITE',
+        `${siteVariable} must not embed credentials (user:password@host). Put the account in JIRA_EMAIL and the token in JIRA_API_TOKEN.`,
+        siteVariable,
       ),
     );
     return { problems };
@@ -282,8 +306,8 @@ export function resolveHost(
       problem(
         'warning',
         'site_path_stripped',
-        `JIRA_SITE ${JSON.stringify(site)} carries a path/query; only the origin is used. Requests are built from the API root, so the extra part is ignored.`,
-        'JIRA_SITE',
+        `${siteVariable} ${JSON.stringify(site)} carries a path/query; only the origin is used. Requests are built from the API root, so the extra part is ignored.`,
+        siteVariable,
       ),
     );
   }
@@ -294,16 +318,20 @@ export function resolveHost(
       problem(
         'error',
         'site_malformed',
-        `JIRA_SITE resolves to host ${JSON.stringify(hostname)}, which is not a valid DNS name (letters, digits, hyphens and dots only; no IP literals). Use the site host name.`,
-        'JIRA_SITE',
+        `${siteVariable} resolves to host ${JSON.stringify(hostname)}, which is not a valid DNS name (letters, digits, hyphens and dots only; no IP literals). Use the site host name.`,
+        siteVariable,
       ),
     );
     return { problems };
   }
 
   // A dot-less value is a site NAME, not a host: complete it to the canonical
-  // Cloud suffix, which is the shape the docs advertise ("mycompany").
-  if (!hostname.includes('.')) {
+  // Cloud suffix, which is the shape the docs advertise ("mycompany"). Not when
+  // the operator allowlisted that very name (an internal single-label host) or
+  // gave it a port: completing either would send the credentials to somebody
+  // else's Cloud site (CC-179).
+  const allowlistedAsGiven = allowlist.matchers.some((m) => m.matches(hostname));
+  if (!hostname.includes('.') && url.port === '' && !allowlistedAsGiven) {
     hostname = `${hostname}${CANONICAL_SITE_SUFFIX}`;
   }
 
@@ -315,8 +343,24 @@ export function resolveHost(
       problem(
         'error',
         'host_not_allowed',
-        `JIRA_SITE host ${JSON.stringify(hostname)} is not ${CANONICAL_SITE_SUFFIX} and is not listed in JIRA_ALLOWED_HOSTS. Add it there (exact host or /anchored-regex/) to allow requests to it.`,
+        `${siteVariable} host ${JSON.stringify(hostname)} is not ${CANONICAL_SITE_SUFFIX} and is not listed in JIRA_ALLOWED_HOSTS. Add it there (exact host or /anchored-regex/) to allow requests to it.`,
         'JIRA_ALLOWED_HOSTS',
+      ),
+    );
+    return { hostname, problems };
+  }
+
+  // The request layer's blocklist runs before its allowlist, so an allowlisted
+  // loopback, private or metadata host (`10.0.0.5`, `localhost`,
+  // `jira.internal`) would start cleanly and then fail every request. Refused
+  // here, the one error names the cause; no allowlist entry can fix it (CC-233).
+  if (isBlockedHost(hostname)) {
+    problems.push(
+      problem(
+        'error',
+        'host_blocked',
+        `${siteVariable} host ${JSON.stringify(hostname)} is a loopback, private, link-local or metadata address, which is never contacted — not even when it is in JIRA_ALLOWED_HOSTS. Point ${siteVariable} at a public host name.`,
+        siteVariable,
       ),
     );
     return { hostname, problems };
@@ -330,8 +374,8 @@ export function resolveHost(
       problem(
         'error',
         'site_port',
-        `JIRA_SITE names port ${url.port} on ${hostname}; a port is only accepted for a host listed in JIRA_ALLOWED_HOSTS. Drop the port for Jira Cloud.`,
-        'JIRA_SITE',
+        `${siteVariable} names port ${url.port} on ${hostname}; a port is only accepted for a host listed in JIRA_ALLOWED_HOSTS. Drop the port for Jira Cloud.`,
+        siteVariable,
       ),
     );
     return { hostname, problems };

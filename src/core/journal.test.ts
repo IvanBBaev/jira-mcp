@@ -169,6 +169,33 @@ test('the journal rotates to .1 once the next line would cross the threshold', a
   });
 });
 
+test('[CC-199] a rotation that cannot rename still appends the entry', async () => {
+  await withTempDir(async (dir) => {
+    const path = join(dir, 'writes.jsonl');
+    // A non-empty directory squatting on `.1` makes the rename fail.
+    await mkdir(`${path}.1`);
+    await writeFile(join(`${path}.1`, 'occupant'), 'x');
+    const logger = createFakeLogger();
+    const journal = createFileJournal({
+      path,
+      clock: createFakeClock(AT),
+      maxBytes: 200,
+      logger,
+    });
+
+    assert.equal(await journal.append({ ...ENTRY, issueKey: 'ABC-1' }), 'ok');
+    assert.equal(await journal.append({ ...ENTRY, issueKey: 'ABC-2' }), 'ok');
+
+    assert.equal(logger.eventsOf('journal_write_failed').length, 0);
+    const current = await lines(path);
+    assert.equal(current.length, 2);
+    assert.equal(
+      (JSON.parse(current[1] ?? '{}') as { issueKey: string }).issueKey,
+      'ABC-2',
+    );
+  });
+});
+
 test('rotation keeps exactly one previous generation', async () => {
   await withTempDir(async (dir) => {
     const path = join(dir, 'writes.jsonl');

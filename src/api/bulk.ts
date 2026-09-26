@@ -235,7 +235,10 @@ export interface BulkStatusResult {
   readonly status: string;
   readonly progressPercent?: number;
   readonly totalIssueCount?: number;
-  /** How many issues the task has processed — `processedAccessibleIssues.length`. */
+  /**
+   * How many issues the task SUCCEEDED on — `processedAccessibleIssues.length`.
+   * Despite the wire name, failures are not in it; they are {@link failedCount}.
+   */
   readonly processedCount?: number;
   /** How many issues FAILED — the size of the wire's per-issue error map. */
   readonly failedCount?: number;
@@ -457,7 +460,8 @@ function mapSubmitted(data: unknown): BulkSubmitResult {
 
 function mapProgress(body: Record<string, unknown>): BulkStatusResult {
   // The two id-level collections are folded into COUNTS: a model polling a
-  // task needs "2 of 3, 1 failed", and the per-issue detail (which ids, which
+  // task needs "2 of 3 succeeded, 1 failed" — the two lists are disjoint, and
+  // `processedAccessibleIssues` holds only the successes (CC-214) — and the per-issue detail (which ids, which
   // error strings) is on the Jira UI's progress page the tool description
   // points at. Tolerant reads throughout — a slot that is not the expected
   // shape is dropped, not fatal (only `taskId` and `status` are load-bearing).

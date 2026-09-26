@@ -31,6 +31,7 @@ import {
   APPROXIMATE_COUNT_PATH,
   DEFAULT_SEARCH_FIELDS,
   DEFAULT_SEARCH_MAX_RESULTS,
+  MAX_RECONCILE_ISSUES,
   MAX_SEARCH_RESULTS,
   SEARCH_JQL_PATH,
   approximateCount,
@@ -152,6 +153,20 @@ test('a page carrying no more token ends the loop as exhausted', async () => {
   assert.equal(jira.calls.length, 1);
 });
 
+test('a page with no issues key at all is an empty page, and a row with no fields gets {}', async () => {
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ nextPageToken: 'tok-1' })) // synthetic — Jira omitted `issues`
+    .enqueue(jiraOk({ issues: [{ id: '10002', key: 'ABC-2' }], isLast: true })); // synthetic
+
+  const result = await searchIssues({ jira: jira.fn, jql: JQL, maxPages: 4 });
+
+  assert.equal(result.pages, 2);
+  assert.deepEqual(keys(result.issues), ['ABC-2']);
+  // The row keeps its identity and gains an empty bag rather than `undefined`,
+  // so the tool ring can shape `fields` without a guard on every read.
+  assert.deepEqual(result.issues[0]?.fields, {});
+});
+
 test('an issues array that is not an array is a shape error, not an empty page', async () => {
   const jira = createFakeJiraRequest().enqueue(jiraOk({ issues: 'nope' })); // synthetic
 
@@ -159,6 +174,32 @@ test('an issues array that is not an array is a shape error, not an empty page',
     searchIssues({ jira: jira.fn, jql: JQL }),
     isJiraErrorOfKind('unexpected_shape'),
   );
+});
+
+test('a page that is not an object, or a row missing its id or key, is a shape error', async () => {
+  // Each answer is wrong in a different place: the page itself, the row, the
+  // id, the key. The message names the position so a 200-row page can be
+  // read back to the one row Jira mangled. // synthetic
+  const pages: readonly [unknown, RegExp][] = [
+    [[issue('1', 'ABC-1')], /did not return a JSON object/],
+    [{ issues: [42] }, /issue at position 0 is not a JSON object/],
+    [
+      { issues: [issue('1', 'ABC-1'), { key: 'ABC-2' }] },
+      /position 1 has no string "id"/,
+    ],
+    [{ issues: [{ id: '3', fields: {} }] }, /position 0 has no string "key"/],
+  ];
+  for (const [page, message] of pages) {
+    const jira = createFakeJiraRequest().enqueue(jiraOk(page));
+    await assert.rejects(
+      searchIssues({ jira: jira.fn, jql: JQL }),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'unexpected_shape' &&
+        message.test(error.message),
+      message.source,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -375,6 +416,46 @@ test('CC-01: a caller-supplied token that expired fails fast with remediation', 
   assert.equal(bodyOf(jira.calls[0])['nextPageToken'], 'stale-token');
 });
 
+test('CC-01: the expiry wording on a FIRST page, with no cursor sent, is not a restart', async () => {
+  // No token was on the wire, so whatever Jira is complaining about, a restart
+  // would replay the identical request. The error goes up untouched.
+  const upstream = expiredTokenError();
+  const jira = createFakeJiraRequest().enqueue(jiraErr(upstream));
+
+  await assert.rejects(
+    searchIssues({ jira: jira.fn, jql: JQL, maxPages: 4 }),
+    (error: unknown) => {
+      assert.equal(error, upstream, 'the error object itself must survive');
+      return true;
+    },
+  );
+  assert.equal(jira.calls.length, 1);
+  assert.equal(Object.hasOwn(bodyOf(jira.calls[0]), 'nextPageToken'), false);
+});
+
+test('CC-01: a 400 that carries no Jira wording at all is not mistaken for an expiry', async () => {
+  // synthetic — a 400 with an empty body: nothing names a page token, so the
+  // sweep neither restarts nor rewrites the error.
+  const bare = errorFromResponse({
+    status: 400,
+    body: {},
+    method: 'POST',
+    pathTemplate: SEARCH_JQL_PATH,
+  });
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ issues: [issue('10001', 'ABC-1')], nextPageToken: 'tok-1' })) // synthetic
+    .enqueue(jiraErr(bare));
+
+  await assert.rejects(
+    searchIssues({ jira: jira.fn, jql: JQL, maxPages: 4 }),
+    (error) => {
+      assert.equal(error, bare);
+      return true;
+    },
+  );
+  assert.equal(jira.calls.length, 2, 'no restart on a 400 that says nothing');
+});
+
 test('CC-01: the marker is matched even when Jira spells nextPageToken as one word', async () => {
   const oneWord = errorFromResponse({
     status: 400,
@@ -467,6 +548,21 @@ test('CC-02: every recent write showing up leaves an empty missing list', async 
   assert.deepEqual(result.missingRecentIssueIds, []);
 });
 
+test('[CC-187] a recent write spelled with leading zeros matches the issue Jira returns', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk({ issues: [issue('7', 'ABC-7')] }), // synthetic
+  );
+
+  const result = await searchIssues({
+    jira: jira.fn,
+    jql: JQL,
+    recentlyWrittenIssueIds: ['007', '0'],
+  });
+
+  assert.deepEqual(result.missingRecentIssueIds, ['0']);
+  assert.deepEqual(result.reconciledIssueIds, ['7', '0']);
+});
+
 test('CC-02: an explicit reconcileIssues list wins over the recent-write list', async () => {
   const jira = createFakeJiraRequest().enqueue(jiraOk({ issues: [] })); // synthetic
 
@@ -501,6 +597,32 @@ test('CC-02: an issue KEY in the reconcile list is refused with remediation', as
   assert.equal(jira.calls.length, 0);
 });
 
+test('CC-02: more reconcile ids than Jira accepts are refused before the wire', async () => {
+  const jira = createFakeJiraRequest();
+  const ids = Array.from(
+    { length: MAX_RECONCILE_ISSUES + 1 },
+    (_, index) => 10_000 + index,
+  );
+
+  await assert.rejects(
+    searchIssues({ jira: jira.fn, jql: JQL, reconcileIssues: ids }),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'validation' &&
+      error.message.includes(`Jira accepts at most ${String(MAX_RECONCILE_ISSUES)}`),
+  );
+  assert.equal(jira.calls.length, 0);
+
+  // Duplicates collapse first, so a list with repeats is not over the limit.
+  jira.enqueue(jiraOk({ issues: [], isLast: true }));
+  const repeated = [...ids.slice(0, MAX_RECONCILE_ISSUES), ...ids.slice(0, 5)];
+  await searchIssues({ jira: jira.fn, jql: JQL, reconcileIssues: repeated });
+  assert.equal(
+    (bodyOf(jira.lastRequest()).reconcileIssues as unknown[]).length,
+    MAX_RECONCILE_ISSUES,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // expand
 // ---------------------------------------------------------------------------
@@ -515,6 +637,27 @@ test('expand sections are joined into the comma string the endpoint expects', as
   });
 
   assert.equal(bodyOf(jira.lastRequest())['expand'], 'changelog,renderedFields');
+});
+
+test('a comma string expand is trimmed, an all-blank expand or token is dropped', async () => {
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ issues: [] })) // synthetic
+    .enqueue(jiraOk({ issues: [] })); // synthetic
+
+  await searchIssues({ jira: jira.fn, jql: JQL, expand: ' changelog , ,names ' });
+  assert.equal(bodyOf(jira.calls[0])['expand'], 'changelog,names');
+
+  // Blank pieces only: no `expand` key at all, and a whitespace token is the
+  // same as none — the search starts from page one without a restart marker.
+  const result = await searchIssues({
+    jira: jira.fn,
+    jql: JQL,
+    expand: [' ', ''],
+    nextPageToken: '   ',
+  });
+  assert.equal(Object.hasOwn(bodyOf(jira.calls[1]), 'expand'), false);
+  assert.equal(Object.hasOwn(bodyOf(jira.calls[1]), 'nextPageToken'), false);
+  assert.equal(result.restarted, false);
 });
 
 // ---------------------------------------------------------------------------

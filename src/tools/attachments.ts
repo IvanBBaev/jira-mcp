@@ -241,13 +241,25 @@ async function assertLinkStaysInside(
   }
 }
 
-/** `report.pdf` + 2 ⇒ `report-2.pdf`; a long extension is treated as none. */
+/**
+ * `report.pdf` + 2 ⇒ `report-2.pdf`; a long extension is treated as none. The
+ * stem gives up room for the counter so the variant stays within
+ * {@link MAX_MEDIA_NAME_CHARS}: a longer name is one the upload tool refuses,
+ * which would strand a file this store wrote itself (CC-186). The cut is on
+ * code-point boundaries, as in `truncateName`.
+ */
 function variantOf(name: string, index: number): string {
   const dot = name.lastIndexOf('.');
   const hasExt = dot > 0 && name.length - dot <= MAX_EXTENSION_CHARS;
   const stem = hasExt ? name.slice(0, dot) : name;
   const ext = hasExt ? name.slice(dot) : '';
-  return `${stem}-${String(index)}${ext}`;
+  const suffix = `-${String(index)}${ext}`;
+  let kept = '';
+  for (const ch of stem) {
+    if (kept.length + ch.length + suffix.length > MAX_MEDIA_NAME_CHARS) break;
+    kept += ch;
+  }
+  return `${kept}${suffix}`;
 }
 
 /**

@@ -100,6 +100,12 @@ test('a numeric issue argument is the id that was written', () => {
   assert.deepEqual(writtenIssueIds({ issue: 10_001 }), ['10001']);
 });
 
+test('a number that is not a Jira id — zero, negative, fractional, NaN — is not one', () => {
+  for (const issue of [0, -5, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2]) {
+    assert.deepEqual(writtenIssueIds({ issue }), [], `issue: ${String(issue)}`);
+  }
+});
+
 test('an issue KEY argument yields nothing — it cannot be resolved offline', () => {
   assert.deepEqual(writtenIssueIds({ issue: 'ABC-1' }), []);
 });

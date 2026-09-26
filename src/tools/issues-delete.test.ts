@@ -382,8 +382,9 @@ test('the schemas are strict, carry the control fields and nothing extra', () =>
     true,
   );
 
-  // The project-entity deletes take NUMERIC ids (the collab/agile pattern) —
-  // the string spelling of the same id is refused, not coerced.
+  // The project-entity deletes take NUMERIC ids (the collab pattern). CC-181:
+  // the digit-string spelling the list tools report is converted, and a name
+  // or a non-positive spelling is still refused.
   assert.equal(
     deleteComponentTool.input.safeParse({ componentId: COMPONENT_ID }).success,
     true,
@@ -395,8 +396,18 @@ test('the schemas are strict, carry the control fields and nothing extra', () =>
     }).success,
     true,
   );
+  const spelled = deleteComponentTool.input.safeParse({
+    componentId: String(COMPONENT_ID),
+  });
+  assert.equal(spelled.success, true);
+  assert.equal(spelled.data?.componentId, COMPONENT_ID);
   assert.equal(
-    deleteComponentTool.input.safeParse({ componentId: String(COMPONENT_ID) }).success,
+    deleteComponentTool.input.safeParse({ componentId: 'Billing' }).success,
+    false,
+  );
+  assert.equal(deleteComponentTool.input.safeParse({ componentId: '0' }).success, false);
+  assert.equal(
+    deleteComponentTool.input.safeParse({ componentId: '010' }).success,
     false,
   );
   assert.equal(
@@ -1057,6 +1068,57 @@ test('a thin component and a countless answer degrade to what Jira sent (CC-66)'
   assert.deepEqual(before, { kind: 'component', id: '10500', name: 'Backend' });
 });
 
+test('a lead with no display name is named by accountId; one with no accountId drops out', async () => {
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  // synthetic — a lead Jira sent as an accountId alone (the display name is
+  // withheld under some privacy settings), and a project echoed only by id.
+  const byId = createFakeJiraRequest()
+    .on(COMPONENT_COUNTS_ROUTE, jiraOk(COMPONENT_COUNTS_BODY))
+    .on(
+      COMPONENT_ROUTE,
+      jiraOk({
+        id: String(COMPONENT_ID),
+        name: 'Backend',
+        lead: { accountId: '5b10ac8d82e05b22cc7d4ef5', displayName: '' },
+        projectId: 10000,
+      }),
+    );
+  const named = beforeOf(
+    await gate.execute(
+      callOf(deleteComponentTool, { componentId: COMPONENT_ID }, {}, byId.fn),
+    ),
+  );
+  assert.equal(named['lead'], '5b10ac8d82e05b22cc7d4ef5');
+  // `projectId` is a number on the wire; the snapshot keeps every id a string.
+  assert.equal(named['project'], '10000');
+
+  // synthetic — a lead with a name but no accountId is not addressable and the
+  // api ring drops it (JIRA-API.md §Users), so the snapshot has no `lead` key
+  // rather than a name nobody can resolve.
+  const anonymous = createFakeJiraRequest()
+    .on(COMPONENT_COUNTS_ROUTE, jiraOk(COMPONENT_COUNTS_BODY))
+    .on(
+      COMPONENT_ROUTE,
+      jiraOk({
+        id: String(COMPONENT_ID),
+        name: 'Backend',
+        lead: { displayName: 'Ghost' },
+      }),
+    );
+  const unnamed = beforeOf(
+    await gate.execute(
+      callOf(deleteComponentTool, { componentId: COMPONENT_ID }, {}, anonymous.fn),
+    ),
+  );
+  assert.equal(Object.hasOwn(unnamed, 'lead'), false);
+  assert.equal(Object.hasOwn(unnamed, 'project'), false);
+});
+
 // ---------------------------------------------------------------------------
 // jira_delete_version
 // ---------------------------------------------------------------------------
@@ -1206,6 +1268,26 @@ test('CC-125: an absent target reads as stripped or cleared, never as an error',
   assert.equal(Object.hasOwn(versionSnapshot, 'moveAffectedIssuesTo'), false);
 });
 
+test('a version that is only an id and a name plans without inventing its flags', async () => {
+  // synthetic — a freshly created version: no description, no dates, and
+  // Jira omits `archived`/`released` rather than sending false. The snapshot
+  // must not turn an absent flag into `false`, nor a missing count into 0.
+  const fake = createFakeJiraRequest()
+    .on(VERSION_COUNTS_ROUTE, jiraOk({ self: VERSION_COUNTS_BODY.self }))
+    .on(VERSION_ROUTE, jiraOk({ id: String(VERSION_ID), name: '2.0.0' }));
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(callOf(deleteVersionTool, { versionId: VERSION_ID }, {}, fake.fn)),
+  );
+
+  assert.deepEqual(before, { kind: 'version', id: String(VERSION_ID), name: '2.0.0' });
+});
+
 // ---------------------------------------------------------------------------
 // jira_delete_sprint
 // ---------------------------------------------------------------------------
@@ -1277,6 +1359,32 @@ test('a sprint that is only an id and a name still plans honestly', async () => 
   assert.deepEqual(before, { kind: 'sprint', id: SPRINT_ID, name: 'Sprint 7' });
 });
 
+test('a closed sprint keeps its completeDate in the snapshot', async () => {
+  // synthetic — the same sprint after jira_close_sprint: `completeDate` is
+  // the one field only a closed sprint carries, and the audit trail keeps it.
+  const fake = createFakeJiraRequest().on(
+    SPRINT_ROUTE,
+    jiraOk({
+      ...SPRINT_BODY,
+      state: 'closed',
+      completeDate: '2026-08-17T09:15:00.000Z',
+    }),
+  );
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(callOf(deleteSprintTool, { sprintId: SPRINT_ID }, {}, fake.fn)),
+  );
+
+  assert.equal(before['state'], 'closed');
+  assert.equal(before['completeDate'], '2026-08-17T09:15:00.000Z');
+  assert.equal(before['originBoardId'], 17);
+});
+
 // ---------------------------------------------------------------------------
 // The bulk writes (D103) — jira_bulk_delete_issues / jira_bulk_edit_issues
 // ---------------------------------------------------------------------------
@@ -1291,7 +1399,7 @@ test('CC-126: the bulk writes ship inside issues-delete, so one deny token still
   }
 });
 
-test('CC-127: a 201 means ENQUEUED — the receipt says to poll and never claims done', async () => {
+test('CC-127 [CC-183]: a 201 means ENQUEUED — the receipt carries the enqueued hint and never claims done', async () => {
   const fake = createFakeJiraRequest().on(BULK_DELETE_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
   const gate = createWriteGate({
     writeMode: 'apply',
@@ -1310,7 +1418,8 @@ test('CC-127: a 201 means ENQUEUED — the receipt says to poll and never claims
   // The receipt is the taskId and the before-state — no completion claim.
   assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
   const hint = (applied.hints ?? [])[0];
-  assert.equal(hint?.code, 'discovery');
+  // CC-183: its own code — `discovery` would send a client to a lookup tool.
+  assert.equal(hint?.code, 'enqueued');
   assert.match(hint?.message ?? '', /ENQUEUED/);
   assert.match(hint?.message ?? '', /jira_get_bulk_status/);
   assert.match(hint?.message ?? '', /never waits/);
@@ -1320,6 +1429,18 @@ test('CC-127: a 201 means ENQUEUED — the receipt says to poll and never claims
   assert.deepEqual(fake.routes(), [BULK_DELETE_SUBMIT_ROUTE]);
   // A replayed submit would enqueue a SECOND task doing the same damage.
   assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
+});
+
+test('[CC-178] jira_bulk_edit_issues refuses a label with whitespace', () => {
+  const args = { issues: bulkKeys(1), labelsAction: 'ADD' };
+  assert.equal(
+    bulkEditIssuesTool.input.safeParse({ ...args, labels: ['needs review'] }).success,
+    false,
+  );
+  assert.equal(
+    bulkEditIssuesTool.input.safeParse({ ...args, labels: ['needs-review'] }).success,
+    true,
+  );
 });
 
 test('CC-128: the 1000-issue cap is enforced in the schema, before anything is sent', () => {
@@ -1346,6 +1467,77 @@ test('CC-128: the 1000-issue cap is enforced in the schema, before anything is s
   );
   assert.equal(
     bulkEditIssuesTool.input.safeParse({ issues: [], priorityId: '2' }).success,
+    false,
+  );
+});
+
+test('[CC-215] the bulk issue list is trimmed in validation, and a blank entry is refused', () => {
+  for (const tool of [bulkDeleteIssuesTool, bulkEditIssuesTool]) {
+    const extra = tool === bulkEditIssuesTool ? { priorityId: '3' } : {};
+    const parsed = tool.input.safeParse({ issues: [' PROJ-1 ', '10001'], ...extra });
+    assert.equal(parsed.success, true);
+    assert.deepEqual(parsed.data?.issues, ['PROJ-1', '10001']);
+    assert.equal(tool.input.safeParse({ issues: ['   '], ...extra }).success, false);
+  }
+});
+
+test('[CC-242] bulk edit ids are trimmed in validation, so the plan echoes what apply sends', async () => {
+  const parsed = bulkEditIssuesTool.input.safeParse({
+    issues: [KEY],
+    priorityId: ' 2 ',
+    assigneeAccountId: ' acc-1 ',
+    fixVersionIds: [' 10600 '],
+    fixVersionsAction: 'ADD',
+  });
+  assert.equal(parsed.success, true);
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+  const plan = await gate.execute(
+    callOf(bulkEditIssuesTool, parsed.data, {}, createFakeJiraRequest().fn),
+  );
+  assert.deepEqual((beforeOf(plan) as { edits: unknown }).edits, {
+    priorityId: '2',
+    assigneeAccountId: 'acc-1',
+    fixVersions: { action: 'ADD', versionIds: ['10600'] },
+  });
+  for (const blank of [
+    { priorityId: '  ' },
+    { assigneeAccountId: '  ' },
+    { fixVersionIds: ['  '], fixVersionsAction: 'ADD' },
+  ]) {
+    assert.equal(
+      bulkEditIssuesTool.input.safeParse({ issues: [KEY], ...blank }).success,
+      false,
+    );
+  }
+});
+
+test('[CC-243] duplicate bulk targets are dropped before the count and the 1000 cap', async () => {
+  const parsed = bulkDeleteIssuesTool.input.safeParse({
+    issues: ['PROJ-2', ' PROJ-1', 'PROJ-2', 'PROJ-1 ', 'proj-1'],
+  });
+  assert.equal(parsed.success, true);
+  // First-seen order; case and key-vs-id aliases are NOT folded.
+  assert.deepEqual(parsed.data?.issues, ['PROJ-2', 'PROJ-1', 'proj-1']);
+
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+  const plan = await gate.execute(
+    callOf(bulkDeleteIssuesTool, parsed.data, {}, createFakeJiraRequest().fn),
+  );
+  assert.equal(beforeOf(plan)['issueCount'], 3);
+
+  // 1000 distinct keys plus repeats is still within the cap.
+  const padded = [...bulkKeys(1000), ...bulkKeys(5)];
+  assert.equal(bulkDeleteIssuesTool.input.safeParse({ issues: padded }).success, true);
+  assert.equal(
+    bulkDeleteIssuesTool.input.safeParse({ issues: bulkKeys(1001) }).success,
     false,
   );
 });
@@ -1452,6 +1644,39 @@ test('CC-130: the edit posts to /bulk/issues/fields and DERIVES selectedActions 
   assert.equal(fake.lastRequest()?.safe, undefined, 'an unsafe write is never replayed');
 });
 
+test('the fixVersions family rides through the tool into the wire and the before-state', async () => {
+  const fake = createFakeJiraRequest().on(BULK_EDIT_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    bulkEditIssuesTool,
+    { issues: [KEY], fixVersionIds: ['10600', '10601'], fixVersionsAction: 'REPLACE' },
+    fake,
+  );
+
+  const body = fake.lastRequest()?.body as Record<string, unknown>;
+  assert.deepEqual(body['selectedActions'], ['fixVersions']);
+  assert.deepEqual(
+    (body['editedFieldsInput'] as Record<string, unknown>)['multipleVersionPickerFields'],
+    [
+      {
+        fieldId: 'fixVersions',
+        bulkEditMultiSelectFieldOption: 'REPLACE',
+        versions: [{ versionId: '10600' }, { versionId: '10601' }],
+      },
+    ],
+  );
+  assert.deepEqual(beforeOf(plan)['edits'], {
+    fixVersions: { action: 'REPLACE', versionIds: ['10600', '10601'] },
+  });
+  assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
+});
+
 test('CC-131: notifyUsers maps to sendBulkNotification, and absent means omitted', async () => {
   const gate = createWriteGate({
     writeMode: 'apply',
@@ -1492,6 +1717,19 @@ test('CC-131: notifyUsers maps to sendBulkNotification, and absent means omitted
       'sendBulkNotification',
     ),
     false,
+  );
+
+  // And the edit carries the flag the same way when it is given.
+  const loud = createFakeJiraRequest().on(BULK_EDIT_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
+  await planThenApply(
+    gate,
+    bulkEditIssuesTool,
+    { issues: [KEY], priorityId: '2', notifyUsers: true },
+    loud,
+  );
+  assert.equal(
+    (loud.lastRequest()?.body as Record<string, unknown>)['sendBulkNotification'],
+    true,
   );
 });
 
@@ -1676,4 +1914,11 @@ test('a read that fails before the delete never reaches the DELETE', async () =>
   assert.equal(result.ok, false);
   assert.equal(result.error?.kind, 'not_found');
   assert.deepEqual(fake.routes(), [`GET /rest/api/3/issue/${KEY}`]);
+});
+
+test('[CC-195] a delete id spelled past the safe integer range is refused, not rounded', () => {
+  assert.equal(
+    deleteComponentTool.input.safeParse({ componentId: '9007199254740993' }).success,
+    false,
+  );
 });

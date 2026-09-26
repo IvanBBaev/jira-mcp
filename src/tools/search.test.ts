@@ -322,6 +322,48 @@ test('jira_search preserves the row keys Jira sent beside fields', async () => {
   assert.equal(result.data?.issues[0]?.id, '10001');
 });
 
+test('[CC-134] jira_search projects the users an expanded changelog carries', async () => {
+  const row = {
+    ...issue('10001', 'ABC-1'),
+    changelog: {
+      histories: [
+        {
+          id: '1',
+          author: {
+            accountId: ACCOUNT_ID,
+            displayName: 'User One',
+            emailAddress: 'user.one@example.com',
+            avatarUrls: { '48x48': 'https://avatar.example/u1' },
+          },
+          items: [{ field: 'status', fromString: 'To Do', toString: 'Done' }],
+        },
+      ],
+    },
+  };
+  const fake = createFakeJiraRequest().on(SEARCH_ROUTE, jiraOk(page([row])), 1);
+
+  const result = await searchTool.handler(
+    { jql: JQL, expand: ['changelog'] },
+    ctxOf(fake),
+  );
+
+  const serialized = JSON.stringify(result.data);
+  assert.ok(
+    !serialized.includes('user.one@example.com'),
+    'an email leaked through expand',
+  );
+  assert.ok(!serialized.includes('avatar.example'), 'an avatar leaked through expand');
+  assert.deepEqual(result.data?.issues[0]?.['changelog'], {
+    histories: [
+      {
+        id: '1',
+        author: { accountId: ACCOUNT_ID, displayName: 'User One' },
+        items: [{ field: 'status', fromString: 'To Do', toString: 'Done' }],
+      },
+    ],
+  });
+});
+
 test('jira_search forwards fields, page size, expand and reconcile ids verbatim', async () => {
   const fake = createFakeJiraRequest().on(
     SEARCH_ROUTE,
@@ -675,6 +717,26 @@ test('CC-05: a JQL 400 passes Jira wording through and adds the quoting advice',
   assert.equal(result.error?.message, syntax.message);
   assert.equal(result.error?.remediation, JQL_REMEDIATION);
   assert.match(JQL_REMEDIATION, /double quotes/);
+});
+
+test('CC-05: a bare 400 with no Jira wording still gets the quoting advice', async () => {
+  // synthetic — a 400 whose body carried no `errorMessages`: nothing to pass
+  // through, and nothing that could name a page token, so the JQL advice is
+  // the only remediation on offer.
+  const bare = errorFromResponse({
+    status: 400,
+    body: {},
+    method: 'POST',
+    pathTemplate: SEARCH_JQL_PATH,
+  });
+  const fake = createFakeJiraRequest().on(SEARCH_ROUTE, jiraErr(bare), 1);
+
+  const result = await searchTool.handler({ jql: 'project = My Project' }, ctxOf(fake));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.equal(result.error?.jiraMessages, undefined);
+  assert.equal(result.error?.remediation, JQL_REMEDIATION);
 });
 
 test('CC-05: the quoting advice is added to jira_count failures too', async () => {

@@ -49,9 +49,10 @@ jobs:
       - run: npm ci
       - run: npm run check
 
-  # Coverage is its own job rather than part of `check`: instrumenting the suite
-  # roughly doubles its runtime, and the matrix would pay that cost twice for an
-  # identical number.
+  # Since D36 `check` already runs the suite under c8 (`test:coverage` is step 6
+  # of `check:publish`, docs/TESTING.md §Gate), so this job repeats that run on
+  # the newest Node under its own status name. It proves nothing the matrix does
+  # not; it is kept only as a separately named line in the checks list.
   coverage:
     name: coverage
     runs-on: ubuntu-latest
@@ -65,28 +66,42 @@ jobs:
       - run: npm ci
       - run: npm run coverage
 
-  # Suite 9 (docs/TESTING.md): read-only probes against the scratch site, asking
-  # the one question fixtures cannot — has Atlassian changed the wire? Weekly, on
-  # the default branch only. Every gate below has to hold:
+  # Suite 9 (docs/TESTING.md): the read-only half of Gate C against the scratch
+  # site, asking the one question fixtures cannot — has Atlassian changed the
+  # wire? It runs `scripts/verify-live.mjs` WITHOUT --write/--irreversible/
+  # --purge, so it drives the BUILT server over stdio exactly as a client would:
+  # doctor preflight, read claims, residue inventory. Every child it spawns is
+  # pinned to JIRA_WRITE_MODE=plan by the driver itself, and nothing destructive
+  # can start without --confirm-site, which this job never passes. Exit 1 on any
+  # FAIL claim, so a changed wire is a red scheduled run.
+  #
+  # It is NOT `npm test`: no unit test talks to Jira, and running the unit suite
+  # with JIRA_LIVE_TEST=1 only switched its network fence off while the real
+  # secrets sat in the environment — proving nothing about the site.
+  #
+  # Weekly, on the default branch only. Every gate below has to hold:
   #   - schedule/manual only, so no PR (least of all a fork's) can reach it;
   #   - the `live` environment, where the JIRA_* secrets are scoped;
   #   - JIRA_API_TOKEN actually present, so a fresh clone of this repo without
   #     secrets reports "skipped", not a red build nobody can fix.
-  # JIRA_WRITE_MODE=plan is belt-and-braces: the suite exercises no write tool,
-  # and the gate would refuse it anyway.
+  # Optional repository variables JIRA_LIVE_PROJECT / JIRA_LIVE_PROJECT2 name the
+  # scratch projects (--project / --project2); unset, the project-scoped claims
+  # SKIP and the residue table reports those classes UNKNOWN.
   live:
     name: live read suite
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     environment: live
     # Job-level, not step-level: a step's own `env:` is not visible to that
-    # step's `if:`, so the presence check below would always read empty.
+    # step's `if:`, so the presence check below would always read empty. The
+    # driver hands the credentials to its child servers explicitly and never
+    # lets them inherit anything else from this environment.
     env:
-      JIRA_LIVE_TEST: '1'
       JIRA_SITE: ${{ secrets.JIRA_SITE }}
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-      JIRA_WRITE_MODE: plan
+      JIRA_LIVE_PROJECT: ${{ vars.JIRA_LIVE_PROJECT }}
+      JIRA_LIVE_PROJECT2: ${{ vars.JIRA_LIVE_PROJECT2 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -94,10 +109,15 @@ jobs:
           node-version: 24.x
           cache: npm
       - run: npm ci
+      # The driver spawns build/index.js; it refuses to run (exit 2) without it.
       - run: npm run build
       - name: Run live read suite
         if: env.JIRA_API_TOKEN != ''
-        run: npm test
+        run: |
+          set --
+          if [ -n "$JIRA_LIVE_PROJECT" ]; then set -- "$@" --project "$JIRA_LIVE_PROJECT"; fi
+          if [ -n "$JIRA_LIVE_PROJECT2" ]; then set -- "$@" --project2 "$JIRA_LIVE_PROJECT2"; fi
+          node scripts/verify-live.mjs "$@"
       - name: Report missing credentials
         if: env.JIRA_API_TOKEN == ''
         run: echo "::notice::Live suite skipped — the JIRA_* secrets are not configured."

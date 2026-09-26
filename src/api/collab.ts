@@ -1091,6 +1091,22 @@ function positiveId(value: string | number, what: string, remediation: string): 
   return text;
 }
 
+/**
+ * A delete's swap target must name a DIFFERENT record (CC-163). Moving the
+ * issues onto the record being deleted is a caller mistake whose upstream
+ * outcome is undocumented, so it is refused before anything is sent.
+ */
+function notSelf(target: string, id: string, what: string, remediation: string): string {
+  if (target === id) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `${what} names ${id}, the record being deleted. Nothing was sent.`,
+      remediation,
+    });
+  }
+  return target;
+}
+
 /** A required non-empty string, trimmed (D22 — the refusal names the field). */
 function requireText(value: string, what: string, remediation: string): string {
   const clean = value.trim();
@@ -1107,7 +1123,7 @@ function requireText(value: string, what: string, remediation: string): string {
 /** Version dates are calendar dates; a timestamp is a caller mistake (D22). */
 function calendarDate(value: string, what: string): string {
   const clean = value.trim();
-  if (!RELEASE_DATE.test(clean)) {
+  if (!RELEASE_DATE.test(clean) || !isRealDate(clean)) {
     throw createJiraError({
       kind: 'validation',
       reason: `${what} must be an ISO-8601 calendar date (YYYY-MM-DD), received ${JSON.stringify(value)}. Nothing was sent.`,
@@ -1117,6 +1133,21 @@ function calendarDate(value: string, what: string): string {
     });
   }
   return clean;
+}
+
+/**
+ * The shape alone admits 2026-02-30 and 2026-13-01. Checked here because a
+ * lenient date parser on the server side may roll such a value over into a
+ * different, real date instead of refusing it (CC-182).
+ */
+function isRealDate(date: string): boolean {
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
 }
 
 /**
@@ -1545,7 +1576,12 @@ export function deleteComponentRequest(input: DeleteComponentInput): JiraRequest
   const moveIssuesTo =
     input.moveIssuesTo === undefined
       ? undefined
-      : positiveId(input.moveIssuesTo, 'moveIssuesTo', COMPONENT_ID_REMEDIATION);
+      : notSelf(
+          positiveId(input.moveIssuesTo, 'moveIssuesTo', COMPONENT_ID_REMEDIATION),
+          id,
+          'moveIssuesTo',
+          'Pass the id of another component, or omit moveIssuesTo to strip the component from its issues.',
+        );
   return {
     method: 'DELETE',
     path: `${COMPONENT_COLLECTION_PATH}/${id}`,
@@ -1583,6 +1619,9 @@ export async function deleteComponent(
   };
 }
 
+const SWAP_SELF_REMEDIATION =
+  'Pass the id of another version, or omit the target to clear this version from those fields.';
+
 /**
  * Build the spec of a version delete —
  * `POST /version/{id}/removeAndSwap` (CC-122). The bare `DELETE /version/{id}`
@@ -1600,15 +1639,25 @@ export function deleteVersionRequest(input: DeleteVersionInput): JiraRequestSpec
   const body: Record<string, unknown> = {};
   if (input.moveFixIssuesTo !== undefined) {
     body.moveFixIssuesTo = Number(
-      positiveId(input.moveFixIssuesTo, 'moveFixIssuesTo', VERSION_ID_REMEDIATION),
+      notSelf(
+        positiveId(input.moveFixIssuesTo, 'moveFixIssuesTo', VERSION_ID_REMEDIATION),
+        id,
+        'moveFixIssuesTo',
+        SWAP_SELF_REMEDIATION,
+      ),
     );
   }
   if (input.moveAffectedIssuesTo !== undefined) {
     body.moveAffectedIssuesTo = Number(
-      positiveId(
-        input.moveAffectedIssuesTo,
+      notSelf(
+        positiveId(
+          input.moveAffectedIssuesTo,
+          'moveAffectedIssuesTo',
+          VERSION_ID_REMEDIATION,
+        ),
+        id,
         'moveAffectedIssuesTo',
-        VERSION_ID_REMEDIATION,
+        SWAP_SELF_REMEDIATION,
       ),
     );
   }

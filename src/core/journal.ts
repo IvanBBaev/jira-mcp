@@ -103,7 +103,12 @@ async function rotateIfNeeded(
     return;
   }
   if (size === 0 || size + incomingBytes <= maxBytes) return;
-  await rename(path, `${path}${JOURNAL_ROTATED_SUFFIX}`);
+  try {
+    await rename(path, `${path}${JOURNAL_ROTATED_SUFFIX}`);
+  } catch {
+    // A failed rotation must not cost the entry: the file runs over budget for
+    // now and the next append tries again (CC-199).
+  }
 }
 
 /**

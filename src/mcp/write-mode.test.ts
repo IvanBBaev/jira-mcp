@@ -317,6 +317,61 @@ test('planFingerprint ignores key order but tracks tool, args and profile', () =
   );
 });
 
+test('[CC-145] an own __proto__ key is fingerprinted like any other key', () => {
+  const planned = JSON.parse(
+    '{"fields":{"customfield_1":{"__proto__":{"value":"A"}}}}',
+  ) as unknown;
+  const applied = JSON.parse(
+    '{"fields":{"customfield_1":{"__proto__":{"value":"B"}}}}',
+  ) as unknown;
+  assert.notEqual(
+    planFingerprint('jira_test_write', planned, undefined),
+    planFingerprint('jira_test_write', applied, undefined),
+  );
+  assert.equal(
+    planFingerprint('jira_test_write', planned, undefined),
+    planFingerprint('jira_test_write', structuredClone(planned), undefined),
+  );
+});
+
+test('newPlanId clamps a wild draw and treats a non-finite one as zero', () => {
+  // A misbehaving rng must never produce an id outside the shape the store
+  // and the apply path agree on — 24 lowercase hex digits, no more, no less.
+  assert.equal(
+    newPlanId(() => Number.NaN),
+    'plan_000000000000000000000000',
+  );
+  assert.equal(
+    newPlanId(() => Number.POSITIVE_INFINITY),
+    'plan_000000000000000000000000',
+  );
+  assert.equal(
+    newPlanId(() => -1),
+    'plan_000000000000000000000000',
+  );
+  assert.equal(
+    newPlanId(() => 2),
+    'plan_ffffffffffffffffffffffff',
+  );
+  assert.match(
+    newPlanId(() => 2),
+    PLAN_ID_PATTERN,
+  );
+});
+
+test('planFingerprint binds an absent field and an explicit undefined the same way', () => {
+  // Zod-parsed args carry `undefined` for every optional key the caller left
+  // out; JSON has no such value, so the fingerprint must not see a difference
+  // between "not given" and "given as undefined" or a re-parse would drift.
+  const absent = planFingerprint('jira_test_write', { a: 1 }, undefined);
+  const explicit = planFingerprint('jira_test_write', { a: 1, b: undefined }, undefined);
+  assert.equal(explicit, absent);
+  assert.notEqual(
+    planFingerprint('jira_test_write', { a: 1, b: null }, undefined),
+    absent,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // The plan store
 // ---------------------------------------------------------------------------
@@ -357,6 +412,44 @@ test('the store is bounded — the oldest outstanding plan is evicted', () => {
     'ok',
   );
   assert.equal(MAX_OUTSTANDING_PLANS, 64);
+});
+
+test('a colliding plan id is drawn again; a stuck rng lets the newer plan win', () => {
+  // Eight zero draws (two ids' worth) then a counting sequence: the second
+  // issue lands on the first id, notices the collision and draws a fresh one.
+  let draws = 0;
+  const stuckThenCounting: Rng = () => {
+    draws += 1;
+    return draws <= 8 ? 0 : (draws % 4096) / 4096;
+  };
+  const store = createPlanStore(stuckThenCounting);
+  const first = store.issue({ tool: 'jira_test_write', fingerprint: 'fp-1' });
+  const second = store.issue({ tool: 'jira_test_write', fingerprint: 'fp-2' });
+  assert.equal(first, 'plan_000000000000000000000000');
+  assert.notEqual(second, first);
+  assert.equal(store.size, 2, 'both plans stay outstanding');
+  assert.equal(
+    store.consume(first, { tool: 'jira_test_write', fingerprint: 'fp-1' }),
+    'ok',
+  );
+  assert.equal(
+    store.consume(second, { tool: 'jira_test_write', fingerprint: 'fp-2' }),
+    'ok',
+  );
+
+  // An rng that never moves cannot escape the collision. The id then binds
+  // the NEWER request only — it must never authorize two different ones.
+  const stuck = createPlanStore(constantRng(0));
+  const older = stuck.issue({ tool: 'jira_test_write', fingerprint: 'fp-old' });
+  const newer = stuck.issue({ tool: 'jira_test_write', fingerprint: 'fp-new' });
+  assert.equal(newer, older);
+  assert.equal(stuck.size, 1, 'the older plan is gone, not shadowed');
+  assert.equal(
+    stuck.consume(older, { tool: 'jira_test_write', fingerprint: 'fp-old' }),
+    'mismatch',
+    'the id no longer authorizes the older request',
+  );
+  assert.equal(stuck.size, 0, 'and the mismatch burned it for the newer one too');
 });
 
 // ---------------------------------------------------------------------------
@@ -649,6 +742,56 @@ test('CC-86: the plan of a multipart upload names the file, without the bytes', 
   // The metadata is the approval surface; the payload itself is not — a plan
   // envelope must never carry the file contents.
   assert.ok(!JSON.stringify(planned).includes('"0":1'), 'no raw bytes in the plan');
+});
+
+test('the plan of a multipart upload redacts the filename and skips an absent content type', async () => {
+  // The filename is caller text like any other and goes through the redactor;
+  // a part that names no content type shows none rather than an `undefined`.
+  const redactor = createFakeRedactor(['salary']);
+  const uploadTool = defineTool({
+    name: 'jira_test_write_upload',
+    title: 'Test upload',
+    description: 'Uploads a file.',
+    package: 'attachments',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    writeTier: 'standard',
+    input: writeToolInput({ issue: z.string() }),
+    async handler(args, ctx) {
+      await ctx.jira({
+        method: 'POST',
+        path: `/issue/${args.issue}/attachments`,
+        pathTemplate: '/issue/{key}/attachments',
+        multipart: [
+          { field: 'file', filename: 'salary-review.pdf', bytes: new Uint8Array(3) },
+        ],
+      });
+      return ok({ uploaded: true });
+    },
+  });
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+    redact: (value) => redactor.redact(value),
+  });
+
+  const result = await gate.execute(
+    callOf(uploadTool, { issue: 'ABC-1' }, {}, createFakeJiraRequest().fn),
+  );
+
+  const planned = (result.data as { planned: Record<string, unknown> }).planned;
+  assert.deepEqual(planned.multipart, [
+    { field: 'file', filename: '[REDACTED]-review.pdf', bytes: 3 },
+  ]);
+  assert.ok(
+    redactor.calls.includes('salary-review.pdf'),
+    'the filename went through the redactor',
+  );
 });
 
 test('a handler that swallows the capture still yields a plan, not a fake success', async () => {

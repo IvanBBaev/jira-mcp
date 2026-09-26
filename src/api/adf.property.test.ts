@@ -348,7 +348,10 @@ const inlineArb: fc.Arbitrary<AdfNode[]> = fc.array(
         nil: undefined,
       }),
     )
-    .map(([text, kinds, href]): AdfNode => {
+    .map(([text, picked, href]): AdfNode => {
+      // Jira refuses `code` next to any mark but link/annotation, and the
+      // parser never emits the pair (CC-148): only valid documents round-trip.
+      const kinds = picked.includes('code') ? ['code'] : picked;
       const marks: AdfNode[] = kinds.map((type) => ({ type }));
       if (href !== undefined) marks.push({ type: 'link', attrs: { href } });
       return marks.length === 0 ? { type: 'text', text } : { type: 'text', text, marks };
@@ -388,14 +391,19 @@ function listArb(depth: number): fc.Arbitrary<AdfNode> {
       ? fc.constant(undefined)
       : fc.option(listArb(depth - 1), { nil: undefined, freq: 3 });
 
+  // Blocks after the first paragraph: further paragraphs and code blocks
+  // (CC-154) — the renderer puts them before any nested list.
+  const blocksArb = fc.array(fc.oneof(paragraphArb, codeBlockArb), { maxLength: 2 });
+
   const itemArb: fc.Arbitrary<AdfNode> = fc
-    .tuple(inlineArb, nestedArb)
-    .map(([content, nested]) => ({
+    .tuple(inlineArb, blocksArb, nestedArb)
+    .map(([content, blocks, nested]) => ({
       type: 'listItem',
-      content:
-        nested === undefined
-          ? [{ type: 'paragraph', content }]
-          : [{ type: 'paragraph', content }, nested],
+      content: [
+        { type: 'paragraph', content },
+        ...blocks,
+        ...(nested === undefined ? [] : [nested]),
+      ],
     }));
 
   return fc

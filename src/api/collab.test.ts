@@ -480,6 +480,36 @@ test('CC-96: an ordinary 401 on the same route keeps its auth kind', async () =>
   );
 });
 
+test('CC-96: the rewrite copies no detail it was not given, and a bare 401 passes through', async () => {
+  // A configuration refusal without a `detail` yields a permission error with
+  // none; a 401 that carries no Jira message at all cannot match the sentence
+  // and is returned exactly as it came.
+  const denied = createJiraError({
+    kind: 'auth',
+    reason: 'Jira rejected GET /project/{projectIdOrKey}/role with HTTP 401.',
+    httpStatus: 401,
+    jiraMessages: ['You cannot edit the configuration of this project.'],
+  });
+  const bare = createJiraError({
+    kind: 'auth',
+    reason: 'Jira rejected GET /project/{projectIdOrKey}/role with HTTP 401.',
+    httpStatus: 401,
+  });
+  const jira = createFakeJiraRequest().enqueue(jiraErr(denied)).enqueue(jiraErr(bare));
+
+  const rewritten = asJiraError(
+    await caught(() => listProjectRoles({ jira: jira.fn, project: 'ABC' })),
+  );
+  assert.equal(rewritten.kind, 'permission');
+  assert.equal(rewritten.detail, undefined);
+  assert.deepEqual(rewritten.jiraMessages, denied.jiraMessages);
+
+  assert.equal(
+    await caught(() => listProjectRoles({ jira: jira.fn, project: 'ABC' })),
+    bare,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Votes
 // ---------------------------------------------------------------------------
@@ -914,6 +944,28 @@ test('CC-51: createVersion refuses a timestamp where a calendar date belongs', a
   assert.deepEqual(jira.routes(), []);
 });
 
+test('[CC-182] a version date that does not exist on the calendar is refused before sending', async () => {
+  for (const releaseDate of ['2026-02-30', '2026-13-01', '2026-00-10', '2025-02-29']) {
+    const jira = createFakeJiraRequest();
+    const error = asJiraError(
+      await caught(() =>
+        createVersion({ jira: jira.fn, projectId: 10000, name: '1.0.0', releaseDate }),
+      ),
+    );
+    assert.equal(error.kind, 'validation', releaseDate);
+    assert.deepEqual(jira.routes(), [], releaseDate);
+  }
+  // A leap day that exists still passes the check.
+  const jira = createFakeJiraRequest().enqueue(jiraOk(versionRow(1)));
+  await createVersion({
+    jira: jira.fn,
+    projectId: 10000,
+    name: '1.0.0',
+    releaseDate: '2028-02-29',
+  });
+  assert.equal(jira.routes().length, 1);
+});
+
 test('createVersion refuses a blank name', async () => {
   const jira = createFakeJiraRequest();
 
@@ -1006,6 +1058,7 @@ test('listProjectRoles flattens the name-to-URL map into sorted id/name rows', a
     jiraOk({
       Developers: `${SITE}/rest/api/3/project/ABC/role/10001`,
       Administrators: `${SITE}/rest/api/3/project/ABC/role/10002`,
+      Users: `${SITE}/rest/api/3/project/ABC/role/10003`,
     }),
   );
 
@@ -1016,6 +1069,7 @@ test('listProjectRoles flattens the name-to-URL map into sorted id/name rows', a
   assert.deepEqual(roles, [
     { id: '10002', name: 'Administrators' },
     { id: '10001', name: 'Developers' },
+    { id: '10003', name: 'Users' },
   ]);
 });
 
@@ -1300,6 +1354,45 @@ test('deleteComponentRequest builds the bare spec the plan shows', () => {
       query: { moveIssuesTo: '10102' },
     },
   );
+});
+
+test('[CC-163] a delete whose swap target is the deleted record is refused before any request', async () => {
+  const jira = createFakeJiraRequest();
+
+  const component = asJiraError(
+    await caught(() =>
+      deleteComponent({ jira: jira.fn, componentId: 10101, moveIssuesTo: '10101' }),
+    ),
+  );
+  const fix = asJiraError(
+    await caught(() =>
+      deleteVersion({ jira: jira.fn, versionId: '10201', moveFixIssuesTo: 10201 }),
+    ),
+  );
+  const affected = asJiraError(
+    await caught(() =>
+      deleteVersion({
+        jira: jira.fn,
+        versionId: 10201,
+        moveFixIssuesTo: 10202,
+        moveAffectedIssuesTo: ' 10201 ',
+      }),
+    ),
+  );
+
+  for (const [error, field] of [
+    [component, 'moveIssuesTo'],
+    [fix, 'moveFixIssuesTo'],
+    [affected, 'moveAffectedIssuesTo'],
+  ] as const) {
+    assert.equal(error.kind, 'validation');
+    assert.match(
+      error.message,
+      new RegExp(`${field} names \\d+, the record being deleted`),
+    );
+    assert.match(error.message, /Nothing was sent\./);
+  }
+  assert.deepEqual(jira.routes(), []);
 });
 
 test('deleteComponent sends the DELETE and synthesizes the receipt from a 204', async () => {

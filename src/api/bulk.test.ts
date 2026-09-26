@@ -591,6 +591,39 @@ test('a refused call names the Make bulk changes permission (CC-34 pattern)', as
   assert.equal(passedThrough, expired);
 });
 
+test('a refusal keeps what Jira said, the body snippet, and only the hint as advice', async () => {
+  // A permission error built with Jira's own wording, a non-JSON snippet and
+  // an empty remediation (which `createJiraError` stores as none): every
+  // optional field rides through, and the hint stands alone as the advice
+  // rather than being glued onto nothing.
+  const denied = createFakeJiraRequest().enqueue(
+    jiraErr(
+      createJiraError({
+        kind: 'permission',
+        reason: 'Jira refused the request (403).',
+        httpStatus: 403,
+        jiraMessages: ['You do not have the Make bulk changes global permission.'],
+        detail: '<html>Forbidden</html>',
+        remediation: '',
+      }),
+    ),
+  );
+  const error = asJiraError(
+    await caught(() =>
+      submitBulkEdit({ jira: denied.fn, issues: ['SAN-1'], priorityId: '2' }),
+    ),
+  );
+  assert.equal(error.kind, 'permission');
+  assert.equal(error.httpStatus, 403);
+  assert.deepEqual(error.jiraMessages, [
+    'You do not have the Make bulk changes global permission.',
+  ]);
+  assert.equal(error.detail, '<html>Forbidden</html>');
+  assert.ok(error.remediation?.startsWith('Bulk submits also need'));
+  assert.match(error.remediation ?? '', /Edit issues/);
+  assert.equal(error.message, `Jira refused the request (403). ${error.remediation}`);
+});
+
 test('the calls carry the caller signal and deadline onto the wire', async () => {
   const controller = new AbortController();
   const jira = createFakeJiraRequest()

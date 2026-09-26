@@ -10,15 +10,19 @@
  * Usage:
  *   node scripts/generate-readme.mjs            rewrite README.md in place
  *   node scripts/generate-readme.mjs --check    exit 1 if README.md is stale
+ *   ... --readme <path>                         operate on another copy instead
  *
  * `--check` is what the drift test runs. It never writes, so it is safe in CI.
+ * `--readme` exists for the tests that exercise the WRITE path: they run it
+ * against a copy in a temp directory, so an interrupted run can never leave the
+ * checkout's README half-edited.
  *
  * Requires `npm run build` first: reading the manifest from `build/` rather than
  * parsing the TypeScript keeps this script free of a compiler dependency and
  * means it sees exactly the values the server will register.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -160,10 +164,22 @@ async function loadPackages() {
   return module.PACKAGES;
 }
 
+/** The README to operate on: `--readme <path>` (resolved against cwd), else the repo's. */
+function readmePath(argv) {
+  const at = argv.indexOf('--readme');
+  if (at === -1) return README_PATH;
+  const value = argv[at + 1];
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error('--readme needs a path.');
+  }
+  return resolve(value);
+}
+
 async function run(argv) {
   const check = argv.includes('--check');
+  const target = readmePath(argv);
   const packages = await loadPackages();
-  const current = readFileSync(README_PATH, 'utf8');
+  const current = readFileSync(target, 'utf8');
   const next = spliceReadme(current, renderTools(packages));
 
   if (next === current) {
@@ -178,17 +194,32 @@ async function run(argv) {
     return 1;
   }
 
-  writeFileSync(README_PATH, next, 'utf8');
+  writeFileSync(target, next, 'utf8');
   process.stderr.write('README.md tool tables regenerated.\n');
   return 0;
 }
 
+/**
+ * `argv[1]` and this module, compared through realpath: Node realpaths the
+ * entry module, so a symlinked checkout (macOS `/tmp` is one) or a path with
+ * spaces would otherwise fail the guard and exit 0 having done nothing (CC-217).
+ */
+function isEntryPoint(moduleUrl) {
+  const entry = process.argv[1];
+  if (entry === undefined || entry === '') return false;
+  const real = (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return path;
+    }
+  };
+  return real(resolve(entry)) === real(fileURLToPath(moduleUrl));
+}
+
 // Only when invoked directly — the drift test imports nothing from here, but a
 // future consumer should not trigger a rewrite by importing this module.
-if (
-  process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (isEntryPoint(import.meta.url)) {
   run(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

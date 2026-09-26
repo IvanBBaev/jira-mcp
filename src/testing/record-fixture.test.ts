@@ -30,7 +30,8 @@
 // `./fixture-pii.test.ts` — is what fails.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -72,7 +73,8 @@ interface RecordModule {
 
 type FetchLike = (input: unknown, init?: unknown) => Promise<Response>;
 
-const RECORDER_URL = pathToFileURL(join(REPO_ROOT, 'scripts', 'record-fixture.mjs')).href;
+const RECORDER_PATH = join(REPO_ROOT, 'scripts', 'record-fixture.mjs');
+const RECORDER_URL = pathToFileURL(RECORDER_PATH).href;
 
 let recorderModule: Promise<RecordModule> | undefined;
 
@@ -810,3 +812,226 @@ test('--force is the only way to replace a fixture', async () => {
   assert.equal(doc.scenario, 'myself');
   assert.equal((await stat(target)).mode & 0o777, 0o600);
 });
+
+// ---------------------------------------------------------------------------
+// 7. The CLI, driven as a real child process
+// ---------------------------------------------------------------------------
+//
+// `main()` and `usage()` are module-private and only run when the script is
+// invoked directly, so spawning it is the only way to reach them at all.
+//
+// Every arm below has to stop before the first request: the child carries no
+// network fence, so an arm that reached `record()`'s fetch would turn
+// `npm run check` into a live call. The environment is built from scratch
+// rather than inherited — no JIRA_*, HOME and XDG pointed at this suite's own
+// empty directory — so no developer `.env` on this machine can decide the
+// outcome, and the credential arm fails for the reason the test says it does.
+// `NODE_V8_COVERAGE` is the one thing deliberately passed through: the child IS
+// the code under test here, and its profile is what c8 has to see.
+
+interface CliRun {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function runCli(
+  args: readonly string[],
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<CliRun> {
+  const coverage = process.env['NODE_V8_COVERAGE'];
+  return new Promise<CliRun>((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [RECORDER_PATH, ...args],
+      {
+        cwd: DIR,
+        env: {
+          PATH: process.env['PATH'] ?? '',
+          HOME: DIR,
+          XDG_CONFIG_HOME: join(DIR, 'config'),
+          ...(coverage === undefined ? {} : { NODE_V8_COVERAGE: coverage }),
+          ...extraEnv,
+        },
+        timeout: 30_000,
+      },
+      (_error, stdout, stderr) => {
+        resolve({ code: child.exitCode ?? 1, stdout, stderr });
+      },
+    );
+  });
+}
+
+test('--list names every scenario, and --help repeats them with their inputs', async () => {
+  const list = await runCli(['--list']);
+  assert.equal(list.code, 0);
+  assert.equal(list.stderr, '');
+
+  const names = list.stdout
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => required(line.split(/\s+/u)[0], 'scenario name'));
+  // The scenarios the rest of this suite drives have to be among them, or the
+  // catalog and the tests have drifted apart.
+  for (const name of ['search-page', 'issue-detail', 'myself', 'error-404']) {
+    assert.ok(names.includes(name), `--list never mentioned ${name}`);
+  }
+  assert.ok(list.stdout.includes('(needs --jql)'), 'a scenario listed without its input');
+
+  const help = await runCli(['--help']);
+  assert.equal(help.code, 0);
+  assert.equal(help.stderr, '');
+  assert.match(help.stdout, /^record-fixture — record redacted Jira Cloud fixtures/u);
+  assert.match(help.stdout, /--allow-opaque-key <key>/u);
+  for (const name of names) {
+    assert.ok(help.stdout.includes(name), `usage() dropped the ${name} scenario`);
+  }
+});
+
+test('an unknown flag names itself, prints the usage, and exits 2', async () => {
+  const run = await runCli(['--nope']);
+  assert.equal(run.code, 2);
+  // Diagnostics on stderr, nothing on stdout — the house rule, even here.
+  assert.equal(run.stdout, '');
+  assert.match(run.stderr, /^record-fixture: .*Unknown option '--nope'/u);
+  assert.match(run.stderr, /\nScenarios:\n/u);
+});
+
+test('--max-body-bytes is checked before anything is recorded', async () => {
+  const target = out('cli-cap');
+  for (const value of ['10', '2048.5']) {
+    const run = await runCli([
+      '--scenario',
+      'myself',
+      '--out',
+      target,
+      '--max-body-bytes',
+      value,
+    ]);
+    assert.equal(run.code, 2, `--max-body-bytes ${value} was accepted`);
+    assert.match(run.stderr, /--max-body-bytes must be an integer of at least 1024\./u);
+  }
+  assert.equal(existsSync(target), false, 'a rejected run still wrote a fixture');
+});
+
+test('a configuration failure exits 1, without the usage dump', async () => {
+  const target = out('cli-noconfig');
+  const run = await runCli(['--scenario', 'myself', '--out', target]);
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /^record-fixture: /u);
+  assert.match(run.stderr, /Invalid configuration/u);
+  assert.match(run.stderr, /JIRA_API_TOKEN is not set/u);
+  // A bad environment is not a bad command line: dumping the scenario catalog
+  // here would bury the one line that says what to fix.
+  assert.ok(!run.stderr.includes('Usage:'), 'a config failure printed the usage text');
+  assert.equal(existsSync(target), false);
+});
+
+// ---------------------------------------------------------------------------
+// 8. Every scenario recipe still reaches the wire
+// ---------------------------------------------------------------------------
+//
+// The recipes in the scenario table are the only callers in this repo that hand
+// the recorder's own arguments to `api.meta.listCreateMetaIssueTypes`,
+// `api.agile.listSprints` and friends — and in production they run about once a
+// year, when somebody re-records a fixture against a real site. A recipe that
+// has drifted from its api signature would therefore be discovered at the worst
+// possible moment, mid-recording, against a live tenant.
+//
+// So each one is driven here against canned pages: proof that it still reaches
+// the wire, in the order and with the chaining it claims. What lands IN the
+// fixture is group 1's business; this group only counts exchanges.
+
+const BOARD_ID = 9;
+const SPRINT_ID = 21;
+const ISSUE_TYPE_ID = '10001';
+
+/** A `values` page, already exhausted — one page per scenario is enough here. */
+function valuesPage(values: readonly unknown[]): Record<string, unknown> {
+  return { startAt: 0, maxResults: 50, total: values.length, isLast: true, values };
+}
+
+/** The classic `startAt` page, under whichever key the endpoint names its rows. */
+function classicPage(key: string, rows: readonly unknown[]): Record<string, unknown> {
+  return { startAt: 0, maxResults: 50, total: rows.length, [key]: rows };
+}
+
+/** First match wins, so the deeper createmeta route has to precede its parent. */
+const RECIPE_ROUTES: readonly (readonly [RegExp, () => Response])[] = [
+  [
+    /\/issue\/createmeta\/[^/]+\/issuetypes\/\d+/u,
+    () => json(200, classicPage('fields', [])),
+  ],
+  [
+    /\/issue\/createmeta\/[^/]+\/issuetypes/u,
+    () =>
+      json(
+        200,
+        classicPage('issueTypes', [{ id: ISSUE_TYPE_ID, name: 'Task', subtask: false }]),
+      ),
+  ],
+  [/\/issue\/[^/]+\/comment/u, () => json(200, classicPage('comments', []))],
+  [/\/issue\/[^/]+\/changelog/u, () => json(200, classicPage('values', []))],
+  [/\/issue\/[^/]+\/transitions/u, () => json(200, { transitions: [] })],
+  [/\/rest\/api\/3\/field$/u, () => json(200, [])],
+  [
+    /\/project\/search/u,
+    () => json(200, valuesPage([{ id: '10000', key: 'ACME', name: 'Acme' }])),
+  ],
+  [/\/user\/search/u, () => json(200, [])],
+  [/\/sprint\/\d+\/issue/u, () => json(200, classicPage('issues', []))],
+  [/\/board\/\d+\/sprint/u, () => json(200, valuesPage([{ id: SPRINT_ID, name: 'S1' }]))],
+  [
+    /\/rest\/agile\/1\.0\/board/u,
+    () => json(200, valuesPage([{ id: BOARD_ID, name: 'B1' }])),
+  ],
+  // The one scenario whose fixture is the failure: the recipe asserts rejection.
+  [
+    /\/search\/jql/u,
+    () => json(400, { errorMessages: ["Field 'project' is missing."], errors: {} }),
+  ],
+];
+
+const recipeFetch = (): FetchLike =>
+  fakeFetch((url) => {
+    for (const [pattern, respond] of RECIPE_ROUTES) {
+      if (pattern.test(url)) return respond();
+    }
+    // Unrouted: `fakeFetch` turns this into "no fake response for <url>", which
+    // is what a recipe reaching for an endpoint nobody planned for should say.
+    return undefined;
+  });
+
+interface RecipeCase {
+  readonly scenario: string;
+  readonly params?: Readonly<Record<string, string>>;
+  /** How many requests the recipe is supposed to make, chaining included. */
+  readonly exchanges: number;
+}
+
+const RECIPES: readonly RecipeCase[] = [
+  { scenario: 'comments', params: { issue: 'ACME-1' }, exchanges: 1 },
+  { scenario: 'changelog', params: { issue: 'ACME-1' }, exchanges: 1 },
+  { scenario: 'transitions', params: { issue: 'ACME-1' }, exchanges: 1 },
+  { scenario: 'createmeta', params: { project: 'ACME' }, exchanges: 2 },
+  { scenario: 'fields', exchanges: 1 },
+  { scenario: 'projects', exchanges: 1 },
+  { scenario: 'user-search', params: { query: 'ivan' }, exchanges: 1 },
+  { scenario: 'agile', exchanges: 3 },
+  { scenario: 'error-400', exchanges: 1 },
+];
+
+for (const recipe of RECIPES) {
+  test(`the ${recipe.scenario} recipe records the exchanges it promises`, async () => {
+    const { record } = await loadRecorder();
+    const summary = await record({
+      scenario: recipe.scenario,
+      out: out(`recipe-${recipe.scenario}`),
+      ...(recipe.params === undefined ? {} : { params: recipe.params }),
+      env: ENV,
+      clock: CLOCK,
+      fetchImpl: recipeFetch(),
+    });
+    assert.equal(summary.exchanges, recipe.exchanges);
+  });
+}

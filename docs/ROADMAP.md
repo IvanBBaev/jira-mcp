@@ -75,9 +75,9 @@ scope call:
   a PAT is a resolver, not a header change. `HostRef.pathPrefix` is plumbed end
   to end and re-validated where the URL is built. `JIRA_ALLOWED_HOSTS` already
   admits a self-hosted host, and a non-443 port on one, by design. The classic
-  `startAt`/`maxResults` loop is not merely written but is what 9 of the 11 api
-  modules already use, so only the JQL endpoint's `nextPageToken` loop is
-  Cloud-shaped. `JIRA_ROOT_PATHS` is one frozen map, so a `v2` root is two
+  `startAt`/`maxResults` loop is not merely written but is what six of the 11
+  api modules already use through `shared.ts` (adf, attachments and bulk page
+  nothing), so only the JQL endpoint's `nextPageToken` loop is Cloud-shaped. `JIRA_ROOT_PATHS` is one frozen map, so a `v2` root is two
   lines. One cheap thing is genuinely missing: `resolveHost` hardcodes an empty
   path prefix and downgrades a context path to a *warning*, so
   `https://jira.corp.example/jira` starts and then misses `/jira` on every
@@ -91,7 +91,7 @@ scope call:
   DC identifies users by `username`/`key`. The 63 request specs in `src/api/*`
   each need an individual DC-availability verdict, and `src/api/bulk.ts` has
   none — those endpoints are Cloud-only. `scripts/fake-jira.mjs` is ~100 KB with
-  105 hardcoded Cloud routes and would need a twin before a single DC test could
+  67 hardcoded Cloud route handlers over 50 paths and would need a twin before a single DC test could
   run offline. Realistic test blast radius: 500-700 of 1778.
 
   The finding that decides the order, though, is structural rather than

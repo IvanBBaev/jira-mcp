@@ -63,6 +63,9 @@ interface DriverModule {
   readonly GATE_C_MEDIA_FILE: RegExp;
   readonly residuePlan: (inventory?: unknown) => readonly ResidueRow[];
   readonly renderResidue: (plan: readonly ResidueRow[]) => string;
+  readonly flagCombinationError: (flags: Record<string, unknown>) => string | undefined;
+  readonly runsDeletePhase: (flags: Record<string, unknown>) => boolean;
+  readonly phaseList: (flags: Record<string, unknown>) => string;
 }
 
 const DRIVER_URL = pathToFileURL(join(REPO_ROOT, 'scripts', 'verify-live.mjs')).href;
@@ -352,4 +355,37 @@ test('CC-85: a class the inventory could not read never renders as clean', () =>
   assert.match(partial, /throwaway issues: UNKNOWN/);
   assert.match(partial, /seen so far: 1/);
   assert.ok(partial.includes('SCRATCH-42'));
+});
+
+test('[CC-219] the banner announces a delete phase only when one runs, and --irreversible alone is refused', () => {
+  // --write --irreversible: the delete phase runs and the banner says so.
+  const both = { write: true, irreversible: true };
+  assert.equal(driver.runsDeletePhase(both), true);
+  assert.equal(driver.phaseList(both), 'doctor + read + write + delete + residue');
+
+  // --keep skips the delete phase; the banner must not promise it.
+  const kept = { write: true, irreversible: true, keep: true };
+  assert.equal(driver.runsDeletePhase(kept), false);
+  assert.equal(driver.phaseList(kept), 'doctor + read + write + residue');
+
+  // --irreversible without --write has nothing to delete: refused up front,
+  // rather than announced as a delete phase that never runs.
+  const alone = { irreversible: true };
+  assert.equal(driver.runsDeletePhase(alone), false);
+  assert.match(driver.flagCombinationError(alone) ?? '', /--irreversible needs --write/);
+  assert.equal(driver.flagCombinationError(both), undefined);
+
+  // The residue purge keeps its own route to --irreversible.
+  assert.equal(
+    driver.flagCombinationError({ residue: true, purge: true, irreversible: true }),
+    undefined,
+  );
+  assert.match(
+    driver.flagCombinationError({ purge: true }) ?? '',
+    /only makes sense with --residue/,
+  );
+  assert.match(
+    driver.flagCombinationError({ residue: true, purge: true }) ?? '',
+    /needs --irreversible too/,
+  );
 });

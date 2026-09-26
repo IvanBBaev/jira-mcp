@@ -65,6 +65,14 @@ export const HTTP_SESSION_IDLE_TIMEOUT_MS = 30 * 60_000;
 /** How often the idle sweeper wakes. */
 export const HTTP_IDLE_SWEEP_INTERVAL_MS = 60_000;
 
+/**
+ * CC-209: the most sessions held at once. Each is a whole `buildServer`
+ * product with its own plan store, reaped only after the idle timeout, so an
+ * initialize loop that never sends DELETE was the one per-client growth axis
+ * left unbounded. A single-user loopback server needs a handful.
+ */
+export const HTTP_MAX_SESSIONS = 32;
+
 /** The only path served; no `/healthz` — doctor is the health check. */
 const MCP_PATH = '/mcp';
 
@@ -72,6 +80,42 @@ const MCP_PATH = '/mcp';
 const LOOPBACK_HOST = '127.0.0.1';
 
 const BEARER_PREFIX = 'Bearer ';
+
+/**
+ * CC-139: the largest POST body read, in bytes — the SDK's own SSE transport
+ * limit. The Streamable HTTP transport the SDK ships reads a body whole with
+ * no cap, so this module reads it first and hands the SDK the parsed value.
+ */
+export const HTTP_MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+type BodyResult =
+  | { readonly kind: 'ok'; readonly value: unknown }
+  | { readonly kind: 'too_large' }
+  | { readonly kind: 'invalid' };
+
+/**
+ * Read a POST body under {@link HTTP_MAX_BODY_BYTES}. A body over the cap —
+ * declared by its content-length or crossed mid-stream — is drained without
+ * keeping anything past the cap (memory stays bounded) and refused only once
+ * the client has finished sending, so the refusal is not lost to a reset.
+ */
+async function readJsonBody(req: IncomingMessage): Promise<BodyResult> {
+  const declared = Number(headerValue(req.headers['content-length']) ?? Number.NaN);
+  let overflow = Number.isFinite(declared) && declared > HTTP_MAX_BODY_BYTES;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    if (size > HTTP_MAX_BODY_BYTES) overflow = true;
+    if (!overflow) chunks.push(chunk);
+  }
+  if (overflow) return { kind: 'too_large' };
+  try {
+    return { kind: 'ok', value: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+  } catch {
+    return { kind: 'invalid' };
+  }
+}
 
 /**
  * One live MCP session. `server` and `transport` are a bound pair; `closed`
@@ -154,7 +198,13 @@ function originAllowed(origin: string | undefined): boolean {
  * the presented value is never logged, echoed, or kept.
  */
 function bearerMatches(header: string | undefined, expected: Buffer): boolean {
-  if (header === undefined || !header.startsWith(BEARER_PREFIX)) return false;
+  // The scheme is case-insensitive (RFC 7235 §2.1); the token is not.
+  if (
+    header === undefined ||
+    header.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX.toLowerCase()
+  ) {
+    return false;
+  }
   const presented = Buffer.from(header.slice(BEARER_PREFIX.length), 'utf8');
   if (presented.length !== expected.length) return false;
   return timingSafeEqual(presented, expected);
@@ -198,6 +248,12 @@ export async function connectHttpTransport(
   const port = settings.httpPort;
   const expectedToken = Buffer.from(token, 'utf8');
   const sessions = new Map<string, SessionEntry>();
+  // Set by `close()` before its teardown loop (CC-164): a keep-alive socket
+  // can still deliver an initialize while the loop awaits, and a session
+  // registered after the loop copied the keys would never be closed.
+  let stopping = false;
+  // Initialize POSTs between the cap check and registration (CC-234).
+  let initializing = 0;
 
   const teardown = async (sid: string): Promise<void> => {
     const entry = sessions.get(sid);
@@ -273,11 +329,46 @@ export async function connectHttpTransport(
       return;
     }
 
-    // 5. Route by method + Mcp-Session-Id (CC-117).
+    // 5. Body (CC-139): a POST is read here, under the cap, and handed to the
+    // SDK parsed. The refusal matches the SDK's own parse-error shape.
+    let parsedBody: unknown;
+    if (req.method === 'POST') {
+      const body = await readJsonBody(req);
+      if (body.kind === 'too_large') {
+        res.setHeader('connection', 'close');
+        refuse(res, 413, -32000, 'Payload Too Large: request body exceeds 4 MiB.');
+        return;
+      }
+      if (body.kind === 'invalid') {
+        refuse(res, 400, -32700, 'Parse error: Invalid JSON');
+        return;
+      }
+      parsedBody = body.value;
+    }
+
+    if (stopping) {
+      res.setHeader('connection', 'close');
+      refuse(res, 503, -32000, 'Service Unavailable: the server is shutting down.');
+      return;
+    }
+
+    // 6. Route by method + Mcp-Session-Id (CC-117).
     const sid = headerValue(req.headers['mcp-session-id']);
     if (sid === undefined) {
       if (req.method !== 'POST') {
         refuse(res, 400, -32000, 'Bad Request: Mcp-Session-Id header required.');
+        return;
+      }
+      // Initializes still in flight count against the cap: registration
+      // happens after two awaits, so a parallel burst would otherwise all
+      // pass a check that only counts registered sessions (CC-234).
+      if (sessions.size + initializing >= HTTP_MAX_SESSIONS) {
+        refuse(
+          res,
+          503,
+          -32000,
+          `Service Unavailable: ${String(HTTP_MAX_SESSIONS)} sessions are open. Close one with DELETE, or let an idle one expire.`,
+        );
         return;
       }
       const entry: SessionEntry = {
@@ -287,6 +378,10 @@ export async function connectHttpTransport(
           enableJsonResponse: true,
           onsessioninitialized: (sessionId: string): void => {
             sessions.set(sessionId, entry);
+            // A request past the `stopping` check before `close()` ran lands
+            // here after close has snapshotted the map; nothing else would
+            // ever tear it down (CC-235).
+            if (stopping) void teardown(sessionId);
           },
           onsessionclosed: (sessionId: string): void => {
             // Fire-and-forget is safe: teardown never rejects.
@@ -297,17 +392,33 @@ export async function connectHttpTransport(
         open: 0,
         closed: false,
       };
-      await entry.server.connect(entry.transport);
-      trackResponse(entry, res);
-      // The SDK reads the body itself and refuses a non-initialize POST
-      // without a session on its own (400).
-      await entry.transport.handleRequest(req, res);
-      if (entry.transport.sessionId === undefined) {
-        // The POST never became a session (already answered above). Close the
-        // speculative pair so a junk POST cannot leak a Server per request.
-        entry.closed = true;
-        await entry.transport.close();
-        await entry.server.close();
+      initializing += 1;
+      try {
+        await entry.server.connect(entry.transport);
+        trackResponse(entry, res);
+        // The SDK refuses a non-initialize POST without a session on its
+        // own (400).
+        await entry.transport.handleRequest(req, res, parsedBody);
+      } finally {
+        initializing -= 1;
+        if (entry.transport.sessionId === undefined) {
+          // The POST never became a session — answered above, or thrown out of
+          // the SDK. Close the speculative pair either way, so neither a junk
+          // POST nor a failing one can leak a Server per request.
+          // Each close guarded on its own, as in `teardown` (CC-164): a
+          // rejected transport close must not skip the Server's.
+          entry.closed = true;
+          try {
+            await entry.transport.close();
+          } catch {
+            /* the speculative pair never became a session */
+          }
+          try {
+            await entry.server.close();
+          } catch {
+            /* same */
+          }
+        }
       }
       return;
     }
@@ -321,7 +432,7 @@ export async function connectHttpTransport(
     trackResponse(entry, res);
     // DELETE is the SDK's to handle: it answers 200 and fires
     // `onsessionclosed`, which runs `teardown` above.
-    await entry.transport.handleRequest(req, res);
+    await entry.transport.handleRequest(req, res, parsedBody);
   };
 
   const httpServer = createHttpServer((req, res) => {
@@ -403,6 +514,7 @@ export async function connectHttpTransport(
             resolve();
           });
         });
+        stopping = true;
         for (const sid of [...sessions.keys()]) {
           await teardown(sid);
         }

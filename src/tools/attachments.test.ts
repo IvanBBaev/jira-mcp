@@ -553,6 +553,21 @@ test('a collision variant only splits off something that is really an extension'
   });
 });
 
+test('[CC-186] a collision variant of a full-length name still fits the upload name cap', async () => {
+  await withTempDir(async (dir) => {
+    const store = createNodeMediaStore(dir);
+    const long = `${'r'.repeat(MAX_MEDIA_NAME_CHARS - 4)}.pdf`;
+    await writeFile(join(dir, long), '');
+
+    const variant = (await store.write(long, new Uint8Array([1]))).name;
+
+    assert.equal(variant.length, MAX_MEDIA_NAME_CHARS);
+    assert.match(variant, /r-1\.pdf$/);
+    // The name the store chose is one the store will read back.
+    assert.deepEqual([...(await store.read(variant)).bytes], [1]);
+  });
+});
+
 test('CC-74: a media directory that is really a path through a file is a config error', async () => {
   await withTempDir(async (dir) => {
     // The typo an operator makes once: JIRA_MEDIA_DIR pointing THROUGH a file.

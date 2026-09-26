@@ -10,7 +10,7 @@
 // Every failure here is a diagnostic on stderr, and under an MCP client stderr
 // is a pipe: `process.exit()` tears the process down with the write still in the
 // pipe buffer, which silently truncates the message at 64 KiB (measured). The
-// same rule governs `src/index.ts` (CC-91), and for the same reason — the one
+// same rule governs `src/index.ts` (CC-89), and for the same reason — the one
 // sentence explaining why the server did not start is the whole value of these
 // paths, so it must survive.
 'use strict';

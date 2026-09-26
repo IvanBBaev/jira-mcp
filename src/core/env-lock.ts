@@ -247,6 +247,11 @@ export function writeFileAtomic(
     // data is still only in the page cache, leaving a zero-length file.
     fsyncSync(fd);
   } catch (cause) {
+    // NO TEST DRIVES THIS ARM: every call between `open` and here fails only
+    // on a full or failing volume, and there is no seam over `node:fs` in this
+    // module on purpose — it IS the filesystem code. It is kept because the
+    // alternative to cleaning up is leaving a 0600 file holding the credentials
+    // that were being written, under a name a later run will not recognise.
     closeSync(fd);
     try {
       unlinkSync(tmpPath);
@@ -263,7 +268,8 @@ export function writeFileAtomic(
     try {
       unlinkSync(tmpPath);
     } catch {
-      // Same as above: do not mask the rename failure.
+      // Same as above: do not mask the rename failure. Unreached for the same
+      // reason — the temp file is there unless something else removed it.
     }
     throw cause;
   }
@@ -301,11 +307,23 @@ export async function acquireEnvLock(
     // The exact bytes on disk are our claim to the lock: `refresh`/`release`
     // compare against them to notice a lock that was broken under us.
     const record = `${JSON.stringify(owner)}\n`;
+    let made = false;
     try {
       mkdirSync(lockPath, { recursive: false, mode: SECRET_DIR_MODE });
+      made = true;
       writeFileAtomic(join(lockPath, OWNER_FILE), record, { mode: SECRET_FILE_MODE });
       return makeLock(lockPath, targetPath, owner, record, options.onWarning);
     } catch (cause) {
+      // A directory we made but could not claim (ENOSPC, EACCES on the owner
+      // file) is removed before rethrowing (CC-168). Left behind, it would
+      // block every other process until it went stale.
+      if (made) {
+        try {
+          rmSync(lockPath, { recursive: true, force: true });
+        } catch {
+          /* the original failure is the one worth reporting */
+        }
+      }
       if (errnoCode(cause) !== 'EEXIST') throw cause;
     }
 
@@ -320,15 +338,36 @@ export async function acquireEnvLock(
         options.onWarning?.(
           `Breaking stale lock ${lockPath} (untouched for ${String(clock.now() - mtime)}ms, owner ${describeOwner(before, 'unknown')}). A previous run was probably killed.`,
         );
+        // Rename, verify, then remove (CC-172). A plain `rm` of the path is
+        // check-then-act: a second breaker that observed the same stale lock
+        // could delete the fresh lock the first breaker had just taken, and
+        // both would hold it. The rename moves exactly one directory, and the
+        // record check proves it is the one observed as stale.
+        const grave = `${lockPath}.stale-${String(pid)}-${String(nextSeq())}`;
         try {
-          rmSync(lockPath, { recursive: true, force: true });
+          renameSync(lockPath, grave);
         } catch {
-          // NOT the "another breaker got there first" case — `force` already
-          // swallows a vanished directory. This is a removal that genuinely
-          // cannot happen (unwritable parent, or the directory held open on
-          // Windows/NFS). Swallow it: the lock is still there, so the next
-          // attempt sees it, `brokenOnce` stops a second break, and the wait
-          // ends in a timeout error that names the path.
+          // ENOENT: another breaker got there first. Anything else (unwritable
+          // parent, a directory held open on Windows/NFS) leaves the lock in
+          // place: `brokenOnce` stops a second break, and the wait ends in a
+          // timeout error that names the path.
+          continue;
+        }
+        if (readOwnerRaw(grave) !== before) {
+          // The lock was re-taken after our observation: put it back. If that
+          // fails, a third process holds the path now, and the moved holder
+          // notices the loss on its next refresh/release.
+          try {
+            renameSync(grave, lockPath);
+            continue;
+          } catch {
+            /* fall through and clear the moved directory */
+          }
+        }
+        try {
+          rmSync(grave, { recursive: true, force: true });
+        } catch {
+          /* litter under a unique name blocks nobody */
         }
         continue;
       }

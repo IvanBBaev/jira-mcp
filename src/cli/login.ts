@@ -32,6 +32,7 @@ import {
   type EnvFileHost,
   type EnvFileOptions,
 } from '../core/config.js';
+import { effectiveCredentials } from '../core/credentials.js';
 import { createJiraError, toJiraError } from '../core/errors.js';
 import { createAuthRequest, type AuthRequestFn } from '../core/http.js';
 import { createLogger, NO_CID } from '../core/log.js';
@@ -432,6 +433,12 @@ function describeDuration(ms: number): string {
 // The loopback callback
 // ---------------------------------------------------------------------------
 
+/** Drop C0/C1 control characters (CC-144): the text is printed to a terminal. */
+function stripControl(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+}
+
 /**
  * Compare the `state` nonce without leaking where two values diverge.
  *
@@ -483,6 +490,8 @@ async function startLoopback(args: {
   readonly port: number;
   readonly expectedState: string;
   readonly redactor: Redactor;
+  /** Called for each code callback whose state is not ours (CC-246). */
+  readonly onForeignState?: () => void;
 }): Promise<Loopback> {
   let settle: (code: string) => void = () => undefined;
   let fail: (reason: unknown) => void = () => undefined;
@@ -506,13 +515,24 @@ async function startLoopback(args: {
 
     const providerError = url.searchParams.get('error');
     if (providerError !== null) {
+      // An error redirect echoes our state too (RFC 6749 §4.1.2.1). One that
+      // does not is not from the authorization we started — any page can
+      // navigate here — so it must not end the login (CC-144).
+      if (!sameState(args.expectedState, url.searchParams.get('state') ?? '')) {
+        respond(res, 400, 'State mismatch; this callback was ignored.');
+        return;
+      }
       const description = url.searchParams.get('error_description');
       respond(res, 400, 'Authorization failed. You can close this tab.');
       fail(
         createJiraError({
           kind: 'auth',
-          reason: `Atlassian refused the authorization: ${providerError}${
-            description === null || description === '' ? '' : ` (${description})`
+          // Query text goes to a terminal: control characters (ANSI escapes
+          // included) are dropped so it cannot repaint the screen.
+          reason: `Atlassian refused the authorization: ${stripControl(providerError)}${
+            description === null || description === ''
+              ? ''
+              : ` (${stripControl(description)})`
           }.`,
           remediation:
             'Approve the requested scopes in the browser, and check that the app in ' +
@@ -531,20 +551,13 @@ async function startLoopback(args: {
 
     // Constant-time, and BEFORE the code is handed to anyone: a callback whose
     // state is not ours did not come from the authorization we started, so its
-    // code is not ours to spend (CC-97).
+    // code is not ours to spend (CC-97). Nor may it end the flow: any page can
+    // navigate here, and a forged callback that aborted the login would let
+    // it cancel every attempt the operator makes. Like a foreign error
+    // redirect (CC-144), it is refused and the wait goes on (CC-246).
     if (!sameState(args.expectedState, url.searchParams.get('state') ?? '')) {
       respond(res, 400, 'State mismatch; this callback was ignored.');
-      fail(
-        createJiraError({
-          kind: 'auth',
-          reason:
-            'The callback carried a state value that does not match the one this login generated, so the authorization code was discarded without being exchanged.',
-          remediation:
-            'Run `jira-mcp-ai login` again and complete the flow in the browser tab it opens; ' +
-            'a stale tab from an earlier attempt produces exactly this.',
-          redactor: args.redactor,
-        }),
-      );
+      args.onForeignState?.();
       return;
     }
 
@@ -778,11 +791,23 @@ export async function run(options: LoginOptions = {}): Promise<number> {
   // Which leg is in flight, so a failure can name the likeliest cause instead of
   // repeating the endpoint's own opaque `error` code back at the operator.
   let exchanging = false;
+  let foreignCallbacks = 0;
   try {
     loopback = await startLoopback({
       port: oauth.redirectPort,
       expectedState: state,
       redactor,
+      onForeignState: () => {
+        foreignCallbacks += 1;
+        // Once is enough to explain a stale tab; a page replaying the
+        // callback in a loop must not flood the terminal.
+        if (foreignCallbacks === 1) {
+          err(
+            'Ignored a callback whose state does not match this login; its authorization code was discarded unspent. ' +
+              'Still waiting — complete the flow in the tab this login opened, not one from an earlier attempt.\n',
+          );
+        }
+      },
     });
 
     if (!flags.json) {
@@ -799,6 +824,10 @@ export async function run(options: LoginOptions = {}): Promise<number> {
           ? `A browser was opened. If nothing appeared, visit:\n${authorizeUrl}\n\n`
           : `Open this URL to authorize:\n${authorizeUrl}\n\n`,
       );
+    } else if (!opened) {
+      // stdout is the one JSON object, but a URL nobody can see is a login
+      // nobody can finish: `--json --no-browser` waited out the timeout (CC-207).
+      err(`Open this URL to authorize:\n${authorizeUrl}\n`);
     }
 
     // The wait, bounded. `clock.sleep` rather than a timer, so the whole flow is
@@ -818,8 +847,12 @@ export async function run(options: LoginOptions = {}): Promise<number> {
 
     if (code === undefined) {
       return fail(
-        `No callback arrived within ${describeDuration(timeoutMs)}, so the login was abandoned.`,
-        'Re-run the command and complete the authorization in the browser, or raise --timeout if the wait was genuinely too short.',
+        foreignCallbacks === 0
+          ? `No callback arrived within ${describeDuration(timeoutMs)}, so the login was abandoned.`
+          : `No callback for this login arrived within ${describeDuration(timeoutMs)}, so the login was abandoned; ${String(foreignCallbacks)} callback(s) with a state value that does not match were ignored and their codes discarded unexchanged.`,
+        foreignCallbacks === 0
+          ? 'Re-run the command and complete the authorization in the browser, or raise --timeout if the wait was genuinely too short.'
+          : 'Re-run the command and complete the authorization in the browser tab it opens; a stale tab from an earlier attempt produces exactly this.',
         EXIT_FLOW_FAILED,
       );
     }
@@ -866,7 +899,16 @@ export async function run(options: LoginOptions = {}): Promise<number> {
     // is not a bug: accessible-resources ids are not globally unique, so `--site`
     // matches on URL or name rather than on the id.
     const wantedCloudId = flags.cloudId ?? oauth.cloudId;
-    const wantedSite = flags.site ?? settings.site;
+    // The site of the profile being logged in, not of the active one: `--profile
+    // work` must match work's JIRA_PROFILE_WORK_SITE (CC-166). `--cloud-id`
+    // alone picks the site INSTEAD of the environment's, so that site is not
+    // applied on top of it — it would refuse every other site of the grant
+    // (CC-245). Both flags together still both apply.
+    const wantedSite =
+      flags.site ??
+      (flags.cloudId === undefined
+        ? effectiveCredentials(settings, profile).site
+        : undefined);
     const site = selectSite(parseAccessibleSites(resources.json), {
       ...(wantedCloudId === undefined || wantedCloudId === ''
         ? {}
@@ -1018,8 +1060,12 @@ export async function runLogout(options: LoginOptions = {}): Promise<number> {
       // else, so a concurrent refresh in another process cannot lose its write
       // to a wholesale overwrite.
       const file = await store.read();
-      const keys = Object.keys(file.tokens);
-      for (const key of keys) await store.remove(key);
+      const keys: string[] = [];
+      for (const key of Object.keys(file.tokens)) {
+        // Only what actually went: a key that was not removed must not be
+        // reported as gone while its refresh token stays on disk (CC-211).
+        if (await store.remove(key)) keys.push(key);
+      }
       out(
         keys.length === 0
           ? `No stored OAuth tokens in ${quote(store.path)}; nothing to remove.\n`

@@ -161,6 +161,12 @@ export interface ClassicPage<T> {
   readonly startAt?: number;
   /** The page size the server actually applied — it may cap the requested one. */
   readonly maxResults?: number;
+  /**
+   * Rows the server sent, when a reader dropped some it could not map. The
+   * offset and the short-page test count SERVER rows: measuring them by the
+   * kept `items` stops early and re-reads the tail (CC-161).
+   */
+  readonly scanned?: number;
 }
 
 /**
@@ -354,7 +360,8 @@ export async function fetchPage<T>(
  * trips, the caller aborts or the call budget expires.
  *
  * "Exhausted" is any of: `isLast: true`, an empty page, a page shorter than the
- * size the server said it applied, or `startAt` reaching a reported `total`.
+ * size the server said it applied (unless it also said `isLast: false`), or
+ * `startAt` reaching a reported `total`.
  * The empty-page rule is also the anti-spin guard — a server that keeps
  * answering zero rows can never advance the offset, so the loop must not treat
  * it as "keep going".
@@ -393,13 +400,28 @@ export async function fetchAll<T>(
     // comparing against the REQUESTED size would then read every full page as
     // short and stop after one.
     const applied = page.maxResults ?? pageSize;
-    const read = page.items.length;
-    startAt = (page.startAt ?? startAt) + read;
+    const read = page.scanned ?? page.items.length;
+    // A permission-filtered window (`isLast: false`, fewer rows than applied)
+    // still spans the server's full `maxResults` of offsets: the rows the
+    // caller cannot see were counted server-side and never sent. Advancing by
+    // the rows read would re-read the tail of the window as duplicates
+    // (CC-173). Only an ECHOED `maxResults` is trusted for this; a server that
+    // echoes none may have capped the size silently, so the conservative
+    // advance by rows read stands.
+    const hidden =
+      page.isLast === false && page.maxResults !== undefined && page.maxResults > read;
+    startAt = (page.startAt ?? startAt) + (hidden ? applied : read);
 
+    // An explicit `isLast: false` outranks a short page: permission-filtered
+    // endpoints (boards, filters, projects) drop rows the caller cannot see and
+    // still have more to give (CC-160). The short-page rule is for the servers
+    // that report no `isLast` at all. An EMPTY window with `isLast: false` is
+    // the same case in the extreme, and it continues only while the offset can
+    // still move, which keeps the anti-spin guard (CC-173).
     const done =
       page.isLast === true ||
-      read === 0 ||
-      read < applied ||
+      (read === 0 && !hidden) ||
+      (page.isLast !== false && read < applied) ||
       (total !== undefined && startAt >= total);
     if (done) return classicResult(items, pages, 'exhausted', startAt, total);
   }

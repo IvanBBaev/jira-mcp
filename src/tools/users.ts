@@ -9,10 +9,10 @@
 // Two properties are load-bearing here and are asserted in `users.test.ts`:
 //
 //  1. **Email is opt-in, and dropping it is this ring's job.** `api/users.ts`
-//     passes `emailAddress` through whenever Jira sent one; THREAT-MODEL.md §PII
-//     says the model may not see it unless it asked. So `includeEmail` defaults
-//     to false and every row is re-projected here — an omitted key, never a
-//     `null` and never the string "undefined".
+//     passes `emailAddress` through whenever Jira sent one; THREAT-MODEL.md
+//     §PII minimization says the model may not see it unless it asked. So
+//     `includeEmail` defaults to false and every row is re-projected here — an
+//     omitted key, never a `null` and never the string "undefined".
 //  2. **A masked email is a normal result (CC-19).** A tenant that hides email
 //     addresses answers with rows that simply have no `emailAddress`. That is
 //     reported as the `email_hidden` hint — and only when the caller actually
@@ -181,7 +181,7 @@ interface UserSearchData {
 /**
  * Re-project a Jira user onto the documented shape. Everything else Jira sends
  * (`accountType`, `timeZone`, `locale`, avatars) is dropped, and `emailAddress`
- * survives only when the caller opted in — THREAT-MODEL.md §PII.
+ * survives only when the caller opted in — THREAT-MODEL.md §PII minimization.
  */
 function projectUser(user: JiraUser, includeEmail: boolean): UserRow {
   return {

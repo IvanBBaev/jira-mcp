@@ -18,7 +18,8 @@
 // protocol channel. `process.loadEnvFile` also has the precedence we want: a
 // variable already present in `process.env` is NOT overwritten by the file, so
 // values passed by the MCP client win over the file (verified behaviour of the
-// `--env-file` loader this API shares).
+// `--env-file` loader this API shares) — except a blank one, which the host
+// treats as absent (CC-236).
 
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -94,7 +95,23 @@ export const nodeEnvFileHost: EnvFileHost = {
     }
   },
   loadFile(path: string): void {
-    process.loadEnvFile(path);
+    // `process.loadEnvFile` keeps any key that already exists, even as "" —
+    // and settings read a blank value as unset. An MCP client template's
+    // `JIRA_API_TOKEN: ""` placeholder would then hide the file's real token
+    // and the report would call it "not set" (CC-236). A blank entry is
+    // lifted for the load and put back only when the file did not fill it.
+    const blank = Object.keys(process.env).filter(
+      (key) => process.env[key]?.trim() === '',
+    );
+    const saved = new Map(blank.map((key) => [key, process.env[key] ?? '']));
+    for (const key of blank) delete process.env[key];
+    try {
+      process.loadEnvFile(path);
+    } finally {
+      for (const [key, value] of saved) {
+        if (process.env[key] === undefined) process.env[key] = value;
+      }
+    }
   },
 };
 

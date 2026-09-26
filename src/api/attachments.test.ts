@@ -32,6 +32,7 @@ import {
   FALLBACK_MEDIA_NAME,
   ISSUE_ATTACHMENTS_PATH_TEMPLATE,
   ISSUE_PATH_TEMPLATE,
+  MAX_MEDIA_NAME_BYTES,
   MAX_MEDIA_NAME_CHARS,
   UPLOAD_FIELD_NAME,
   downloadAttachment,
@@ -165,6 +166,31 @@ function issueWithAttachments(rows: readonly unknown[]): Record<string, unknown>
 // safeMediaName — Jira-supplied names are untrusted (D45)
 // ---------------------------------------------------------------------------
 
+test('[CC-186] truncating an extensionless name never leaves a trailing dot or space', () => {
+  // 118 letters, then ". " spanning the cut, then more text: the 120-char cut
+  // would end on ". ", which Windows strips on creation.
+  const raw = `${'n'.repeat(118)}. tail-with-no-extension-at-all`;
+  const safe = safeMediaName(raw);
+  assert.equal(safe, 'n'.repeat(118));
+});
+
+test('[CC-229] a downloaded name is one the upload side accepts unchanged', () => {
+  // Leading dots and spaces interleave; trailing whitespace other than a space.
+  const cases: readonly (readonly [string, string])[] = [
+    ['. .env', 'env'],
+    ['. . .x', 'x'],
+    [' .. a', 'a'],
+    ['\u00a0.hidden', 'hidden'],
+    ['a\u00a0.', 'a'],
+    ['report.pdf \u3000', 'report.pdf'],
+  ];
+  for (const [raw, expected] of cases) {
+    const safe = safeMediaName(raw);
+    assert.equal(safe, expected, `safeMediaName(${JSON.stringify(raw)})`);
+    assert.equal(requireLocalName(safe), safe, `round trip of ${JSON.stringify(raw)}`);
+  }
+});
+
 test('safeMediaName reduces every hostile filename to a basename', () => {
   const cases: readonly (readonly [string, string])[] = [
     // Plain names survive untouched — sanitizing must not be lossy for the
@@ -223,6 +249,31 @@ test('safeMediaName caps the length and keeps a short extension', () => {
   const oddSuffix = safeMediaName(`${'b'.repeat(400)}.thisisnotanextension`);
   assert.equal(oddSuffix.length, MAX_MEDIA_NAME_CHARS);
   assert.equal(oddSuffix, 'b'.repeat(MAX_MEDIA_NAME_CHARS));
+});
+
+test('[CC-150] safeMediaName caps UTF-8 bytes and never splits a surrogate pair', () => {
+  const utf8 = (text: string): number => new TextEncoder().encode(text).length;
+
+  // 150 CJK characters are 450 bytes: under no character cap would they fit a
+  // 255-byte filename.
+  const cjk = safeMediaName(`${'報'.repeat(150)}.pdf`);
+  assert.ok(utf8(cjk) <= MAX_MEDIA_NAME_BYTES, `${utf8(cjk)} bytes`);
+  assert.ok(cjk.endsWith('.pdf'));
+  assert.equal(cjk, `${'報'.repeat(78)}.pdf`);
+
+  // An emoji is two UTF-16 units: a unit-count cut would strand half of one.
+  const emoji = safeMediaName(`${'😀'.repeat(70)}.md`);
+  assert.doesNotMatch(
+    emoji,
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    'no lone surrogate may survive',
+  );
+  assert.ok(emoji.length <= MAX_MEDIA_NAME_CHARS);
+  assert.ok(utf8(emoji) <= MAX_MEDIA_NAME_BYTES);
+  assert.ok(emoji.endsWith('.md'));
+
+  // A name inside both caps is untouched.
+  assert.equal(safeMediaName('報告.pdf'), '報告.pdf');
 });
 
 // ---------------------------------------------------------------------------
@@ -328,11 +379,27 @@ test('listAttachments answers an empty list when the field is absent or null', a
 });
 
 test('listAttachments falls back to the requested key when Jira sends none', async () => {
-  const jira = createFakeJiraRequest().enqueue(jiraOk({ fields: { attachment: [] } }));
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ fields: { attachment: [] } }))
+    .enqueue(jiraOk({ fields: {} }));
 
-  const result = await listAttachments({ jira: jira.fn, issueKey: '10000' });
+  const listed = await listAttachments({ jira: jira.fn, issueKey: '10000' });
+  assert.equal(listed.issueKey, '10000');
 
-  assert.equal(result.issueKey, '10000');
+  // The same fallback on the empty-answer path: no key and no field at all.
+  const empty = await listAttachments({ jira: jira.fn, issueKey: '10000' });
+  assert.deepEqual(empty, { issueKey: '10000', attachments: [] });
+});
+
+test('getAttachment drops an author that is not a record at all', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk(attachmentRow({ id: 10001, author: 'User One' })),
+  );
+
+  const result = await getAttachment({ jira: jira.fn, attachmentId: '10001' });
+
+  assert.equal(Object.hasOwn(result, 'author'), false);
+  assert.equal(result.id, '10001');
 });
 
 test('listAttachments refuses a response whose shape it cannot read', async () => {

@@ -89,6 +89,7 @@ import { ok } from '../mcp/result.js';
 import { callBase, guarded } from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolAnnotations, ToolResult } from '../mcp/types.js';
 import { noteBeforeState } from '../mcp/write-mode.js';
+import { labelsArg } from './issues-write.js';
 
 // ---------------------------------------------------------------------------
 // Annotations
@@ -417,11 +418,13 @@ function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
   };
 }
 
-/** `lead` as one string: the display name, or the accountId when that is all. */
+/**
+ * `lead` as one string: the display name, or the accountId when that is all.
+ * The api ring drops a lead without an accountId and never keeps an empty
+ * display name, so whichever half is here is a non-empty string.
+ */
 function leadBefore(lead: ProjectComponent['lead']): string | undefined {
-  if (lead === undefined) return undefined;
-  const name = lead.displayName ?? lead.accountId;
-  return name === '' ? undefined : name;
+  return lead === undefined ? undefined : (lead.displayName ?? lead.accountId);
 }
 
 function componentBefore(
@@ -616,11 +619,21 @@ const worklogIdArg = z
   .describe('Numeric worklog id, as jira_get_worklogs reports it.');
 
 /**
- * Components, versions and sprints take NUMBERS, not strings — the same
- * `collabIdArg`/`agileIdArg` pattern their read/write packages use, repeated
- * here because those consts are private to their modules on purpose.
+ * Components, versions and sprints take NUMBERS — the same `collabIdArg`
+ * pattern their read/write packages use, repeated here because those consts
+ * are private to their modules on purpose. A digit string is accepted and
+ * converted, because jira_list_components and jira_list_versions report ids
+ * as strings.
  */
-const numericIdArg = z.number().int().min(1);
+const numericIdArg = z.union([
+  z.number().int().min(1),
+  z
+    .string()
+    .regex(/^[1-9]\d*$/)
+    // Past 2^53 the conversion rounds to a different id (CC-195).
+    .refine((value) => Number.isSafeInteger(Number(value)), 'Not a safe integer id.')
+    .transform(Number),
+]);
 
 /**
  * The bulk target list. The 1000 cap is Jira's documented request limit,
@@ -629,9 +642,15 @@ const numericIdArg = z.number().int().min(1);
  * cap server-side, so a list that validates can still be refused by Jira.
  */
 const bulkIssuesArg = z
-  .array(z.string().min(1))
+  // Trimmed here, so the plan's before-state echoes what apply sends and a
+  // blank entry dies in validation, in both modes (CC-215).
+  .array(z.string().trim().min(1))
   .min(1)
-  .max(1000)
+  // Exact duplicates dropped, first-seen order kept, BEFORE the cap: a repeat
+  // neither inflates an irreversible plan's issueCount nor eats into the 1000
+  // (CC-243). Key-vs-id and case aliases are left alone — only Jira knows them.
+  .transform((issues) => [...new Set(issues)])
+  .pipe(z.array(z.string()).max(1000))
   .describe(
     'Issue keys (PROJ-123) or numeric issue ids — at most 1000, and subtasks of ' +
       'selected parents count toward the same limit.',
@@ -854,7 +873,9 @@ export const deleteVersionTool = defineTool({
     'Permanently delete one project version (a release). IRREVERSIBLE: every ' +
     'fixVersion and affectedVersion occurrence is rewritten — swapped to ' +
     'moveFixIssuesTo / moveAffectedIssuesTo when given, CLEARED when omitted, which ' +
-    'is a documented outcome and not an error. Requires JIRA_ALLOW_IRREVERSIBLE=true ' +
+    'is a documented outcome and not an error. Custom version-picker fields have no ' +
+    'swap input and are always CLEARED of this version (the plan counts those issues). ' +
+    'Requires JIRA_ALLOW_IRREVERSIBLE=true ' +
     'on top of the usual plan → apply; the plan works without it and shows the ' +
     'release with all three related-issue counts. To retire a release reversibly, ' +
     'jira_update_version with archived: true hides it instead.',
@@ -941,7 +962,7 @@ export const deleteSprintTool = defineTool({
  * eat every caller's deadline budget — so the hint names the read that does.
  */
 const BULK_ENQUEUED_HINT: Hint = {
-  code: 'discovery',
+  code: 'enqueued',
   message:
     'Jira ENQUEUED the bulk operation — a 201 means accepted, not done. Poll ' +
     'jira_get_bulk_status with this taskId until the task reports COMPLETE (or ' +
@@ -1044,15 +1065,17 @@ function refineBulkEditFamily(
 
 const bulkEditIssuesInput = writeToolInput({
   issues: bulkIssuesArg,
-  labels: z
-    .array(z.string().min(1))
+  labels: labelsArg
     .optional()
     .describe('Label values for labelsAction. REMOVE_ALL takes an empty list.'),
   labelsAction: bulkEditActionArg
     .optional()
     .describe('What to do with labels: ADD, REMOVE, REPLACE or REMOVE_ALL.'),
+  // Trimmed at the schema, as the issue list is (CC-215): the plan echoes
+  // what apply sends, and api/bulk.ts trims before sending (CC-242).
   priorityId: z
     .string()
+    .trim()
     .min(1)
     .optional()
     .describe(
@@ -1061,6 +1084,7 @@ const bulkEditIssuesInput = writeToolInput({
     ),
   assigneeAccountId: z
     .string()
+    .trim()
     .min(1)
     .nullable()
     .optional()
@@ -1069,7 +1093,7 @@ const bulkEditIssuesInput = writeToolInput({
         'display name or email into one. null unassigns.',
     ),
   fixVersionIds: z
-    .array(z.string().min(1))
+    .array(z.string().trim().min(1))
     .optional()
     .describe(
       'Numeric version ids (from jira_list_versions) for fixVersionsAction. ' +

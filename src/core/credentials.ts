@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// The credential rule — AUTH.md §Profiles, D29.
+// The credential rule — AUTH.md §Multi-account, D34.
 //
 // ONE implementation of "which site, email and token does this call actually
 // use". It lived in two places before: the composition root built the per-call
@@ -58,13 +58,15 @@ export type CredentialSource = Pick<
  *
  * Profile names are matched case-insensitively because the environment spells
  * them in upper case (`JIRA_PROFILE_EU_SITE`) and humans write them in lower
- * case; `loadSettings` keys the map by the lowercased name.
+ * case; `loadSettings` keys the map by the lowercased name. Trimmed as well, the
+ * same way the token store's `profileKey` is: `login --profile " work "` stored
+ * under `work` while matching the DEFAULT profile's site (CC-248).
  */
 export function profileOf(
   settings: CredentialSource,
   profileName: string | undefined,
 ): ProfileConfig | undefined {
-  const key = profileName?.toLowerCase();
+  const key = profileName?.trim().toLowerCase();
   return key === undefined ? undefined : settings.profiles[key];
 }
 

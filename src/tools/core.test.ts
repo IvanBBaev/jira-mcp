@@ -364,6 +364,14 @@ test('jira_get_myself omits absent optional keys instead of emitting undefined',
 
   assert.deepEqual(result.data, { accountId: ACCOUNT_ID, accountType: 'app' });
   assert.equal(Object.keys(result.data ?? {}).includes('displayName'), false);
+
+  // The bare minimum — an id and nothing else — is exactly one key out.
+  const bare = createFakeJiraRequest().on(
+    MYSELF_ROUTE,
+    jiraOk({ accountId: ACCOUNT_ID }),
+  );
+  const minimal = await getMyselfTool.handler({}, ctxOf(bare));
+  assert.deepEqual(minimal.data, { accountId: ACCOUNT_ID });
 });
 
 test('CC-35: an account record is metadata and is NOT branded untrusted', async () => {

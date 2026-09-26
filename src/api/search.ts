@@ -468,7 +468,10 @@ function normalizeIssueIds(
           'Pass the numeric "id" an issue read or create returned, not the issue key.',
       });
     }
-    seen.add(text);
+    // Canonical spelling (CC-187): `007` goes on the wire as the number 7 and
+    // Jira reports it back as "7", so the missing-id comparison must use the
+    // same spelling or a returned issue is reported as missing.
+    seen.add(text.replace(/^0+(?=\d)/, ''));
   }
   if (seen.size > MAX_RECONCILE_ISSUES) {
     throw createJiraError({

@@ -222,8 +222,24 @@ function bound(text: string, max: number): string {
   return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1)}…`;
 }
 
+/**
+ * Scrub BEFORE {@link bound}, never after: a cut through the middle of a
+ * registered secret leaves a prefix no literal needle matches any more (CC-158).
+ */
 function scrub(text: string, redactor: Redactor | undefined): string {
   return redactor ? redactor.redactString(text) : stripCredentialShapes(text);
+}
+
+/**
+ * Jira's own error messages as one `message`-safe clause: joined, scrubbed,
+ * then bounded to {@link MESSAGE_DETAIL_MAX} — in that order (CC-158). Shared
+ * with the wire tier so both construction paths cap the same way (CC-240).
+ */
+export function boundedJiraMessages(
+  messages: readonly string[],
+  redactor?: Redactor,
+): string {
+  return bound(scrub(messages.join('; '), redactor), MESSAGE_DETAIL_MAX);
 }
 
 /**
@@ -323,7 +339,7 @@ export function errorFromResponse(options: ResponseErrorOptions): JiraError {
   const route = describeRoute(options.method, options.pathTemplate);
   const summary =
     jiraMessages.length > 0
-      ? `: ${bound(jiraMessages.join('; '), MESSAGE_DETAIL_MAX)}`
+      ? `: ${boundedJiraMessages(jiraMessages, redactor)}`
       : detail !== undefined
         ? ' with a non-JSON body'
         : '';
@@ -382,7 +398,7 @@ export function toJiraError(value: unknown, options: WrapOptions = {}): JiraErro
     options.reason ??
     (native === ''
       ? 'The call failed.'
-      : `The call failed: ${bound(native, MESSAGE_DETAIL_MAX)}`);
+      : `The call failed: ${bound(scrub(native, options.redactor), MESSAGE_DETAIL_MAX)}`);
 
   return createJiraError({ kind, reason, cause: value, redactor: options.redactor });
 }

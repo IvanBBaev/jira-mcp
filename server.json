@@ -96,7 +96,7 @@
         },
         {
           "name": "JIRA_ALLOW_IRREVERSIBLE",
-          "description": "Opt-in for the irreversible (delete) tier. Those tools refuse without it, even under apply.",
+          "description": "Opt-in for the irreversible tier (the deletes and the bulk delete/edit pair). Those tools refuse without it, even under apply.",
           "isRequired": false,
           "default": "false",
           "format": "boolean"
@@ -223,7 +223,6 @@
           "name": "JIRA_OAUTH_TOKEN_FILE",
           "description": "Where login writes the token store, mode 0600. Defaults to oauth.json beside the env file.",
           "isRequired": false,
-          "default": "<config dir>/oauth.json",
           "format": "filepath"
         },
         {

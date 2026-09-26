@@ -24,7 +24,8 @@
 // record is a NORMAL result, never an error. The api ring reports the fact as
 // `emailHidden` and passes an email through only when Jira actually sent one;
 // deciding whether the model is allowed to see it (`includeEmail`, TOOLS.md
-// §Read shaping / THREAT-MODEL.md §PII) is the tool ring's call, not this one's.
+// §Read shaping / THREAT-MODEL.md §PII minimization) is the tool ring's call,
+// not this one's.
 // ---------------------------------------------------------------------------
 
 import { createJiraError } from '../core/errors.js';
@@ -73,6 +74,9 @@ export const MAX_USER_SEARCH_RESULTS = 100;
  * by a better query; a caller that wants a roster passes `maxPages`.
  */
 export const DEFAULT_USER_SEARCH_MAX_PAGES = 1;
+
+/** The assignable endpoint considers candidates up to the thousandth user only. */
+export const ASSIGNABLE_USER_SEARCH_CAP = 1000;
 
 /**
  * CC-112 — cap on DISTINCT case-insensitive names one {@link resolveMentionNames}
@@ -293,8 +297,9 @@ export async function getMyself(options: GetMyselfOptions): Promise<MyselfResult
  *
  * Passing `issueKey` or `project` switches to the assignable-user endpoint
  * (O-5) — same inputs, same output shape, narrower candidate set. Both
- * endpoints answer with a bare JSON array and no `total`/`isLast`, so the
- * classic loop's "a short page ends it" rule is what terminates the sweep.
+ * endpoints answer with a bare JSON array and no `total`/`isLast`. On the
+ * plain endpoint a short page ends the sweep; the assignable one filters a
+ * window of candidates, so there only an empty window ends it (CC-201).
  */
 export async function searchUsers(
   options: SearchUsersOptions,
@@ -310,21 +315,29 @@ export async function searchUsers(
   const maxPages = options.maxPages ?? DEFAULT_USER_SEARCH_MAX_PAGES;
   const path = scope === 'assignable' ? ASSIGNABLE_USER_SEARCH_PATH : USER_SEARCH_PATH;
 
-  const request = (cursor: ClassicCursor): JiraRequestSpec => ({
-    method: 'GET',
-    path,
-    query: {
-      query,
-      ...scopeQuery,
-      startAt: cursor.startAt,
-      maxResults: cursor.maxResults,
-    },
-  });
+  let sentWindow: ClassicCursor | undefined;
+  const request = (cursor: ClassicCursor): JiraRequestSpec => {
+    sentWindow = cursor;
+    return {
+      method: 'GET',
+      path,
+      query: {
+        query,
+        ...scopeQuery,
+        startAt: cursor.startAt,
+        maxResults: cursor.maxResults,
+      },
+    };
+  };
 
   const loop = await fetchAll<JiraUser>({
     jira: options.jira,
     request,
-    readPage: (response) => readUserPage(response, path),
+    readPage: (response) => {
+      const page = readUserPage(response, path);
+      if (scope !== 'assignable' || sentWindow === undefined) return page;
+      return assignableWindow(page, sentWindow);
+    },
     pageSize: maxResults.value,
     maxPages,
     ...(options.startAt === undefined ? {} : { startAt: options.startAt }),
@@ -422,7 +435,9 @@ interface MentionNameGroup {
 function groupNames(names: readonly string[]): readonly MentionNameGroup[] {
   const byFold = new Map<string, MentionNameGroup>();
   for (const name of names) {
-    const fold = name.toLowerCase();
+    // Trimmed as the search trims it, so `@[ Alice ]` and `@[Alice]` are one
+    // name; the raw spelling stays the map key (CC-241).
+    const fold = name.trim().toLowerCase();
     const group = byFold.get(fold);
     if (group === undefined) {
       byFold.set(fold, { query: name, spellings: [name] });
@@ -467,7 +482,9 @@ async function resolveOneMention(
 
   // CC-107 — a unique case-insensitive exact display-name match settles the
   // name even among partial matches; two exact matches settle nothing.
-  const fold = name.toLowerCase();
+  // Compared trimmed, as searched: an untrimmed name never matched exactly
+  // and fell through to ambiguity or a lone partial candidate (CC-241).
+  const fold = name.trim().toLowerCase();
   const exact = candidates.filter((user) => user.displayName?.toLowerCase() === fold);
   const [firstExact, secondExact] = exact;
   if (firstExact !== undefined && secondExact === undefined) {
@@ -529,6 +546,25 @@ function readUserPage(response: JiraResponse, path: string): ClassicPage<JiraUse
   }
   return {
     items: rows.map((row, index) => toJiraUser(row, `user at position ${index}`)),
+  };
+}
+
+/**
+ * The assignable endpoint takes the window `startAt..startAt+maxResults` of
+ * candidates and only then drops the ones who cannot be assigned, so a short
+ * page is the normal case, not the end (CC-201). The window is reported as the
+ * applied page size, which advances the offset past the whole window, and only
+ * an empty window or the documented cap at the thousandth user ends the sweep.
+ */
+function assignableWindow(
+  page: ClassicPage<JiraUser>,
+  sent: ClassicCursor,
+): ClassicPage<JiraUser> {
+  const windowEnd = sent.startAt + sent.maxResults;
+  return {
+    ...page,
+    maxResults: sent.maxResults,
+    isLast: page.items.length === 0 || windowEnd >= ASSIGNABLE_USER_SEARCH_CAP,
   };
 }
 

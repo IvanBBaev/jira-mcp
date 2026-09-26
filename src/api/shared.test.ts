@@ -23,6 +23,7 @@ import { JiraError, type JiraRequestSpec, type JiraResponse } from '../core/type
 import {
   DEFAULT_MAX_PAGES,
   NEXT_PAGE_TOKEN_KEY,
+  budgetOf,
   fetchAll,
   fetchPage,
   searchPages,
@@ -452,6 +453,56 @@ test('fetchPage reads exactly one classic page at the requested offset', async (
   assert.equal(jira.calls[0]?.deadlineAt, 5_000);
 });
 
+test('fetchPage starts at offset 0 when the caller names no startAt', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk({ values: rows(2, 0), startAt: 0, maxResults: 2, total: 2 }),
+  );
+
+  const page = await fetchPage<Row>({
+    jira: jira.fn,
+    request: classicRequest,
+    readPage: readClassicPage,
+    maxResults: 2,
+  });
+
+  assert.deepEqual(ids(page.items), ['1', '2']);
+  assert.equal(jira.calls[0]?.query?.startAt, 0);
+});
+
+test('budgetOf keeps the deadline and clock together, and a lone clock alone', () => {
+  const clock = createFakeClock(0);
+  assert.deepEqual(budgetOf({}), {});
+  assert.deepEqual(budgetOf({ clock }), { clock });
+  assert.deepEqual(budgetOf({ deadlineAt: 5_000, clock }), { deadlineAt: 5_000, clock });
+  // A wider object loses nothing it should keep and gains nothing it should not.
+  assert.deepEqual(budgetOf({ clock, deadlineAt: undefined }), { clock });
+});
+
+test('query identity survives a cyclic body instead of overflowing the stack', async () => {
+  // The fingerprint stops descending at a fixed depth, so a body that refers
+  // to itself is compared as far as that depth and no further: both pages
+  // carry the same cycle, the identities agree, and the loop completes.
+  const cyclic: Record<string, unknown> = { jql: 'project = ABC' };
+  cyclic.self = cyclic;
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ issues: rows(1, 0), nextPageToken: 't1' }))
+    .enqueue(jiraOk({ issues: rows(1, 1) }));
+
+  const result = await searchPages<Row>({
+    jira: jira.fn,
+    request: (cursor) => ({
+      method: 'POST',
+      path: '/search/jql',
+      safe: true,
+      body: { ...cyclic, [NEXT_PAGE_TOKEN_KEY]: cursor.nextPageToken },
+    }),
+    readPage: readTokenPage,
+  });
+
+  assert.equal(result.pages, 2);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
 test('fetchAll walks startAt/maxResults until isLast', async () => {
   const jira = createFakeJiraRequest()
     .enqueue(jiraOk({ values: rows(2, 0), startAt: 0, maxResults: 2, isLast: false }))
@@ -488,6 +539,88 @@ test('fetchAll treats a short page as the end', async () => {
   });
 
   assert.deepEqual(ids(result.items), ['1', '2', '3']);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
+test('[CC-160] fetchAll keeps walking a short page the server marks isLast: false', async () => {
+  // A permission-filtered endpoint drops the rows the caller cannot see, so a
+  // page can be short while the server still says there is more.
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ values: rows(1, 0), startAt: 0, maxResults: 2, isLast: false }))
+    .enqueue(jiraOk({ values: rows(2, 1), startAt: 2, maxResults: 2, isLast: true }));
+
+  const result = await fetchAll<Row>({
+    jira: jira.fn,
+    request: classicRequest,
+    readPage: readClassicPage,
+    pageSize: 2,
+  });
+
+  assert.deepEqual(ids(result.items), ['1', '2', '3']);
+  assert.equal(result.pages, 2);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
+test('[CC-173] fetchAll advances a filtered window by the echoed maxResults, not the rows read', async () => {
+  // Offsets 0-49 held 50 rows; the caller may see 48 of them. Advancing by 48
+  // would ask for 48-97 and read the window's last two visible rows twice.
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ values: rows(48, 0), startAt: 0, maxResults: 50, isLast: false }))
+    .enqueue(jiraOk({ values: rows(3, 48), startAt: 50, maxResults: 50, isLast: true }));
+
+  const result = await fetchAll<Row>({
+    jira: jira.fn,
+    request: classicRequest,
+    readPage: readClassicPage,
+    pageSize: 50,
+  });
+
+  assert.deepEqual(
+    jira.calls.map((call) => call.query?.startAt),
+    [0, 50],
+  );
+  assert.equal(result.items.length, 51);
+  assert.equal(new Set(ids(result.items)).size, 51);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
+test('[CC-173] fetchAll walks past an empty window the server marks isLast: false', async () => {
+  // Every row in the first window is hidden from the caller; the rows after it
+  // are not. A zero-row page is not the end while the server says there is more.
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ values: [], startAt: 0, maxResults: 2, isLast: false }))
+    .enqueue(jiraOk({ values: rows(1, 0), startAt: 2, maxResults: 2, isLast: true }));
+
+  const result = await fetchAll<Row>({
+    jira: jira.fn,
+    request: classicRequest,
+    readPage: readClassicPage,
+    pageSize: 2,
+  });
+
+  assert.deepEqual(
+    jira.calls.map((call) => call.query?.startAt),
+    [0, 2],
+  );
+  assert.deepEqual(ids(result.items), ['1']);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
+test('[CC-173] fetchAll still stops on an empty isLast: false page that echoes no maxResults', async () => {
+  // Without an echoed window size the offset cannot move, so continuing would
+  // spin on the same request until the page cap.
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk({ values: [], startAt: 0, isLast: false }),
+  );
+
+  const result = await fetchAll<Row>({
+    jira: jira.fn,
+    request: classicRequest,
+    readPage: readClassicPage,
+    pageSize: 2,
+  });
+
+  assert.equal(jira.calls.length, 1);
   assert.equal(result.stopReason, 'exhausted');
 });
 

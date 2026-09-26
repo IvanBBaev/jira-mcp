@@ -126,16 +126,73 @@ export function isBlockedHost(raw: string): boolean {
   }
 
   if (host.includes(':')) {
-    if (host === '::1' || host === '::') return true;
-    if (/^fe[89ab]/.test(host)) return true; // link-local
-    if (/^f[cd]/.test(host)) return true; // unique-local
-    if (host.startsWith('fec0')) return true; // deprecated site-local
-    const mapped = EMBEDDED_IPV4.exec(host); // ::ffff:127.0.0.1
-    if (mapped?.[1]) {
-      return isBlockedIpv4(mapped[1].split('.').map((part) => Number(part)));
-    }
+    const hextets = parseIpv6(host);
+    // Unparseable yet colon-bearing: not a name DNS will ever resolve, and a
+    // literal this module cannot read is refused rather than trusted.
+    if (hextets === undefined) return true;
+    return isBlockedIpv6(hextets);
   }
 
+  return false;
+}
+
+/**
+ * The eight 16-bit groups of an IPv6 literal, or `undefined` when it is not
+ * one. Handles `::` compression, a trailing dotted IPv4 and a zone id. Text
+ * matching on the literal is not enough: `URL` rewrites `::ffff:169.254.169.254`
+ * to `::ffff:a9fe:a9fe`, and `0:0:0:0:0:0:0:1` is `::1` spelled out (CC-157).
+ */
+function parseIpv6(host: string): number[] | undefined {
+  let text = host.replace(/%.*$/, '');
+  const dotted = EMBEDDED_IPV4.exec(text);
+  if (dotted?.[1]) {
+    const octets = dotted[1].split('.').map((part) => Number(part));
+    if (octets.some((octet) => octet > 255)) return undefined;
+    const [a = 0, b = 0, c = 0, d = 0] = octets;
+    const quad = `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+    text = text.slice(0, -dotted[1].length) + quad;
+  }
+
+  const halves = text.split('::');
+  if (halves.length > 2) return undefined;
+  const readGroups = (part: string | undefined): number[] | undefined => {
+    if (part === undefined || part === '') return [];
+    const groups = part.split(':');
+    if (!groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))) return undefined;
+    return groups.map((group) => parseInt(group, 16));
+  };
+  const head = readGroups(halves[0]);
+  const rest = readGroups(halves[1]);
+  if (head === undefined || rest === undefined) return undefined;
+
+  if (halves.length === 1) return head.length === 8 ? head : undefined;
+  const missing = 8 - head.length - rest.length;
+  if (missing < 1) return undefined;
+  return [...head, ...new Array<number>(missing).fill(0), ...rest];
+}
+
+/** Loopback / unspecified / private IPv6, or an IPv4 embedding of a blocked v4. */
+function isBlockedIpv6(groups: readonly number[]): boolean {
+  const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
+  const v4 = [g6 >> 8, g6 & 0xff, g7 >> 8, g7 & 0xff];
+  const upperZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0;
+
+  if (upperZero && g4 === 0 && g5 === 0) {
+    // `::`, `::1`, and the deprecated IPv4-compatible `::a.b.c.d`.
+    return (g6 === 0 && g7 <= 1) || isBlockedIpv4(v4);
+  }
+  // IPv4-mapped `::ffff:a.b.c.d` and SIIT-translated `::ffff:0:a.b.c.d`.
+  if (upperZero && ((g4 === 0 && g5 === 0xffff) || (g4 === 0xffff && g5 === 0))) {
+    return isBlockedIpv4(v4);
+  }
+  // NAT64: the well-known `64:ff9b::/96` embeds the IPv4 in the last 32 bits;
+  // the local-use `64:ff9b:1::/48` is never a public Jira address.
+  if (g0 === 0x64 && g1 === 0xff9b) return g2 === 0 ? isBlockedIpv4(v4) : true;
+  // 6to4 `2002:aabb:ccdd::/48` carries the IPv4 in groups 1–2.
+  if (g0 === 0x2002) return isBlockedIpv4([g1 >> 8, g1 & 0xff, g2 >> 8, g2 & 0xff]);
+  if ((g0 & 0xffc0) === 0xfe80) return true; // link-local
+  if ((g0 & 0xfe00) === 0xfc00) return true; // unique-local
+  if ((g0 & 0xffc0) === 0xfec0) return true; // deprecated site-local
   return false;
 }
 
@@ -276,7 +333,9 @@ export function hostFromOrigin(origin: string): string {
 // Anything that could end a segment early, smuggle a query, inject a header or
 // re-open traversal after the server decodes.
 const SEGMENT_FORBIDDEN = /[/\\?#%\s]/;
-const PATH_FORBIDDEN = /[?#\s]/;
+// A backslash is a separator to the WHATWG URL parser, so it would re-open
+// traversal behind the dot-segment check (CC-202).
+const PATH_FORBIDDEN = /[?#\\\s]/;
 const PATH_DOT_SEGMENT = /(?:^|\/)\.{1,2}(?:\/|$)/;
 const PATH_ENCODED_DOT = /%2e/i;
 
@@ -352,7 +411,7 @@ export function assertApiPath(path: string): void {
   }
   if (PATH_FORBIDDEN.test(path) || hasControlChar(path)) {
     throw invalidPath(
-      `Request path "${path}" contains "?", "#", whitespace or a control character.`,
+      `Request path "${path}" contains "?", "#", a backslash, whitespace or a control character.`,
       'Put query parameters in the request `query` object, not in the path.',
     );
   }

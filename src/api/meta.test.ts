@@ -765,3 +765,149 @@ test('a response Jira should never send becomes unexpected_shape', async () => {
     isJiraError('unexpected_shape'),
   );
 });
+
+// ---------------------------------------------------------------------------
+// Sparse rows — what an older site or a trimmed expand leaves out
+// ---------------------------------------------------------------------------
+
+test('getProject drops an unaddressable lead and keeps absent lists absent', async () => {
+  const jira = createFakeJiraRequest();
+  // A deactivated lead on some tenants arrives as a bare display name, and
+  // `null` stands in for an empty optional list more often than `[]` does.
+  // synthetic
+  jira.on(
+    'GET /rest/api/3/project/ABC',
+    jiraOk({
+      id: 10000,
+      key: 'ABC',
+      name: 'Alpha',
+      lead: { displayName: 'Former Lead', active: false },
+      components: null,
+    }),
+  );
+
+  const project = await getProject({ jira: jira.fn, project: 'ABC' });
+
+  // A numeric id is normalised, never left for a path template to stringify.
+  assert.equal(project.id, '10000');
+  assert.equal(project.lead, undefined);
+  assert.equal(project.issueTypes, undefined);
+  assert.equal(project.components, undefined);
+  assert.equal(project.versions, undefined);
+});
+
+test('getProject refuses a list that is not an array and a row that is not an object', async () => {
+  const jira = createFakeJiraRequest();
+  jira.on(
+    'GET /rest/api/3/project/ABC',
+    jiraOk({ id: '10000', key: 'ABC', name: 'Alpha', versions: 'none' }),
+  );
+  jira.on(
+    'GET /rest/api/3/project/DEF',
+    jiraOk({ id: '10001', key: 'DEF', name: 'Delta', components: [42] }),
+  );
+
+  await assert.rejects(
+    () => getProject({ jira: jira.fn, project: 'ABC' }),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'unexpected_shape' &&
+      /non-array where a list of versions was expected/.test(error.message),
+  );
+  await assert.rejects(
+    () => getProject({ jira: jira.fn, project: 'DEF' }),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'unexpected_shape' &&
+      /component #0 that is not a JSON object/.test(error.message),
+  );
+});
+
+test('listFields maps a field that carries no schema block', async () => {
+  const jira = createFakeJiraRequest();
+  jira.on(
+    'GET /rest/api/3/field',
+    jiraOk([{ id: 'thumbnail', name: 'Images', custom: false, clauseNames: [] }]),
+  );
+
+  const catalog = await listFields({ jira: jira.fn });
+
+  assert.deepEqual(at(catalog.fields, 0), {
+    id: 'thumbnail',
+    name: 'Images',
+    custom: false,
+    clauseNames: [],
+  });
+});
+
+test('getCreateMeta falls back to key and fieldId when the modern names are missing', async () => {
+  const jira = createFakeJiraRequest();
+  // The older createmeta shape: `key` but no `fieldId`, no `name`, no
+  // `schema`, and allowed values that are bare ids or not objects at all.
+  // synthetic
+  jira.on(
+    'GET /rest/api/3/issue/createmeta/ABC/issuetypes/10001',
+    jiraOk({
+      maxResults: 50,
+      startAt: 0,
+      total: 1,
+      fields: [
+        {
+          key: 'priority',
+          allowedValues: [{ id: 3, name: 'Medium' }, 'Low', { value: 'Lowest' }],
+        },
+      ],
+    }),
+  );
+
+  const meta = await getCreateMeta({
+    jira: jira.fn,
+    project: 'ABC',
+    issueTypeId: '10001',
+  });
+
+  assert.deepEqual(at(meta.items, 0), {
+    fieldId: 'priority',
+    name: 'priority',
+    required: false,
+    key: 'priority',
+    allowedValues: [{ id: '3', name: 'Medium' }, {}, { value: 'Lowest' }],
+  });
+  assert.deepEqual(meta.required, []);
+});
+
+test('listStatuses maps a status with no scope and a scope with no project', async () => {
+  const jira = createFakeJiraRequest();
+  jira.on(
+    'GET /rest/api/3/statuses/search',
+    jiraOk({
+      maxResults: 200,
+      startAt: 0,
+      total: 2,
+      isLast: true,
+      values: [
+        { id: 10001, name: 'Backlog', statusCategory: 'TODO' },
+        {
+          id: '10002',
+          name: 'Review',
+          statusCategory: 'IN_PROGRESS',
+          scope: { type: 'PROJECT' },
+        },
+      ],
+    }),
+  );
+
+  const result = await listStatuses({ jira: jira.fn });
+
+  assert.deepEqual(at(result.items, 0), {
+    id: '10001',
+    name: 'Backlog',
+    statusCategory: 'TODO',
+  });
+  assert.deepEqual(at(result.items, 1), {
+    id: '10002',
+    name: 'Review',
+    statusCategory: 'IN_PROGRESS',
+    scopeType: 'PROJECT',
+  });
+});

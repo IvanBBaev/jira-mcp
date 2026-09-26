@@ -261,10 +261,10 @@ test('a truncated result carries exactly one truncated hint', () => {
 
 test('a single item over budget is ellipsized and the field is named (CC-26)', () => {
   const data = { issues: [{ key: 'PROJ-1', description: 'y'.repeat(5_000) }] };
-  const out = truncateResult(ok(data), 400);
+  const out = truncateResult(ok(data), 500);
 
   assert.equal(out.truncated, true);
-  assert.ok(out.json.length <= 400);
+  assert.ok(out.json.length <= 500);
 
   const parsed = parse(out.json);
   const marker = parsed['_truncation'] as Record<string, unknown>;
@@ -372,6 +372,123 @@ test('a result whose data IS the string keeps a prefix instead of nothing', () =
   assert.ok(data.length > 1, 'something of the answer survived');
   assert.ok(data.endsWith(ELLIPSIS));
   assert.equal(data.slice(0, -1), 'R'.repeat(data.length - 1), 'a prefix, never a slice');
+});
+
+/** A `jira_get_issue` result: the bulk is nested, and `fieldsRequested` is small. */
+function issueDetail(comments: number, bodyChars = 300): Record<string, unknown> {
+  return {
+    id: '10001',
+    key: 'PROJ-1',
+    fields: {
+      summary: 'A long-running issue',
+      status: { name: 'In Progress' },
+      comment: {
+        comments: Array.from({ length: comments }, (_, index) => ({
+          id: String(20_000 + index),
+          author: { accountId: `acc-${String(index % 7)}`, displayName: 'Someone' },
+          body: 'c'.repeat(bodyChars),
+          created: '2026-09-01T10:00:00.000+0000',
+        })),
+        total: comments,
+      },
+    },
+    raw: false,
+    fieldsRequested: ['summary', 'status', 'comment', 'assignee', 'labels', 'priority'],
+    expand: [],
+  };
+}
+
+test('[CC-249] the ladder trims the nested bulk of a record, never its small lists', () => {
+  const data = issueDetail(300);
+  const out = truncateResult(ok(data), 25_000);
+
+  assert.equal(out.truncated, true);
+  assert.ok(out.json.length <= 25_000);
+  const parsed = parse(out.json);
+  const marker = parsed['_truncation'] as Record<string, unknown>;
+  assert.equal(marker['reason'], 'budget');
+  assert.equal(marker['field'], 'data.fields.comment.comments');
+  assert.equal(marker['of'], 300);
+
+  const kept = parsed['data'] as Record<string, unknown>;
+  assert.deepEqual(kept['fieldsRequested'], data['fieldsRequested'], 'untouched');
+  assert.equal(kept['key'], 'PROJ-1');
+  const comments = (
+    (kept['fields'] as Record<string, unknown>)['comment'] as Record<string, unknown>
+  )['comments'] as unknown[];
+  assert.ok(comments.length > 10, `kept ${String(comments.length)} comments`);
+  assert.equal(marker['dropped'], 300 - comments.length);
+});
+
+test('[CC-249] search results still trim data.issues, the array holding everything', () => {
+  const issues = Array.from({ length: 30 }, () => issueDetail(5, 200));
+  const out = truncateResult(ok({ issues, nextPageToken: 'CAEaAggB' }), 6_000);
+  const marker = parse(out.json)['_truncation'] as Record<string, unknown>;
+
+  assert.equal(marker['reason'], 'budget');
+  assert.equal(marker['field'], 'data.issues');
+  assert.equal(marker['of'], 30);
+});
+
+test('[CC-249] a small array is not the collection when the bulk is elsewhere', () => {
+  // The bulk is 300 string-valued fields; the only arrays are the short
+  // `fieldsRequested` and `expand`. Trimming either would misreport the request.
+  const fields: Record<string, string> = {};
+  for (let index = 0; index < 300; index += 1) {
+    fields[`customfield_${String(10_000 + index)}`] = 'v'.repeat(300);
+  }
+  const data = {
+    key: 'PROJ-1',
+    fields,
+    fieldsRequested: ['summary', 'status', '*all'],
+    expand: ['names'],
+  };
+  const out = truncateResult(ok(data), 25_000);
+  const parsed = parse(out.json);
+  const kept = parsed['data'] as Record<string, unknown>;
+
+  assert.deepEqual(kept['fieldsRequested'], data.fieldsRequested);
+  assert.deepEqual(kept['expand'], data.expand);
+});
+
+test('[CC-250] hundreds of medium strings are capped together instead of hitting the floor', () => {
+  const fields: Record<string, string> = {};
+  for (let index = 0; index < 300; index += 1) {
+    fields[`customfield_${String(10_000 + index)}`] = 'v'.repeat(300 + (index % 5));
+  }
+  const data = { key: 'PROJ-1', fields, fieldsRequested: ['*all'] };
+  const out = truncateResult(ok(data), 25_000);
+
+  assert.equal(out.truncated, true);
+  assert.ok(out.json.length <= 25_000);
+  const parsed = parse(out.json);
+  assert.ok('data' in parsed, 'data survives: the floor is not reached');
+  const marker = parsed['_truncation'] as Record<string, unknown>;
+  assert.equal(marker['reason'], 'item_too_large');
+  assert.equal(marker['field'], 'data.fields.customfield_10004', 'the longest leaf');
+  assert.equal(marker['of'], 304);
+
+  const kept = parsed['data'] as Record<string, unknown>;
+  assert.equal(kept['key'], 'PROJ-1');
+  assert.deepEqual(kept['fieldsRequested'], ['*all']);
+  const values = Object.values(kept['fields'] as Record<string, string>);
+  assert.equal(values.length, 300, 'every field is still there');
+  const cap = 304 - (marker['dropped'] as number);
+  for (const value of values) {
+    assert.ok(value.endsWith(ELLIPSIS));
+    assert.equal(value.length, cap + 1, 'one common cap for every string');
+  }
+});
+
+test('[CC-251] the truncated hint forbids following nextStartAt as well as nextPageToken', () => {
+  const out = truncateResult(ok(page(40)), 1_500);
+  const hints = parse(out.json)['hints'] as { code: string; message: string }[];
+  const message = hints.find((hint) => hint.code === 'truncated')?.message ?? '';
+
+  assert.match(message, /nextPageToken/);
+  assert.match(message, /nextStartAt/);
+  assert.match(message, /Resume at startAt \+ rows received/);
+  assert.match(message, /maxResults/);
 });
 
 test('a non-finite budget means no budget; a negative one is the floor', () => {

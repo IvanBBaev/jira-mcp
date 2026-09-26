@@ -226,9 +226,12 @@ Two rules that catch people out:
 6. The code is exchanged for tokens. Access token, refresh token and granted
    scopes are registered with the redactor the instant they exist.
 7. Accessible resources are fetched with the fresh token and a site is selected —
-   `--cloud-id` pins it, `--site` matches on URL or name, otherwise a single
-   result is used and several are an ambiguity error that lists the candidates
-   (CC-103).
+   `--cloud-id` pins it, `--site` matches on URL or name; when a flag is absent
+   the environment stands in (`JIRA_OAUTH_CLOUD_ID`, then the site of the
+   profile being logged in: `JIRA_PROFILE_<NAME>_SITE` under `--profile`, else
+   `JIRA_SITE`, CC-166). With nothing to match on, a single result is used and
+   several are an ambiguity error that lists the candidates (CC-103); a pin that
+   matches none of them is a `config` error listing what the grant does cover.
 8. The store is written, and the site, cloudId, granted scopes and store path are
    printed. **No token is ever printed**, in any mode, including `--json`.
 
@@ -250,8 +253,11 @@ the host layer. It is also why a cloudId is validated before a URL is ever built
 path-injection primitive, not a cosmetic issue.
 
 The cloudId is discovered per login from the accessible-resources endpoint;
-`JIRA_OAUTH_CLOUD_ID` **pins** it rather than caching it. Two properties of that
-endpoint are load-bearing:
+`JIRA_OAUTH_CLOUD_ID` **pins** it rather than caching it. At call time the pin is
+a check, not an override (CC-165). The stored refresh token was granted for the
+cloudId recorded with it, so a pin that names a different site is a `config`
+error before any request is sent. The fix is to re-run `login` or unset the pin.
+Two properties of that endpoint are load-bearing:
 
 - **`id` is not unique across containers** — two entries may share one — so site
   selection matches on URL or name and never treats `id` as a primary key.
@@ -423,7 +429,9 @@ Contract (D11 in DECISIONS.md):
 - `--offline`: local probes only (1–3, 8–11) — no network; pairs with startup's
   offline-only rule (OBSERVABILITY.md).
 - Prompts (`doctor --save`) only on a TTY; non-interactive runs fail with a
-  message instead of hanging.
+  message instead of hanging. `--save` writes the three top-level variables,
+  so it refuses in oauth mode and under an active profile that overrides any
+  of them (CC-212).
 
 ## Still not supported (see ROADMAP.md)
 

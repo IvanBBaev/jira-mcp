@@ -19,13 +19,15 @@ TypeScript. It follows the house template established by its sibling repos:
 1. Give Claude (and any MCP client) a reliable, token-efficient tool surface over
    Jira Cloud: JQL search, issue CRUD, transitions, comments, worklogs, project and
    field metadata, users, boards and sprints.
-2. Work **headless**: API-token auth, no browser OAuth dance, usable from cron,
-   CI, and remote sessions — the primary reason not to use Atlassian's official
-   remote MCP server.
+2. Work **headless**: API-token auth by default, usable from cron, CI, and
+   remote sessions — the primary reason not to use Atlassian's official remote
+   MCP server. OAuth (Phase 8) is an opt-in alternative, never a requirement:
+   the one interactive step it adds is the login, and once the grant is stored
+   the server refreshes without a browser (AUTH.md).
 3. Be safe by default: read-only unless explicitly enabled, plan/apply gate for
    writes, and a second gate in front of the irreversible tier — the six
-   deletes: three shipped with D45, three more with D102. THREAT-MODEL.md owns
-   both gate contracts.
+   deletes (three shipped with D45, three more with D102) and the bulk
+   delete/edit pair (D103). THREAT-MODEL.md owns both gate contracts.
 
 ## Non-goals (v1)
 
@@ -296,7 +298,8 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   `JIRA_PACKAGES_READONLY` (drops write-tier tools).
 - `JIRA_WRITE_MODE=plan|apply` (default `plan`): in `plan` mode write tools
   return a description of what they would do; `apply` requires per-call
-  `apply: true`. The irreversible tier (the six deletes) sits above that gate
+  `apply: true`. The irreversible tier (the six deletes and the two bulk
+  writes) sits above that gate
   and needs `JIRA_ALLOW_IRREVERSIBLE` as well, because a blanket write mode set
   for ordinary edits must never be read as consent to destroy. Normative gate
   contract + tiers: THREAT-MODEL.md (single owner); the variables and their

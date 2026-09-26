@@ -80,7 +80,7 @@ import {
   pagingOf,
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
-import type { Hint, PackageSpec, ToolCtx } from '../mcp/types.js';
+import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
 
 // ---------------------------------------------------------------------------
 // 1. Shared plumbing
@@ -266,12 +266,17 @@ export const listSprintsTool = defineTool<
         boardId: args.boardId,
         state: args.state,
       });
-      return ok<SprintListData>({
-        sprints: loop.items,
-        count: loop.items.length,
-        boardId: args.boardId,
-        paging: pagingOf(loop, PARTIAL_NOTES),
-      });
+      // A sprint goal is prose any board user can write, so the list is a
+      // content-bearing read like the filter pair (CC-176).
+      return ok<SprintListData>(
+        {
+          sprints: loop.items,
+          count: loop.items.length,
+          boardId: args.boardId,
+          paging: pagingOf(loop, PARTIAL_NOTES),
+        },
+        { untrusted: true },
+      );
     });
   },
 });
@@ -639,7 +644,7 @@ export const startSprintTool = defineTool<
         startDate: args.startDate,
         endDate: args.endDate,
       });
-      return ok<SprintStateData>(sprintStateData(result));
+      return sprintStateResult(result);
     });
   },
 });
@@ -674,7 +679,7 @@ export const closeSprintTool = defineTool<
   handler(args, ctx) {
     return guarded(async () => {
       const result = await closeSprint({ ...callBase(ctx), sprintId: args.sprintId });
-      return ok<SprintStateData>(sprintStateData(result));
+      return sprintStateResult(result);
     });
   },
 });
@@ -696,6 +701,18 @@ function sprintStateData(result: {
     status: result.status,
     ...(result.sprint === undefined ? {} : { sprint: result.sprint }),
   };
+}
+
+/**
+ * The start/close envelope. Jira's echo carries the sprint's goal, which a
+ * board user wrote, so an echo with a goal is branded untrusted (CC-176).
+ */
+function sprintStateResult(
+  result: Parameters<typeof sprintStateData>[0],
+): ToolResult<SprintStateData> {
+  const goal = result.sprint?.goal;
+  const untrusted = typeof goal === 'string' && goal !== '';
+  return ok<SprintStateData>(sprintStateData(result), untrusted ? { untrusted } : {});
 }
 
 // ---------------------------------------------------------------------------

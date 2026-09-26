@@ -26,9 +26,11 @@
 //     ("more rows exist upstream"), so it is reported in `data.paging`
 //     (`partial`, `stopReason`, `nextStartAt`, `note`) and never as a hint.
 //
-// Metadata is not content-bearing (TOOLS.md §Untrusted content): no result here
-// carries Jira free text a portal user could have authored, so nothing on this
-// path is branded `_untrusted`.
+// Metadata is mostly not content-bearing (TOOLS.md §Untrusted content): field
+// names, link types and statuses are admin-configured. The exception is
+// `jira_get_project`, whose project, component and version descriptions are
+// tenant-authored free text, so that one result is branded `_untrusted`
+// (CC-146).
 //
 // Layering: `core ← api ← mcp ← tools`. Tools are a composition root — they may
 // import from every ring below, and they reach the network only through
@@ -211,7 +213,10 @@ export const getProjectTool = defineTool<
         project: args.project,
         ...(args.expand === undefined ? {} : { expand: args.expand }),
       });
-      return ok<ProjectDetailData>({ project });
+      // CC-146: the project description and every component/version description
+      // are tenant-authored — the same text `jira_list_components` and
+      // `jira_list_versions` already brand.
+      return ok<ProjectDetailData>({ project }, { untrusted: true });
     });
   },
 });
@@ -282,7 +287,8 @@ export const listFieldsTool = defineTool<z.infer<typeof listFieldsInput>, FieldL
     'the custom flag, so "Story Points" resolves to customfield_10016 and back. ' +
     '`query` filters by name or id. `duplicateNames` lists names carried by more ' +
     'than one id — when a name appears there, ask which field is meant instead of ' +
-    'picking one. GET /field is not paginated, so this result is always complete.',
+    'picking one. GET /field is not paginated, so this result is complete unless a ' +
+    '`truncated` hint says the character budget cut it (CC-253).',
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listFieldsInput,
@@ -465,7 +471,9 @@ export const getCreateMetaTool = defineTool<
 const listStatusesInput = toolInput({
   projectId: z
     .string()
-    .min(1)
+    // The endpoint takes the id only; a key is refused here rather than left
+    // to however /statuses/search treats it (CC-213).
+    .regex(/^[1-9]\d*$/, 'The numeric project id, not the key (e.g. 10000, not PROJ).')
     .optional()
     .describe(
       'NUMERIC project id (from jira_list_projects / jira_get_project), not a ' +
@@ -534,7 +542,8 @@ export const listLinkTypesTool = defineTool<
     'Lists the issue link types configured on this site with their inward and ' +
     'outward phrases (for example "blocks" / "is blocked by"). jira_link_issues ' +
     'takes the `name` from this list, so read it first rather than guessing a link ' +
-    'type name. The endpoint is not paginated, so this result is always complete.',
+    'type name. The endpoint is not paginated, so this result is complete unless a ' +
+    '`truncated` hint says the character budget cut it (CC-253).',
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listLinkTypesInput,

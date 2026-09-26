@@ -447,6 +447,25 @@ test('CC-49: jira_update_component sends ONLY the fields the caller named', asyn
   assert.deepEqual(sent?.body, { name: 'Payments' });
 });
 
+test('[CC-181] a component id spelled as the list tools report it reaches Jira as the same id', async () => {
+  const fake = createFakeJiraRequest().on(
+    COMPONENT_UPDATE_ROUTE,
+    jiraOk(componentRow('10100', 'Payments')),
+  );
+  const parsed = updateComponentTool.input.parse({
+    componentId: '10100',
+    name: 'Payments',
+  });
+
+  dataOf(await updateComponentTool.handler(parsed, createCtx(fake.fn)));
+
+  assert.match(fake.lastRequest()?.path ?? '', /\/component\/10100$/);
+  assert.equal(
+    updateComponentTool.input.safeParse({ componentId: 'Billing', name: 'x' }).success,
+    false,
+  );
+});
+
 test('an empty description clears it, and `false` flags still travel', async () => {
   const fake = createFakeJiraRequest().on(
     COMPONENT_UPDATE_ROUTE,
@@ -913,7 +932,9 @@ test('every collab input schema is strict and rejects unknown keys', () => {
 });
 
 test('collab ids are positive integers and required text is non-empty (D22)', () => {
-  for (const bad of [0, -1, 1.5, '10100']) {
+  // CC-181: '10100' is now accepted (the list tools' spelling); a name, a
+  // zero or a leading zero spelled as a string is still refused.
+  for (const bad of [0, -1, 1.5, '0', '010', 'Billing', '1e3']) {
     assert.equal(
       updateComponentTool.input.safeParse({ componentId: bad, name: 'x' }).success,
       false,
@@ -1078,4 +1099,17 @@ test('the collab package exports its twelve tools in TOOLS.md order', () => {
   }
   // No delete of anything reaches this package (WP-72 owns those).
   assert.ok(!collabPackage.tools.some((tool) => tool.name.includes('delete')));
+});
+
+test('[CC-195] a digit-string id past the safe integer range is refused, not rounded', () => {
+  assert.equal(
+    updateComponentTool.input.safeParse({ componentId: '9007199254740993', name: 'x' })
+      .success,
+    false,
+  );
+  assert.equal(
+    updateComponentTool.input.safeParse({ componentId: '9007199254740991', name: 'x' })
+      .success,
+    true,
+  );
 });

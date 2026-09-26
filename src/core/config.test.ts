@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { withEnv } from '../testing/with-env.js';
@@ -10,6 +10,7 @@ import {
   OAUTH_TOKEN_FILE_NAME,
   defaultOAuthTokenFile,
   loadEnvFile,
+  nodeEnvFileHost,
   preferredEnvFilePath,
   resolveConfigDir,
   resolveConfigPath,
@@ -88,6 +89,19 @@ describe('resolveEnvFileCandidates', () => {
       '/etc/jira.env',
     );
   });
+
+  it('with no home directory at all, the only candidate left is the project one', () => {
+    // Nothing else to offer — the writer gets the checkout path and the
+    // operator who runs without $HOME has accepted that.
+    assert.equal(
+      preferredEnvFilePath({ ...base, homeDir: '', env: {} }),
+      '/work/project/.env',
+    );
+    assert.deepEqual(
+      resolveEnvFileCandidates({ ...base, homeDir: '', env: {} }).map((c) => c.source),
+      ['project'],
+    );
+  });
 });
 
 describe('config dir and the OAuth token store', () => {
@@ -127,6 +141,16 @@ describe('config dir and the OAuth token store', () => {
     );
     assert.equal(resolveConfigPath('oauth.json', base), '/work/project/oauth.json');
     assert.equal(resolveConfigPath('/var/lib/oauth.json', base), '/var/lib/oauth.json');
+  });
+
+  it('expands a bare tilde and defaults to the real home and cwd', () => {
+    assert.equal(resolveConfigPath('~', base), '/home/tester');
+    assert.equal(
+      resolveConfigPath('~\\oauth.json', base),
+      join('/home/tester', 'oauth.json'),
+    );
+    assert.equal(resolveConfigPath('~'), homedir());
+    assert.equal(resolveConfigPath('oauth.json'), resolve(process.cwd(), 'oauth.json'));
   });
 });
 
@@ -254,5 +278,33 @@ describe('loadEnvFile against the real filesystem', () => {
 
     assert.equal(process.env.ENV_FILE_PROBE_A, undefined);
     assert.equal(process.env.ENV_FILE_PROBE_B, undefined);
+  });
+
+  it('[CC-236] a blank process value does not shadow the file, and stays when the file lacks it', async () => {
+    const file = join(dir, 'blank.env');
+    writeFileSync(file, 'ENV_FILE_PROBE_C=from-file\n', { mode: 0o600 });
+
+    await withEnv(
+      { JIRA_ENV_FILE: file, ENV_FILE_PROBE_C: '', ENV_FILE_PROBE_D: '  ' },
+      () => {
+        assert.equal(loadEnvFile().loaded, true);
+        // blank in the process env -> the file's value is used
+        assert.equal(process.env.ENV_FILE_PROBE_C, 'from-file');
+        // blank and absent from the file -> left exactly as it was
+        assert.equal(process.env.ENV_FILE_PROBE_D, '  ');
+      },
+    );
+  });
+
+  it('the real host reports a file mode, and nothing for a directory or a missing path', () => {
+    const file = join(dir, 'mode.env');
+    writeFileSync(file, 'X=1\n');
+    // Set explicitly: a `mode` on the write is masked by the umask, and a
+    // hardened runner's 077 would turn 0640 into 0600.
+    chmodSync(file, 0o640);
+
+    assert.equal(nodeEnvFileHost.statFile(file), 0o640);
+    assert.equal(nodeEnvFileHost.statFile(dir), undefined);
+    assert.equal(nodeEnvFileHost.statFile(join(dir, 'absent.env')), undefined);
   });
 });

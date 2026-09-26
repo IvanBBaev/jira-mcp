@@ -3,7 +3,8 @@
 An [MCP](https://modelcontextprotocol.io) server for **Jira Cloud**: it gives an
 MCP-capable agent (Claude Code, Claude Desktop, or any other client) tools to
 search, read and — behind an explicit gate — write Jira issues, using your own
-Atlassian account and API token.
+Atlassian account: an API token, or OAuth 2.0 (3LO) through `jira-mcp-ai login`
+([`docs/AUTH.md`](docs/AUTH.md)).
 
 Two things shape the design:
 
@@ -17,13 +18,14 @@ Two things shape the design:
 > is normative and the code ships with it; drift is a bug. `jira-mcp-ai` is on
 > npm with provenance, so the registration example below resolves as written.
 > The version stays below 1.0.0 because 18 of the 58 tools have not yet been run
-> against a real Jira site — see [the roadmap](docs/IMPLEMENTATION-PLAN.md) and
+> against a real Jira site — see [the implementation plan](docs/IMPLEMENTATION-PLAN.md) and
 > [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Requirements
 
 - Node.js ≥ 22 (env files are read with `process.loadEnvFile()`, not dotenv)
-- A Jira Cloud site and an Atlassian API token
+- A Jira Cloud site and an Atlassian API token (or, with `JIRA_AUTH_MODE=oauth`,
+  an OAuth 2.0 app of your own — see [`docs/AUTH.md`](docs/AUTH.md))
 
 ## Registration
 
@@ -56,7 +58,8 @@ Before wiring the server into a client, run
 `npx -y jira-mcp-ai@0.9.4 doctor` with the same environment variables set: it
 runs the configuration and credential probes from a plain terminal and prints a
 report — the fastest way to learn whether the site, email and token actually
-work. `--help` and `--version` are also available.
+work. `login` and `logout` (the OAuth flow), `--help` and `--version` are also
+available.
 
 **If the server does not appear, it is almost always PATH.** Claude Desktop
 launches MCP servers from a minimal environment that does not include your
@@ -123,7 +126,7 @@ One issue and its comments, available transitions, change history and worklogs, 
 | `jira_get_transitions` | Get transitions | read-only | List the workflow transitions available from this issue's CURRENT status: id, name and target status. |
 | `jira_get_changelog` | Get changelog | read-only | Read an issue's change history — field, from → to, author, created. |
 | `jira_get_worklogs` | Get worklogs | read-only | List the work logged on an issue: timeSpentSeconds, timeSpent, started, author and the flattened comment. Sum timeSpentSeconds rather than parsing timeSpent strings. |
-| `jira_get_bulk_status` | Get bulk status | read-only | Poll one bulk operation by task id — any bulk task this account may see, including one submitted through the Jira UI. |
+| `jira_get_bulk_status` | Get bulk status | read-only | Poll a bulk operation by task id, UI-submitted included. |
 
 ### Issues (write) — `issues-write`
 

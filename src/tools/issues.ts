@@ -160,8 +160,9 @@ const getIssueInput = toolInput({
     .array(z.string().min(1))
     .optional()
     .describe(
-      'Jira expand sections, passed through unmodified — "changelog" for the ' +
-        'recent change history, "renderedFields" for Jira\'s own HTML rendering.',
+      'Jira expand sections — "changelog" for the recent change history, ' +
+        '"renderedFields" for Jira\'s own HTML rendering (returned under ' +
+        'data.expanded). Users inside them are projected like fields.',
     ),
   properties: z
     .array(z.string().min(1))
@@ -198,8 +199,8 @@ export const getIssueTool = defineTool({
     "returns Jira's whole navigable set and burns the result budget. Rich text is " +
     'flattened to plain text unless raw: true, which returns the ADF trees instead ' +
     '(this is the only tool that can), or format: "markdown" for a markdown ' +
-    'rendering of the same fields. expand is passed through unmodified; ' +
-    'expand: ["changelog"] adds the recent history. Users are accountId + ' +
+    'rendering of the same fields. expand: ["changelog"] adds the recent ' +
+    'history; other sections come back under data.expanded. Users are accountId + ' +
     'displayName — never a username.',
   package: 'issues',
   annotations: READ_ANNOTATIONS,
@@ -232,7 +233,9 @@ const getCommentsInput = toolInput({
   startAt: startAtArg,
   maxResults: maxResultsArg,
   orderBy: z
-    .enum(['-created', 'created', '-updated', 'updated'])
+    // Jira documents only the created date as a comment sort key; `updated`
+    // was accepted here and silently ignored or refused by Jira (CC-194).
+    .enum(['-created', 'created'])
     .optional()
     .describe(
       `Sort order; default ${DEFAULT_COMMENT_ORDER_BY} (newest first). Jira's own ` +
@@ -314,7 +317,7 @@ export const getChangelogTool = defineTool({
     "Read an issue's change history — field, from → to, author, created. Jira " +
     'returns it OLDEST FIRST and that order is kept, so "what changed recently" ' +
     'means reading the TAIL: call once to learn data.total, then request ' +
-    'startAt = total - maxResults. For the recent slice alone, expand: ' +
+    'startAt = max(0, total - maxResults). For the recent slice alone, expand: ' +
     '["changelog"] on jira_get_issue is one call instead of two. One page per ' +
     'call; data.nextStartAt resumes a partial read.',
   package: 'issues',
@@ -384,12 +387,13 @@ export const getBulkStatusTool = defineTool({
   name: 'jira_get_bulk_status',
   title: 'Get bulk status',
   description:
-    'Poll one bulk operation by task id — any bulk task this account may see, ' +
-    'including one submitted through the Jira UI. Status is ENQUEUED, RUNNING, ' +
-    'COMPLETE, FAILED, CANCEL_REQUESTED, CANCELLED or DEAD, with progressPercent ' +
-    'and the counts that matter: failedCount and invalidOrInaccessibleIssueCount. ' +
-    'Per-issue errors are not exposed here — examine a FAILED or DEAD task in the ' +
-    'Jira UI. A finished task stays readable for about 14 days.',
+    'Poll a bulk operation by task id, UI-submitted included. Status: ENQUEUED, ' +
+    'RUNNING, COMPLETE, FAILED, CANCEL_REQUESTED, CANCELLED or DEAD, with ' +
+    'progressPercent, processedCount (issues that SUCCEEDED), failedCount and ' +
+    'invalidOrInaccessibleIssueCount. COMPLETE does not mean every issue succeeded: ' +
+    'check failedCount and compare processedCount with totalIssueCount. An ' +
+    'unreported count is absent, never 0. Per-issue errors are only in the Jira UI; ' +
+    'a finished task stays readable ~14 days.',
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getBulkStatusInput,

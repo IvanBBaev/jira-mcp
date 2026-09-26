@@ -1,33 +1,42 @@
-# Release publishing — DELIBERATELY INERT until the owner turns it on.
+# Release publishing — LIVE. It published 0.9.0 (2026-08-17) and 0.9.4
+# (2026-08-18); docs/RELEASING.md is the runbook and carries the observed state
+# of every repository setting named below.
 #
-# npm publishing is an OPEN owner decision (O-9 in docs/DECISIONS.md, with repo
-# visibility O-10). This file is the pipeline waiting behind that decision, not
-# the decision itself. Four independent things must all be true before a single
-# byte reaches the registry, and none of them can happen by merging this file:
+# O-9 (publish to npm) and O-10 (public repository) are resolved in
+# docs/DECISIONS.md. What stands between a commit and the registry is now these
+# guards, all of which must hold for a single byte to be published:
 #
-#   1. A repository variable `PUBLISH_ENABLED` must be set to the string `true`
-#      (Settings > Secrets and variables > Actions > Variables). Unset, the job
-#      is skipped outright.
-#   2. A tag matching `v*` must be pushed. Nothing else publishes: a manual
+#   1. The repository variable `PUBLISH_ENABLED` is the string `true` (Settings >
+#      Secrets and variables > Actions > Variables). It has been set since
+#      2026-08-17, so it is a standing go signal, not a pending one; unsetting
+#      it is the fastest way to stop releases without touching a file — the job
+#      is then skipped outright.
+#   2. A tag matching `v*` is pushed. Nothing else publishes: a manual
 #      `workflow_dispatch` run is a rehearsal that stops before `npm publish`.
-#   3. `"private": true` must be removed from package.json. npm refuses to
-#      publish a package marked private, so the release fails loudly until the
-#      owner makes that edit on purpose.
-#   4. A publishing credential must exist — see the next paragraph, because for
-#      the FIRST release that cannot be the trusted publisher.
+#   3. The full gate (`npm run check`), the tarball assertion and the
+#      tag-equals-package.json-version check all pass on the runner first.
+#   4. A publishing credential exists: the bootstrap `NPM_TOKEN` secret today,
+#      the npm trusted publisher (OIDC) once it is registered — see below.
+#
+# The `release` environment is declared on the job; it has no required reviewer
+# today, and adding one is the single settings edit that puts a human in front
+# of every release. The registry itself is the last guard: it rejects a
+# re-publish of a version that already exists.
 #
 # The steady state is trusted publishing: GitHub OIDC and nothing else, npm CLI
 # >= 11.5.1 (hence the Node 24 runner and the explicit assertion below), and
 # `id-token: write` on the publishing job. It is not reachable for a package that
 # does not exist yet: a trusted publisher is configured on a package's settings
 # page on npmjs.com, and there is no settings page until something has been
-# published. So the first release is published with a granular access token in
-# the `NPM_TOKEN` secret (D86), and every release after it is not.
+# published. So the first release was published with a granular access token
+# in the `NPM_TOKEN` secret (D86). The package exists now, but the trusted
+# publisher is still NOT registered, so releases (0.9.4 included) keep going out
+# on that token until the retirement in docs/RELEASING.md §5 is done.
 #
 # The publish step below reads that secret if it is present and uses OIDC if it
 # is not, which makes the transition an act of deletion rather than an edit:
-# once a first version exists, register the trusted publisher, delete the secret,
-# and this file is token-free again without a diff. Deletion is the point —
+# register the trusted publisher, delete the secret (and revoke the token on
+# npmjs.com), and this file is token-free again without a diff. Deletion is the point —
 # granular tokens cap at 90 days, so a token kept past its one job is a chore
 # that also sits in the repo as a stealable long-lived credential.
 #
@@ -72,8 +81,8 @@ jobs:
   publish:
     name: publish to npm
     runs-on: ubuntu-latest
-    # Guard 1. `vars.PUBLISH_ENABLED` is unset until the owner decides O-9, so on
-    # today's repository this job is skipped and the workflow is a no-op.
+    # Guard 1. `vars.PUBLISH_ENABLED` has been `true` since O-9 was resolved
+    # (2026-08-17). Unset it to make this job skip and the workflow a no-op.
     if: vars.PUBLISH_ENABLED == 'true'
     # Give this a required reviewer in Settings > Environments if you want a
     # human approval step in front of every release as well.

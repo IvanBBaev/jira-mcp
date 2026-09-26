@@ -33,7 +33,8 @@
 // `{ accountId, displayName, active }`. `raw: true` exists on `jira_get_issue`
 // only — a page of ADF trees would blow the result budget (TOOLS.md §Read
 // shaping). Everything else a row carried (`self`, `expand`, `changelog` from an
-// `expand` request) is preserved verbatim.
+// `expand` request) keeps its structure through the same projection, so user
+// objects in it are reduced too.
 //
 // THE SESSION RECONCILES ITS OWN WRITES (CC-02). When the caller passes no
 // `reconcileIssues`, the ids this server's applied writes touched go along
@@ -67,7 +68,7 @@ import type { PageStopReason } from '../api/shared.js';
 import type { ErrorRecord, JiraError } from '../core/types.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
 import { errorResult, toErrorRecord } from '../mcp/errors.js';
-import { sessionRecentWrites } from '../mcp/recent-writes.js';
+import { currentRecentWrites } from '../mcp/recent-writes.js';
 import { err, ok } from '../mcp/result.js';
 import {
   READ_ANNOTATIONS,
@@ -255,9 +256,17 @@ export interface SearchData {
 }
 
 function shapeRow(issue: SearchIssue): SearchIssueRow {
-  // Spread first so `self`, `expand` and an expanded `changelog` survive
-  // unmodified (TOOLS.md §Read shaping); only `fields` is projected.
-  return { ...issue, fields: shapeIssueFields(issue.fields, false) };
+  // Every section is shaped, not only `fields`: an expanded `changelog` or
+  // `versionedRepresentations` carries full user objects, email included, and
+  // the user projection holds everywhere (TOOLS.md §Read shaping). `self` and
+  // `expand` are strings, which the projection leaves untouched.
+  const { id, key, fields, ...rest } = issue;
+  return {
+    ...shapeIssueFields(rest, false),
+    id,
+    key,
+    fields: shapeIssueFields(fields, false),
+  };
 }
 
 function searchData(result: SearchIssuesResult): SearchData {
@@ -312,8 +321,8 @@ const searchInput = toolInput({
     .array(z.string().min(1))
     .optional()
     .describe(
-      'Jira expand sections, passed through unmodified — "changelog" adds each ' +
-        "issue's recent history.",
+      'Jira expand sections — "changelog" adds each issue\'s recent history. ' +
+        'Users inside them are projected like fields.',
     ),
   reconcileIssues: z
     .array(z.union([z.string().min(1), z.number().int()]))
@@ -346,7 +355,7 @@ export const searchTool = defineTool({
       // to find it again. An explicit empty array is a caller's decision too, so
       // `undefined` and `[]` are deliberately not the same thing here.
       const recentlyWrittenIssueIds =
-        args.reconcileIssues === undefined ? sessionRecentWrites.snapshot() : undefined;
+        args.reconcileIssues === undefined ? currentRecentWrites().snapshot() : undefined;
       const result = await searchIssues({
         ...callBase(ctx),
         jql: args.jql,

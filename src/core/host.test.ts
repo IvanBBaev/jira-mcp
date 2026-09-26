@@ -83,10 +83,35 @@ describe('resolveHost', () => {
     );
   });
 
+  it('rejects a host the URL parser accepts but DNS would not', () => {
+    // WHATWG URL parsing tolerates underscores and IP literals; the resolver
+    // does not, because the value is interpolated into every request URL and
+    // the allowlist compares DNS names.
+    for (const site of [
+      'https://exa_mple.com',
+      'https://[::1]',
+      'https://a-.example.com',
+    ]) {
+      const result = resolveHost(site);
+      assert.equal(result.host, undefined, site);
+      assert.deepEqual(codes(result.problems), ['site_malformed'], site);
+      assert.match(String(result.problems[0]?.message), /not a valid DNS name/);
+    }
+  });
+
   it('rejects a port on a canonical Cloud host', () => {
     const result = resolveHost('https://mycompany.atlassian.net:8443');
     assert.equal(result.host, undefined);
     assert.deepEqual(codes(result.problems), ['site_port']);
+  });
+
+  it('[CC-143] a bare host:port is a host with a port, not a URL scheme', () => {
+    const kept = resolveHost('jira.example.com:8443', ['jira.example.com']);
+    assert.equal(kept.host?.origin, 'https://jira.example.com:8443');
+    assert.deepEqual(kept.problems, []);
+    // On a canonical Cloud host the port is still refused — as a port.
+    const cloud = resolveHost('mycompany.atlassian.net:8443');
+    assert.deepEqual(codes(cloud.problems), ['site_port']);
   });
 
   it('keeps a port on an explicitly allowlisted host', () => {
@@ -111,6 +136,41 @@ describe('host allowlist (default deny)', () => {
     assert.deepEqual(result.problems, []);
   });
 
+  it('[CC-179] never completes an allowlisted single-label host to a Cloud site', () => {
+    for (const site of ['jira', 'https://jira']) {
+      const result = resolveHost(site, ['jira']);
+      assert.equal(result.host?.origin, 'https://jira', site);
+      assert.deepEqual(result.problems, [], site);
+    }
+    const ported = resolveHost('https://jira:8443', ['jira']);
+    assert.equal(ported.host?.origin, 'https://jira:8443');
+  });
+
+  it('[CC-179] a single-label host with a port is refused as itself, not as a Cloud site', () => {
+    const result = resolveHost('jira:8443');
+    assert.equal(result.host, undefined);
+    assert.deepEqual(codes(result.problems), ['host_not_allowed']);
+    assert.match(String(result.problems[0]?.message), /"jira"/);
+    assert.doesNotMatch(String(result.problems[0]?.message), /atlassian\.net"/);
+  });
+
+  it('[CC-233] an allowlisted loopback, private or internal host is refused at startup', () => {
+    for (const site of [
+      '10.0.0.5',
+      '127.0.0.1',
+      'localhost',
+      'jira.internal',
+      'https://jira.local:8443',
+    ]) {
+      const host = new URL(site.includes('://') ? site : `https://${site}`).hostname;
+      const result = resolveHost(site, [host]);
+      assert.equal(result.host, undefined, site);
+      assert.deepEqual(codes(result.problems), ['host_blocked'], site);
+      assert.equal(result.problems[0]?.field, 'JIRA_SITE', site);
+    }
+    assert.deepEqual(resolveHost('internal.atlassian.net').problems, []);
+  });
+
   it('rejects evil-atlassian.net — suffix matching is banned', () => {
     assert.equal(isCanonicalCloudHost('evil-atlassian.net'), false);
     assert.equal(isAllowedHost('evil-atlassian.net'), false);
@@ -124,11 +184,37 @@ describe('host allowlist (default deny)', () => {
     assert.equal(isAllowedHost('jira.example.com.evil.net', ['jira.example.com']), false);
   });
 
-  it('anchors regex entries on both ends', () => {
+  it('[CC-231] refuses an unanchored regex entry instead of wrapping it', () => {
     const allow = ['/jira\\.example\\.com/'];
+    const compiled = compileAllowlist(allow);
+    assert.deepEqual(compiled.matchers, []);
+    assert.deepEqual(codes(compiled.problems), ['allowlist_invalid_pattern']);
+    assert.equal(compiled.problems[0]?.severity, 'error');
+    assert.match(String(compiled.problems[0]?.message), /not anchored/);
+    assert.match(
+      String(compiled.problems[0]?.message),
+      /\/\^jira\\\.example\\\.com\$\//,
+      'the message spells the anchored fix',
+    );
+    assert.equal(isAllowedHost('jira.example.com', allow), false);
+    // Half an anchor is still unanchored.
+    assert.equal(compileAllowlist(['/^jira\\.example\\.com/']).matchers.length, 0);
+    assert.equal(compileAllowlist(['/jira\\.example\\.com$/']).matchers.length, 0);
+  });
+
+  it('[CC-231] still wraps an anchored alternation so it cannot match a suffix', () => {
+    const allow = ['/^jira\\.example\\.com|other\\.example\\.com$/'];
     assert.equal(isAllowedHost('jira.example.com', allow), true);
-    assert.equal(isAllowedHost('evil.jira.example.com.attacker.net', allow), false);
-    assert.equal(isAllowedHost('xjira.example.com', allow), false);
+    assert.equal(isAllowedHost('jira.example.com.attacker.net', allow), false);
+  });
+
+  it('[CC-231] refuses suffix forms of an exact host', () => {
+    const compiled = compileAllowlist(['*.example.com', '.example.com']);
+    assert.deepEqual(compiled.matchers, []);
+    assert.deepEqual(codes(compiled.problems), [
+      'allowlist_invalid_pattern',
+      'allowlist_invalid_pattern',
+    ]);
   });
 
   it('supports an anchored regex written with explicit anchors', () => {
@@ -155,6 +241,12 @@ describe('host allowlist (default deny)', () => {
 
   it('ignores empty entries and trims whitespace', () => {
     assert.equal(isAllowedHost('jira.example.com', ['', '  jira.example.com  ']), true);
+    assert.equal(
+      isAllowedHost('', ['jira.example.com']),
+      false,
+      'an empty host matches nothing',
+    );
+    assert.equal(isAllowedHost('   ', ['jira.example.com']), false);
   });
 
   it('allows any canonical Cloud host without an allowlist', () => {

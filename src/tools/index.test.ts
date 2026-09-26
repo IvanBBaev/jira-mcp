@@ -542,31 +542,156 @@ describe('buildCapabilitiesInfo', () => {
 // README drift
 // ---------------------------------------------------------------------------
 
+const GENERATOR_PATH = fileURLToPath(
+  new URL('../../scripts/generate-readme.mjs', import.meta.url),
+);
+
+/** The real generator, run the way `npm run readme` runs it. */
+async function runGenerator(
+  args: readonly string[],
+  script: string = GENERATOR_PATH,
+): Promise<{ code: number; stderr: string }> {
+  const { execFile } = await import('node:child_process');
+
+  return await new Promise<{ code: number; stderr: string }>((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [script, ...args],
+      { timeout: 30_000 },
+      (_error, _stdout, stderr) => {
+        resolve({ code: child.exitCode ?? 1, stderr });
+      },
+    );
+  });
+}
+
+/** `docs/index.html` — the GitHub Pages site, which no generator owns. */
+const SITE_PATH = fileURLToPath(new URL('../../docs/index.html', import.meta.url));
+
+test('[CC-216] the site tier cards count the tools the manifest holds', () => {
+  // The cards are hand-written HTML: Phase 12 moved the manifest to 28 / 22 /
+  // 8 and the page kept saying 27 / 22 / 6 while every test stayed green.
+  const tools = PACKAGES.flatMap((pkg) => pkg.tools);
+  const expected = {
+    read: tools.filter((tool) => tool.writeTier === undefined).length,
+    write: tools.filter((tool) => tool.writeTier === 'standard').length,
+    irr: tools.filter((tool) => tool.writeTier === 'irreversible').length,
+  };
+  const site = readFileSync(SITE_PATH, 'utf8');
+  for (const [tag, count] of Object.entries(expected)) {
+    const shown = [
+      ...site.matchAll(new RegExp(`<span class="tag ${tag}">(\\d+) tools</span>`, 'gu')),
+    ];
+    assert.equal(shown.length, 1, `one "${tag}" tier card`);
+    assert.equal(Number(shown[0]?.[1]), count, `the "${tag}" tier card`);
+  }
+});
+
+/** `README.md`, resolved the same way whether this file runs from `src/` or `build/`. */
+const README_PATH = fileURLToPath(new URL('../../README.md', import.meta.url));
+
 describe('the README tool tables', () => {
+  // The drift test runs the generator against the REAL README.md, read-only.
+  // The two tests after it need a broken README, so they hand the generator a
+  // copy in a temp directory (`--readme`): editing the checkout's file and
+  // restoring it in a `finally` would leave it broken whenever a run is killed
+  // before the `finally` gets to run.
   test('are in sync with the manifest', async () => {
     // The generator's own `--check` mode is the assertion: running the real
     // command means the test cannot pass while `npm run readme` would produce a
     // different file, which a reimplementation of the rendering here could.
-    const { execFile } = await import('node:child_process');
-    const script = fileURLToPath(
-      new URL('../../scripts/generate-readme.mjs', import.meta.url),
-    );
-
-    const result = await new Promise<{ code: number; stderr: string }>((resolve) => {
-      const child = execFile(
-        process.execPath,
-        [script, '--check'],
-        { timeout: 30_000 },
-        (_error, _stdout, stderr) => {
-          resolve({ code: child.exitCode ?? 1, stderr });
-        },
-      );
-    });
+    const result = await runGenerator(['--check']);
 
     assert.equal(
       result.code,
       0,
       `README.md no longer matches the tool manifest. Regenerate it with \`npm run readme\`.\n${result.stderr}`,
     );
+  });
+
+  test('[CC-217] run through a symlink, --check still reports a stale README', async (t) => {
+    // Node realpaths the entry module, so a guard comparing argv[1] as given
+    // said "not me" and the check exited 0 without looking at anything.
+    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-readme-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const copy = join(dir, 'README.md');
+    const start = '<!-- GENERATED:TOOLS:START -->';
+    writeFileSync(
+      copy,
+      readFileSync(README_PATH, 'utf8').replace(start, `${start}\n\nA stale line.`),
+      'utf8',
+    );
+    const link = join(dir, 'generate-readme.mjs');
+    await symlink(GENERATOR_PATH, link);
+
+    const stale = await runGenerator(['--check', '--readme', copy], link);
+    assert.equal(stale.code, 1);
+    assert.match(stale.stderr, /README\.md is out of date/u);
+  });
+
+  test('report a stale README on --check and regenerate it without', async (t) => {
+    const original = readFileSync(README_PATH, 'utf8');
+    const start = '<!-- GENERATED:TOOLS:START -->';
+    assert.ok(original.includes(start));
+    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-readme-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const copy = join(dir, 'README.md');
+
+    // A hand edit INSIDE the generated block: it is exactly what the marker
+    // pair promises to overwrite, so regenerating restores the file byte for
+    // byte and the assertion below can say so.
+    writeFileSync(
+      copy,
+      original.replace(start, `${start}\n\nA hand edit that the generator owns.`),
+      'utf8',
+    );
+
+    const stale = await runGenerator(['--check', '--readme', copy]);
+    assert.equal(stale.code, 1);
+    assert.match(stale.stderr, /README\.md is out of date with the tool manifest/u);
+    assert.match(stale.stderr, /npm run readme/u);
+    assert.equal(
+      readFileSync(copy, 'utf8').includes('A hand edit that the generator owns.'),
+      true,
+      '--check must never write',
+    );
+
+    const rewrite = await runGenerator(['--readme', copy]);
+    assert.equal(rewrite.code, 0);
+    assert.match(rewrite.stderr, /README\.md tool tables regenerated\./u);
+    assert.equal(readFileSync(copy, 'utf8'), original);
+
+    const again = await runGenerator(['--readme', copy]);
+    assert.equal(again.code, 0);
+    assert.match(again.stderr, /README\.md is already up to date\./u);
+    assert.equal(
+      readFileSync(README_PATH, 'utf8'),
+      original,
+      'the checkout is never touched',
+    );
+  });
+
+  test('refuse a README that has lost its markers, by name', async (t) => {
+    const original = readFileSync(README_PATH, 'utf8');
+    const end = '<!-- GENERATED:TOOLS:END -->';
+    assert.ok(original.includes(end));
+    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-readme-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const copy = join(dir, 'README.md');
+    writeFileSync(copy, original.replace(end, ''), 'utf8');
+
+    // Without `--check` on purpose: the write path is the one that must refuse,
+    // because with one marker gone the script cannot know which span it owns.
+    const result = await runGenerator(['--readme', copy]);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /^generate-readme: README\.md is missing the /u);
+    assert.match(result.stderr, /restore them before generating/u);
+    assert.equal(readFileSync(copy, 'utf8'), original.replace(end, ''));
+  });
+
+  test('refuse --readme without a path', async () => {
+    const result = await runGenerator(['--check', '--readme']);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /^generate-readme: --readme needs a path\./u);
   });
 });

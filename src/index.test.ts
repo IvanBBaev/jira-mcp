@@ -28,7 +28,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -425,6 +425,13 @@ async function startServer(home: string): Promise<Child> {
     },
   };
 }
+
+test('[CC-156] the root logger is not bound to a correlation id', async () => {
+  // The logger `start()` builds is handed to http, journal and OAuth; binding it
+  // (even to NO_CID) would override the per-call ambient id in every event.
+  const source = await readFile(SERVER_ENTRY, 'utf8');
+  assert.ok(!source.includes('.withCid('), 'start() must not bind the root logger');
+});
 
 describe('the built server over stdio', () => {
   let home: string | undefined;

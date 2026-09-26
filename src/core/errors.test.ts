@@ -55,6 +55,14 @@ describe('kindForStatus', () => {
     assert.equal(kindForStatus(599), 'transport');
   });
 
+  it('reads a status below 400 as a shape problem, never as validation', () => {
+    // http.ts rejects a redirect before it is followed and a 2xx is never an
+    // error, so a 1xx/2xx/3xx here is a caller bug: it must not be dressed up
+    // as a request the model could fix.
+    assert.equal(kindForStatus(302), 'unexpected_shape');
+    assert.equal(kindForStatus(204), 'unexpected_shape');
+  });
+
   it('reads a 403 carrying Jira login-denied headers as auth (CC-18)', () => {
     assert.equal(
       kindForStatus(403, {
@@ -111,6 +119,16 @@ describe('extractJiraMessages', () => {
         errors: { summary: 'Field is required.', customfield_10011: 'Invalid value.' },
       }),
       ['summary: Field is required.', 'customfield_10011: Invalid value.'],
+    );
+  });
+
+  it('keeps a numeric or boolean field value, stringified', () => {
+    assert.deepEqual(
+      extractJiraMessages({
+        errorMessages: [],
+        errors: { timeSpent: 0, notifyUsers: false, summary: 'Field is required.' },
+      }),
+      ['timeSpent: 0', 'notifyUsers: false', 'summary: Field is required.'],
     );
   });
 
@@ -312,6 +330,18 @@ describe('errorFromResponse', () => {
     assert.ok(error.message.endsWith(REMEDIATION.not_found));
   });
 
+  it('names the route from the template alone when no method was given', () => {
+    const withTemplate = errorFromResponse({
+      status: 500,
+      pathTemplate: '/myself',
+      body: {},
+    });
+    assert.ok(withTemplate.message.startsWith('Jira returned HTTP 500 for /myself.'));
+
+    const bare = errorFromResponse({ status: 500, body: {} });
+    assert.ok(bare.message.startsWith('Jira returned HTTP 500.'));
+  });
+
   it('marks a 429 retryable', () => {
     const error = errorFromResponse({
       status: 429,
@@ -424,6 +454,26 @@ describe('toJiraError', () => {
     assert.equal(isJiraError(createJiraError({ kind: 'config', reason: 'x.' })), true);
     assert.equal(isJiraError(new Error('plain')), false);
     assert.equal(isJiraError('nope'), false);
+  });
+});
+
+describe('scrub before bound (CC-158)', () => {
+  it('[CC-158] a secret straddling the message cut leaves no prefix behind', () => {
+    const secret = 'Zq7xW2pLm9Kd4Rt8Yv3Hs6Nb1Fc5Gj0Ae';
+    const redactor = createRedactor({ secrets: [secret] });
+    // Place the secret so the MESSAGE_DETAIL_MAX cut would land inside it.
+    const text = `${'x'.repeat(MESSAGE_DETAIL_MAX - 10)} ${secret} tail`;
+    const prefix = secret.slice(0, 8);
+
+    const fromResponse = errorFromResponse({
+      status: 400,
+      body: { errorMessages: [text] },
+      redactor,
+    });
+    assert.ok(!fromResponse.message.includes(prefix), fromResponse.message);
+
+    const wrapped = toJiraError(new Error(text), { redactor });
+    assert.ok(!wrapped.message.includes(prefix), wrapped.message);
   });
 });
 

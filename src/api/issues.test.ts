@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { errorFromResponse } from '../core/errors.js';
+import { createJiraError, errorFromResponse } from '../core/errors.js';
 import {
   createFakeClock,
   createFakeJiraRequest,
@@ -29,6 +29,7 @@ import { JiraError, type JiraRequestSpec } from '../core/types.js';
 import {
   DEFAULT_COMMENT_ORDER_BY,
   ISSUE_ASSIGNEE_PATH_TEMPLATE,
+  MAX_PAGE_SIZE,
   MAX_SHAPE_DEPTH,
   ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
   ISSUE_COMMENT_PATH_TEMPLATE,
@@ -311,6 +312,41 @@ test('getIssue accepts an expand string and omits empty query parameters', async
   assert.equal(request?.query?.properties, undefined);
 });
 
+test('[CC-134] getIssue returns the other expand sections under expanded, users projected', async () => {
+  const fake = createFakeJiraRequest().on(
+    ISSUE_ROUTE,
+    jiraOk({
+      ...issueWithEverything(),
+      expand: 'renderedFields,names',
+      renderedFields: { description: '<p>Port the read and write paths.</p>' },
+      names: { summary: 'Summary' },
+      versionedRepresentations: {
+        assignee: {
+          '1': { ...wireUser(ACCOUNT_ID, 'User One'), emailAddress: 'u1@example.com' },
+        },
+      },
+    }),
+  );
+
+  const issue = await getIssue({ jira: fake.fn, issue: KEY, expand: ['renderedFields'] });
+
+  assert.deepEqual(issue.expanded?.['renderedFields'], {
+    description: '<p>Port the read and write paths.</p>',
+  });
+  assert.deepEqual(issue.expanded?.['names'], { summary: 'Summary' });
+  assert.ok(!JSON.stringify(issue).includes('u1@example.com'));
+  // The envelope keys are restated, never duplicated under expanded.
+  for (const key of ['id', 'key', 'self', 'expand', 'fields', 'changelog']) {
+    assert.equal(issue.expanded?.[key], undefined, key);
+  }
+});
+
+test('getIssue omits expanded when the response carried no extra section', async () => {
+  const fake = createFakeJiraRequest().on(ISSUE_ROUTE, jiraOk(issueWithEverything()));
+  const issue = await getIssue({ jira: fake.fn, issue: KEY });
+  assert.equal('expanded' in issue, false);
+});
+
 test('getIssue refuses an issue key that would escape its path segment', async () => {
   const fake = createFakeJiraRequest();
 
@@ -445,6 +481,34 @@ test('listComments walks classic pages up to maxPages', async () => {
   assert.equal(result.partial, true);
   assert.equal(result.nextStartAt, 4);
   assert.equal(fake.lastRequest()?.query?.orderBy, 'created');
+});
+
+test('[CC-161] listComments counts an unmappable row toward the offset', async () => {
+  // Page one carries a row with no id: it is dropped from the output, but it is
+  // still one of the server's two rows, so the page is full and the next offset
+  // is 2 — not 1, which would re-read comment 2.
+  const first = commentPage(0, ['1', '2']);
+  (first.comments as Array<Record<string, unknown>>)[0] = { self: 'x' };
+  const fake = createFakeJiraRequest()
+    .on((req) => req.path.endsWith('/comment') && req.query?.startAt === 0, jiraOk(first))
+    .on(
+      (req) => req.path.endsWith('/comment') && req.query?.startAt === 2,
+      jiraOk(commentPage(2, ['3', '4'])),
+    );
+
+  const result = await listComments({
+    jira: fake.fn,
+    issue: KEY,
+    maxResults: 2,
+    maxPages: 2,
+  });
+
+  assert.deepEqual(
+    result.comments.map((comment) => comment.id),
+    ['2', '3', '4'],
+  );
+  assert.equal(result.pages, 2);
+  assert.equal(result.nextStartAt, 4);
 });
 
 test('listWorklogs flattens the worklog comment and projects the author', async () => {
@@ -627,6 +691,25 @@ test('CC-21: resolveTransitionId matches by id or name and names the alternative
   );
 });
 
+test('CC-21: resolveTransitionId says "unnamed" and "none" rather than printing holes', () => {
+  assert.throws(
+    () => resolveTransitionId([{ id: '31' }], 'Done'),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.match(error.message, /Available now: 31 \(unnamed\)\./);
+      return true;
+    },
+  );
+  assert.throws(
+    () => resolveTransitionId([], 'Done'),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.match(error.message, /Available now: none\./);
+      return true;
+    },
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------
@@ -693,6 +776,7 @@ test('createIssue takes numeric ids as ids, not names', async () => {
     project: '10000',
     issueType: '10002',
     summary: 'Numeric references',
+    dueDate: '2026-10-01',
   });
 
   assert.deepEqual(fake.lastRequest()?.body, {
@@ -700,6 +784,7 @@ test('createIssue takes numeric ids as ids, not names', async () => {
       project: { id: '10000' },
       issuetype: { id: '10002' },
       summary: 'Numeric references',
+      duedate: '2026-10-01',
     },
   });
 });
@@ -807,7 +892,40 @@ test('updateIssue clears fields with an explicit null', async () => {
   });
 
   assert.deepEqual(fake.lastRequest()?.body, {
-    fields: { description: null, assignee: null, parent: null, dueDate: '2026-09-01' },
+    fields: { description: null, assignee: null, parent: null, duedate: '2026-09-01' },
+  });
+});
+
+test('updateIssue replaces description, assignee, labels and parent, and clears a due date', async () => {
+  const fake = createFakeJiraRequest().on(
+    `PUT /rest/api/3/issue/${KEY}`,
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  await updateIssue({
+    jira: fake.fn,
+    issue: KEY,
+    description: 'Rewritten wholesale.',
+    assigneeAccountId: ACCOUNT_ID,
+    labels: ['mcp', 'api'],
+    parent: '10000',
+    dueDate: null,
+  });
+
+  assert.deepEqual(fake.lastRequest()?.body, {
+    fields: {
+      description: adfDoc('Rewritten wholesale.'),
+      assignee: { accountId: ACCOUNT_ID },
+      labels: ['mcp', 'api'],
+      parent: { id: '10000' },
+      duedate: null,
+    },
+  });
+
+  // Label verbs alone: the body carries `update` and no empty `fields` block.
+  await updateIssue({ jira: fake.fn, issue: KEY, labelsAdd: ['triaged'] });
+  assert.deepEqual(fake.lastRequest()?.body, {
+    update: { labels: [{ add: 'triaged' }] },
   });
 });
 
@@ -820,6 +938,29 @@ test('updateIssue refuses a no-op and refuses replacing and editing labels at on
   );
   await assert.rejects(
     updateIssue({ jira: fake.fn, issue: KEY, labels: ['a'], labelsAdd: ['b'] }),
+    isJiraErrorOfKind('validation'),
+  );
+  assert.equal(fake.calls.length, 0);
+});
+
+test('[CC-162] a raw fields.labels conflicts with labelsAdd/labelsRemove like named labels does', async () => {
+  const fake = createFakeJiraRequest();
+  await assert.rejects(
+    updateIssue({
+      jira: fake.fn,
+      issue: KEY,
+      fields: { labels: ['a'] },
+      labelsAdd: ['b'],
+    }),
+    isJiraErrorOfKind('validation'),
+  );
+  await assert.rejects(
+    updateIssue({
+      jira: fake.fn,
+      issue: KEY,
+      fields: { labels: ['a'] },
+      labelsRemove: ['b'],
+    }),
     isJiraErrorOfKind('validation'),
   );
   assert.equal(fake.calls.length, 0);
@@ -1377,6 +1518,13 @@ test('shapeUser rejects a record with no accountId', () => {
   assert.equal(shapeUser(null), undefined);
 });
 
+test('shapeUser keeps only the accountId when Jira sent nothing else usable', () => {
+  // A deleted or app user comes back with the id alone; nothing is invented.
+  assert.deepEqual(shapeUser({ accountId: ACCOUNT_ID, displayName: 7, active: 'yes' }), {
+    accountId: ACCOUNT_ID,
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Deletes (D45 / WP-72)
 // ---------------------------------------------------------------------------
@@ -1685,4 +1833,589 @@ test('CC-67: at MAX_SHAPE_DEPTH both formats stop at the SAME node, untouched', 
   assert.deepEqual(asText, asMarkdown);
   assert.deepEqual(asText, fields);
   assert.deepEqual(shapeIssueFields(fields, true), fields);
+});
+
+// ---------------------------------------------------------------------------
+// Guards the tools never trip — held here so a future caller cannot either
+// ---------------------------------------------------------------------------
+
+test('addWorklog refuses a timeSpentSeconds that is not a positive whole number', async () => {
+  const fake = createFakeJiraRequest();
+
+  for (const timeSpentSeconds of [0, -5, 1.5]) {
+    await assert.rejects(
+      addWorklog({
+        jira: fake.fn,
+        issue: KEY,
+        timeSpentSeconds,
+        startedAt: STARTED_AT,
+        utcOffsetMinutes: 0,
+      }),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'validation' &&
+        /timeSpentSeconds must be a whole number of seconds above zero/.test(
+          error.message,
+        ),
+      String(timeSpentSeconds),
+    );
+  }
+  assert.equal(fake.calls.length, 0);
+});
+
+test('an explicit startAt resumes a classic list where the previous page stopped', async () => {
+  // The offset the previous call reported as `nextStartAt`, handed back in —
+  // the first request goes out at that offset, not at zero.
+  const fake = createFakeJiraRequest().on(
+    (req) => req.path.endsWith('/comment') && req.query?.startAt === 2,
+    jiraOk(commentPage(2, ['3', '4'])),
+  );
+
+  const result = await listComments({
+    jira: fake.fn,
+    issue: KEY,
+    startAt: 2,
+    maxResults: 2,
+  });
+
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.lastRequest()?.query?.startAt, 2);
+  assert.deepEqual(
+    result.comments.map((comment) => comment.id),
+    ['3', '4'],
+  );
+  assert.equal(result.nextStartAt, 4);
+});
+
+test('classic lists refuse a negative or fractional startAt and a maxResults below 1', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/comment`,
+    jiraOk(commentPage(0, ['1'])),
+  );
+
+  for (const startAt of [-1, 2.5]) {
+    await assert.rejects(
+      listComments({ jira: fake.fn, issue: KEY, startAt }),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'validation' &&
+        /startAt must be a whole number of rows/.test(error.message),
+      String(startAt),
+    );
+  }
+  await assert.rejects(
+    listComments({ jira: fake.fn, issue: KEY, maxResults: 0 }),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'validation' &&
+      /maxResults must be a whole number of at least 1/.test(error.message),
+  );
+  assert.equal(fake.calls.length, 0);
+
+  // Over the cap is not an error: the page is clamped and the caller pages on.
+  await listComments({ jira: fake.fn, issue: KEY, maxResults: MAX_PAGE_SIZE * 10 });
+  assert.equal(fake.lastRequest()?.query?.maxResults, MAX_PAGE_SIZE);
+});
+
+test('a classic list whose collection is not an array is an unexpected_shape', async () => {
+  const fake = createFakeJiraRequest()
+    .on(
+      `GET /rest/api/3/issue/${KEY}/comment`,
+      jiraOk({ startAt: 0, maxResults: 50, total: 1, comments: { id: '1' } }),
+    )
+    .on(`GET /rest/api/3/issue/${KEY}/transitions`, jiraOk({ transitions: 'none' }));
+
+  await assert.rejects(
+    listComments({ jira: fake.fn, issue: KEY }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+  await assert.rejects(
+    listTransitions({ jira: fake.fn, issue: KEY }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+});
+
+test('an issue echo without a string id or key is an unexpected_shape, not a blank', async () => {
+  // Jira always sends both; a proxy that rewrote the body is the realistic
+  // way to lose them, and the tool must not report a "created" issue it
+  // cannot name. // synthetic
+  const fake = createFakeJiraRequest()
+    .on(ISSUE_ROUTE, jiraOk({ key: KEY, fields: {} }))
+    .on('POST /rest/api/3/issue', jiraOk({ id: 10010, key: 'PROJ-10' }, { status: 201 }));
+
+  await assert.rejects(
+    getIssue({ jira: fake.fn, issue: KEY }),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'unexpected_shape' &&
+      /issue\.id is missing or not a string/.test(error.message),
+  );
+  await assert.rejects(
+    createIssue({ jira: fake.fn, project: 'PROJ', issueType: 'Task', summary: 'Named' }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+});
+
+test('listTransitions tolerates a numeric transition id and echoes it as a string', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/transitions`,
+    jiraOk({
+      transitions: [
+        { id: 21, name: 'In Progress', to: { id: '2', name: 'In Progress' } },
+        { name: 'no id at all' },
+      ],
+    }),
+  );
+
+  const result = await listTransitions({ jira: fake.fn, issue: KEY });
+
+  // The id-less row is dropped rather than shaped into a transition nobody
+  // can POST.
+  assert.equal(result.transitions.length, 1);
+  assert.equal(result.transitions[0]?.id, '21');
+  assert.equal(result.transitions[0]?.name, 'In Progress');
+});
+
+// ---------------------------------------------------------------------------
+// Sparse payloads: what a read keeps, drops and refuses to invent
+// ---------------------------------------------------------------------------
+
+test('shapeIssueFields keeps a bare link and drops one that points at no issue', () => {
+  const fields = shapeIssueFields(
+    {
+      issuelinks: [
+        // No id, no type, an outward issue that is only a key: kept as-is.
+        { outwardIssue: { key: 'PROJ-2' } },
+        // Inward only, with a `fields` that is not an object.
+        {
+          id: '10002',
+          type: { name: 'Blocks', inward: 'is blocked by' },
+          inwardIssue: { id: '10003', key: 'PROJ-3', fields: 'nope' },
+        },
+        // Neither side names an issue: nothing to point at, so it is dropped.
+        { id: '10004', type: { name: 'Relates' } },
+        // An issue without a string key is no issue at all.
+        { type: {}, outwardIssue: { id: '10005' } },
+        'not a link',
+      ],
+      // A parent that is not an object becomes null rather than a fake ref.
+      parent: 'nope',
+    },
+    false,
+  );
+
+  assert.deepEqual(fields.issuelinks, [
+    { type: {}, direction: 'outward', issue: { key: 'PROJ-2' } },
+    {
+      id: '10002',
+      type: { name: 'Blocks', inward: 'is blocked by' },
+      direction: 'inward',
+      relation: 'is blocked by',
+      issue: { id: '10003', key: 'PROJ-3' },
+    },
+  ]);
+  assert.equal(fields.parent, null);
+});
+
+test('shapeIssueFields passes a non-array issuelinks value through like any field', () => {
+  assert.deepEqual(shapeIssueFields({ issuelinks: 'n/a' }, false), { issuelinks: 'n/a' });
+  // Not an object at all: nothing to shape.
+  assert.deepEqual(shapeIssueFields('nope', false), {});
+});
+
+test('getIssue keeps a sparse changelog block and leaves out one that is not an object', async () => {
+  const sparse = {
+    ...issueWithEverything(),
+    changelog: {
+      histories: [
+        // No id, created or author; `items` is not an array.
+        { items: 'nope' },
+        // Items that are not objects are dropped, the rest passed through.
+        { id: '30002', items: ['nope', { field: 'summary' }] },
+        'not a history',
+      ],
+    },
+  };
+  const fake = createFakeJiraRequest().on(ISSUE_ROUTE, jiraOk(sparse));
+
+  const issue = await getIssue({ jira: fake.fn, issue: KEY });
+
+  assert.deepEqual(issue.changelog, {
+    histories: [{ items: [] }, { id: '30002', items: [{ field: 'summary' }] }],
+  });
+
+  // A changelog that is not an object (or has no histories) is not invented.
+  const odd = createFakeJiraRequest().on(
+    ISSUE_ROUTE,
+    jiraOk({ ...issueWithEverything(), changelog: 'nope' }),
+  );
+  assert.equal((await getIssue({ jira: odd.fn, issue: KEY })).changelog, undefined);
+  const empty = createFakeJiraRequest().on(
+    ISSUE_ROUTE,
+    jiraOk({ ...issueWithEverything(), changelog: { histories: 'nope' } }),
+  );
+  assert.deepEqual((await getIssue({ jira: empty.fn, issue: KEY })).changelog, {
+    histories: [],
+  });
+});
+
+test('listTransitions shapes a bare transition without inventing what Jira left out', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/transitions`,
+    jiraOk({
+      transitions: [
+        { id: '31' },
+        { id: '41', to: {} },
+        {
+          id: '51',
+          to: { id: '5', statusCategory: {} },
+          hasScreen: 'yes',
+          fields: 'nope',
+        },
+        'not a transition',
+      ],
+    }),
+  );
+
+  const result = await listTransitions({ jira: fake.fn, issue: KEY });
+
+  assert.deepEqual(result.transitions, [
+    { id: '31' },
+    { id: '41', to: {} },
+    { id: '51', to: { id: '5', statusCategory: {} } },
+  ]);
+});
+
+test('listTransitions treats a body with no transitions as an empty list', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/transitions`,
+    jiraOk({ expand: 'transitions' }),
+  );
+
+  assert.deepEqual(await listTransitions({ jira: fake.fn, issue: KEY }), {
+    transitions: [],
+  });
+});
+
+test('listComments keeps a bare comment, drops a row that is not one and ends on a page with no counters', async () => {
+  const signal = new AbortController().signal;
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/comment`,
+    jiraOk({
+      comments: [
+        { id: '7', body: adfDoc('Bare'), visibility: {} },
+        { body: adfDoc('No id') },
+        'nope',
+      ],
+    }),
+  );
+
+  const result = await listComments({ jira: fake.fn, issue: KEY, signal });
+
+  assert.deepEqual(result.comments, [{ id: '7', body: 'Bare', visibility: {} }]);
+  // No `total`, `isLast`, `startAt` or `maxResults`: one short page is the end,
+  // and the result reports no total rather than a made-up zero.
+  assert.equal(result.stopReason, 'exhausted');
+  assert.equal(result.total, undefined);
+  assert.equal(result.pages, 1);
+  // The MCP cancellation rides along on the wire request.
+  assert.equal(fake.lastRequest()?.signal, signal);
+});
+
+test('listComments reads a body with no comments key as an empty page', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/comment`,
+    jiraOk({ startAt: 0 }),
+  );
+
+  const result = await listComments({ jira: fake.fn, issue: KEY });
+
+  assert.deepEqual(result.comments, []);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
+test('listWorklogs keeps a bare worklog and drops rows that are not one', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/worklog`,
+    jiraOk({
+      worklogs: [
+        // Only an id: nothing else is invented, not even an empty comment.
+        { id: '40002', issueId: 10001, timeSpentSeconds: '9000', visibility: 'nope' },
+        {
+          id: '40003',
+          updateAuthor: wireUser(OTHER_ACCOUNT_ID, 'User Two'),
+          visibility: { type: 'role', value: 'Developers', identifier: '10100' },
+        },
+        { comment: adfDoc('no id') },
+        'nope',
+      ],
+    }),
+  );
+
+  const result = await listWorklogs({ jira: fake.fn, issue: KEY });
+
+  assert.deepEqual(result.worklogs, [
+    { id: '40002' },
+    {
+      id: '40003',
+      updateAuthor: {
+        accountId: OTHER_ACCOUNT_ID,
+        displayName: 'User Two',
+        active: true,
+      },
+      visibility: { type: 'role', value: 'Developers', identifier: '10100' },
+    },
+  ]);
+});
+
+test('getComment renders the body as markdown when asked, like the list does', async () => {
+  const body = {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Ship ' },
+          { type: 'text', text: 'now', marks: [{ type: 'strong' }] },
+        ],
+      },
+    ],
+  };
+  const route = `GET /rest/api/3/issue/${KEY}/comment/50001`;
+  const reply = { id: '50001', body };
+
+  const markdown = await getComment({
+    jira: createFakeJiraRequest().on(route, jiraOk(reply)).fn,
+    issue: KEY,
+    commentId: '50001',
+    format: 'markdown',
+  });
+  const text = await getComment({
+    jira: createFakeJiraRequest().on(route, jiraOk(reply)).fn,
+    issue: KEY,
+    commentId: '50001',
+  });
+
+  assert.equal(markdown.body, 'Ship **now**');
+  assert.equal(text.body, 'Ship now');
+});
+
+test('getIssue carries requested properties and does without a self link', async () => {
+  const body: Record<string, unknown> = {
+    ...issueWithEverything(),
+    properties: { 'ops.owner': 'sre' },
+  };
+  delete body['self'];
+  const fake = createFakeJiraRequest().on(ISSUE_ROUTE, jiraOk(body));
+
+  const issue = await getIssue({ jira: fake.fn, issue: KEY, properties: ['ops.owner'] });
+
+  assert.equal(fake.lastRequest()?.query?.properties, 'ops.owner');
+  assert.equal(issue.self, undefined);
+  assert.deepEqual(issue.properties, { 'ops.owner': 'sre' });
+});
+
+test('linkIssues sends no comment block when none was given, and no visibility when open', async () => {
+  const fake = createFakeJiraRequest().on(
+    'POST /rest/api/3/issueLink',
+    jiraOk(undefined, { status: 201 }),
+  );
+
+  await linkIssues({
+    jira: fake.fn,
+    linkType: 'Blocks',
+    inwardIssue: 'PROJ-2',
+    outwardIssue: 'PROJ-3',
+  });
+  assert.deepEqual(fake.lastRequest()?.body, {
+    type: { name: 'Blocks' },
+    inwardIssue: { key: 'PROJ-2' },
+    outwardIssue: { key: 'PROJ-3' },
+  });
+
+  await linkIssues({
+    jira: fake.fn,
+    linkType: 'Blocks',
+    inwardIssue: 'PROJ-2',
+    outwardIssue: 'PROJ-3',
+    comment: 'Visible to all.',
+  });
+  assert.deepEqual(fake.lastRequest()?.body, {
+    type: { name: 'Blocks' },
+    inwardIssue: { key: 'PROJ-2' },
+    outwardIssue: { key: 'PROJ-3' },
+    comment: { body: adfDoc('Visible to all.') },
+  });
+});
+
+test('CC-21: a bare 400 on a transition is re-aimed without quoting messages Jira never sent', async () => {
+  const bare = createJiraError({
+    kind: 'validation',
+    reason: 'Bad Request',
+    httpStatus: 400,
+  });
+  const fake = createFakeJiraRequest().on(
+    `POST /rest/api/3/issue/${KEY}/transitions`,
+    jiraErr(bare),
+  );
+
+  await assert.rejects(
+    transitionIssue({ jira: fake.fn, issue: KEY, transitionId: '31' }),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.reason, 'Jira rejected transition 31 for this issue.');
+      assert.equal(error.jiraMessages, undefined);
+      assert.equal(error.detail, undefined);
+      assert.equal(error.cause, bare);
+      return true;
+    },
+  );
+});
+
+test('transitionIssue passes a non-400 failure through untouched', async () => {
+  const forbidden = createJiraError({
+    kind: 'permission',
+    reason: 'Forbidden',
+    httpStatus: 403,
+  });
+  const fake = createFakeJiraRequest().on(
+    `POST /rest/api/3/issue/${KEY}/transitions`,
+    jiraErr(forbidden),
+  );
+
+  await assert.rejects(
+    transitionIssue({ jira: fake.fn, issue: KEY, transitionId: '31' }),
+    (error: unknown) => error === forbidden,
+  );
+});
+
+test('a bare 400 on an issue delete is re-aimed without quoting messages Jira never sent', async () => {
+  const bare = createJiraError({
+    kind: 'validation',
+    reason: 'Bad Request',
+    httpStatus: 400,
+  });
+  const fake = createFakeJiraRequest().on(
+    `DELETE /rest/api/3/issue/${KEY}`,
+    jiraErr(bare),
+  );
+
+  await assert.rejects(deleteIssue({ jira: fake.fn, issue: KEY }), (error: unknown) => {
+    assert.ok(error instanceof JiraError);
+    assert.equal(error.reason, `Jira refused to delete ${KEY}.`);
+    assert.equal(error.jiraMessages, undefined);
+    assert.equal(error.detail, undefined);
+    assert.equal(error.cause, bare);
+    return true;
+  });
+});
+
+test('a created comment or worklog, or a read worklog, without an id is unexpected_shape', async () => {
+  const fake = createFakeJiraRequest()
+    .on(
+      `POST /rest/api/3/issue/${KEY}/comment`,
+      jiraOk({ body: adfDoc('x') }, { status: 201 }),
+    )
+    .on(
+      `POST /rest/api/3/issue/${KEY}/worklog`,
+      jiraOk({ timeSpent: '1h' }, { status: 201 }),
+    )
+    .on(`GET /rest/api/3/issue/${KEY}/worklog/40001`, jiraOk({ timeSpent: '1h' }));
+
+  await assert.rejects(
+    addComment({ jira: fake.fn, issue: KEY, body: 'x' }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+  await assert.rejects(
+    addWorklog({
+      jira: fake.fn,
+      issue: KEY,
+      timeSpent: '1h',
+      startedAt: STARTED_AT,
+      utcOffsetMinutes: 0,
+    }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+  await assert.rejects(
+    getWorklog({ jira: fake.fn, issue: KEY, worklogId: '40001' }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+});
+
+test('createIssue sets the reporter and updateIssue sets the priority by name or id', async () => {
+  const fake = createFakeJiraRequest()
+    .on(
+      'POST /rest/api/3/issue',
+      jiraOk(
+        { id: '10011', key: 'PROJ-11', self: 'https://example/i/10011' },
+        { status: 201 },
+      ),
+    )
+    .on(`PUT /rest/api/3/issue/${KEY}`, jiraOk(undefined, { status: 204 }));
+
+  await createIssue({
+    jira: fake.fn,
+    project: 'PROJ',
+    issueType: 'Task',
+    summary: 'On behalf of',
+    reporterAccountId: OTHER_ACCOUNT_ID,
+  });
+  const created = fake.lastRequest()?.body as { fields: Record<string, unknown> };
+  assert.deepEqual(created.fields.reporter, { accountId: OTHER_ACCOUNT_ID });
+
+  await updateIssue({ jira: fake.fn, issue: KEY, priority: 'Highest' });
+  assert.deepEqual(
+    (fake.lastRequest()?.body as { fields: Record<string, unknown> }).fields,
+    {
+      priority: { name: 'Highest' },
+    },
+  );
+  await updateIssue({ jira: fake.fn, issue: KEY, priority: '1' });
+  assert.deepEqual(
+    (fake.lastRequest()?.body as { fields: Record<string, unknown> }).fields,
+    {
+      priority: { id: '1' },
+    },
+  );
+  assertNeverSafe(fake.calls);
+});
+
+test('formatJiraTimestamp refuses an instant outside the calendar Jira stores', () => {
+  // Year 10000 renders in the expanded `+010000-…` ISO form that no fixed
+  // slice reads; the offset can also push a valid instant past the Date limit.
+  assert.throws(
+    () => formatJiraTimestamp(Date.UTC(10_000, 0, 1), 0),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'validation' &&
+      /outside the range Jira accepts/.test(error.message),
+  );
+  assert.throws(
+    () => formatJiraTimestamp(8.64e15, 60),
+    (error: unknown) =>
+      error instanceof JiraError &&
+      error.kind === 'validation' &&
+      /outside the range Jira accepts/.test(error.message),
+  );
+});
+
+test('[CC-196] a due date travels as the system field id duedate, and a raw duedate collides', async () => {
+  const fake = createFakeJiraRequest().on(
+    `PUT /rest/api/3/issue/${KEY}`,
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  await updateIssue({ jira: fake.fn, issue: KEY, dueDate: '2026-10-01' });
+
+  assert.deepEqual(fake.lastRequest()?.body, { fields: { duedate: '2026-10-01' } });
+  await assert.rejects(
+    updateIssue({
+      jira: fake.fn,
+      issue: KEY,
+      dueDate: '2026-10-01',
+      fields: { duedate: '2026-11-01' },
+    }),
+    /set twice/,
+  );
 });

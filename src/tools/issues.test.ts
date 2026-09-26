@@ -533,7 +533,7 @@ test('an exhausted list is not partial and offers no resume offset', async () =>
   assert.equal(result.data?.nextStartAt, undefined);
 });
 
-test('jira_get_changelog keeps Jira order and says so in its description', async () => {
+test('[CC-252] jira_get_changelog keeps Jira order and says so in its description', async () => {
   const fake = createFakeJiraRequest().on(CHANGELOG_ROUTE, jiraOk(CHANGELOG_BODY));
 
   const result = await getChangelogTool.handler({ issue: KEY }, ctxOf(fake));
@@ -544,7 +544,8 @@ test('jira_get_changelog keeps Jira order and says so in its description', async
   );
   // The tail guidance is the only way a model can read "what changed recently".
   assert.match(getChangelogTool.description, /OLDEST FIRST/);
-  assert.match(getChangelogTool.description, /startAt = total - maxResults/);
+  // Clamped: with total < maxResults the bare difference is negative (CC-252).
+  assert.match(getChangelogTool.description, /startAt = max\(0, total - maxResults\)/);
 });
 
 test('jira_get_worklogs returns the logged time as seconds', async () => {
@@ -882,6 +883,27 @@ test('a permission failure keeps its own kind rather than collapsing to not_foun
 // CC-132 — jira_get_bulk_status (WP-121)
 // ---------------------------------------------------------------------------
 
+test('[CC-214] the bulk status description counts successes and warns that COMPLETE can hide failures', () => {
+  // processedAccessibleIssues holds only the successes; a partial failure
+  // still ends COMPLETE, with the failures in failedAccessibleIssues.
+  assert.match(getBulkStatusTool.description, /processedCount \(issues that SUCCEEDED\)/);
+  assert.match(
+    getBulkStatusTool.description,
+    /COMPLETE does not mean every issue succeeded/,
+  );
+  assert.doesNotMatch(getBulkStatusTool.description, /examine a FAILED or DEAD task/);
+});
+
+test('[CC-220] the bulk status description says an unreported count is absent, not zero', () => {
+  // The mapper never invents a 0 (a terse body maps without counts), so the
+  // model must not read a missing failedCount as a clean run.
+  assert.match(
+    getBulkStatusTool.description,
+    /compare processedCount with totalIssueCount/,
+  );
+  assert.match(getBulkStatusTool.description, /absent, never 0/);
+});
+
 test('CC-132: the bulk status read lives in issues and reports the queue as counts', async () => {
   // The poller MUST survive `JIRA_PACKAGES_DENY=issues-delete`: an operator
   // who denies the irreversible surface still needs to watch bulk tasks —
@@ -931,4 +953,14 @@ test('CC-132: the bulk status read lives in issues and reports the queue as coun
   // Progress counters, not Jira-authored prose: NOT branded (CC-35 pattern).
   assert.equal(result._untrusted, undefined);
   assert.equal(result.hints, undefined);
+});
+
+test('[CC-194] jira_get_comments offers only the sort keys Jira documents', () => {
+  for (const orderBy of ['-updated', 'updated']) {
+    assert.equal(getCommentsTool.input.safeParse({ issue: KEY, orderBy }).success, false);
+  }
+  assert.equal(
+    getCommentsTool.input.safeParse({ issue: KEY, orderBy: '-created' }).success,
+    true,
+  );
 });

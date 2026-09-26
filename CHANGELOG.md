@@ -44,14 +44,81 @@ env var names — not internal refactors.
   store is not `0600`. It makes no network call, so it runs under `--offline`,
   and it prints nothing from which a token could be reconstructed.
 
-No tool changed. Same 52 tools, same packages, same inputs and outputs — this
-release adds a way to authenticate, not a way to do anything new.
+- **Mention resolution on the markdown write path.** The seven rich-text
+  write tools — `jira_create_issue`, `jira_update_issue`,
+  `jira_transition_issue`, `jira_add_comment`, `jira_update_comment`,
+  `jira_add_worklog`, `jira_link_issues` — take `resolveMentions?: boolean`,
+  off by default. With `format: "markdown"`, `@[Display Name]` tokens become
+  real mention nodes: each distinct name is looked up through user search, and
+  the call refuses before anything is written when a name matches no active
+  user or more than one (the refusal lists the candidates), or when one call
+  carries more than 20 distinct names. Without the flag the tokens stay literal
+  text and the result carries a `mentions_skipped` hint, and
+  `resolveMentions: true` without `format: "markdown"` is refused at the
+  schema. The bracketed spelling is deliberately not what reads render
+  (`@Name`), so text round-tripped through a read never re-resolves by
+  accident.
 
-**Not yet proven against a real tenant.** The whole OAuth path is verified
-offline only. In particular the loopback redirect URI is an assumption: Atlassian
-documents no normative rule about registering one, so whether
+- **Loopback Streamable HTTP transport.** `JIRA_TRANSPORT=http` serves MCP
+  over HTTP on `127.0.0.1` only, never another interface, on `JIRA_HTTP_PORT`
+  (default `3334`), at the single path `/mcp`. `JIRA_HTTP_TOKEN` is required:
+  settings refuse `http` without it, and every request must carry it as a
+  bearer. One session per `Mcp-Session-Id`, created on `initialize`, closed on
+  `DELETE` or after 30 minutes without a request (a client holding the SSE
+  stream open is connected, not idle); tearing a session down discards its
+  armed plans. `stdio` stays the default and is unchanged.
+
+- **Three more irreversible deletes** in the `issues-delete` package, behind
+  the same ceremony as the existing three — `JIRA_ALLOW_IRREVERSIBLE`, the
+  plan/apply gate, a `before` snapshot that carries the issue counts Jira will
+  rewrite:
+  - `jira_delete_component` — `componentId`, optional `moveIssuesTo` (another
+    component every affected issue is reassigned to; absent simply removes the
+    component from them). Needs Administer Projects.
+  - `jira_delete_version` — `versionId`, optional `moveFixIssuesTo` and
+    `moveAffectedIssuesTo`. Goes through `removeAndSwap`, never the deprecated
+    bare `DELETE`; an absent swap target **clears** that occurrence from every
+    issue rather than failing the call. Needs Administer Projects.
+  - `jira_delete_sprint` — `sprintId`; open issues in the sprint move to the
+    backlog. Needs the board's manage-sprints permission.
+
+- **Bulk delete and bulk edit**, also in `issues-delete`, plus a queue read:
+  - `jira_bulk_delete_issues` — `issues` (1–1000 ids or keys), `notifyUsers?`.
+    Subtasks of selected parents are deleted too and count against the cap.
+  - `jira_bulk_edit_issues` — `issues` (1–1000), `notifyUsers?`, and at least
+    one of four edit families: `labels` + `labelsAction`, `priorityId`,
+    `assigneeAccountId` (`null` clears), `fixVersionIds` + `fixVersionsAction`;
+    actions are `ADD`, `REMOVE`, `REPLACE`, `REMOVE_ALL`.
+  - Both are asynchronous: Jira answers with a `taskId` that means _enqueued_,
+    not done. `jira_get_bulk_status` (`taskId`) reads the queue — status,
+    progress and the counts — and lives in the `issues` package rather than
+    `issues-delete` because it is a safe read: it survives
+    `JIRA_PACKAGES_DENY=issues-delete` and works for any bulk task the account
+    may see, UI-submitted ones included.
+  - The two bulk writes need the site-wide "Make bulk changes" permission on
+    top of the per-project Browse and Delete/Edit issues.
+
+### Changed
+
+- The `issues-delete` package is now titled "Deletes and bulk changes
+  (irreversible)". Its id is unchanged, so `JIRA_PACKAGES_DENY=issues-delete`
+  still removes the whole irreversible surface — now eight tools rather than
+  three.
+
+58 tools in the same 10 packages, up from 52: six added, none removed or
+renamed, and every existing input and output as it was. `resolveMentions` is a
+new optional argument on seven tools and is off unless you set it.
+
+**Not yet proven against a real tenant.** OAuth, the HTTP transport, mention
+resolution, the three deletes and the three bulk tools are verified offline
+only — the fake-Jira fixture and the unit suite, not a live site. For OAuth in
+particular the loopback redirect URI is an assumption: Atlassian documents no
+normative rule about registering one, so whether
 `http://127.0.0.1:8250/callback` is accepted by the developer console is
-untested. Treat `oauth` mode as unreleased until a version note says otherwise.
+untested. The deletes and the bulk writes additionally need permissions
+(Administer Projects, manage sprints, Make bulk changes) that the account
+behind the last live run did not have. Treat all of the above as unreleased
+until a version note says otherwise.
 
 ## [0.9.4] — 2026-08-18
 
@@ -86,7 +153,7 @@ since npm does not let a version be reused.)
   that case as HTTP 400 "The board does not support sprints", which read as
   "your arguments were wrong" — so a caller would keep retrying a call that
   cannot succeed on that board however it is phrased (D89).
-- `jira_list_project_roles` and `jira_get_project_role` no longer tell you to
+- `jira_list_project_roles` (with or without `roleId`) no longer tells you to
   regenerate your API token when the account simply is not a project
   administrator. Jira refuses that read with HTTP 401 "You cannot edit the
   configuration of this project", which read as an authentication failure — so

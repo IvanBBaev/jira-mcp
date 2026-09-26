@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // The tool registry: package gating and the per-call boundary
 // (ARCHITECTURE.md §Package gating and write safety, CONFIGURATION.md §Tool
-// surface gating, OBSERVABILITY.md §Log events, CC-29).
+// surface gating, OBSERVABILITY.md §Log-event table, CC-29).
 //
 // Two jobs, both of them boundaries.
 //
@@ -532,7 +532,8 @@ export function createRegistry(
 
         log.emit('tool_call_end', {
           tool: name,
-          ok: result.ok,
+          // What the caller got: a render fallback turns ok into an error (CC-200).
+          ok: rendered.structuredContent.ok,
           durationMs: deps.clock.now() - startedAt,
           ...(rendered.truncated ? { truncated: true } : {}),
           ...errorFields,

@@ -1,5 +1,5 @@
 // OAuth 2.0 (3LO): PKCE, site discovery, the token store, and the refreshing
-// credential resolver (WP-A; D91, D92, D93, D94, D95, D96).
+// credential resolver (WP-80; D91, D92, D93, D94, D95, D96).
 //
 // Everything here is either pure or filesystem-only. The one thing this module
 // must never do is reach the network itself: `core/http.ts` owns `fetch`
@@ -65,6 +65,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import {
+  DEFAULT_STALE_MS,
   SECRET_FILE_MODE,
   withEnvLock,
   writeFileAtomic,
@@ -72,6 +73,7 @@ import {
 } from './env-lock.js';
 import { createJiraError, isJiraError } from './errors.js';
 import { gatewayHost, isAllowedHost } from './host.js';
+import { isBlockedHost } from './http-util.js';
 import type { AuthRequestFn, BearerCredentials, CredentialResolver } from './http.js';
 import type { Clock, Logger, OAuthSettings, Redactor } from './types.js';
 
@@ -331,7 +333,7 @@ export function buildAuthorizeUrl(input: AuthorizeUrlInput): string {
       kind: 'config',
       reason: 'The OAuth scope list is empty, so the authorization would grant nothing.',
       remediation:
-        'Leave JIRA_OAUTH_SCOPES unset to use the defaults, or set it to a space-separated scope list.',
+        'Leave JIRA_OAUTH_SCOPES unset to use the defaults, or set it to a comma-separated scope list.',
     });
   }
   // Scopes are joined with spaces, so a scope that already contains one would
@@ -341,7 +343,10 @@ export function buildAuthorizeUrl(input: AuthorizeUrlInput): string {
     throw createJiraError({
       kind: 'config',
       reason: `The OAuth scope ${JSON.stringify(safeLabel(split))} contains whitespace, which would split it into scopes nobody asked for.`,
-      remediation: 'Separate scopes with single spaces in JIRA_OAUTH_SCOPES.',
+      // JIRA_OAUTH_SCOPES is a comma list (settings.ts `csv`), so a space is
+      // the classic slip; the remediation must not tell the user to add more
+      // spaces (CC-169).
+      remediation: 'Separate scopes with commas in JIRA_OAUTH_SCOPES, not spaces.',
     });
   }
 
@@ -786,6 +791,17 @@ function parseStoredTokens(value: unknown, profile: string, path: string): Store
 }
 
 /**
+ * How long a token-store writer waits for the lock (CC-167). Deliberately LONGER
+ * than {@link DEFAULT_STALE_MS}. A live holder may keep the lock for a whole
+ * refresh POST ({@link LOCKED_REFRESH_TIMEOUT_MS}), and the waiter must outlast
+ * it. The waiter must also live past the staleness horizon to break a lock that
+ * a killed process left behind. With the generic 10s budget, a second process
+ * whose call arrived during a slow refresh failed with `timeout` just as the
+ * first was about to write valid tokens.
+ */
+export const TOKEN_STORE_ACQUIRE_TIMEOUT_MS = DEFAULT_STALE_MS + 5_000;
+
+/**
  * The 0600 store `login` writes and every refresh rewrites (D95).
  *
  * Tokens live here rather than in the env file because rotation writes on every
@@ -795,7 +811,11 @@ function parseStoredTokens(value: unknown, profile: string, path: string): Store
  */
 export function createTokenStore(deps: TokenStoreDeps): TokenStore {
   const { path, clock } = deps;
-  const lockOptions: EnvLockOptions = { ...deps.lock, clock };
+  const lockOptions: EnvLockOptions = {
+    acquireTimeoutMs: TOKEN_STORE_ACQUIRE_TIMEOUT_MS,
+    ...deps.lock,
+    clock,
+  };
 
   const readNow = (): TokenStoreFile => {
     let raw: string;
@@ -832,7 +852,10 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     const tokens = parsed['tokens'];
     if (!isRecord(tokens)) storeError(path, 'has no `tokens` object');
 
-    const entries: Record<string, StoredTokens> = {};
+    // Null prototype: a profile named `constructor` or `__proto__` must read
+    // as absent or as its own record, never as an Object.prototype member
+    // (CC-170).
+    const entries = Object.create(null) as Record<string, StoredTokens>;
     for (const [key, value] of Object.entries(tokens)) {
       entries[key] = parseStoredTokens(value, key, path);
     }
@@ -847,7 +870,11 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
 
   const locked: LockedTokenStore = {
     read: readNow,
-    get: (profile) => readNow().tokens[profileKey(profile)],
+    get: (profile) => {
+      const { tokens } = readNow();
+      const key = profileKey(profile);
+      return Object.hasOwn(tokens, key) ? tokens[key] : undefined;
+    },
     put: (profile, tokens) => {
       const file = readNow();
       write({
@@ -857,7 +884,13 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     },
     remove: (profile) => {
       const file = readNow();
-      const key = profileKey(profile);
+      // An exact stored key first: `read` hands back keys as they are on disk,
+      // and a hand-edited `"Work"` normalizes to a key that is not there, so
+      // `logout --all` could never delete it (CC-211).
+      const key =
+        profile !== undefined && Object.hasOwn(file.tokens, profile)
+          ? profile
+          : profileKey(profile);
       if (!Object.hasOwn(file.tokens, key)) return false;
       const rest = { ...file.tokens };
       delete rest[key];
@@ -945,8 +978,13 @@ function tokenEndpointError(
     return createJiraError({
       kind: 'rate_limited',
       reason,
+      // A throttled refresh leaves the grant intact, so a later tool call is
+      // the whole fix; a throttled login exchange has ended the flow, and only
+      // a new login finishes it (CC-247).
       remediation:
-        'Wait and retry the tool call; the token request is never replayed automatically, because a replayed rotation is a logout.',
+        what === 'refresh'
+          ? 'Wait and retry the tool call; the token request is never replayed automatically, because a replayed rotation is a logout. The stored authorization is still valid — no new login is needed.'
+          : 'Wait a minute, then run `jira-mcp-ai login` again; the token request is never replayed automatically.',
       httpStatus: status,
       redactor,
       cause,
@@ -1022,6 +1060,11 @@ function rethrowTokenFailure(error: unknown, what: string, redactor?: Redactor):
       TERMINAL_TOKEN_ERRORS.includes(code)
     ) {
       throw tokenEndpointError(status, { error: code }, what, redactor, error);
+    }
+    // The transport's 429 cannot say whether a refresh or a login was
+    // throttled, and the right advice differs (CC-247).
+    if (status === 429) {
+      throw tokenEndpointError(status, {}, what, redactor, error);
     }
   }
   throw error;
@@ -1122,6 +1165,20 @@ export async function exchangeAuthorizationCode(
 // 9. The refreshing credential resolver
 // ---------------------------------------------------------------------------
 
+/**
+ * The timeout of the refresh POST, which runs while the token-store lock is held.
+ *
+ * A waiting process breaks a lock older than its own `staleMs` (default
+ * {@link DEFAULT_STALE_MS}), and the lock has no heartbeat. With the ordinary
+ * request timeout (`JIRA_REQUEST_TIMEOUT_MS`, up to ten minutes) a slow token
+ * endpoint would keep the lock past that horizon: a second process breaks it,
+ * refreshes with the same refresh token, and one of the two rotations is lost —
+ * a logout. So the lock-held POST is bounded by the lock's horizon, not by the
+ * configured request timeout, with room left for the read and the write around
+ * it. Deliberately a constant: the horizon it must fit inside is one too.
+ */
+export const LOCKED_REFRESH_TIMEOUT_MS = DEFAULT_STALE_MS - 10_000;
+
 export interface OAuthResolverDeps {
   readonly settings: OAuthSettings;
   readonly store: TokenStore;
@@ -1130,6 +1187,12 @@ export interface OAuthResolverDeps {
   readonly logger: Logger;
   readonly redactor?: Redactor;
   readonly allowedHosts?: readonly string[];
+  /**
+   * The profile a call that names none resolves to (`JIRA_ACTIVE_PROFILE`).
+   * `login`, `logout` and `doctor` all key the store by it; the resolver must
+   * too, or a grant stored under it is invisible to every tool call (CC-206).
+   */
+  readonly activeProfile?: string;
 }
 
 function storedIsFresh(stored: StoredTokens, now: number): boolean {
@@ -1182,6 +1245,8 @@ export function createOAuthCredentialResolver(
     store.update(async (view) => {
       const current = view.get(profile);
       if (current === undefined) throw noTokensError(store.path, key);
+      // Another process may have rotated it since the unlocked read (CC-171).
+      redactor?.addSecret(current.refreshToken);
 
       // Rule 2: another process may have rotated while we queued for the lock.
       if (storedIsFresh(current, clock.now())) return current;
@@ -1200,6 +1265,7 @@ export function createOAuthCredentialResolver(
         response = await authRequest({
           method: 'POST',
           url: tokenEndpoint(settings.authOrigin),
+          timeoutMs: LOCKED_REFRESH_TIMEOUT_MS,
           json: {
             grant_type: 'refresh_token',
             client_id: clientId,
@@ -1271,10 +1337,15 @@ export function createOAuthCredentialResolver(
     return started;
   };
 
-  return async (profile?: string): Promise<BearerCredentials> => {
+  return async (requested?: string): Promise<BearerCredentials> => {
+    const profile = requested ?? deps.activeProfile;
     const key = profileKey(profile);
     const stored = await store.get(profile);
     if (stored === undefined) throw noTokensError(store.path, key);
+    // The refresh token came off disk, not out of a token response, so nothing
+    // else registers it. A transport error or token-endpoint echo that quotes
+    // the refresh POST body must still come out masked (CC-171).
+    redactor?.addSecret(stored.refreshToken);
 
     const fresh = storedIsFresh(stored, clock.now())
       ? stored
@@ -1290,16 +1361,40 @@ export function createOAuthCredentialResolver(
     }
     redactor?.addSecret(accessToken);
 
-    // The pin wins over the stored site: one grant can cover several sites, and
-    // JIRA_OAUTH_CLOUD_ID says which of them this server addresses. The cloudId
-    // is validated inside `gatewayHost` before any URL exists (CC-101).
-    const cloudId = nonEmptyString(settings.cloudId) ? settings.cloudId : fresh.cloudId;
-    const host = gatewayHost(settings.gatewayOrigin, cloudId);
+    // Every stored grant carries the cloudId `login` selected for it, the pin
+    // included when one was set. At call time the pin is a CHECK, not an
+    // override (CC-165). The pin is one variable for every profile, so letting
+    // it win would sign profile B's calls with B's token and send them to
+    // profile A's site: silently cross-tenant if B's grant happens to cover it.
+    // The cloudId is validated inside `gatewayHost` before any URL exists
+    // (CC-101).
+    const pin = settings.cloudId?.trim();
+    if (nonEmptyString(pin) && pin !== fresh.cloudId) {
+      throw createJiraError({
+        kind: 'config',
+        reason: `JIRA_OAUTH_CLOUD_ID pins cloudId ${JSON.stringify(safeLabel(pin, 64))}, but profile ${JSON.stringify(safeLabel(key, 40))} is authorized for cloudId ${JSON.stringify(safeLabel(fresh.cloudId, 64))}. Nothing was sent.`,
+        remediation: `Run \`jira-mcp-ai login${key === DEFAULT_PROFILE_KEY ? '' : ` --profile ${safeLabel(key, 40)}`}\` against the pinned site, or unset JIRA_OAUTH_CLOUD_ID to use the site the profile was authorized for.`,
+      });
+    }
+    const host = gatewayHost(settings.gatewayOrigin, fresh.cloudId);
 
     // The gateway is not blanket-allowed: `loadSettings` appends it in oauth
     // mode only, so basic-mode egress is unchanged (D97). Catching it here names
     // the cause; letting the request layer catch it names only the symptom.
     const hostname = new URL(host.origin).hostname;
+    // The request layer's SSRF blocklist runs before its allowlist, and the
+    // effective allowlist already names the gateway in oauth mode — so a
+    // loopback or private gateway passes the check below and dies at the first
+    // request with advice about JIRA_SITE. Asked first, the answer names the
+    // variable that is actually wrong; no allowlist entry could fix it (CC-230).
+    if (isBlockedHost(hostname)) {
+      throw createJiraError({
+        kind: 'config',
+        reason: `The OAuth gateway host ${safeLabel(hostname)} is a loopback, private, link-local or metadata address, which is never contacted — not even when it is in the allowlist. Nothing was sent.`,
+        remediation:
+          'Unset JIRA_OAUTH_GATEWAY_ORIGIN to use the default gateway, or point it at a public https host.',
+      });
+    }
     if (!isAllowedHost(hostname, deps.allowedHosts)) {
       throw createJiraError({
         kind: 'config',

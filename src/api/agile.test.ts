@@ -35,6 +35,7 @@ import {
   jiraErr,
   jiraOk,
 } from '../core/fakes/index.js';
+import { createJiraError } from '../core/errors.js';
 import { JiraError, type JiraRequestSpec } from '../core/types.js';
 import {
   DEFAULT_AGILE_PAGE_SIZE,
@@ -219,6 +220,22 @@ test('listBoards stops at the page cap and reports where to resume', async () =>
   assert.equal(jira.calls.length, 2);
 });
 
+test('listBoards resumes from the offset the caller names', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk(valuesPage(4, 2, true, [boardRow(5, 'GHI'), boardRow(6, 'GHI')])),
+  );
+
+  const result = await listBoards({ jira: jira.fn, pageSize: 2, startAt: 4 });
+
+  // The `nextStartAt` of a capped run goes straight back in as `startAt`.
+  assert.equal(jira.calls[0]?.query?.startAt, 4);
+  assert.equal(result.pages, 1);
+  assert.deepEqual(
+    result.items.map((board) => board.id),
+    [5, 6],
+  );
+});
+
 test('listBoards sends the project and type filters, and only those', async () => {
   const jira = createFakeJiraRequest().on(
     'GET /rest/agile/1.0/board',
@@ -330,6 +347,34 @@ test('listSprints joins several states into the CSV Jira expects', async () => {
   assert.equal(jira.lastRequest()?.query?.state, 'active,future');
 });
 
+test('listSprints sends no state filter for an empty state list', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board/7/sprint',
+    jiraOk(valuesPage(0, 50, true, [sprintRow(21, 'active')])),
+  );
+
+  await listSprints({ jira: jira.fn, boardId: 7, state: [] });
+
+  // An empty list means "no filter", never `state=` — the empty parameter is a
+  // different request, and Jira answers it with a 400.
+  assert.equal(Object.hasOwn(jira.lastRequest()?.query ?? {}, 'state'), false);
+});
+
+test('listBoards reads a bare envelope and a board without type or location', async () => {
+  // synthetic — the smallest page the loop must still stop on: no `startAt`,
+  // no `maxResults`, no `total`, a row with only the required keys.
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board',
+    jiraOk({ isLast: true, values: [{ id: 9, name: 'Bare board' }] }),
+  );
+
+  const result = await listBoards({ jira: jira.fn });
+
+  assert.equal(result.pages, 1);
+  assert.equal(result.stopReason, 'exhausted');
+  assert.deepEqual(result.items, [{ id: 9, name: 'Bare board' }]);
+});
+
 test('listSprints rejects a board id that is not a Jira id, before any request', async () => {
   const jira = createFakeJiraRequest();
 
@@ -414,6 +459,22 @@ test("listSprintIssues sends the caller's own fields and JQL unchanged", async (
     'assignee = 5b10a2844c20165700ede21g',
     'the JQL travels trimmed but otherwise untouched',
   );
+});
+
+test('listSprintIssues keeps a row whose fields are missing, without inventing them', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/sprint/21/issue',
+    // synthetic — `fields=` was honoured with nothing to return
+    jiraOk(issuesPage(0, 50, 2, [{ key: 'ABC-2', id: '10002' }, { key: 'ABC-3' }])),
+  );
+
+  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21 });
+
+  // Only the key is required; `id` and `fields` are carried when present and
+  // left out — never `undefined`, never `{}` — when they are not.
+  assert.deepEqual(result.items, [{ key: 'ABC-2', id: '10002' }, { key: 'ABC-3' }]);
+  assert.equal(Object.hasOwn(result.items[0] ?? {}, 'fields'), false);
+  assert.equal(Object.hasOwn(result.items[1] ?? {}, 'id'), false);
 });
 
 test('listSprintIssues stops when the offset reaches the reported total', async () => {
@@ -919,6 +980,15 @@ test('an upstream failure this ring has no opinion about propagates untouched', 
 
   // Same instance, not a re-wrap: the retry policy lives in `core/http.ts`.
   assert.equal(error, upstream);
+
+  // And something that is not a JiraError at all (a fence, a programming
+  // error) is not even looked at.
+  const foreign = new TypeError('fetch is not a function');
+  const broken = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board',
+    jiraErr(foreign),
+  );
+  assert.equal(await caught(() => listBoards({ jira: broken.fn })), foreign);
 });
 
 test('CC-34: a 404 on the board list is unsupported, not a missing board', async () => {
@@ -965,6 +1035,118 @@ test('CC-34: a 403 on an id-bearing route keeps its kind and names the other cau
   assert.equal(error.kind, 'permission');
   assert.match(error.remediation ?? '', /Browse Projects/);
   assert.match(error.remediation ?? '', /Agile API/);
+});
+
+test('CC-34: the extended advice replaces the old tail instead of doubling it', async () => {
+  // The client's own errors are `reason + remediation` (createJiraError's
+  // format), so the rewrite must slice the old advice off before appending the
+  // extended one — or the message would carry the first sentence twice.
+  const upstream = createJiraError({
+    kind: 'permission',
+    reason: 'Jira refused GET /rest/agile/1.0/board/7/sprint (403).',
+    httpStatus: 403,
+    remediation: 'Ask a Jira admin for Browse Projects on this board.',
+  });
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board/7/sprint',
+    jiraErr(upstream),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprints({ jira: jira.fn, boardId: 7 })),
+  );
+
+  assert.equal(error.kind, 'permission');
+  assert.equal(
+    error.remediation,
+    'Ask a Jira admin for Browse Projects on this board. ' +
+      'If other agile calls fail the same way, the Agile API itself may be ' +
+      'unavailable on this site (Jira Software licence or board permission) rather ' +
+      'than the board/sprint being missing.',
+  );
+  assert.equal(
+    error.message,
+    `Jira refused GET /rest/agile/1.0/board/7/sprint (403). ${error.remediation ?? ''}`,
+  );
+  assert.equal(
+    error.message.split('Ask a Jira admin').length,
+    2,
+    'the old advice appears once',
+  );
+});
+
+test('CC-34: a root-probe refusal keeps what Jira said and the body snippet', async () => {
+  const upstream = new JiraError({
+    kind: 'permission',
+    message: 'Jira returned 403 for GET /rest/agile/1.0/board.',
+    httpStatus: 403,
+    jiraMessages: ['The user does not have the required licence.'],
+    detail: '{"errorMessages":["The user does not have the required licence."]}',
+    remediation: 'Ask a Jira admin for access.',
+  });
+  const jira = createFakeJiraRequest().on('GET /rest/agile/1.0/board', jiraErr(upstream));
+
+  const error = asJiraError(await caught(() => listBoards({ jira: jira.fn })));
+
+  assert.equal(error.kind, 'unsupported');
+  assert.equal(error.httpStatus, 403);
+  assert.match(error.message, /answered 403 for the board list/);
+  // CC-21's shape survives the rewrite: Jira's own words and the raw body.
+  assert.deepEqual(error.jiraMessages, upstream.jiraMessages);
+  assert.equal(error.detail, upstream.detail);
+  assert.equal(error.cause, upstream);
+});
+
+test('CC-34: a scoped refusal with no advice of its own gets the Agile explanation alone', async () => {
+  const upstream = new JiraError({
+    kind: 'not_found',
+    message: 'Jira returned 404 for GET /rest/agile/1.0/sprint/21.',
+    httpStatus: 404,
+    jiraMessages: ['Sprint does not exist or you do not have permission to view it.'],
+    detail:
+      '{"errorMessages":["Sprint does not exist or you do not have permission to view it."]}',
+  });
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/sprint/21',
+    jiraErr(upstream),
+  );
+
+  const error = asJiraError(
+    await caught(() => getSprint({ jira: jira.fn, sprintId: 21 })),
+  );
+
+  assert.equal(error.kind, 'not_found');
+  assert.equal(error.httpStatus, 404);
+  // Nothing to slice off the tail, so the original message is the reason and
+  // the Agile explanation is the whole remediation — no leading space, no
+  // doubled advice.
+  assert.match(error.remediation ?? '', /^If other agile calls fail the same way/);
+  assert.equal(error.message, `${upstream.message} ${error.remediation ?? ''}`);
+  assert.deepEqual(error.jiraMessages, upstream.jiraMessages);
+  assert.equal(error.detail, upstream.detail);
+  assert.equal(error.cause, upstream);
+});
+
+test('CC-95: the sprint-less rewrite copes with a refusal that carries no body snippet', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board/7/sprint',
+    jiraErr(
+      new JiraError({
+        kind: 'validation',
+        message: 'Jira rejected GET /rest/agile/1.0/board/7/sprint with HTTP 400.',
+        httpStatus: 400,
+        jiraMessages: ['The board does not support sprints'],
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprints({ jira: jira.fn, boardId: 7 })),
+  );
+
+  assert.equal(error.kind, 'unsupported');
+  assert.deepEqual(error.jiraMessages, ['The board does not support sprints']);
+  assert.equal(Object.hasOwn(error, 'detail') && error.detail !== undefined, false);
 });
 
 test('CC-95: a board that cannot hold sprints is unsupported, not a bad argument', async () => {

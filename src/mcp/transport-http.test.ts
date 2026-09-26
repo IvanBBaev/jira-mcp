@@ -33,6 +33,8 @@ import { ok } from './result.js';
 import { buildServer } from './server.js';
 import {
   HTTP_IDLE_SWEEP_INTERVAL_MS,
+  HTTP_MAX_BODY_BYTES,
+  HTTP_MAX_SESSIONS,
   HTTP_SESSION_IDLE_TIMEOUT_MS,
   connectHttpTransport,
   hostAllowed,
@@ -484,6 +486,61 @@ test('CC-114: a request without a valid bearer token is refused with 401', async
 
     // The correct token opens a session — the guard refuses values, not POSTs.
     await openSession(harness);
+
+    // The scheme is case-insensitive (RFC 7235); the token is not.
+    const lower = await send(
+      'POST',
+      url,
+      initializeBody(),
+      baseHeaders({ authorization: `bearer ${TOKEN}` }),
+    );
+    assert.equal(lower.status, 200);
+    const upperToken = await send(
+      'POST',
+      url,
+      initializeBody(),
+      baseHeaders({ authorization: `Bearer ${TOKEN.toUpperCase()}` }),
+    );
+    assert.equal(upperToken.status, 401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CC-139 — POST body cap
+// ---------------------------------------------------------------------------
+
+test('CC-139: a POST body over the cap is refused with 413, declared or chunked', async () => {
+  const harness = await makeHarness();
+  await withHandle(harness, async () => {
+    const url = mcpUrl(harness.port);
+
+    // Exactly at the cap still opens a session: JSON allows trailing space.
+    const init = initializeBody();
+    const atCap = init + ' '.repeat(HTTP_MAX_BODY_BYTES - Buffer.byteLength(init));
+    const ok = await send('POST', url, atCap, rpcHeaders());
+    assert.equal(ok.status, 200);
+
+    const over = atCap + ' ';
+    // `send` sets no content-length, so Node streams the body chunked.
+    const chunked = await send('POST', url, over, rpcHeaders());
+    assert.equal(chunked.status, 413);
+    const declared = await send(
+      'POST',
+      url,
+      over,
+      rpcHeaders({ 'content-length': String(Buffer.byteLength(over)) }),
+    );
+    assert.equal(declared.status, 413);
+    for (const refusal of [chunked, declared]) {
+      const parsed = JSON.parse(refusal.body) as { error?: { code?: number } };
+      assert.equal(parsed.error?.code, -32000);
+    }
+
+    // A body that is not JSON gets the SDK's own parse-error shape.
+    const junk = await send('POST', url, '{not json', rpcHeaders());
+    assert.equal(junk.status, 400);
+    const parsed = JSON.parse(junk.body) as { error?: { code?: number } };
+    assert.equal(parsed.error?.code, -32700);
   });
 });
 
@@ -537,6 +594,13 @@ test('CC-116: a non-loopback Host or Origin is refused with 403', async () => {
       rpcHeaders({ origin: 'https://evil.example' }),
     );
     assert.equal(evilOrigin.status, 403);
+
+    // An Origin that is not a URL at all, and one on a non-web scheme, are
+    // refused the same way — the parse failure is a refusal, not a crash.
+    for (const origin of ['not a url', 'file:///tmp/page.html', 'ftp://127.0.0.1']) {
+      const odd = await send('POST', url, initializeBody(), rpcHeaders({ origin }));
+      assert.equal(odd.status, 403, origin);
+    }
 
     // No Origin at all passes — curl and MCP clients send none.
     // (`openSession` and every other request in this suite prove it.)
@@ -995,4 +1059,215 @@ test('CC-117: a session holding the standalone SSE stream is not idle', async ()
 
     stream.destroy();
   });
+});
+
+test('CC-164: a rejected close of a speculative transport still closes its Server', async () => {
+  const harness = await makeHarness();
+  let serverCloses = 0;
+  const deps: HttpTransportDeps = {
+    ...harness.deps,
+    createServer: (): ConnectableServer => {
+      const product = harness.deps.createServer();
+      return {
+        connect: (transport) => {
+          const close = transport.close.bind(transport);
+          transport.close = async (): Promise<void> => {
+            await close();
+            throw new Error('transport close failed, on purpose');
+          };
+          return product.connect(transport);
+        },
+        close: async (): Promise<void> => {
+          serverCloses += 1;
+          await product.close();
+        },
+      };
+    },
+  };
+  const handle = await connectHttpTransport(deps);
+  try {
+    // A sessionless non-initialize POST: the SDK answers 400 and the
+    // speculative pair is closed in the `finally`.
+    const res = await send(
+      'POST',
+      mcpUrl(harness.port),
+      rpc('tools/list', {}),
+      rpcHeaders(),
+    );
+    assert.equal(res.status, 400, res.body);
+    await until(() => serverCloses === 1, 'the speculative Server to be closed');
+  } finally {
+    await handle.close('sigterm');
+  }
+});
+
+test('CC-164: a request that lands while close() tears sessions down gets 503, not a session', async () => {
+  const harness = await makeHarness();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let closing = false;
+  const deps: HttpTransportDeps = {
+    ...harness.deps,
+    createServer: (): ConnectableServer => {
+      const product = harness.deps.createServer();
+      return {
+        connect: (transport) => product.connect(transport),
+        close: async (): Promise<void> => {
+          await product.close();
+          closing = true;
+          await gate;
+        },
+      };
+    },
+  };
+  const handle = await connectHttpTransport(deps);
+  // One session, so close() has a teardown to stall in.
+  await openSession(harness);
+
+  // A request whose headers reach the server before close() but whose body
+  // arrives during the teardown loop — an active connection survives
+  // `httpServer.close()` until `closeAllConnections`.
+  const body = initializeBody();
+  const socket = connect({ host: LOOPBACK_HOST, port: harness.port });
+  const chunks: Buffer[] = [];
+  socket.on('data', (chunk: Buffer) => chunks.push(chunk));
+  socket.on('error', () => undefined);
+  const head = [
+    'POST /mcp HTTP/1.1',
+    `host: ${LOOPBACK_HOST}:${String(harness.port)}`,
+    `authorization: Bearer ${TOKEN}`,
+    'accept: application/json, text/event-stream',
+    'content-type: application/json',
+    `content-length: ${String(Buffer.byteLength(body))}`,
+    '',
+    '',
+  ].join('\r\n');
+  socket.write(head);
+  await drainEventLoop();
+
+  const closed = handle.close('sigterm');
+  await until(() => closing, 'the teardown to stall on the gate');
+  socket.write(body);
+  await until(
+    () => Buffer.concat(chunks).toString('utf8').includes('\r\n\r\n'),
+    'a response',
+  );
+  const response = Buffer.concat(chunks).toString('utf8');
+  assert.match(response, /^HTTP\/1\.1 503 /);
+
+  release();
+  await closed;
+  socket.destroy();
+});
+
+test('[CC-209] an initialize past the session cap is refused until one closes', async () => {
+  const harness = await makeHarness();
+  await withHandle(harness, async () => {
+    const sids: string[] = [];
+    for (let i = 0; i < HTTP_MAX_SESSIONS; i += 1) sids.push(await openSession(harness));
+
+    const refused = await send(
+      'POST',
+      mcpUrl(harness.port),
+      initializeBody(),
+      rpcHeaders(),
+    );
+    assert.equal(refused.status, 503, refused.body);
+    assert.match(refused.body, /sessions are open/);
+
+    const closed = await send(
+      'DELETE',
+      mcpUrl(harness.port),
+      undefined,
+      rpcHeaders({ 'mcp-session-id': sids[0] as string }),
+    );
+    assert.equal(closed.status, 200, closed.body);
+    await openSession(harness);
+  });
+});
+
+test('[CC-234] a parallel burst of initializes cannot pass the session cap', async () => {
+  const harness = await makeHarness();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let connects = 0;
+  const deps: HttpTransportDeps = {
+    ...harness.deps,
+    createServer: (): ConnectableServer => {
+      const product = harness.deps.createServer();
+      return {
+        connect: async (transport) => {
+          connects += 1;
+          await gate;
+          await product.connect(transport);
+        },
+        close: () => product.close(),
+      };
+    },
+  };
+  const handle = await connectHttpTransport(deps);
+  try {
+    const extra = 3;
+    const total = HTTP_MAX_SESSIONS + extra;
+    let settled = 0;
+    const pending = Array.from({ length: total }, () =>
+      send('POST', mcpUrl(harness.port), initializeBody(), rpcHeaders()).then((res) => {
+        settled += 1;
+        return res;
+      }),
+    );
+    // Every request has either been refused or is parked in `connect`, past
+    // the cap check, before any of them registers.
+    await until(() => connects + settled === total, 'every initialize to meet the cap');
+    release();
+    const results = await Promise.all(pending);
+    assert.equal(connects, HTTP_MAX_SESSIONS);
+    assert.equal(results.filter((res) => res.status === 503).length, extra);
+    assert.equal(results.filter((res) => res.status === 200).length, HTTP_MAX_SESSIONS);
+  } finally {
+    release();
+    await handle.close('sigterm');
+  }
+});
+
+test('[CC-235] a session that registers after close() began is torn down', async () => {
+  const harness = await makeHarness();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let connected = false;
+  let serverCloses = 0;
+  const deps: HttpTransportDeps = {
+    ...harness.deps,
+    createServer: (): ConnectableServer => {
+      const product = harness.deps.createServer();
+      return {
+        connect: async (transport) => {
+          connected = true;
+          await gate;
+          await product.connect(transport);
+        },
+        close: async (): Promise<void> => {
+          serverCloses += 1;
+          await product.close();
+        },
+      };
+    },
+  };
+  const handle = await connectHttpTransport(deps);
+  // Past the `stopping` check, parked in `connect` while close() runs.
+  const late = send('POST', mcpUrl(harness.port), initializeBody(), rpcHeaders()).catch(
+    () => undefined,
+  );
+  await until(() => connected, 'the initialize to reach connect');
+  await handle.close('sigterm');
+  assert.equal(serverCloses, 0);
+  release();
+  await late;
+  await until(() => serverCloses === 1, 'the late session to be torn down');
 });

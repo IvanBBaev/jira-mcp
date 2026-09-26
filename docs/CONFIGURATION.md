@@ -29,23 +29,24 @@ Files are loaded with Node's `process.loadEnvFile()` — no dotenv dependency
 (D10 in DECISIONS.md: dotenv ≥ 17 prints a stdout banner, which would corrupt
 the MCP protocol).
 
-Files written by the CLI (`doctor --save`, future `login`) are created atomically
-with mode `0600`, guarded by a cross-process env lock.
+Files written by the CLI (`doctor --save`, and the token store `login` writes)
+are created atomically with mode `0600`, guarded by a cross-process env lock.
 
 ## Core credentials (v1)
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JIRA_SITE` | yes | — | `"mycompany"`, `"mycompany.atlassian.net"`, or full URL. Which host forms are accepted without an allowlist is a wire rule — JIRA-API.md §Hosts; other hosts need `JIRA_ALLOWED_HOSTS`. |
-| `JIRA_EMAIL` | yes | — | Atlassian account email for Basic auth. Not read under `JIRA_AUTH_MODE=oauth`. |
-| `JIRA_API_TOKEN` | yes | — | API token (secret; registered with the redactor). Not read under `JIRA_AUTH_MODE=oauth`. |
+| `JIRA_EMAIL` | yes | — | Atlassian account email for Basic auth. Not used under `JIRA_AUTH_MODE=oauth`. |
+| `JIRA_API_TOKEN` | yes | — | API token (secret; registered with the redactor). Not used under `JIRA_AUTH_MODE=oauth` — still redacted if it is left set. |
 | `JIRA_TOKEN_EXPIRES` | no | — | ISO date of the token's expiry (Cloud tokens expire ≤ 1 year). When set, doctor and the startup report warn ≤ 30 days out (`token_expiry_warning`, OBSERVABILITY.md). Ignored under `JIRA_AUTH_MODE=oauth`, which says so rather than pretending to honour it. |
-| `JIRA_ALLOWED_HOSTS` | no | — | Comma list of extra allowed hosts (Server/DC or vanity domains). Exact host or anchored regex; suffix matching banned. |
+| `JIRA_ALLOWED_HOSTS` | no | — | Comma list of extra allowed hosts (Server/DC or vanity domains). Exact host or anchored regex (`/^jira\.example\.com$/`); suffix matching banned. A suffix form (`*.example.com`, `.example.com`) or a regex without both `^` and `$` is a startup error naming the entry (CC-231). The SSRF blocklist (loopback, private, link-local, metadata) wins over this list: an entry cannot make such a host reachable, and a `JIRA_SITE` naming one is a startup error (`host_blocked`, CC-233). |
 
 The Required column describes the **default** mode, `basic`, which is what an
 installation that sets nothing from the next section runs: all three are needed.
-Under `JIRA_AUTH_MODE=oauth` the email and token are not read at all, and the
-requiredness moves to the two client variables below.
+Under `JIRA_AUTH_MODE=oauth` the email and token are not used (a token left
+in the environment is still redacted, never sent), and the requiredness moves to
+the two client variables below.
 
 ## Authentication mode and OAuth 2.0 (3LO)
 
@@ -67,17 +68,17 @@ Jira site a call is about, whether or not the credentials came from a token.
 | `JIRA_OAUTH_CLIENT_ID` | no | — | **Required in `oauth` mode**, ignored in `basic` — which is why the column says no. Client id of the OAuth 2.0 (3LO) app consent is asked for; create the app in the Atlassian developer console (AUTH.md §"Registering the app" covers what that costs you). |
 | `JIRA_OAUTH_CLIENT_SECRET` | no | — | **Required in `oauth` mode** too (secret; registered with the redactor). Required despite PKCE, which is why it is not optional: Atlassian authenticates the client on the token endpoint, on the first exchange and on every refresh. |
 | `JIRA_OAUTH_SCOPES` | no | `read:jira-work,write:jira-work,read:jira-user,manage:jira-project,read:board-scope:jira-software,write:board-scope:jira-software,read:sprint:jira-software,write:sprint:jira-software,read:epic:jira-software,write:epic:jira-software,read:issue:jira-software,write:issue:jira-software,offline_access` | Comma list of scopes `login` asks consent for. The default covers the v1 tool surface and deliberately leaves out global admin and sprint deletes (AUTH.md §Scopes). **Changing this list after a successful login forces a re-consent** — Atlassian never widens a stored grant silently, so run `login` again after editing it. |
-| `JIRA_OAUTH_CLOUD_ID` | no | — | Pins the flow to one Jira Cloud site. A **pin, not a cache**: discovery stays the default path, so unset means every run resolves the site from the accessible-resources endpoint. Set it only when the authorized account can reach several sites and you want one of them — `login` prints the id. Refused at startup if it is not path-safe (it goes into every request path). |
+| `JIRA_OAUTH_CLOUD_ID` | no | — | Pins the flow to one Jira Cloud site. A **pin, not a cache**: discovery stays the default path, so unset means every run resolves the site from the accessible-resources endpoint. Set it only when the authorized account can reach several sites and you want one of them — `login` prints the id. At call time it is checked against the cloudId the profile's stored tokens were issued for, and a mismatch is a `config` error (re-run `login`, or unset it; CC-165). Refused at startup if it is not path-safe (it goes into every request path). |
 | `JIRA_OAUTH_TOKEN_FILE` | no | `<config dir>/oauth.json` | Where `login` writes the token store, mode `0600`. `<config dir>` is the directory the env file is looked for in (`$XDG_CONFIG_HOME/jira-mcp-ai`, default `~/.config/jira-mcp-ai`), so tokens sit beside the env file rather than in the project. A leading `~` and relative paths are expanded exactly as for `JIRA_ENV_FILE`. |
 | `JIRA_OAUTH_REDIRECT_PORT` | no | `8250` | Loopback port `login` binds for the redirect callback. It must match the callback URL registered on the app character for character — AUTH.md §"The redirect URI is the unverified part of this feature" spells the URL. Unprivileged ports only (1024–65535). |
 | `JIRA_OAUTH_AUTH_ORIGIN` | no | `https://auth.atlassian.com` | Origin of the authorization server the browser is sent to and tokens are exchanged at. Must be an **https origin with no path, query, fragment or credentials** — this is where the client secret is sent, so anything beyond an origin is a typo or somebody's redirect target. It exists so the offline test harness can point the flow at a local fake; there is no reason to set it against a real tenant. |
-| `JIRA_OAUTH_GATEWAY_ORIGIN` | no | `https://api.atlassian.com` | Origin of the OAuth API gateway `oauth`-mode requests are routed through instead of the site host. Same origin rules and same test-harness reason as `JIRA_OAUTH_AUTH_ORIGIN`. In `oauth` mode the hostnames of both origins are appended to the effective egress allowlist, so a redirected flow still cannot reach a host you did not configure; in `basic` mode the allowlist is byte-for-byte what `JIRA_ALLOWED_HOSTS` says. |
+| `JIRA_OAUTH_GATEWAY_ORIGIN` | no | `https://api.atlassian.com` | Origin of the OAuth API gateway `oauth`-mode requests are routed through instead of the site host. Same origin rules and same test-harness reason as `JIRA_OAUTH_AUTH_ORIGIN`. Every Jira call goes to this host, so it must not be loopback, private, link-local or a metadata address — the SSRF blocklist refuses those even when allowlisted, and the resolver says so before anything is sent (CC-230). In `oauth` mode the hostnames of both origins are appended to the effective egress allowlist, so a redirected flow still cannot reach a host you did not configure; in `basic` mode the allowlist is byte-for-byte what `JIRA_ALLOWED_HOSTS` says. |
 
 ## Profiles
 
 | Variable | Default | Description |
 |---|---|---|
-| `JIRA_PROFILE_<NAME>_SITE` / `_EMAIL` / `_API_TOKEN` | — | Named profile credentials. |
+| `JIRA_PROFILE_<NAME>_SITE` / `_EMAIL` / `_API_TOKEN` | — | Named profile credentials. `<NAME>` is case-insensitive; two spellings of one variable are refused. |
 | `JIRA_ACTIVE_PROFILE` | — | Profile used when a tool call doesn't specify one. |
 | `JIRA_LOCK_PROFILE` | `true` | Per-call profile switching is rejected. Locked by default (O-6): a model that can pick the tenant per call can leak issue text across tenants, so unlocking is a deliberate act. |
 
@@ -92,26 +93,30 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_PACKAGES_DENY` | — | Deny list; wins over selection; `core` is force-re-added. |
 | `JIRA_PACKAGES_READONLY` | — | Packages whose write-tier tools are dropped. |
 | `JIRA_WRITE_MODE` | `plan` | `plan` = writes describe instead of execute; `apply` = writes execute when the call passes `apply: true`. Gate contract: THREAT-MODEL.md. |
-| `JIRA_ALLOW_IRREVERSIBLE` | `false` | Opt-in for the irreversible write tier (deletes, D45 and D102). Without it those tools refuse even under `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier. |
+| `JIRA_ALLOW_IRREVERSIBLE` | `false` | Opt-in for the irreversible write tier (the deletes, D45 and D102, and the bulk delete/edit pair, D103). Without it those tools refuse even under `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier. |
 
 ## HTTP behaviour
 
 | Variable | Default | Description |
 |---|---|---|
-| `JIRA_REQUEST_TIMEOUT_MS` | `30000` | Per-request timeout via injected clock/AbortSignal. |
-| `JIRA_CALL_BUDGET_MS` | `120000` | Wall-clock budget for one tool call's total HTTP activity — retry waits and semaphore queueing count against it. On breach: abort with `kind=budget_exceeded` (OBSERVABILITY.md §Call budget). |
-| `JIRA_HOST_CONCURRENCY` | `4` | Per-host semaphore slots. |
-| `JIRA_RETRY_ATTEMPTS` | `3` | Max retry attempts (policy in JIRA-API.md). |
-| `JIRA_MAX_RESULT_CHARS` | `25000` | Truncation budget for tool results. |
-| `JIRA_MAX_PAGES` | `20` | Loop guard for `fetchAll`/`searchPages`. |
-| `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). |
+| `JIRA_REQUEST_TIMEOUT_MS` | `30000` | Per-request timeout via injected clock/AbortSignal. Integer in 1–600000. |
+| `JIRA_CALL_BUDGET_MS` | `120000` | Wall-clock budget for one tool call's total HTTP activity — retry waits and semaphore queueing count against it. On breach: abort with `kind=budget_exceeded` (OBSERVABILITY.md §Call budget). Integer in 1–3600000. |
+| `JIRA_HOST_CONCURRENCY` | `4` | Per-host semaphore slots. Integer in 1–64. |
+| `JIRA_RETRY_ATTEMPTS` | `3` | Max retry attempts (policy in JIRA-API.md). Integer in 0–10; `0` disables retries. |
+| `JIRA_MAX_RESULT_CHARS` | `25000` | Truncation budget for tool results, measured on the serialized `structuredContent`. The text channel of an untrusted result can be longer: it adds the taint banner, and each fence bracket inside tenant text becomes a six-character `\uXXXX` escape. Integer in 500–10000000. |
+| `JIRA_MAX_PAGES` | `20` | Loop guard for `fetchAll`/`searchPages`. Integer in 1–1000. |
+| `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). A leading `~` is expanded and a relative path is resolved against the cwd, as for `JIRA_ENV_FILE` (CC-184). |
+
+The ranges above are inclusive, and a value is plain decimal digits: `3e4`,
+`0x10` or `4.0` — or anything outside the range — is an `invalid_number`
+startup error, never a silent clamp (CC-141).
 
 ## Transport
 
 | Variable | Default | Description |
 |---|---|---|
 | `JIRA_TRANSPORT` | `stdio` | `stdio` (default) or `http` — the loopback Streamable HTTP transport (D101). |
-| `JIRA_HTTP_PORT` | `3334` | Loopback port the `http` transport binds — `127.0.0.1` only, never another interface (CC-115). |
+| `JIRA_HTTP_PORT` | `3334` | Loopback port the `http` transport binds — `127.0.0.1` only, never another interface (CC-115). Integer in 1–65535. |
 | `JIRA_HTTP_TOKEN` | — | Bearer token (secret; registered with the redactor) required on every `http` request (CC-114). Required whenever `http` is selected — settings refuse that combination without it (CC-30). |
 
 ## Diagnostics
@@ -119,7 +124,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | Variable | Default | Description |
 |---|---|---|
 | `JIRA_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error`; all output to stderr. |
-| `JIRA_JOURNAL_PATH` | — | Optional write-journal (JSONL of every write tool call: tool, args hash, result, timestamp). |
+| `JIRA_JOURNAL_PATH` | — | Optional write-journal (JSONL of every write tool call: tool, args hash, result, timestamp). A leading `~` is expanded and a relative path is resolved against the cwd (CC-184). |
 
 ## Test-only variables
 
@@ -128,7 +133,7 @@ knows they are deliberately outside the runtime surface.
 
 | Variable | Default | Description |
 |---|---|---|
-| `JIRA_LIVE_TEST` | — | `1` enables the live read suite against the scratch site; unset, those tests skip. |
+| `JIRA_LIVE_TEST` | — | `1` makes the unit-test network fence (`src/testing/network-fence.ts`) keep ambient `JIRA_*` variables and skip the fence. No test uses it and CI does not set it; the live read suite is `scripts/verify-live.mjs` (TESTING.md suite 9), which does not read this variable. |
 
 ## Claude Code registration (example)
 

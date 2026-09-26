@@ -9,13 +9,15 @@
 // the call site, so "can I try again?" has one answer per error and not one per
 // reader.
 //
-// TRUST BOUNDARY. Nothing upstream is interpolated into `message`. Jira's own
-// texts are kept verbatim in `jiraMessages` (a separate array the client can
-// render) and a bounded body snippet lives in `detail` — already redacted at
-// construction time (CC-15). An unexpected throw carries NO detail at all: a
-// stack-trace string is exactly the kind of value that smuggles a token or a URL
-// into the transcript, and the real diagnosis belongs in a stderr log event
-// keyed by cid, which WP-24's catch site emits.
+// TRUST BOUNDARY. Jira's own texts are kept verbatim in `jiraMessages` (a
+// separate array the client can render), a bounded excerpt of them reaches
+// `message` (CC-36), and a bounded body snippet lives in `detail` — already
+// redacted at construction time (CC-15). The envelope is not branded
+// untrusted (CC-16), so these texts reach the model unfenced. An unexpected
+// throw carries NO detail at all: a stack-trace string is exactly the kind of
+// value that smuggles a token or a URL into the transcript, and the real
+// diagnosis belongs in a stderr log event keyed by cid, which WP-24's catch
+// site emits.
 //
 // Layering: `core ← api ← mcp ← tools`.
 // ---------------------------------------------------------------------------

@@ -39,10 +39,17 @@
 
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:https';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 // ---------------------------------------------------------------------------
@@ -1317,7 +1324,7 @@ function buildRoutes(server) {
         if (body.nextPageToken !== undefined) {
           const decoded = decodeToken(body.nextPageToken);
           if (decoded === undefined) {
-            // The shape Jira uses for a cursor it no longer recognises (CC-05).
+            // The shape Jira uses for a cursor it no longer recognises (CC-01).
             return jiraError(400, ['The provided nextPageToken is invalid or expired']);
           }
           offset = decoded;
@@ -1931,7 +1938,7 @@ function buildRoutes(server) {
         if (component === undefined) return notFound('Component');
         // The fake's issues never carry a component, so the honest count is
         // zero. The route exists because jira_delete_component reads it before
-        // planning (CC-124); unrouted, that read would fail the purge loudly.
+        // planning (CC-121); unrouted, that read would fail the purge loudly.
         return json(200, {
           self: `${origin()}/rest/api/3/component/${ctx.params.id}`,
           issueCount: 0,
@@ -2032,7 +2039,7 @@ function buildRoutes(server) {
         if (version === undefined) return notFound('Version');
         // Zeroes for the same reason as the component twin above: no fake
         // issue references a version, and the route is here for
-        // jira_delete_version's before-read (CC-124), not for the numbers.
+        // jira_delete_version's before-read (CC-123), not for the numbers.
         return json(200, {
           self: `${origin()}/rest/api/3/version/${ctx.params.id}`,
           issuesFixedCount: 0,
@@ -2860,8 +2867,25 @@ export async function startFakeJira(options = {}) {
 // Standalone entry
 // ---------------------------------------------------------------------------
 
-const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+/**
+ * `argv[1]` and this module, compared through realpath: Node realpaths the
+ * entry module, so a symlinked checkout (macOS `/tmp` is one) or a path with
+ * spaces would otherwise fail the guard and exit 0 having done nothing (CC-217).
+ */
+function isEntryPoint(moduleUrl) {
+  const entry = process.argv[1];
+  if (entry === undefined || entry === '') return false;
+  const real = (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return path;
+    }
+  };
+  return real(resolve(entry)) === real(fileURLToPath(moduleUrl));
+}
+
+const invokedDirectly = isEntryPoint(import.meta.url);
 
 if (invokedDirectly) {
   const { values } = parseArgs({

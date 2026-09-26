@@ -302,6 +302,39 @@ test('a user row without an accountId is a shape error', async () => {
   );
 });
 
+test('a user row that is not an object is a shape error naming its position', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk([{ accountId: 'a' }, 'User Two'])); // synthetic
+
+  await assert.rejects(
+    searchUsers({ jira: jira.fn, query: 'user' }),
+    (error: unknown) => {
+      assert.ok(isJiraErrorOfKind('unexpected_shape')(error));
+      assert.match(
+        String((error as Error).message),
+        /user at position 1 is not a JSON object/,
+      );
+      return true;
+    },
+  );
+});
+
+test('a maxResults below 1 or fractional is refused before anything reaches the wire', async () => {
+  const jira = createFakeJiraRequest(); // nothing enqueued: no call is expected
+
+  for (const maxResults of [0, -5, 2.5]) {
+    await assert.rejects(
+      searchUsers({ jira: jira.fn, query: 'user', maxResults }),
+      (error: unknown) => {
+        assert.ok(isJiraErrorOfKind('validation')(error));
+        assert.match(String((error as Error).message), /whole number of at least 1/);
+        return true;
+      },
+      String(maxResults),
+    );
+  }
+  assert.equal(jira.calls.length, 0);
+});
+
 // ---------------------------------------------------------------------------
 // Pagination
 // ---------------------------------------------------------------------------
@@ -384,6 +417,62 @@ test('O-5: an issueKey input switches to the assignable-user endpoint', async ()
   assert.equal(result.scope, 'assignable');
 });
 
+test('[CC-201] a short assignable page is a filtered window, not the end of the candidates', async () => {
+  const twelve = Array.from({ length: 12 }, (_, index) =>
+    user(
+      `5b10a2844c20165700ede2${String(index).padStart(2, '0')}`,
+      `User ${String(index)}`,
+    ),
+  ); // synthetic
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk(twelve))
+    .enqueue(jiraOk([user('5b10a2844c20165700ede299', 'User 99')])) // synthetic
+    .enqueue(jiraOk([]));
+
+  const first = await searchUsers({
+    jira: jira.fn,
+    query: 'user',
+    project: 'ABC',
+    maxResults: 50,
+  });
+
+  assert.equal(first.users.length, 12);
+  assert.equal(first.partial, true);
+  assert.equal(first.nextStartAt, 50, 'the offset skips the whole window');
+
+  const rest = await searchUsers({
+    jira: jira.fn,
+    query: 'user',
+    project: 'ABC',
+    maxResults: 50,
+    startAt: 50,
+    maxPages: 5,
+  });
+
+  assert.equal(rest.users.length, 1);
+  assert.equal(rest.partial, false, 'an empty window ends the sweep');
+  assert.equal(rest.pages, 2);
+  assert.equal(jira.lastRequest()?.query?.startAt, 100);
+});
+
+test('[CC-201] the assignable sweep stops at the thousandth candidate', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk([user('5b10a2844c20165700ede21g', 'User One')]), // synthetic
+  );
+
+  const result = await searchUsers({
+    jira: jira.fn,
+    query: 'user',
+    issueKey: 'ABC-1',
+    maxResults: 50,
+    startAt: 950,
+    maxPages: 5,
+  });
+
+  assert.equal(result.pages, 1);
+  assert.equal(result.partial, false);
+});
+
 test('O-5: issueKey wins over project so the request is never ambiguous', async () => {
   const jira = createFakeJiraRequest().enqueue(jiraOk([])); // synthetic
 
@@ -439,6 +528,24 @@ test('resolveMentionNames resolves a unique match through the plain one-page sea
     id: '5b10a2844c20165700ede21g',
     text: '@User One',
   });
+});
+
+test('[CC-241] a padded @[ name ] exact-matches trimmed, over a longer partial match', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk([
+      user('5b10a2844c20165700ede21g', 'Alice Smithson'), // synthetic
+      user('5b10a2844c20165700ede21h', 'Alice Smith'), // synthetic
+    ]),
+  );
+
+  const resolved = await resolveMentionNames({
+    jira: jira.fn,
+    names: [' Alice Smith ', 'Alice Smith'],
+  });
+
+  assert.equal(jira.calls.length, 1, 'padded and bare spellings are one name');
+  assert.equal(resolved.get(' Alice Smith ')?.id, '5b10a2844c20165700ede21h');
+  assert.equal(resolved.get('Alice Smith')?.id, '5b10a2844c20165700ede21h');
 });
 
 test('resolveMentionNames carries the abort signal to the wire', async () => {
@@ -691,4 +798,21 @@ test('a match without a display name resolves with text omitted', async () => {
   const resolved = await resolveMentionNames({ jira: jira.fn, names: ['ghost'] });
 
   assert.deepEqual(resolved.get('ghost'), { id: '5b10a2844c20165700ede21g' });
+});
+
+test('an ambiguity refusal names a candidate with no display name as such', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk([
+      { accountId: '5b10a2844c20165700ede21g', active: true, accountType: 'atlassian' },
+      user('5b10ac8d82e05b22cc7d4ef5', 'User Two'),
+    ]), // synthetic — the tenant blanked one name
+  );
+
+  await assert.rejects(
+    resolveMentionNames({ jira: jira.fn, names: ['User'] }),
+    isMentionRefusal(
+      /\(no display name\) \(5b10a2844c20165700ede21g\)/,
+      /User Two \(5b10ac8d82e05b22cc7d4ef5\)/,
+    ),
+  );
 });

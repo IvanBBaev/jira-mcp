@@ -86,7 +86,7 @@ import {
   shouldRetryStatus,
 } from './http-util.js';
 import type { SlotRelease } from './http-util.js';
-import { REMEDIATION, kindForStatus } from './errors.js';
+import { REMEDIATION, boundedJiraMessages, kindForStatus } from './errors.js';
 import { UNKNOWN_ERROR_KIND } from './telemetry.js';
 import type { Telemetry } from './telemetry.js';
 
@@ -306,8 +306,9 @@ function projectErrorBody(text: string): JiraErrorBody {
   const parsed = parseJson(text);
   if (!parsed.ok || typeof parsed.value !== 'object' || parsed.value === null) {
     // CC-15: a non-JSON error body (HTML from a proxy, plain text from a WAF)
-    // survives as a bounded snippet, never as a full body.
-    return { messages: [], detail: text.trim().slice(0, MAX_DETAIL_CHARS) };
+    // survives as a bounded snippet, never as a full body. The cut is made by
+    // `makeFail`, after redaction (CC-238).
+    return { messages: [], detail: text.trim() };
   }
 
   const body = parsed.value as Record<string, unknown>;
@@ -353,8 +354,21 @@ interface StatusMapping {
  * itself — it either waits and retries, or throws `rate_limited` when the
  * budget is spent — so this function is never called with one.
  */
-function describeStatus(status: number, headers: JiraResponseHeaders): StatusMapping {
+function describeStatus(
+  status: number,
+  headers: JiraResponseHeaders,
+  credentialKind: JiraCredentials['kind'],
+): StatusMapping {
   const kind = kindForStatus(status, { headers });
+  if (kind === 'auth' && credentialKind === 'bearer') {
+    // OAuth signs nothing with JIRA_EMAIL/JIRA_API_TOKEN; naming them sends the
+    // operator after the wrong problem (CC-208).
+    return {
+      kind,
+      remediation:
+        'The OAuth authorization was refused. Run `jira-mcp-ai login` again (with --profile for a named profile), and check that JIRA_OAUTH_SCOPES covers this call.',
+    };
+  }
   if (kind === 'auth') {
     return {
       kind,
@@ -448,7 +462,12 @@ function makeFail(redactor: Redactor | undefined): (init: FailInit) => JiraError
       ...init,
       message: clean(init.message),
       remediation: clean(init.remediation),
-      detail: init.detail === undefined ? undefined : clean(init.detail),
+      // Redact the whole body, THEN cut: a cut through a secret leaves a
+      // prefix no needle matches any more (CC-238, as CC-158 in errors.ts).
+      detail:
+        init.detail === undefined
+          ? undefined
+          : clean(init.detail).slice(0, MAX_DETAIL_CHARS),
       jiraMessages: init.jiraMessages?.map((entry) => clean(entry)),
     });
 }
@@ -775,7 +794,22 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
     /** Sleep `ms`, but never past the budget. */
     const waitFor = async (ms: number): Promise<void> => {
       if (remaining() <= ms) budgetExceeded();
-      await clock.sleep(ms, spec.signal);
+      try {
+        await clock.sleep(ms, spec.signal);
+      } catch (error) {
+        // A cancel between attempts is the same cancel as one mid-attempt and
+        // gets the same typed answer, not a bare AbortError (CC-175).
+        if (errorName(error) !== 'AbortError') throw error;
+        throw fail({
+          kind: 'transport',
+          message: `${method} ${route} was cancelled by the caller while waiting to retry.`,
+          retryable: false,
+          remediation: replayable
+            ? 'Call again if the result is still needed.'
+            : 'The write may or may not have been applied — verify the current state before sending it again.',
+          cause: error,
+        });
+      }
     };
 
     const noteFailure = (): void => {
@@ -801,14 +835,31 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         return pool.acquire(host);
       }
       const deadline = armDeadline(remaining());
+      // The caller's cancel reaches the queue too: a cancelled call must not
+      // hold its place ahead of live ones until the budget runs out (CC-204).
+      const signal =
+        spec.signal === undefined
+          ? deadline.signal
+          : AbortSignal.any([deadline.signal, spec.signal]);
       try {
-        return await pool.acquire(host, deadline.signal);
+        return await pool.acquire(host, signal);
       } catch (error) {
         if (deadline.expired()) return budgetExceeded();
+        if (spec.signal?.aborted === true) {
+          throw fail({
+            kind: 'transport',
+            message: `${method} ${route} was cancelled by the caller while waiting for a connection slot.`,
+            retryable: false,
+            remediation: replayable
+              ? 'Call again if the result is still needed.'
+              : 'The write may or may not have been applied — verify the current state before sending it again.',
+            cause: error,
+          });
+        }
         // Unreachable today: the pool rejects a queued waiter only through the
-        // signal it was handed, and that signal is this deadline. Kept as a
-        // rethrow rather than folded into the branch above, because reporting a
-        // future rejection as "the budget ran out" would be a lie.
+        // signal it was handed, which is the deadline or the caller's. Kept as a
+        // rethrow rather than folded into the branches above, because reporting
+        // a future rejection as either of them would be a lie.
         throw error;
       } finally {
         await deadline.cancel();
@@ -922,13 +973,19 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
      * turns a body that never arrives into a failed attempt rather than a
      * successful call that quietly reports no data.
      */
+    // The status of the attempt in flight, once its headers arrived: a body
+    // that fails after a 2xx is a write that landed, not one that may have.
+    let answeredStatus: number | undefined;
+
     const runAttempt = async (
       guard: AttemptGuard,
       attempt: number,
       attemptStartedAt: number,
     ): Promise<AttemptResult> => {
+      answeredStatus = undefined;
       const response = await sendAttempt(guard, attempt, attemptStartedAt);
       const status = response.status;
+      answeredStatus = status;
       // Emitted on the headers, before the body: a response that arrived and
       // then stalled must still show up in the log as the status it was.
       logger.emit('http_response', {
@@ -971,8 +1028,15 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
     for (let attempt = 1; ; attempt += 1) {
       if (remaining() <= 0) budgetExceeded();
 
-      const attemptTimeoutMs = Math.min(timeoutMs, remaining());
       const release = await acquireSlot();
+      // Measured AFTER the slot: a queued wait spends budget, and an attempt
+      // timeout computed before it would let the attempt run past the deadline.
+      const left = remaining();
+      if (left <= 0) {
+        release();
+        budgetExceeded();
+      }
+      const attemptTimeoutMs = Math.min(timeoutMs, left);
       const guard = armAttempt(clock, attemptTimeoutMs, spec.signal);
       const attemptStartedAt = clock.now();
       // No initializer: the try assigns and so does every non-throwing path of
@@ -1033,6 +1097,24 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
           await waitFor(delayMs);
           continue;
         }
+        if (
+          !replayable &&
+          answeredStatus !== undefined &&
+          isSuccessStatus(answeredStatus)
+        ) {
+          // Jira already said yes; only the reply is lost. Calling it ambiguous
+          // invites a resend, and a resend of a create is a duplicate (CC-205).
+          logger.emit('ambiguous_write', { method, pathTemplate: route });
+          throw fail({
+            kind: 'ambiguous_write',
+            message: `${method} ${route} was applied (Jira answered ${String(answeredStatus)}), but its response body ${failure.reason === 'timeout' ? 'timed out' : 'failed in transit'}, so the result it carried is unknown. It was NOT retried.`,
+            httpStatus: answeredStatus,
+            retryable: false,
+            remediation:
+              'Do not send it again. Read the issue back (or search for it) to get what the reply would have carried, such as a created key.',
+            cause: failure.cause,
+          });
+        }
         if (!replayable) {
           ambiguousWrite(
             failure.reason === 'timeout'
@@ -1086,8 +1168,10 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       if (status === 429) {
         const serverMs = parseRetryAfterMs(headers['retry-after'], clock.now());
         const cappedMs = serverMs === undefined ? undefined : capRetryAfterMs(serverMs);
+        // A zero (or past-date) Retry-After would retry back to back with no
+        // jitter, so it earns the same backoff as no header at all (CC-203).
         const waitMs =
-          cappedMs === undefined
+          cappedMs === undefined || cappedMs === 0
             ? backoffMs(attempt, rng)
             : jitterMs(cappedMs, RETRY_AFTER_JITTER, rng);
         logger.emit('rate_limited', {
@@ -1141,7 +1225,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
       if (!isSuccessStatus(status)) {
         const body = projectErrorBody(result.text);
-        const mapping = describeStatus(status, headers);
+        const mapping = describeStatus(status, headers, creds.kind);
         if (mapping.kind === 'auth') {
           logger.emit('auth_failure', { status, pathTemplate: route });
         }
@@ -1149,7 +1233,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
           kind: mapping.kind,
           message:
             body.messages.length > 0
-              ? `Jira rejected ${method} ${route} with HTTP ${String(status)}: ${body.messages.join('; ')}`
+              ? `Jira rejected ${method} ${route} with HTTP ${String(status)}: ${boundedJiraMessages(body.messages, options.redactor)}`
               : `Jira rejected ${method} ${route} with HTTP ${String(status)}.`,
           httpStatus: status,
           jiraMessages: body.messages,
@@ -1170,7 +1254,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
           kind: 'unexpected_shape',
           message: `Jira answered ${method} ${route} with HTTP ${String(status)} but the body was not JSON.`,
           httpStatus: status,
-          detail: text.trim().slice(0, MAX_DETAIL_CHARS),
+          detail: text.trim(),
           remediation:
             'A proxy or login page is probably answering instead of Jira. Check JIRA_SITE and any corporate proxy.',
         });
@@ -1474,8 +1558,10 @@ export function createAuthRequest(options: AuthRequestOptions): AuthRequestFn {
       if (status === 429) {
         const serverMs = parseRetryAfterMs(responseHeaders['retry-after'], clock.now());
         const cappedMs = serverMs === undefined ? undefined : capRetryAfterMs(serverMs);
+        // A zero (or past-date) Retry-After would retry back to back with no
+        // jitter, so it earns the same backoff as no header at all (CC-203).
         const waitMs =
-          cappedMs === undefined
+          cappedMs === undefined || cappedMs === 0
             ? backoffMs(attempt, rng)
             : jitterMs(cappedMs, RETRY_AFTER_JITTER, rng);
         logger.emit('rate_limited', {
@@ -1499,7 +1585,11 @@ export function createAuthRequest(options: AuthRequestOptions): AuthRequestFn {
           httpStatus: 429,
           remediation:
             method === 'POST'
-              ? 'A token request is never replayed automatically. Wait, then run `jira-mcp-ai login` again.'
+              ? // Neutral here: this layer cannot tell a refresh (the grant is
+                // intact, retrying later is right) from a login exchange (the
+                // flow is over, login must run again). core/oauth.ts knows,
+                // and restates it (CC-247).
+                'A token request is never replayed automatically; wait before trying again.'
               : 'Wait before calling again.',
         });
       }

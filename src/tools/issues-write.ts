@@ -40,6 +40,7 @@ import {
   type MentionTarget,
 } from '../api/adf.js';
 import {
+  NO_TRANSITION_MATCHES,
   WORKLOG_STARTED_PATTERN,
   addComment,
   addWorklog,
@@ -134,10 +135,15 @@ function fieldErrorHints(error: JiraError): readonly Hint[] {
 /**
  * CC-21: both halves of the transition failure earn the same pointer — the name
  * that resolved against nothing (local `validation`, nothing sent) and the id
- * that Jira refused after the workflow moved under it (400).
+ * that Jira refused after the workflow moved under it (400). Any other local
+ * refusal of the same call (an unresolved mention, an empty argument) has
+ * nothing to do with transitions and gets no pointer (CC-177).
  */
 function transitionErrorHints(error: JiraError): readonly Hint[] {
-  return error.kind === 'validation' ? [TRANSITION_DISCOVERY_HINT] : [];
+  if (error.kind !== 'validation') return [];
+  const aboutTransitions =
+    error.httpStatus === 400 || (error.reason ?? '').startsWith(NO_TRANSITION_MATCHES);
+  return aboutTransitions ? [TRANSITION_DISCOVERY_HINT] : [];
 }
 
 /** An unknown link type name is a 400 from `POST /issueLink`. */
@@ -160,11 +166,23 @@ const accountIdArg = z
   );
 
 /**
+ * CC-136: the longest string a rich-text input takes. Jira refuses a text field
+ * over 32,767 characters anyway, so twice that leaves room for markdown syntax
+ * and loses nothing a write could have stored. The bound is what keeps the
+ * markdown parser, which rescans a line at every `[`, from being handed a
+ * multi-megabyte line that would stall the event loop during planning.
+ */
+const MAX_RICH_TEXT_CHARS = 65_536;
+
+/**
  * Rich text as the api ring takes it: plain text (converted to ADF) or a raw ADF
  * document. The tool ring never builds ADF — `api/adf.ts` owns `toAdf`, including
  * the validation of a hand-written document.
  */
-const richTextArg = z.union([z.string(), z.record(z.string(), z.unknown())]);
+const richTextArg = z.union([
+  z.string().max(MAX_RICH_TEXT_CHARS),
+  z.record(z.string(), z.unknown()),
+]);
 
 /**
  * D44: every rich-text write input reads its STRING form in one of two
@@ -198,7 +216,17 @@ const resolveMentionsArg = z
       'text.',
   );
 
-const labelsArg = z.array(z.string().min(1));
+/**
+ * A Jira label is one token: Jira refuses one with whitespace in it, so the
+ * refusal happens here, naming the value, instead of as a 400 after a plan
+ * that looked fine (CC-178).
+ */
+export const labelsArg = z.array(
+  z
+    .string()
+    .min(1)
+    .regex(/^\S+$/, 'A Jira label cannot contain whitespace; use - or _ instead.'),
+);
 
 const fieldsArg = z
   .record(z.string(), z.unknown())
@@ -326,7 +354,7 @@ interface MentionResolution {
  *
  * One pass per call: the names of every markdown rich-text field are extracted,
  * unioned and resolved once, and the map is shared across the call's fields —
- * with the current eight tools that union is the single rich-text field each
+ * with the current seven tools that union is the single rich-text field each
  * carries. Tokens found while `resolveMentions` is off stay literal text and
  * earn `mentions_skipped`, with no network touched (CC-105). A resolver refusal
  * (zero match, ambiguity, cap — CC-106/CC-107/CC-112) throws `validation`

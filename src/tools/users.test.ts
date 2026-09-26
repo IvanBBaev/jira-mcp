@@ -7,7 +7,8 @@
 // hand-shaped from JIRA-API.md with the TESTING.md placeholder vocabulary.
 //
 // What these tests pin down:
-//   * THREAT-MODEL.md §PII — `emailAddress` is dropped unless the caller asked;
+//   * THREAT-MODEL.md §PII minimization — `emailAddress` is dropped unless the
+//     caller asked;
 //   * CC-19 — a GDPR-masked email is a NORMAL result carrying `email_hidden`;
 //   * O-5 / D26 — `issue`/`project` switch to the assignable endpoint, and
 //     `issue` wins when both are given;
@@ -75,7 +76,7 @@ function hintCodes(result: ToolResult<unknown>): readonly string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Email is opt-in (THREAT-MODEL.md §PII)
+// Email is opt-in (THREAT-MODEL.md §PII minimization)
 // ---------------------------------------------------------------------------
 
 test('jira_search_users drops emailAddress unless includeEmail was asked for', async () => {

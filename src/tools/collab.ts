@@ -175,9 +175,19 @@ const accountIdArg = z
 /**
  * Ids on this surface are positive integers and are validated again in
  * `api/collab.ts` before any request is built (D22). Typing them as numbers here
- * keeps a component named "Billing" from ever being mistaken for an id.
+ * keeps a component named "Billing" from ever being mistaken for an id. A
+ * digit string is accepted too, because the list tools report ids as strings
+ * and a model hands back exactly what it read.
  */
-const collabIdArg = z.number().int().min(1);
+const collabIdArg = z.union([
+  z.number().int().min(1),
+  z
+    .string()
+    .regex(/^[1-9]\d*$/)
+    // Past 2^53 the conversion rounds to a different id (CC-195).
+    .refine((value) => Number.isSafeInteger(Number(value)), 'Not a safe integer id.')
+    .transform(Number),
+]);
 
 /** The `YYYY-MM-DD` shape both version dates share. */
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;

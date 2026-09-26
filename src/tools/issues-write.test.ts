@@ -427,6 +427,25 @@ test('jira_create_issue stays quiet when no sprint was requested', async () => {
 // jira_update_issue (CC-31)
 // ---------------------------------------------------------------------------
 
+test('[CC-178] a label with whitespace is refused by every label argument', () => {
+  const cases: readonly [AnyToolSpec, string][] = [
+    [createIssueTool, 'labels'],
+    [updateIssueTool, 'labels'],
+    [updateIssueTool, 'labelsAdd'],
+    [updateIssueTool, 'labelsRemove'],
+  ];
+  for (const [tool, field] of cases) {
+    const base = minimalArgs(tool);
+    const bad = tool.input.safeParse({ ...base, [field]: ['needs review'] });
+    assert.equal(bad.success, false, `${tool.name}.${field} accepted a spaced label`);
+    assert.match(bad.error?.issues[0]?.message ?? '', /cannot contain whitespace/);
+    assert.equal(
+      tool.input.safeParse({ ...base, [field]: ['needs-review'] }).success,
+      true,
+    );
+  }
+});
+
 test('CC-31: labelsAdd/labelsRemove build an incremental update, never a replace', async () => {
   const fake = createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT);
 
@@ -631,6 +650,21 @@ test('jira_update_comment accepts a raw ADF document unchanged', async () => {
   assert.deepEqual(lastBody(fake)['body'], adfDoc('Raw ADF.'));
   // A numeric id renders as the same path segment a string id does.
   assert.deepEqual(fake.routes(), [EDIT_COMMENT_ROUTE]);
+});
+
+test('[CC-136] a rich-text string over 65,536 characters is refused before planning', () => {
+  const at = (length: number): boolean =>
+    addCommentTool.input.safeParse({ issue: KEY, body: 'x'.repeat(length) }).success;
+  assert.equal(at(65_536), true);
+  assert.equal(at(65_537), false);
+  // A raw ADF document is not a string and is bounded by Jira, not by this cap.
+  assert.equal(
+    addCommentTool.input.safeParse({
+      issue: KEY,
+      body: { type: 'doc', version: 1, content: [] },
+    }).success,
+    true,
+  );
 });
 
 test('D32: the issue argument of jira_update_comment is named `issue`', () => {
@@ -1238,6 +1272,30 @@ test('a name the search cannot settle refuses the whole call — the plan sees n
   assert.deepEqual(fake.routes(), [USER_SEARCH_ROUTE]);
 });
 
+test('[CC-177] a transition refused over its comment mention carries no transition hint', async () => {
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Nobody Known'), jiraOk([]))
+    .on(GET_TRANSITIONS_ROUTE, jiraOk(TRANSITIONS_BODY));
+
+  const result = await transitionIssueTool.handler(
+    {
+      issue: KEY,
+      transition: 'Done',
+      comment: 'Closing, per @[Nobody Known].',
+      format: 'markdown',
+      resolveMentions: true,
+    },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(result.error?.remediation ?? '', /jira_search_users/);
+  // The transition was never in doubt, so pointing at jira_get_transitions
+  // would send the caller to fix the wrong argument.
+  assert.deepEqual(hintCodes(result), []);
+});
+
 test('CC-111: resolution is execution-time — apply re-resolves, the plan was a snapshot', async () => {
   const args = {
     issue: KEY,
@@ -1367,4 +1425,156 @@ test('the same rule holds for the tools that read before they write', async () =
     transitionIssueTool.handler({ issue: KEY, transition: 'Done' }, ctxOf(fake)),
     (error: unknown) => error === captured,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Discovery hints are earned by the failure SHAPE, not by the tool that failed
+// ---------------------------------------------------------------------------
+
+test('a refusal that is not a 400 carries no field-discovery hint on create or update', async () => {
+  const forbidden = () =>
+    jiraErr(
+      errorFromResponse({
+        status: 403,
+        body: { errorMessages: ['You do not have permission to create issues.'] },
+        method: 'POST',
+        pathTemplate: '/issue',
+      }),
+    );
+
+  const created = await createIssueTool.handler(
+    { project: 'PROJ', issueType: 'Task', summary: 'Retry policy' },
+    ctxOf(createFakeJiraRequest().on(CREATE_ROUTE, forbidden())),
+  );
+  assert.equal(created.ok, false);
+  assert.equal(created.error?.kind, 'permission');
+  assert.deepEqual(hintCodes(created), []);
+
+  const updated = await updateIssueTool.handler(
+    { issue: KEY, summary: 'Retry policy' },
+    ctxOf(createFakeJiraRequest().on(UPDATE_ROUTE, forbidden())),
+  );
+  assert.equal(updated.ok, false);
+  assert.deepEqual(hintCodes(updated), []);
+});
+
+test('a transition refused for a reason other than validation carries no discovery hint', async () => {
+  const fake = createFakeJiraRequest()
+    .on(GET_TRANSITIONS_ROUTE, jiraOk(TRANSITIONS_BODY))
+    .on(
+      POST_TRANSITION_ROUTE,
+      jiraErr(
+        errorFromResponse({
+          status: 403,
+          body: {
+            errorMessages: ['You do not have permission to transition this issue.'],
+          },
+          method: 'POST',
+          pathTemplate: '/issue/{issueIdOrKey}/transitions',
+        }),
+      ),
+    );
+
+  const result = await transitionIssueTool.handler(
+    { issue: KEY, transition: 'Done' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'permission');
+  assert.deepEqual(hintCodes(result), []);
+  // The name resolved, so the POST was sent: this is Jira's refusal, not ours.
+  assert.deepEqual(fake.routes(), [GET_TRANSITIONS_ROUTE, POST_TRANSITION_ROUTE]);
+});
+
+test('a link refused for a reason other than a 400 carries no link-type hint', async () => {
+  const fake = createFakeJiraRequest().on(
+    LINK_ROUTE,
+    jiraErr(
+      errorFromResponse({
+        status: 404,
+        body: { errorMessages: ['Issue Does Not Exist'] },
+        method: 'POST',
+        pathTemplate: '/issueLink',
+      }),
+    ),
+  );
+
+  const result = await linkIssuesTool.handler(
+    { linkType: 'Blocks', inwardIssue: KEY, outwardIssue: OTHER_KEY },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'not_found');
+  assert.deepEqual(hintCodes(result), []);
+});
+
+// ---------------------------------------------------------------------------
+// Seams the registry fills in that the fixtures above leave empty
+// ---------------------------------------------------------------------------
+
+test("CC-105: the caller's abort signal rides along on the mention lookup", async () => {
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Ana Petrova'), jiraOk([ANA]))
+    .on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+  const controller = new AbortController();
+
+  const result = await addCommentTool.handler(
+    {
+      issue: KEY,
+      body: 'Ping @[Ana Petrova].',
+      format: 'markdown',
+      resolveMentions: true,
+    },
+    { ...ctxOf(fake), signal: controller.signal },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.routes(), [USER_SEARCH_ROUTE, COMMENT_ROUTE]);
+  // The search is the one call that can hang on a slow directory, so it is the
+  // one that must be abortable from outside.
+  assert.equal(fake.calls[0]?.signal, controller.signal);
+});
+
+test("D16: a /myself answer with no timeZone falls back to the host's zone", async () => {
+  const zoneless: Record<string, unknown> = { ...MYSELF_BODY };
+  delete zoneless['timeZone'];
+  const args = {
+    issue: KEY,
+    timeSpentSeconds: 3600,
+    started: '2026-08-07T10:00:00.000Z',
+  };
+
+  // The host zone is pinned to one that is neither UTC nor on DST: CI runs
+  // under TZ=UTC, where a fallback hardcoded to UTC would render identically
+  // and the test would prove nothing. Node re-reads TZ when it is assigned.
+  const previousTz = process.env.TZ;
+  process.env.TZ = 'Asia/Tokyo';
+  try {
+    const hostZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    assert.equal(hostZone, 'Asia/Tokyo');
+
+    const fallback = createFakeJiraRequest()
+      .on(MYSELF_ROUTE, jiraOk(zoneless))
+      .on(WORKLOG_ROUTE, jiraOk(WORKLOG_BODY));
+    const explicit = createFakeJiraRequest()
+      .on(MYSELF_ROUTE, jiraOk({ ...zoneless, timeZone: hostZone }))
+      .on(WORKLOG_ROUTE, jiraOk(WORKLOG_BODY));
+
+    const fell = await addWorklogTool.handler(args, ctxOf(fallback));
+    const named = await addWorklogTool.handler(args, ctxOf(explicit));
+
+    assert.equal(fell.ok, true);
+    assert.equal(named.ok, true);
+    const started = lastBody(fallback)['started'];
+    // The fallback renders exactly what naming the host zone would have — same
+    // instant, the host's offset, never a bare Z.
+    assert.equal(started, lastBody(explicit)['started']);
+    assert.match(String(started), /\+0900$/);
+    assert.equal(Date.parse(String(started)), Date.parse(args.started));
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  }
 });

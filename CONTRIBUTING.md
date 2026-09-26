@@ -43,13 +43,14 @@ It runs, in order:
 5. `tarball` — `scripts/check-tarball.mjs` asserts what an `npm pack` would
    contain: no tests, no source maps, no test helpers, nothing unexpected.
 6. `test:coverage` — the whole suite under c8, with the floors in
-   [`.c8rc.json`](.c8rc.json) (lines 94 / branches 82 / functions 97 /
-   statements 94) enforced. Those are floors that must not creep down.
+   [`.c8rc.json`](.c8rc.json) (lines 97 / branches 94 / functions 98 /
+   statements 97) enforced. Those are floors that must not creep down — they
+   were last ratcheted up in D105.
 7. `docs:lint` — `scripts/docs-lint.mjs` over the spec corpus (see below).
 8. `audit:prod` — `npm audit --omit=dev --audit-level=high`.
 
 Steps 1–7 are `check:publish`; `check` is `check:publish && audit:prod`. The
-split exists because `prepublishOnly` runs `check:publish` only: the audit is the
+split exists because `prepublishOnly` runs `check:publish`, not `check`: the audit is the
 one step whose verdict depends on a remote database at the moment it runs, and a
 publish must not fail because an advisory landed (or a registry blinked) between
 the green CI run and the tag. For a contributor there is no difference — run
@@ -67,9 +68,10 @@ the green CI run and the tag. For a contributor there is no difference — run
   replaces global `fetch` with a guard that throws synchronously, so an
   accidental real request fails loudly instead of passing quietly. The harness
   also strips ambient `JIRA_*` variables, so your local credentials cannot
-  change a test's verdict. The single exception is the live read suite, gated on
-  `JIRA_LIVE_TEST=1`, which opens both doors at once — real env and real sockets
-  — so a run can never end up half-fenced.
+  change a test's verdict. `JIRA_LIVE_TEST=1` opens both doors at once — real
+  env and real sockets — so a run can never end up half-fenced; no unit test
+  needs it, and the live suite is `scripts/verify-live.mjs`, which runs outside
+  the fence.
 - **Two mocking tiers.** Wire level: `withFetch()` from `src/testing/` records
   every call and scripts responses. Contract level: `fakeJiraRequest` and the
   other fakes in `src/core/fakes/` hand an api or tool module canned
@@ -78,7 +80,7 @@ the green CI run and the tag. For a contributor there is no difference — run
 - **Time is injected.** Tests drive retries and backoff through the fake clock;
   a test that sleeps in real time is a test that will be flaky on someone else's
   laptop.
-- The taxonomy — what each of the nine suites is for, the determinism knobs
+- The taxonomy — what each of the fifteen suites is for, the determinism knobs
   (`TZ=UTC`, `LANG`/`LC_ALL`), the coverage policy — is
   [`docs/TESTING.md`](docs/TESTING.md).
 - **Never commit real tenant data.** Test data must use placeholder account ids,
@@ -105,7 +107,8 @@ rule.
   prove stdout stayed pure JSON-RPC.
 - **Writes stay behind the gate.** `JIRA_WRITE_MODE` defaults to `plan`;
   executing takes `apply` mode, an explicit `apply: true` and a matching
-  single-use `plan_id`. The three deletes need `JIRA_ALLOW_IRREVERSIBLE` on top.
+  single-use `plan_id`. The irreversible tier — the six deletes and the two
+  bulk writes — needs `JIRA_ALLOW_IRREVERSIBLE` on top.
   Unsafe writes are never replayed after an ambiguous failure — the retry policy
   in [`docs/JIRA-API.md`](docs/JIRA-API.md) is canonical.
 - **Jira v3 API only**, ADF bodies, users identified by `accountId`, and search
@@ -209,9 +212,10 @@ You do not need a site to contribute. If you want one:
   error. The report is redacted, but it does name your site and account — treat a
   pasted report the way you would treat any other work artifact.
 
-- **The live suite is read-only.** `JIRA_LIVE_TEST=1 npm test` runs the probes
-  that ask the one question fixtures cannot ("has Atlassian changed the wire?").
-  No write tool is ever exercised live, so there is nothing to clean up.
+- **The live suite is read-only by default.** `node scripts/verify-live.mjs`
+  with no write flags asks the one question fixtures cannot ("has Atlassian
+  changed the wire?"); the weekly CI `live` job runs exactly that. No write tool
+  is exercised without `--write`, so there is nothing to clean up.
 - `scripts/verify-live.mjs` is the fuller end-to-end runbook against a scratch
   project. It reads by default; the write phase needs `--write` and the delete
   phase needs `--irreversible`, neither implies the other, and every mutation is

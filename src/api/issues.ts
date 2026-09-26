@@ -199,6 +199,14 @@ export interface IssueDetail {
   readonly changelog?: IssueChangelog;
   /** Present only when `properties` asked for them. */
   readonly properties?: Readonly<Record<string, unknown>>;
+  /**
+   * Every other top-level section an `expand` added (`renderedFields`,
+   * `names`, `schema`, `transitions`, `operations`, `versionedRepresentations`
+   * …), under Jira's own section names. Shaped like `fields` — users projected,
+   * ADF rendered per `raw`/`format` — so an expand cannot carry an email address
+   * out. Absent when the response had none.
+   */
+  readonly expanded?: Readonly<Record<string, unknown>>;
   /** `true` when ADF was left as a tree because the caller asked for it. */
   readonly raw: boolean;
   /** The field list actually requested; absent means "Jira's navigable set". */
@@ -360,6 +368,17 @@ export type ListTransitionsOptions = ListTransitionsBase & BudgetGuard;
 // 4. Reads
 // ---------------------------------------------------------------------------
 
+/** The keys of an issue read that {@link getIssue} restates itself. */
+const ISSUE_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'id',
+  'key',
+  'self',
+  'expand',
+  'fields',
+  'changelog',
+  'properties',
+]);
+
 /**
  * Read one issue — `GET /rest/api/3/issue/{issueIdOrKey}`.
  *
@@ -393,6 +412,11 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
   const key = requireString(data.key, 'issue.key');
   const changelog = shapeChangelogBlock(data.changelog);
   const props = asRecord(data.properties);
+  const extras: Record<string, unknown> = {};
+  for (const [section, value] of Object.entries(data)) {
+    if (!ISSUE_ENVELOPE_KEYS.has(section)) extras[section] = value;
+  }
+  const expanded = shapeIssueFields(extras, raw, options.format);
 
   return {
     id,
@@ -401,6 +425,7 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
     fields: shapeIssueFields(data.fields, raw, options.format),
     ...(changelog === undefined ? {} : { changelog }),
     ...(props === undefined ? {} : { properties: props }),
+    ...(Object.keys(expanded).length === 0 ? {} : { expanded }),
     raw,
     ...(fields.length === 0 ? {} : { fieldsRequested: fields }),
     expand,
@@ -521,7 +546,7 @@ export function resolveTransitionId(
   throw createJiraError({
     kind: 'validation',
     reason:
-      `No transition matches ${JSON.stringify(want)} from this issue's current ` +
+      `${NO_TRANSITION_MATCHES} ${JSON.stringify(want)} from this issue's current ` +
       `status. Available now: ${catalog === '' ? 'none' : catalog}.`,
     remediation:
       'Transitions depend on the current status and on the workflow, which can ' +
@@ -742,7 +767,9 @@ export function createIssueRequest(input: CreateIssueInput): JiraRequestSpec {
   if (input.parent !== undefined) {
     fields.parent = keyOrIdRef(input.parent, 'parent issue key or id');
   }
-  if (input.dueDate !== undefined) fields.dueDate = requireText(input.dueDate, 'dueDate');
+  // The system field id is all lower case: `dueDate` is an unknown field to
+  // Jira and the whole create was refused (CC-196).
+  if (input.dueDate !== undefined) fields.duedate = requireText(input.dueDate, 'dueDate');
 
   return {
     method: 'POST',
@@ -752,7 +779,11 @@ export function createIssueRequest(input: CreateIssueInput): JiraRequestSpec {
 }
 
 export function updateIssueRequest(input: UpdateIssueInput): JiraRequestSpec {
-  const replacesLabels = input.labels !== undefined;
+  // A raw `fields.labels` replaces the list exactly like the named option, so
+  // it conflicts with labelsAdd/labelsRemove the same way (CC-162).
+  const replacesLabels =
+    input.labels !== undefined ||
+    (input.fields !== undefined && Object.hasOwn(input.fields, 'labels'));
   const editsLabels = input.labelsAdd !== undefined || input.labelsRemove !== undefined;
   if (replacesLabels && editsLabels) {
     throw createJiraError({
@@ -789,7 +820,7 @@ export function updateIssueRequest(input: UpdateIssueInput): JiraRequestSpec {
       input.parent === null ? null : keyOrIdRef(input.parent, 'parent issue key or id');
   }
   if (input.dueDate !== undefined) {
-    fields.dueDate =
+    fields.duedate =
       input.dueDate === null ? null : requireText(input.dueDate, 'dueDate');
   }
 
@@ -981,6 +1012,13 @@ export async function updateIssue(
  * is replaced, because "correct the fields" is useless advice for an id that was
  * valid a second ago.
  */
+/**
+ * The opening of the local "no such transition" refusal, exported so the tool
+ * layer can tell it from the other local validation errors of the same call
+ * (CC-177).
+ */
+export const NO_TRANSITION_MATCHES = 'No transition matches';
+
 export async function transitionIssue(
   options: TransitionIssueOptions,
 ): Promise<TransitionIssueResult> {
@@ -1602,6 +1640,7 @@ async function classicList<T>(
     }
     return {
       items,
+      ...(items.length === rows.length ? {} : { scanned: rows.length }),
       ...(typeof data.isLast === 'boolean' ? { isLast: data.isLast } : {}),
       ...(typeof data.total === 'number' ? { total: data.total } : {}),
       ...(typeof data.startAt === 'number' ? { startAt: data.startAt } : {}),

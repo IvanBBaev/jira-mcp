@@ -23,7 +23,7 @@ import { closeSync, openSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 
 import { systemClock } from '../core/clock.js';
-import { effectiveCredentials } from '../core/credentials.js';
+import { effectiveCredentials, profileOf } from '../core/credentials.js';
 import {
   nodeEnvFileHost,
   preferredEnvFilePath,
@@ -34,11 +34,12 @@ import {
 } from '../core/config.js';
 import {
   SECRET_FILE_MODE,
-  writeGuardedFile,
+  withEnvLock,
+  writeFileAtomic,
   type EnvLockOptions,
 } from '../core/env-lock.js';
 import { toJiraError } from '../core/errors.js';
-import { isCanonicalCloudHost } from '../core/host.js';
+import { isCanonicalCloudHost, resolveHost } from '../core/host.js';
 import {
   createAuthRequest,
   createJiraRequest,
@@ -59,7 +60,9 @@ import {
 import { createRedactor } from '../core/redact.js';
 import { systemRng } from '../core/rng.js';
 import {
+  isIsoDate,
   loadSettings,
+  profileVar,
   TOKEN_EXPIRY_WARNING_DAYS,
   type LoadSettingsResult,
   type StartupFinding,
@@ -174,8 +177,17 @@ export interface DoctorFsHost {
   readText(path: string): string | undefined;
   /** Open for append (creating at 0600), then close. Throws on failure. */
   touchAppend(path: string): void;
-  /** Atomic 0600 write under the cross-process env lock. */
-  writeSecret(path: string, contents: string, options: EnvLockOptions): Promise<void>;
+  /**
+   * Atomic 0600 write under the cross-process env lock. `render` gets the
+   * file's current contents (`undefined` when absent) read INSIDE the lock, so
+   * an edit that lands between doctor's prompt and its write is merged rather
+   * than overwritten (CC-239).
+   */
+  writeSecret(
+    path: string,
+    render: (existing: string | undefined) => string,
+    options: EnvLockOptions,
+  ): Promise<void>;
 }
 
 /** The real filesystem. */
@@ -193,10 +205,12 @@ export const nodeDoctorFs: DoctorFsHost = {
   },
   async writeSecret(
     path: string,
-    contents: string,
+    render: (existing: string | undefined) => string,
     options: EnvLockOptions,
   ): Promise<void> {
-    await writeGuardedFile(path, contents, options);
+    await withEnvLock(path, options, () => {
+      writeFileAtomic(path, render(nodeDoctorFs.readText(path)));
+    });
   },
 };
 
@@ -477,6 +491,7 @@ const HOST_CODES: ReadonlySet<string> = new Set([
   'site_port',
   'site_path_stripped',
   'host_not_allowed',
+  'host_blocked',
   'allowlist_invalid_pattern',
 ]);
 
@@ -1227,13 +1242,18 @@ const PROBES: readonly Probe[] = [
 // `--save`
 // ---------------------------------------------------------------------------
 
-/** Env values that need no quoting; anything else is double-quoted and escaped. */
+/** Env values that need no quoting; anything else is single-quoted. */
 const PLAIN_ENV_VALUE = /^[A-Za-z0-9_@%+=:,./-]+$/;
 
+/**
+ * What a single-quoted value cannot hold. Node's `.env` parser unescapes
+ * nothing, so a double-quoted `\"` read back as a truncated value (CC-210);
+ * single quotes are literal, but end at the next `'` and span no line.
+ */
+const UNQUOTABLE_ENV_VALUE = /['\r\n]/;
+
 function renderEnvValue(value: string): string {
-  if (PLAIN_ENV_VALUE.test(value)) return value;
-  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-  return `"${escaped}"`;
+  return PLAIN_ENV_VALUE.test(value) ? value : `'${value}'`;
 }
 
 function isAssignmentFor(line: string, key: string): boolean {
@@ -1259,9 +1279,18 @@ export function mergeEnvFile(
   while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   for (const [key, value] of values) {
     const rendered = `${key}=${renderEnvValue(value)}`;
-    const index = lines.findIndex((line) => isAssignmentFor(line, key));
-    if (index >= 0) lines[index] = rendered;
-    else lines.push(rendered);
+    // Every assignment of the key is rewritten, not just the first: Node's
+    // parser keeps the LAST one, so a stale later duplicate would otherwise win
+    // over what "Saved." reported (CC-237). Rewriting rather than dropping the
+    // extras keeps the file's hand-made layout intact.
+    let found = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (isAssignmentFor(lines[i] ?? '', key)) {
+        lines[i] = rendered;
+        found = true;
+      }
+    }
+    if (!found) lines.push(rendered);
   }
   const body = lines.join('\n').replace(/\n+$/, '');
   return `${body}\n`;
@@ -1429,6 +1458,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
             logger,
             redactor,
             allowedHosts: loaded.settings.allowedHosts,
+            activeProfile: loaded.settings.activeProfile,
           });
   } else if (
     host !== undefined &&
@@ -1627,6 +1657,35 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
   const interactive = options.isTTY ?? process.stdin.isTTY === true;
   const prompt = options.prompt;
 
+  // `--save` writes the three top-level variables. Where those are not what the
+  // server signs with, "Saved." would be a lie the next call exposes (CC-212).
+  if (loaded.settings.authMode === 'oauth') {
+    err(
+      '--save writes an API token, and JIRA_AUTH_MODE=oauth signs nothing with one.\n' +
+        'Run `jira-mcp-ai login` to authorize, or unset JIRA_AUTH_MODE to use a token.\n',
+    );
+    return EXIT_CONFIG;
+  }
+  const active = profileOf(loaded.settings, loaded.settings.activeProfile);
+  if (active !== undefined) {
+    const shadowing = (
+      [
+        ['SITE', active.site],
+        ['EMAIL', active.email],
+        ['API_TOKEN', active.apiToken],
+      ] as const
+    )
+      .filter(([, value]) => value !== undefined)
+      .map(([field]) => profileVar(active.name, field));
+    if (shadowing.length > 0) {
+      err(
+        `--save writes JIRA_SITE, JIRA_EMAIL and JIRA_API_TOKEN, but the active profile overrides them with ${shadowing.join(', ')}.\n` +
+          'Edit those variables in the env file, or unset JIRA_ACTIVE_PROFILE first.\n',
+      );
+      return EXIT_CONFIG;
+    }
+  }
+
   if (prompt === undefined && !interactive) {
     err(
       '--save needs a terminal: stdin is not a TTY, so there is nobody to answer the prompts.\n' +
@@ -1639,7 +1698,12 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
   // prompts must not do that.
   const ask = prompt ?? createReadlinePrompt(process.stdin, process.stdout);
 
-  const target = loaded.envFile.path ?? preferredEnvFilePath(envOptions);
+  // The file the run loaded is the natural target, except a project-local
+  // `.env`: credentials are never written into a checkout (CC-180).
+  const target =
+    loaded.envFile.source === 'project' || loaded.envFile.path === undefined
+      ? preferredEnvFilePath(envOptions)
+      : loaded.envFile.path;
   out(`Writing credentials to ${quote(target)} (mode ${octal(SECRET_FILE_MODE)}).\n`);
   out('Leave an answer empty to abort. Terminal input is echoed — beware shoulders.\n\n');
 
@@ -1653,15 +1717,49 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
   // The token becomes a secret the moment it is typed, not when it is next read.
   const expires = await ask('Token expiry date (ISO, optional): ', { secret: false });
 
-  const contents = mergeEnvFile(fs.readText(target), [
+  // The same checks the next start runs, so a typo is refused here rather than
+  // saved as "Saved." and refused by the server that reads it (CC-190).
+  const problems = [
+    ...resolveHost(site, loaded.settings.allowedHosts)
+      .problems.filter((p) => p.severity === 'error')
+      .map((p) => p.message),
+    ...(email.includes('@')
+      ? []
+      : [`JIRA_EMAIL ${JSON.stringify(email)} is not an email address.`]),
+    ...(
+      [
+        ['JIRA_SITE', site],
+        ['JIRA_EMAIL', email],
+        ['JIRA_API_TOKEN', apiToken],
+      ] as const
+    )
+      .filter(([, value]) => UNQUOTABLE_ENV_VALUE.test(value))
+      .map(
+        ([key]) =>
+          `${key} contains a single quote or a line break, which a .env file cannot hold intact.`,
+      ),
+    ...(expires === '' || isIsoDate(expires)
+      ? []
+      : [
+          `JIRA_TOKEN_EXPIRES ${JSON.stringify(expires)} is not an ISO date (e.g. 2027-01-31).`,
+        ]),
+  ];
+  if (problems.length > 0) {
+    for (const problem of problems) err(`${problem}\n`);
+    err('Aborted: nothing was written.\n');
+    return EXIT_CONFIG;
+  }
+
+  const values = [
     ['JIRA_SITE', site],
     ['JIRA_EMAIL', email],
     ['JIRA_API_TOKEN', apiToken],
     ...(expires === '' ? [] : [['JIRA_TOKEN_EXPIRES', expires] as const]),
-  ]);
+  ] as const;
 
   try {
-    await fs.writeSecret(target, contents, {
+    // Read and merge under the lock, not before it (CC-239).
+    await fs.writeSecret(target, (existing) => mergeEnvFile(existing, values), {
       clock,
       onWarning: (message) => err(`${message}\n`),
     });

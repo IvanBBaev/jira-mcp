@@ -120,6 +120,8 @@ interface FlattenState {
   readonly listDepth: number;
   /** `true` renders the markdown subset; `false` is the plain-text path. */
   readonly markdown: boolean;
+  /** Inside a table cell, which renders as one line with no block markup. */
+  readonly cell?: boolean;
 }
 
 function deeper(state: FlattenState): FlattenState {
@@ -178,6 +180,11 @@ function escapeMarkdown(text: string): string {
   return out;
 }
 
+/** An attr string as the current path renders it: escaped only for markdown. */
+function literal(text: string, state: { readonly markdown: boolean }): string {
+  return state.markdown ? escapeMarkdown(text) : text;
+}
+
 /** Length of the longest run of backticks in a string; 0 when there is none. */
 function longestBacktickRun(text: string): number {
   let longest = 0;
@@ -206,8 +213,10 @@ function markdownHref(href: string): string | undefined {
   const clean = href.replace(/\s+/g, ' ').trim();
   if (!SAFE_LINK_SCHEME.test(clean)) return undefined;
   // Spaces and parentheses need the angle-bracket form; `<`/`>` cannot appear
-  // inside it, and a URL containing them was already malformed.
-  return /[\s()<>]/.test(clean) ? `<${clean.replace(/[<>]/g, '')}>` : clean;
+  // inside it, and a URL containing them was already malformed. So does a
+  // backtick: the bare form's closer scan steps over code spans, and one opened
+  // in the href would swallow the `)` (CC-226).
+  return /[\s()<>`]/.test(clean) ? `<${clean.replace(/[<>]/g, '')}>` : clean;
 }
 
 /**
@@ -215,6 +224,10 @@ function markdownHref(href: string): string | undefined {
  * innermost-first — code, then em, then strong, then link — so the result parses
  * back to the same mark set. Marks outside the subset (strike, underline,
  * textColor, subsup) are dropped exactly as the text path drops them.
+ *
+ * Each line is marked on its own (CC-227): the reader parses one line at a
+ * time, so `**a\nb**` came back as literal stars, and a code span across a
+ * line break had a block-start escape planted inside it.
  */
 function applyMarks(text: string, node: AdfNode): string {
   if (text === '') return '';
@@ -235,11 +248,30 @@ function applyMarks(text: string, node: AdfNode): string {
     }
   }
 
-  let out = code ? inlineCode(text) : escapeMarkdown(text);
-  if (em) out = `*${out}*`;
-  if (strong) out = `**${out}**`;
-  if (href !== undefined) out = `[${out}](${href})`;
-  return out;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (line === '') return '';
+      // CC-222: emphasis delimiters go inside the whitespace, never around it.
+      // A `**` with a space on its inner side is literal to the reader (CC-191),
+      // so `**Note: **rest` came back as a stray star and the wrong italics.
+      // Whitespace alone takes no emphasis at all. Code keeps its spaces: the
+      // span pads for them itself.
+      const edges = !code && (strong || em) ? /^(\s*)(.*?)(\s*)$/s.exec(line) : null;
+      const lead = edges?.[1] ?? '';
+      const core = edges?.[2] ?? line;
+      const trail = edges?.[3] ?? '';
+
+      let out = code ? inlineCode(core) : escapeMarkdown(core);
+      if (core !== '') {
+        if (em) out = `*${out}*`;
+        if (strong) out = `**${out}**`;
+      }
+      out = `${lead}${out}${trail}`;
+      if (href !== undefined) out = `[${out}](${href})`;
+      return out;
+    })
+    .join('\n');
 }
 
 /** `attrs.level` clamped into the range markdown can express (1..6). */
@@ -327,14 +359,21 @@ function renderCard(node: AdfNode): string {
  * and in `__fileName` on older ones; failing both, the media id is still enough
  * to correlate with `jira_list_attachments`.
  */
-function renderMedia(node: AdfNode): string {
+function renderMedia(node: AdfNode, markdown = false): string {
   const file = node.attrs?.file;
   const fromFile =
     isRecord(file) && typeof file.name === 'string' ? file.name : undefined;
   const name = attrString(node, 'alt') ?? attrString(node, '__fileName') ?? fromFile;
-  if (name !== undefined && name.length > 0) return `[media: ${collapse(name)}]`;
   const id = attrString(node, 'id');
-  return id === undefined ? '[media]' : `[media: id=${id}]`;
+  const label =
+    name !== undefined && name.length > 0
+      ? `media: ${collapse(name)}`
+      : id === undefined
+        ? 'media'
+        : `media: id=${id}`;
+  // CC-147: on the markdown path the brackets are escaped too — `[media: x]`
+  // directly followed by a text node starting `(javascript:…)` is a link.
+  return markdown ? `\\[${escapeMarkdown(label)}\\]` : `[${label}]`;
 }
 
 /**
@@ -347,54 +386,88 @@ function renderTaskItem(node: AdfNode, state: FlattenState): string {
   const box = taskState === 'DONE' ? '[x]' : '[ ]';
   const children: unknown[] = Array.isArray(node.content) ? node.content : [];
 
+  // Children keep document order, as a listItem's do (CC-232): text after a
+  // nested list becomes a continuation line after it, not part of the box line.
+  const indent = listIndent(state.listDepth);
+  const continuation = indent + ' '.repeat(box.length + 1);
+  let out = '';
   let lead = '';
-  let nested = '';
+  let started = false;
+
+  const emitLead = (): void => {
+    const body = collapse(lead);
+    lead = '';
+    if (started) {
+      // On the markdown path a blank line first, as CC-223's, or the reader
+      // would fold the text into the nested list's last item.
+      if (body !== '') out += `${state.markdown ? '\n' : ''}${continuation}${body}\n`;
+      return;
+    }
+    out += `${indent}${box}${body === '' ? '' : ` ${body}`}\n`;
+    started = true;
+  };
+
   for (const child of children) {
     const type = nodeType(child);
     if (type === 'taskList' || type === 'bulletList' || type === 'orderedList') {
-      nested += flatten(child, deeper(state));
+      if (!started || lead !== '') emitLead();
+      out += flatten(child, deeper(state));
     } else {
       lead += flatten(child, deeper(state));
     }
   }
-
-  const indent = listIndent(state.listDepth);
-  const body = collapse(lead);
-  return `${indent}${box}${body === '' ? '' : ` ${body}`}\n${nested}`;
+  if (!started || lead !== '') emitLead();
+  return out;
 }
 
 /**
  * One `listItem`, with its marker on the first line and its continuation lines
  * aligned under the text. Nested lists are rendered separately so they keep the
  * indentation their own depth gives them rather than inheriting this item's.
+ *
+ * Children keep document order (CC-223): a paragraph after a nested list stays
+ * after it. They were hoisted, so `one`, a sublist, `two` read as `one`, `two`,
+ * sublist. On the markdown path the paragraph after a sublist opens with a
+ * blank continuation line, or the reader would take it for the end of the list.
  */
 function renderListItem(item: unknown, marker: string, state: FlattenState): string {
   const children: unknown[] =
     isRecord(item) && Array.isArray(item.content) ? item.content : [item];
 
+  const indent = listIndent(state.listDepth);
+  const continuation = indent + ' '.repeat(marker.length + 1);
+  let out = '';
   let lead = '';
-  let nested = '';
+  let started = false;
+  let afterList = false;
+
+  const emitLead = (): void => {
+    const body = lead.replace(/\n+$/, '');
+    lead = '';
+    if (body === '') return;
+    const lines = body.split('\n');
+    if (afterList && state.markdown) lines.unshift('');
+    for (const line of lines) {
+      out += started ? `${continuation}${line}\n` : `${indent}${marker} ${line}\n`;
+      started = true;
+    }
+    afterList = false;
+  };
+
   for (const child of children) {
     const type = nodeType(child);
     if (type === 'bulletList' || type === 'orderedList' || type === 'taskList') {
-      nested += flatten(child, deeper(state));
+      emitLead();
+      if (!started) out += `${indent}${marker}\n`;
+      started = true;
+      out += flatten(child, deeper(state));
+      afterList = true;
     } else {
       lead += flatten(child, deeper(state));
     }
   }
-
-  const indent = listIndent(state.listDepth);
-  const body = lead.replace(/\n+$/, '');
-  if (body === '') return `${indent}${marker}\n${nested}`;
-
-  const continuation = indent + ' '.repeat(marker.length + 1);
-  const rendered = body
-    .split('\n')
-    .map((line, index) =>
-      index === 0 ? `${indent}${marker} ${line}` : `${continuation}${line}`,
-    )
-    .join('\n');
-  return `${rendered}\n${nested}`;
+  emitLead();
+  return started ? out : `${indent}${marker}\n`;
 }
 
 /** `bulletList` / `orderedList`, iterated here so ordered markers can count. */
@@ -420,11 +493,19 @@ function renderList(node: AdfNode, state: FlattenState): string {
   return out;
 }
 
-/** One table row, `|`-joined, one line — JIRA-API.md §ADF. */
+/**
+ * One table row, `|`-joined, one line — JIRA-API.md §ADF.
+ *
+ * On the markdown path a cell is flat text, as on the text path (CC-225): a
+ * heading in a cell drops its `#`, and a row that opens with a list marker has
+ * it escaped. `# H | - x` had come back as a heading swallowing the whole row.
+ */
 function renderTableRow(node: AdfNode, state: FlattenState): string {
   const cells = Array.isArray(node.content) ? node.content : [];
-  const rendered = cells.map((cell) => collapse(flatten(cell, deeper(state))));
-  return `${rendered.join(' | ')}\n`;
+  const cellState: FlattenState = { ...deeper(state), cell: true };
+  const rendered = cells.map((cell) => collapse(flatten(cell, cellState)));
+  const row = rendered.join(' | ');
+  return `${state.markdown ? escapeBlockStart(row) : row}\n`;
 }
 
 function flattenChildren(node: AdfNode, state: FlattenState): string {
@@ -465,7 +546,7 @@ const LEAF_BLOCKS = new Set(['mediaSingle', 'decisionItem']);
 function flatten(value: unknown, state: FlattenState): string {
   if (state.depth > MAX_NODE_DEPTH) return DEPTH_LIMIT_MARKER;
   if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return literal(value, state);
   if (Array.isArray(value)) {
     return value.map((item) => flatten(item, deeper(state))).join('');
   }
@@ -482,24 +563,30 @@ function flatten(value: unknown, state: FlattenState): string {
     }
     case 'hardBreak':
       return '\n';
+    // CC-147: every attr string below is tenant text as much as a text node's
+    // is, so the markdown path escapes it the same way — a status lozenge that
+    // reads `[x](javascript:…)` must not come out as a live link.
     case 'mention':
-      return renderMention(node);
+      return literal(renderMention(node), state);
     case 'emoji':
-      return attrString(node, 'shortName') ?? attrString(node, 'text') ?? '';
+      return literal(
+        attrString(node, 'shortName') ?? attrString(node, 'text') ?? '',
+        state,
+      );
     case 'status':
-      return attrString(node, 'text') ?? '';
+      return literal(attrString(node, 'text') ?? '', state);
     case 'date':
-      return renderDate(node);
+      return literal(renderDate(node), state);
     case 'inlineCard':
-      return renderCard(node);
+      return literal(renderCard(node), state);
     case 'blockCard':
     case 'embedCard': {
-      const label = renderCard(node);
+      const label = literal(renderCard(node), state);
       return label === '' ? '' : `${label}\n`;
     }
     case 'media':
     case 'mediaInline':
-      return renderMedia(node);
+      return renderMedia(node, state.markdown);
 
     // --- blocks -----------------------------------------------------------
     case 'paragraph': {
@@ -512,9 +599,13 @@ function flatten(value: unknown, state: FlattenState): string {
     }
     case 'heading': {
       const inner = flattenChildren(node, deeper(state));
-      if (!state.markdown) return `${inner}\n`;
+      if (!state.markdown || state.cell === true) return `${inner}\n`;
       const hashes = '#'.repeat(headingLevel(node));
-      return inner === '' ? `${hashes}\n` : `${hashes} ${inner}\n`;
+      // An ATX heading is one line. A hardBreak (or a newline inside a text
+      // node) would end it early, and the rest would parse back as a new block
+      // - `## a` then `- b` becomes a heading and a list (CC-174).
+      const line = inner.replace(/\n+/g, ' ');
+      return line === '' ? `${hashes}\n` : `${hashes} ${line}\n`;
     }
     case 'rule':
       return '---\n';
@@ -532,7 +623,7 @@ function flatten(value: unknown, state: FlattenState): string {
       return `${fence}${info}\n${body}\n${fence}\n`;
     }
     case 'panel': {
-      const panelType = attrString(node, 'panelType') ?? 'info';
+      const panelType = literal(attrString(node, 'panelType') ?? 'info', state);
       return `[panel:${panelType}]\n${flattenChildren(node, deeper(state))}`;
     }
     case 'mediaGroup': {
@@ -576,8 +667,11 @@ function flatten(value: unknown, state: FlattenState): string {
   // type. Both branches are silent about attrs and neither throws.
   const inner = flattenChildren(node, deeper(state));
   if (inner !== '') return inner;
-  if (typeof node.text === 'string' && node.text !== '') return node.text;
-  return `[${typeLabel(type)}]`;
+  // CC-224: the text and the type name are tenant text like any attr (CC-147),
+  // and the placeholder's brackets are escaped as media's are.
+  if (typeof node.text === 'string' && node.text !== '') return literal(node.text, state);
+  const label = typeLabel(type);
+  return state.markdown ? `\\[${escapeMarkdown(label)}\\]` : `[${label}]`;
 }
 
 /**
@@ -747,7 +841,10 @@ const QUOTE_START = /^([ \t]*)>/;
 interface OpenItem {
   readonly node: AdfNode;
   readonly children: AdfNode[];
-  readonly inline: AdfNode[];
+  /** The paragraph a continuation line appends to — the item's latest. */
+  inline: AdfNode[];
+  /** Where the item's text starts; a continuation line drops that indent. */
+  readonly column: number;
 }
 
 /** A list under construction, keyed by the indent of its markers. */
@@ -769,11 +866,37 @@ function indentWidth(text: string): number {
   return width;
 }
 
-/** How many times `ch` repeats starting at `start`. */
-function runLength(text: string, start: number, ch: string): number {
+/** How many times `ch` repeats starting at `start`, counting at most `max`. */
+function runLength(text: string, start: number, ch: string, max = Infinity): number {
   let n = 0;
-  while (text.charAt(start + n) === ch) n += 1;
+  while (n < max && text.charAt(start + n) === ch) n += 1;
   return n;
+}
+
+/**
+ * CC-149 — how much scanning one top-level {@link parseInline} call may do.
+ * Every helper below looks AHEAD for a closer, and every `[`, `*`, `` ` `` or
+ * `<` is a fresh look-ahead, so a line of 65,536 unclosed `[` is quadratic —
+ * seconds of blocked event loop, which under the HTTP transport stalls every
+ * session. The budget makes the total linear: once it is spent, the helpers
+ * report "no closer" and the rest of the line stays literal text. Ordinary
+ * markdown spends a small multiple of its length and never reaches it.
+ */
+interface ScanBudget {
+  left: number;
+}
+
+const SCAN_BUDGET_PER_CHAR = 32;
+const SCAN_BUDGET_BASE = 4096;
+
+function scanBudget(text: string): ScanBudget {
+  return { left: SCAN_BUDGET_BASE + SCAN_BUDGET_PER_CHAR * text.length };
+}
+
+/** Charge `cost` steps; `false` once the budget is spent. */
+function spend(budget: ScanBudget, cost: number): boolean {
+  budget.left -= cost;
+  return budget.left >= 0;
 }
 
 /**
@@ -782,16 +905,23 @@ function runLength(text: string, start: number, ch: string): number {
  * and emphasis, so the `[` in `` `[x` `` is literal and must not be counted —
  * counting it loses the link (or the emphasis) that wraps the span.
  */
-function matchDelimiter(text: string, from: number, open: string, close: string): number {
+function matchDelimiter(
+  text: string,
+  from: number,
+  open: string,
+  close: string,
+  budget: ScanBudget,
+): number {
   let depth = 0;
   for (let i = from; i < text.length; i += 1) {
+    if (!spend(budget, 1)) return -1;
     const ch = text.charAt(i);
     if (ch === '\\') {
       i += 1;
       continue;
     }
     if (ch === '`') {
-      const span = readCodeSpan(text, i);
+      const span = readCodeSpan(text, i, budget);
       if (span !== undefined) {
         i = span.next - 1;
         continue;
@@ -807,15 +937,21 @@ function matchDelimiter(text: string, from: number, open: string, close: string)
 }
 
 /** Index of the next unescaped `delim` outside a code span, or -1. */
-function findDelimiter(text: string, from: number, delim: string): number {
+function findDelimiter(
+  text: string,
+  from: number,
+  delim: string,
+  budget: ScanBudget,
+): number {
   for (let i = from; i < text.length; i += 1) {
+    if (!spend(budget, 1)) return -1;
     const ch = text.charAt(i);
     if (ch === '\\') {
       i += 1;
       continue;
     }
     if (ch === '`') {
-      const span = readCodeSpan(text, i);
+      const span = readCodeSpan(text, i, budget);
       if (span !== undefined) {
         i = span.next - 1;
         continue;
@@ -829,12 +965,17 @@ function findDelimiter(text: string, from: number, delim: string): number {
 function readCodeSpan(
   text: string,
   start: number,
+  budget: ScanBudget,
 ): { readonly text: string; readonly next: number } | undefined {
+  if (budget.left <= 0) return undefined;
   const length = runLength(text, start, '`');
+  spend(budget, length);
   const fence = '`'.repeat(length);
   let from = start + length;
   while (from < text.length) {
+    if (budget.left <= 0) return undefined;
     const at = text.indexOf(fence, from);
+    spend(budget, (at === -1 ? text.length : at) - from + length);
     if (at === -1) return undefined;
     const found = runLength(text, at, '`');
     if (found !== length) {
@@ -856,22 +997,49 @@ function readCodeSpan(
 function readLink(
   text: string,
   start: number,
+  budget: ScanBudget,
 ): { readonly label: string; readonly href: string; readonly next: number } | undefined {
-  const labelEnd = matchDelimiter(text, start + 1, '[', ']');
+  const labelEnd = matchDelimiter(text, start + 1, '[', ']', budget);
   if (labelEnd === -1) return undefined;
   if (text.charAt(labelEnd + 1) !== '(') return undefined;
-  const hrefEnd = matchDelimiter(text, labelEnd + 2, '(', ')');
+  const label = text.slice(start + 1, labelEnd);
+
+  // CC-151: the angle-bracket form is read FIRST. The renderer emits it exactly
+  // for hrefs whose parentheses do not balance (`markdownHref`), so counting
+  // parentheses before looking for `<…>` would cut such an href short.
+  let open = labelEnd + 2;
+  while (text.charAt(open) === ' ') open += 1;
+  if (text.charAt(open) === '<' && budget.left > 0) {
+    const close = text.indexOf('>', open + 1);
+    spend(budget, (close === -1 ? text.length : close) - open);
+    if (close !== -1) {
+      let after = close + 1;
+      while (text.charAt(after) === ' ') after += 1;
+      const href = text.slice(open + 1, close).trim();
+      if (text.charAt(after) === ')' && href !== '') {
+        return { label, href, next: after + 1 };
+      }
+    }
+  }
+
+  const hrefEnd = matchDelimiter(text, labelEnd + 2, '(', ')', budget);
   if (hrefEnd === -1) return undefined;
 
   const raw = text.slice(labelEnd + 2, hrefEnd).trim();
   const href = raw.startsWith('<') && raw.endsWith('>') ? raw.slice(1, -1) : raw;
   if (href === '') return undefined;
-  return { label: text.slice(start + 1, labelEnd), href, next: hrefEnd + 1 };
+  return { label, href, next: hrefEnd + 1 };
+}
+
+/** End of text counts as space: nothing can flank a delimiter from there. */
+function isSpace(ch: string): boolean {
+  return ch === '' || /\s/.test(ch);
 }
 
 function readEmphasis(
   text: string,
   start: number,
+  budget: ScanBudget,
 ):
   | {
       readonly text: string;
@@ -880,10 +1048,17 @@ function readEmphasis(
       readonly next: number;
     }
   | undefined {
-  const run = Math.min(runLength(text, start, '*'), 3);
+  const run = runLength(text, start, '*', 3);
+  // CommonMark flanking, the whitespace half: a run opens only when a
+  // non-space follows it and closes only when a non-space precedes it, so
+  // `2 * 3 * 4` stays literal arithmetic instead of italicising " 3 " (CC-191).
+  if (isSpace(text.charAt(start + run))) return undefined;
   for (let length = run; length >= 1; length -= 1) {
     const delim = '*'.repeat(length);
-    const at = findDelimiter(text, start + length, delim);
+    let at = findDelimiter(text, start + length, delim, budget);
+    while (at !== -1 && isSpace(text.charAt(at - 1))) {
+      at = findDelimiter(text, at + length, delim, budget);
+    }
     if (at === -1) continue;
     const inner = text.slice(start + length, at);
     if (inner === '') continue;
@@ -914,19 +1089,25 @@ interface MentionSink {
 
 /**
  * The `@[name]` token at `start` (which must point at the `@`), or `undefined`
- * when it must stay literal: unterminated, empty, or longer than
+ * when it must stay literal: unterminated, empty or whitespace-only (as `@[]`
+ * does — there is no name to search for, CC-241), or longer than
  * {@link MAX_MENTION_NAME_LENGTH}. The name is verbatim — no trim, no escape
  * processing, no nesting — because it is the resolution-map key (D100), and a
  * key that mutates in transit cannot match the map the resolver built from it.
+ * The resolver trims its own copy for searching and matching (CC-241).
  */
 function readMention(
   text: string,
   start: number,
 ): { readonly name: string; readonly next: number } | undefined {
-  const close = text.indexOf(']', start + 2);
-  if (close === -1) return undefined;
+  // Bounded look-ahead (CC-149): a name longer than the cap is refused anyway,
+  // so there is no reason to scan past it for the `]`.
+  const window = text.slice(start + 2, start + 3 + MAX_MENTION_NAME_LENGTH);
+  const offset = window.indexOf(']');
+  if (offset === -1) return undefined;
+  const close = start + 2 + offset;
   const name = text.slice(start + 2, close);
-  if (name === '' || name.length > MAX_MENTION_NAME_LENGTH) return undefined;
+  if (name.trim() === '' || name.length > MAX_MENTION_NAME_LENGTH) return undefined;
   return { name, next: close + 1 };
 }
 
@@ -937,18 +1118,51 @@ function mentionNode(target: MentionTarget): AdfNode {
   return { type: 'mention', attrs };
 }
 
+/**
+ * Marks the ADF schema allows next to `code`. Everything else — `strong`,
+ * `em` — on a code node is an INVALID_INPUT 400 from Jira (CC-148), so
+ * `**\`x\`**` keeps the code and drops the bold.
+ */
+const CODE_COMPATIBLE_MARKS = new Set(['link', 'annotation']);
+
+/**
+ * Write-side link schemes that are never kept as a link (CC-153): the read
+ * side already refuses to render them, and a comment is a bad place to plant a
+ * `javascript:` URL copied out of untrusted content. Browsers ignore control
+ * characters and whitespace inside a scheme, so they are stripped first.
+ */
+const UNSAFE_WRITE_SCHEME = /^(?:javascript|vbscript|data):/i;
+
+function unsafeHref(href: string): boolean {
+  // eslint-disable-next-line no-control-regex -- stripping them is the point
+  return UNSAFE_WRITE_SCHEME.test(href.replace(/[\u0000-\u0020\u007f]+/g, ''));
+}
+
 /** Add a mark to every text node, skipping nodes that already carry it. */
 function addMark(nodes: readonly AdfNode[], mark: AdfNode): AdfNode[] {
   return nodes.map((node) => {
     if (node.type !== 'text') return node;
     const existing: unknown[] = Array.isArray(node.marks) ? node.marks : [];
     if (existing.some((m) => isRecord(m) && m.type === mark.type)) return node;
+    const isCode = existing.some((m) => isRecord(m) && m.type === 'code');
+    if (
+      isCode &&
+      typeof mark.type === 'string' &&
+      !CODE_COMPATIBLE_MARKS.has(mark.type)
+    ) {
+      return node;
+    }
     return { ...node, marks: [...existing, mark] };
   });
 }
 
 /** One line of inline markdown → inline ADF nodes. Never throws. */
-function parseInline(text: string, depth: number, sink?: MentionSink): AdfNode[] {
+function parseInline(
+  text: string,
+  depth: number,
+  sink?: MentionSink,
+  budget: ScanBudget = scanBudget(text),
+): AdfNode[] {
   const out: AdfNode[] = [];
   let buffer = '';
 
@@ -969,7 +1183,7 @@ function parseInline(text: string, depth: number, sink?: MentionSink): AdfNode[]
     }
 
     if (ch === '`') {
-      const span = readCodeSpan(text, i);
+      const span = readCodeSpan(text, i, budget);
       if (span !== undefined) {
         flush();
         out.push({ type: 'text', text: span.text, marks: [{ type: 'code' }] });
@@ -1000,21 +1214,35 @@ function parseInline(text: string, depth: number, sink?: MentionSink): AdfNode[]
     }
 
     if (ch === '[' && depth < MAX_INLINE_DEPTH) {
-      const link = readLink(text, i);
+      const link = readLink(text, i, budget);
       if (link !== undefined) {
         flush();
         const mark: AdfNode = { type: 'link', attrs: { href: link.href } };
-        out.push(...addMark(parseInline(link.label, depth + 1, sink), mark));
+        const label = parseInline(link.label, depth + 1, sink, budget);
+        // CC-137: `[](url)` has no text to carry the mark, and a link with
+        // nothing to click is a lost link — the URL becomes its own label.
+        // CC-152: the same holds for a label of only non-text nodes (a lone
+        // resolved mention), which `addMark` cannot mark; the URL follows it.
+        const hasText = label.some((node) => node.type === 'text');
+        const separator: AdfNode[] =
+          hasText || label.length === 0 ? [] : [{ type: 'text', text: ' ' }];
+        const hrefText: AdfNode[] = hasText ? [] : [{ type: 'text', text: link.href }];
+        if (unsafeHref(link.href)) {
+          // CC-153: a refused scheme keeps its label as plain text, no link.
+          out.push(...label, ...separator, ...hrefText);
+        } else {
+          out.push(...addMark(label, mark), ...separator, ...addMark(hrefText, mark));
+        }
         i = link.next;
         continue;
       }
     }
 
     if (ch === '*' && depth < MAX_INLINE_DEPTH) {
-      const emphasis = readEmphasis(text, i);
+      const emphasis = readEmphasis(text, i, budget);
       if (emphasis !== undefined) {
         flush();
-        let nodes = parseInline(emphasis.text, depth + 1, sink);
+        let nodes = parseInline(emphasis.text, depth + 1, sink, budget);
         if (emphasis.em) nodes = addMark(nodes, { type: 'em' });
         if (emphasis.strong) nodes = addMark(nodes, { type: 'strong' });
         out.push(...nodes);
@@ -1054,9 +1282,23 @@ function codeBlockNode(language: string, text: string): AdfNode {
   return node;
 }
 
-function itemNode(inline: AdfNode[]): OpenItem {
+function itemNode(inline: AdfNode[], column: number): OpenItem {
   const children: AdfNode[] = [{ type: 'paragraph', content: inline }];
-  return { node: { type: 'listItem', content: children }, children, inline };
+  return { node: { type: 'listItem', content: children }, children, inline, column };
+}
+
+/** `line` without up to `width` columns of leading whitespace. */
+function dropIndent(line: string, width: number): string {
+  let index = 0;
+  let dropped = 0;
+  while (index < line.length && dropped < width) {
+    const ch = line[index];
+    if (ch === ' ') dropped += 1;
+    else if (ch === '\t') dropped += 2;
+    else break;
+    index += 1;
+  }
+  return line.slice(index);
 }
 
 /** A closing fence is a bare run of backticks at least as long as the opener. */
@@ -1075,7 +1317,24 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
   const stack: OpenList[] = [];
   let paragraph: string[] = [];
   let fence:
-    { readonly marker: string; readonly language: string; body: string[] } | undefined;
+    | {
+        readonly marker: string;
+        readonly language: string;
+        readonly body: string[];
+        /** The list item the fence sits in, and the indent its lines drop. */
+        readonly owner?: OpenItem;
+        readonly indent: number;
+      }
+    | undefined;
+  // A blank line or a closed code block inside a list item: the next indented
+  // line opens a new block in that item instead of extending the paragraph
+  // before it.
+  // A blank line holds an item open only as far as its OWN indent reaches: the
+  // renderer writes the continuation indent on a blank line inside an item and
+  // nothing on the blank line after a list, so `-` + blank + ` a` stays a list
+  // followed by a paragraph (CC-154).
+  let gap: 'blank' | 'block' | undefined;
+  let gapIndent = 0;
 
   const flushParagraph = (): void => {
     if (paragraph.length === 0) return;
@@ -1088,6 +1347,7 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
     ordered: boolean,
     start: number,
     rest: string,
+    column: number,
   ): void => {
     let indent = lineIndent;
     // A shallower marker closes the deeper lists; an equal marker of the other
@@ -1107,7 +1367,7 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
     }
 
     const parent = stack.at(-1);
-    const item = itemNode(parseInline(rest, 0, sink));
+    const item = itemNode(parseInline(rest, 0, sink), column);
     if (parent === undefined || indent > parent.indent) {
       const items: AdfNode[] = [item.node];
       const list: AdfNode = {
@@ -1124,31 +1384,85 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
     parent.item = item;
   };
 
+  const closeFence = (): void => {
+    if (fence === undefined) return;
+    const block = codeBlockNode(fence.language, fence.body.join('\n'));
+    if (fence.owner === undefined) content.push(block);
+    else {
+      fence.owner.children.push(block);
+      gap = 'block';
+    }
+    fence = undefined;
+  };
+
+  /**
+   * The open list whose item a line indented by `lineIndent` belongs to — the
+   * deepest one indented less than the line (CC-154). Deeper lists close.
+   */
+  const ownerList = (lineIndent: number): OpenList | undefined => {
+    while (stack.length > 0 && (stack.at(-1)?.indent ?? 0) >= lineIndent) stack.pop();
+    return stack.at(-1);
+  };
+
   for (const line of lines) {
     if (fence !== undefined) {
-      if (isFenceClose(line, fence.marker)) {
-        content.push(codeBlockNode(fence.language, fence.body.join('\n')));
-        fence = undefined;
-      } else fence.body.push(line);
+      if (isFenceClose(line, fence.marker)) closeFence();
+      else fence.body.push(dropIndent(line, fence.indent));
       continue;
     }
 
     const opening = FENCE.exec(line);
     if (opening !== null) {
       flushParagraph();
-      stack.length = 0;
+      const lineIndent = indentWidth(line);
+      const reach = gap === 'blank' ? Math.min(lineIndent, gapIndent) : lineIndent;
+      gap = undefined;
+      const owner = stack.length > 0 ? ownerList(reach) : undefined;
+      if (owner === undefined) stack.length = 0;
       fence = {
         marker: opening[1] ?? '```',
         language: (opening[2] ?? '').trim(),
         body: [],
+        // CommonMark strips up to the fence's own indent from each body line,
+        // top level included (CC-193).
+        indent: lineIndent,
+        ...(owner === undefined ? {} : { owner: owner.item }),
       };
       continue;
     }
 
     if (line.trim() === '') {
       flushParagraph();
-      stack.length = 0;
+      // A list survives a blank line only if an indented line follows it.
+      if (stack.length > 0 && gap === undefined) {
+        gap = 'blank';
+        gapIndent = indentWidth(line);
+      } else if (gap === 'blank') gapIndent = Math.min(gapIndent, indentWidth(line));
+      else if (gap === 'block') {
+        gap = 'blank';
+        gapIndent = indentWidth(line);
+      }
       continue;
+    }
+    const afterGap = gap;
+    gap = undefined;
+    const isItem = LIST_ITEM.test(line);
+    if (afterGap !== undefined && stack.length > 0 && !isItem) {
+      // After a gap, an indented line is a new paragraph in the item above it
+      // (CC-154); anything else ends the list, as before.
+      const lineIndent = indentWidth(line);
+      const reach = afterGap === 'blank' ? Math.min(lineIndent, gapIndent) : lineIndent;
+      const owner = ownerList(reach);
+      if (owner !== undefined) {
+        const inline = parseInline(line.trim(), 0, sink);
+        owner.item.children.push({ type: 'paragraph', content: inline });
+        owner.item.inline = inline;
+        continue;
+      }
+      stack.length = 0;
+    } else if (afterGap === 'blank' && isItem) {
+      // A marker after a blank line starts a new list, as it always has.
+      stack.length = 0;
     }
 
     const heading = HEADING.exec(line);
@@ -1165,16 +1479,19 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
       const marker = item[2] ?? '-';
       const ordered = !BULLET_MARKERS.has(marker);
       const start = ordered ? Number.parseInt(marker, 10) : 1;
-      openItem(indentWidth(item[1] ?? ''), ordered, start, item[3] ?? '');
+      const lineIndent = indentWidth(item[1] ?? '');
+      openItem(lineIndent, ordered, start, item[3] ?? '', lineIndent + marker.length + 1);
       continue;
     }
 
     // Inside a list, a more-indented plain line continues the current item
     // rather than ending the list — that is what the renderer emits for an
-    // item whose text runs over one line.
+    // item whose text runs over one line. Only the item's own indent is
+    // dropped: spaces after a hardBreak are text, and a trim lost them (CC-228).
     const open = stack.at(-1);
     if (open !== undefined && indentWidth(line) > open.indent) {
-      open.item.inline.push({ type: 'hardBreak' }, ...parseInline(line.trim(), 0, sink));
+      const text = dropIndent(line, open.item.column);
+      open.item.inline.push({ type: 'hardBreak' }, ...parseInline(text, 0, sink));
       continue;
     }
     stack.length = 0;
@@ -1183,9 +1500,7 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
 
   // An unterminated fence still yields its code block: dropping it would
   // silently swallow the rest of the document.
-  if (fence !== undefined) {
-    content.push(codeBlockNode(fence.language, fence.body.join('\n')));
-  }
+  closeFence();
   flushParagraph();
 
   return { type: 'doc', version: 1, content };

@@ -27,7 +27,11 @@ import type { MemoryJournal } from '../core/fakes/memoryJournal.js';
 import { JiraError } from '../core/types.js';
 import type { Rng, Settings } from '../core/types.js';
 import { defineTool, toolInput, writeToolInput, z } from './define.js';
-import { createRecentWrites, sessionRecentWrites } from './recent-writes.js';
+import {
+  createRecentWrites,
+  currentRecentWrites,
+  sessionRecentWrites,
+} from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
 import { ok } from './result.js';
 import {
@@ -808,6 +812,28 @@ test('the gate wrappers report the plans the gate holds, not their own idea of i
   assert.equal(wrapped.outstandingPlans, 1);
 });
 
+test('[CC-192] an applied irreversible write records nothing in the recent writes', async () => {
+  const { deps, jira, recent } = makeHarness({
+    settings: { writeMode: 'apply', allowIrreversible: true },
+  });
+  jira.on('GET /rest/api/3/issue/10005', jiraOk({ fields: { summary: 'Doomed' } }));
+  jira.on('DELETE /rest/api/3/issue/10005', jiraOk(undefined, { status: 204 }));
+  recent.record(['10001']);
+
+  await withSession({ ...deps, packages: DELETE_MANIFEST }, async ({ client }) => {
+    const args = { issue: '10005' };
+    const planId = await planIdFor(client, 'jira_fx_delete', args);
+    const result = await callTool(client, 'jira_fx_delete', {
+      ...args,
+      apply: true,
+      plan_id: planId,
+    });
+
+    assert.deepEqual(dataOf(result), { deleted: '10005' });
+    assert.deepEqual(recent.snapshot(), ['10001']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Recently written issues (CC-02)
 // ---------------------------------------------------------------------------
@@ -902,6 +928,53 @@ test('CC-02: a write that came back 4xx records nothing', async () => {
   });
 });
 
+test('[CC-221] a write Jira applied but whose body was lost is recorded', async () => {
+  const { deps, jira, recent } = makeHarness({ settings: { writeMode: 'apply' } });
+  jira.on(
+    'PUT /rest/api/3/issue/10001',
+    jiraErr(
+      new JiraError({
+        kind: 'ambiguous_write',
+        message: 'PUT was applied (Jira answered 204), but its response body timed out',
+        retryable: false,
+        httpStatus: 204,
+      }),
+    ),
+  );
+
+  await withSession(deps, async ({ client }) => {
+    const result = await applyWrite(client, 'jira_fx_update', {
+      issue: '10001',
+      summary: 'S',
+    });
+
+    assert.equal(envelopeOf(result).ok, false);
+    // The server says the write landed, so search must reconcile it.
+    assert.deepEqual(recent.snapshot(), ['10001']);
+  });
+});
+
+test('[CC-221] an ambiguous write with no status records nothing', async () => {
+  const { deps, jira, recent } = makeHarness({ settings: { writeMode: 'apply' } });
+  jira.on(
+    'PUT /rest/api/3/issue/10001',
+    jiraErr(
+      new JiraError({
+        kind: 'ambiguous_write',
+        message: 'PUT timed out after the request was sent',
+        retryable: false,
+      }),
+    ),
+  );
+
+  await withSession(deps, async ({ client }) => {
+    await applyWrite(client, 'jira_fx_update', { issue: '10001', summary: 'S' });
+
+    // It may or may not have landed; the registry only remembers what exists.
+    assert.deepEqual(recent.snapshot(), []);
+  });
+});
+
 test('CC-02: a refused apply and a local failure record nothing', async () => {
   const { deps, recent } = makeHarness({ settings: { writeMode: 'apply' } });
 
@@ -944,6 +1017,50 @@ test('CC-02: without an injected registry the write lands in the session one', a
       // The default the search tool reads (`mcp/recent-writes.ts`).
       assert.deepEqual(sessionRecentWrites.snapshot(), ['10042']);
     });
+  } finally {
+    sessionRecentWrites.clear();
+  }
+});
+
+/** Reports the registry a tool handler sees — what `jira_search` reconciles. */
+const probeTool = defineTool({
+  name: 'jira_fx_recent',
+  title: 'Recent writes',
+  description: 'Returns the ids the in-scope registry holds.',
+  package: 'core',
+  annotations: { ...READ_ANNOTATIONS, openWorldHint: false },
+  input: toolInput({}),
+  handler() {
+    return Promise.resolve(ok({ ids: currentRecentWrites().snapshot() }));
+  },
+});
+
+test('[CC-244] each server’s tool calls read the registry it records into', async () => {
+  const a = makeHarness({ settings: { writeMode: 'apply' } });
+  const b = makeHarness({ settings: { writeMode: 'apply' } });
+  const packages: readonly PackageSpec[] = MANIFEST.map((spec) =>
+    spec.id === 'core' ? { ...spec, tools: [...spec.tools, probeTool] } : spec,
+  );
+  a.jira.on(
+    'POST /rest/api/3/issue',
+    jiraOk({ id: '10042', key: 'ABC-42' }, { status: 201 }),
+  );
+
+  sessionRecentWrites.clear();
+  try {
+    // Two sessions of one process, as the HTTP transport builds them.
+    await withSession({ ...a.deps, packages }, async ({ client: first }) => {
+      await withSession({ ...b.deps, packages }, async ({ client: second }) => {
+        await applyWrite(first, 'jira_fx_create', { summary: 'S' });
+
+        assert.deepEqual(dataOf(await callTool(first, 'jira_fx_recent'))['ids'], [
+          '10042',
+        ]);
+        // The other session's searches must not reconcile this write.
+        assert.deepEqual(dataOf(await callTool(second, 'jira_fx_recent'))['ids'], []);
+      });
+    });
+    assert.deepEqual(sessionRecentWrites.snapshot(), []);
   } finally {
     sessionRecentWrites.clear();
   }

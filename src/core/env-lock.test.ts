@@ -185,6 +185,48 @@ describe('acquireEnvLock', () => {
     lock.release();
   });
 
+  it('[CC-172] a breaker does not delete a lock re-taken after it observed the stale one', async () => {
+    const target = join(dir, '.env');
+    const lockPath = `${target}.lock`;
+    mkdirSync(lockPath);
+    writeFileSync(join(lockPath, 'owner.json'), '{"pid":999}\n');
+    const winner = '{"pid":7,"host":"other","acquiredAt":1}\n';
+
+    // The warning fires between the stale observation and the break: another
+    // breaker wins there and takes a fresh lock.
+    await assert.rejects(
+      acquireEnvLock(
+        target,
+        options({
+          clock: autoClock(Date.now() + 10 * DEFAULT_STALE_MS),
+          onWarning: () => {
+            rmSync(lockPath, { recursive: true, force: true });
+            mkdirSync(lockPath);
+            writeFileSync(join(lockPath, 'owner.json'), winner);
+          },
+        }),
+      ),
+      (error: unknown) => error instanceof JiraError && error.kind === 'timeout',
+    );
+    assert.equal(readFileSync(join(lockPath, 'owner.json'), 'utf8'), winner);
+    assert.deepEqual(
+      readdirSync(dir).filter((name) => name.includes('.stale-')),
+      [],
+    );
+  });
+
+  it('[CC-172] breaking a stale lock leaves no renamed directory behind', async () => {
+    const target = join(dir, '.env');
+    mkdirSync(`${target}.lock`);
+    writeFileSync(join(`${target}.lock`, 'owner.json'), '{"pid":999}\n');
+    const lock = await acquireEnvLock(
+      target,
+      options({ clock: autoClock(Date.now() + 10 * DEFAULT_STALE_MS) }),
+    );
+    lock.release();
+    assert.deepEqual(readdirSync(dir), []);
+  });
+
   it('does not break a lock that is younger than staleMs', async () => {
     const target = join(dir, '.env');
     mkdirSync(`${target}.lock`);
@@ -290,6 +332,33 @@ describe('acquireEnvLock', () => {
         return true;
       },
     );
+  });
+
+  it('[CC-168] removes a lock directory it made but could not claim', async (t) => {
+    if (!POSIX) {
+      t.skip('PATH_MAX-based failure injection is POSIX-only');
+      return;
+    }
+    // A lock path just under PATH_MAX: mkdir succeeds, but the owner record's
+    // temp file inside it is ENAMETOOLONG. The half-made lock must not stay
+    // behind to block every other writer until it goes stale.
+    const pathMax = process.platform === 'darwin' ? 1024 : 4096;
+    let parent = dir;
+    while (parent.length < pathMax - 240) {
+      parent = join(parent, 'd'.repeat(Math.min(200, pathMax - 240 - parent.length)));
+    }
+    mkdirSync(parent, { recursive: true });
+    const lockPath = join(parent, 'x'.repeat(pathMax - 20 - parent.length));
+    assert.ok(lockPath.length < pathMax - 1);
+
+    await assert.rejects(
+      acquireEnvLock(join(dir, '.env'), options({ lockPath })),
+      (error: unknown) => {
+        assert.equal((error as { code?: unknown }).code, 'ENAMETOOLONG');
+        return true;
+      },
+    );
+    assert.equal(existsSync(lockPath), false);
   });
 
   it('names a stale lock with no owner record as unknown', async () => {

@@ -99,7 +99,7 @@
                 "name": "Why not Atlassian's official remote MCP server?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "The official server is remote and OAuth-based: fine for interactive desktop use, unusable anywhere nobody can click through a browser consent screen. jira-mcp-ai is headless — Basic auth with your own API token — so it runs from cron, CI and remote sessions, keeps all traffic between your machine and your Jira site, and adds a plan-and-apply write gate the official server does not have. If OAuth and a hosted service fit your setup, use the official one; this exists for everyone else."
+                  "text": "The official server is remote and OAuth-based: fine for interactive desktop use, unusable anywhere nobody can click through a browser consent screen. jira-mcp-ai is headless by default — Basic auth with your own API token, with OAuth 2.0 (3LO) as an opt-in for accounts that need it — so it runs from cron, CI and remote sessions, keeps all traffic between your machine and your Jira site, and adds a plan-and-apply write gate the official server does not have. If a hosted service fits your setup, use the official one; this exists for everyone else."
                 }
               },
               {
@@ -115,7 +115,7 @@
                 "name": "Is it safe to let an AI assistant write to my Jira site?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. The six deletes — issue, comment, worklog, component, version and sprint — sit in a separate irreversible tier that needs a fourth thing, JIRA_ALLOW_IRREVERSIBLE=true, because blanket write mode must never cover them. There are no bulk operations at all, and a write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
+                  "text": "Writes ship disarmed. In the default plan mode a write tool returns the exact method, path and redacted body it would have sent, plus a single-use plan_id — its first line is, literally, 'NOT performed — plan mode.' Executing requires all three: the server started with JIRA_WRITE_MODE=apply, the call passing apply: true, and a plan_id minted for identical arguments. The irreversible tier — the six deletes (issue, comment, worklog, component, version, sprint) and the two bulk writes (delete, edit) — needs a fourth thing, JIRA_ALLOW_IRREVERSIBLE=true, because blanket write mode must never cover it. A write whose outcome is unknowable (timeout mid-flight) is never retried — the server asks you to check state instead of guessing."
                 }
               },
               {
@@ -1440,8 +1440,9 @@
             <span class="eyebrow">Install</span>
             <h2 id="h-install">Three steps</h2>
             <p class="sub">
-              No developer app, no OAuth consent screen, no App Review — a Jira Cloud
-              site and an API token are the whole setup. Node 22 or newer.
+              No developer app, no consent screen, no App Review — a Jira Cloud site
+              and an API token are the whole setup; OAuth 2.0 is an opt-in, never a
+              requirement. Node 22 or newer.
             </p>
           </div>
 
@@ -1650,7 +1651,7 @@
                   <pre id="c-modes">JIRA_WRITE_MODE=plan       <span class="c"># default — writes return a plan, nothing executes</span>
 JIRA_TOOL_PACKAGES=reader  <span class="c"># reads only — write tools are never registered</span>
 JIRA_WRITE_MODE=apply      <span class="c"># writes execute, when a call also passes apply:true</span>
-JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six deletes; apply alone never does</span></pre>
+JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes and bulk writes; apply alone never does</span></pre>
                 </div>
               </div>
             </div>
@@ -1806,10 +1807,11 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
             <div class="card">
               <h3>What it deliberately does not do</h3>
               <p class="sub" style="font-size: 15px">
-                No bulk operations, no deleting a project, a component, a version or a
-                sprint, no admin surface — excluded by decision, not by omission. No
-                Confluence, no Jira Service Management, no Data Center. A tool that does
-                not exist cannot be talked into running.
+                No deleting a project, no admin surface, no free-form bulk — the bulk
+                delete and bulk edit are two fixed tools inside the irreversible tier —
+                excluded by decision, not by omission. No Confluence, no Jira Service
+                Management, no Data Center. A tool that does not exist cannot be talked
+                into running.
               </p>
             </div>
             <div class="card">
@@ -1850,7 +1852,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
             <div class="tier">
               <div>
                 <h3>read</h3>
-                <span class="tag read">27 tools</span>
+                <span class="tag read">28 tools</span>
               </div>
               <p>Never mutates anything. Safe to expose first, and to leave on.</p>
             </div>
@@ -1870,11 +1872,12 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
             <div class="tier">
               <div>
                 <h3>irreversible</h3>
-                <span class="tag irr">6 tools</span>
+                <span class="tag irr">8 tools</span>
               </div>
               <p>
                 Deleting an issue, a comment, a worklog, a component, a version or a
-                sprint. These need a second, separate switch —
+                sprint, and bulk-editing or bulk-deleting up to 1,000 issues at once.
+                These need a second, separate switch —
                 <code>JIRA_ALLOW_IRREVERSIBLE=true</code> — on top of everything the
                 standard tier already requires, because an operator who turned writes on
                 to move a ticket did not thereby agree to lose one.
@@ -2071,9 +2074,10 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
             <h2 id="h-config">Credentials and environment</h2>
             <p class="sub">
               Headless by design: Basic auth with your Atlassian account email and an
-              API token. No browser OAuth dance, nothing to click through — it works
-              from cron, CI and remote boxes, which is the main reason this exists next
-              to Atlassian's official remote MCP server.
+              API token, nothing to click through — it works from cron, CI and remote
+              boxes, which is the main reason this exists next to Atlassian's official
+              remote MCP server. OAuth 2.0 (3LO) is there as an opt-in for the accounts
+              that need it: one browser login, then the server refreshes on its own.
             </p>
           </div>
 
@@ -2234,9 +2238,9 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
                       <td><code>JIRA_ALLOW_IRREVERSIBLE</code></td>
                       <td><code>false</code></td>
                       <td>
-                        Opt-in for the irreversible tier. Without it the six deletes
-                        refuse even under <code>apply</code> — blanket write mode never
-                        covers them.
+                        Opt-in for the irreversible tier. Without it the deletes and
+                        the bulk writes refuse even under <code>apply</code> — blanket
+                        write mode never covers them.
                       </td>
                     </tr>
                     <tr>
@@ -2513,7 +2517,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
             <a
               href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/IMPLEMENTATION-PLAN.md"
               >docs/IMPLEMENTATION-PLAN.md</a
-            >; the longer horizon — a Data Center adapter, bulk operations — is
+            >; the longer horizon — a Data Center adapter, parked until a real host
+            exists — is
             <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/docs/ROADMAP.md"
               >docs/ROADMAP.md</a
             >.
@@ -2545,14 +2550,15 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
               <p>
                 The official server is remote and OAuth-based: fine for interactive
                 desktop use, unusable anywhere nobody can click through a browser
-                consent screen. jira-mcp-ai is headless — Basic auth with your own API
-                token — so it runs from cron, CI and remote sessions, keeps all traffic
+                consent screen. jira-mcp-ai is headless by default — Basic auth with
+                your own API token, with OAuth 2.0 (3LO) as an opt-in for accounts that
+                need it — so it runs from cron, CI and remote sessions, keeps all traffic
                 between your machine and your Jira site, and adds a plan-and-apply write
                 gate the official server does not have.
               </p>
               <p>
-                If OAuth and a hosted service fit your setup, use the official one; this
-                exists for everyone else.
+                If a hosted service fits your setup, use the official one; this exists
+                for everyone else.
               </p>
             </div>
           </details>
@@ -2584,12 +2590,12 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the six delete
                 arguments.
               </p>
               <p>
-                The six deletes — issue, comment, worklog, component, version and
-                sprint — sit in a separate irreversible tier that needs a fourth thing,
-                <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, because blanket
-                write mode must never cover them. There are no bulk operations at all,
-                and a write whose outcome is unknowable — a timeout mid-flight — is
-                never retried: the server asks you to check state instead of guessing.
+                The irreversible tier — the six deletes (issue, comment, worklog,
+                component, version, sprint) and the two bulk writes (delete, edit) —
+                needs a fourth thing, <code>JIRA_ALLOW_IRREVERSIBLE=true</code>, because
+                blanket write mode must never cover it. A write whose outcome is
+                unknowable — a timeout mid-flight — is never retried: the server asks
+                you to check state instead of guessing.
               </p>
             </div>
           </details>

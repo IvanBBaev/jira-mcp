@@ -38,10 +38,15 @@
  *      `jira_create_version` (named with the run id, archived again on the way
  *      out), `jira_create_sprint` (named with the run id, started and closed so
  *      it does not sit on the backlog) and `jira_create_component` (named with
- *      the run id). **None of the three can be removed** — this server ships no
- *      version, sprint or component delete, on purpose — so a `--write` run
- *      leaves exactly those three behind.
- *   5. **Deletes come last**, and only against the throwaway issue.
+ *      the run id). A `--write` run leaves exactly those three behind, on
+ *      purpose: the residue inventory (rule 6) has to find something real, and
+ *      the `--purge` run removes them with the deletes D102 shipped —
+ *      `jira_delete_sprint`, `jira_delete_version`, `jira_delete_component` —
+ *      or names the permission the tenant withheld.
+ *   5. **Deletes come last**, and only against issues this run created: the
+ *      D103 bulk claims (C42 edits the throwaways, C43 bulk-deletes a third
+ *      issue made for that purpose) run first in the same child, then C26
+ *      deletes the worklog, the comment and the throwaways themselves.
  *   6. **Every run ends with a residue inventory** (C32): the artifacts this
  *      gate's naming convention can still find on the site, each with the way to
  *      remove it. Nothing is guessed — the inventory is a read of the site.
@@ -70,7 +75,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -87,6 +92,12 @@ const RUNBOOK = 'docs/RELEASING.md (section 6, "Gate C")';
 
 /** One tool call's ceiling. Generous: a cold Jira Cloud site is slow. */
 const CALL_TIMEOUT_MS = 90_000;
+
+/**
+ * Spawn-to-`initialize` ceiling. Startup reads configuration and nothing else
+ * (no network), so this only has to cover a slow disk and a cold Node.
+ */
+const CONNECT_TIMEOUT_MS = 30_000;
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -116,8 +127,8 @@ Flags:
                       --irreversible and --purge, and it must match JIRA_SITE.
   --write             Run the write phase (creates TWO throwaway issues, ONE
                       version, ONE sprint and ONE component).
-  --irreversible      Allow the delete tier (the throwaway issue; with --purge,
-                      every leftover gate-c artifact).
+  --irreversible      With --write: allow the delete tier (the throwaway issue;
+                      with --residue --purge, every leftover gate-c artifact).
   --residue           Skip the claims and only inventory what past runs left.
   --purge             With --residue and --irreversible: delete the gate-c
                       issues, versions, components and sprints found (D102),
@@ -220,6 +231,62 @@ export function confirmSiteError(site, confirm, destructive) {
     );
   }
   return undefined;
+}
+
+/**
+ * Why this flag combination cannot run, or `undefined` when it can.
+ *
+ * `--irreversible` only means something on top of `--write` (the delete phase
+ * removes what the write phase created) or with `--residue --purge`. Alone it
+ * used to be accepted, announced a delete phase, and then ran none (CC-219).
+ *
+ * @param {Record<string, unknown>} flags
+ * @returns {string | undefined}
+ */
+export function flagCombinationError(flags) {
+  if (flags.purge === true && flags.residue !== true) {
+    return '--purge only makes sense with --residue.';
+  }
+  if (flags.purge === true && flags.irreversible !== true) {
+    return (
+      '--purge deletes issues, so it needs --irreversible too.\n' +
+      'That is the same opt-in the delete tier uses; the gate does not get a\n' +
+      'quieter one.'
+    );
+  }
+  if (flags.irreversible === true && flags.write !== true && flags.residue !== true) {
+    return (
+      '--irreversible needs --write (the delete phase removes what the write\n' +
+      'phase created) or --residue --purge.'
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Whether the delete phase runs: the one predicate both the banner and the
+ * phase itself read, so the banner cannot promise a phase that is skipped
+ * (CC-219).
+ *
+ * @param {Record<string, unknown>} flags
+ * @returns {boolean}
+ */
+export function runsDeletePhase(flags) {
+  return flags.write === true && flags.irreversible === true && flags.keep !== true;
+}
+
+/**
+ * The phases this run will execute, in order, for the start-up banner.
+ *
+ * @param {Record<string, unknown>} flags
+ * @returns {string}
+ */
+export function phaseList(flags) {
+  if (flags.residue === true) return `residue${flags.purge === true ? ' + purge' : ''}`;
+  return (
+    `doctor + read${flags.write === true ? ' + write' : ''}` +
+    `${runsDeletePhase(flags) ? ' + delete' : ''} + residue`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -496,30 +563,50 @@ function childEnv(home, credentials, overrides) {
  */
 async function withServer(credentials, overrides, body) {
   const home = await mkdtemp(join(tmpdir(), 'jira-mcp-verify-'));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [SERVER_ENTRY],
-    cwd: home,
-    stderr: 'pipe',
-    env: childEnv(home, credentials, overrides),
-  });
-
+  let transport;
   let stderr = '';
-  const sink = (chunk) => {
-    stderr += chunk.toString('utf8');
-  };
-  const attachedEarly = transport.stderr !== undefined && transport.stderr !== null;
-  if (attachedEarly) transport.stderr.on('data', sink);
-
-  const client = new Client({ name: 'jira-mcp-verify-live', version: '0.0.0' });
-  await client.connect(transport);
-  if (!attachedEarly) transport.stderr?.on('data', sink);
-
-  const session = { client, stderr: () => stderr };
   try {
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [SERVER_ENTRY],
+      cwd: home,
+      stderr: 'pipe',
+      env: childEnv(home, credentials, overrides),
+    });
+
+    const sink = (chunk) => {
+      stderr += chunk.toString('utf8');
+    };
+    const attachedEarly = transport.stderr !== undefined && transport.stderr !== null;
+    if (attachedEarly) transport.stderr.on('data', sink);
+
+    const client = new Client({ name: 'jira-mcp-verify-live', version: '0.0.0' });
+    try {
+      // Bounded: a child that hangs before answering `initialize` would
+      // otherwise hold the run forever, and the residue table and the ledger
+      // — the parts an operator needs after a half-finished write phase —
+      // would never print.
+      await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, 'server start');
+    } catch (error) {
+      const tail = stderr.trim().slice(-400);
+      throw new Error(
+        `${messageOf(error)}${tail === '' ? '' : ` — server stderr: ${tail}`}`,
+        { cause: error },
+      );
+    }
+    if (!attachedEarly) transport.stderr?.on('data', sink);
+
+    const session = { client, stderr: () => stderr };
     return await body(session);
   } finally {
-    await client.close();
+    // The transport, not the client: it is what owns the child, closing it is
+    // idempotent, and it works whether or not `connect` got far enough for
+    // the client to know about it.
+    try {
+      await transport?.close();
+    } catch {
+      // A child that is already gone is the outcome we wanted.
+    }
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -2116,6 +2203,60 @@ function purgeCommand(flags, site) {
 let residue;
 
 /**
+ * Page ceiling for one residue read. A scratch project with more than this many
+ * pages of gate-c candidates is itself the finding; the class then reports
+ * UNKNOWN instead of a count that looks complete.
+ */
+const RESIDUE_MAX_PAGES = 20;
+
+/**
+ * Read every page of a startAt-paged list tool (the `paging` block of
+ * `pagingOf`, src/mcp/tool-helpers.ts), bounded by {@link RESIDUE_MAX_PAGES}.
+ *
+ * Returns the rows it saw plus `why` when the read is NOT complete — an error
+ * envelope (with its `kind`), a `partial` page with no `nextStartAt` to resume
+ * from, a cursor that does not advance, or the page cap. The caller turns `why`
+ * into an UNKNOWN row: rows past page 1 are exactly where a newer
+ * `gate-c-<runid>` artifact sits, and printing `none` for them is the lie CC-85
+ * forbids.
+ *
+ * @param {{ client: Client }} session
+ * @param {string} tool
+ * @param {Record<string, unknown>} args
+ * @param {string} key   The data field holding the rows.
+ * @returns {Promise<{ rows: any[], why?: string, kind?: string }>}
+ */
+async function readAllPages(session, tool, args, key) {
+  const rows = [];
+  let startAt;
+  for (let page = 0; page < RESIDUE_MAX_PAGES; page += 1) {
+    const envelope = await call(session, tool, {
+      ...args,
+      ...(startAt === undefined ? {} : { startAt }),
+    });
+    if (envelope.ok !== true) {
+      const kind = String(envelope.error?.kind);
+      return { rows, why: kind, kind };
+    }
+    rows.push(...(envelope.data?.[key] ?? []));
+    const paging = envelope.data?.paging;
+    if (paging?.partial !== true) return { rows };
+    const next = paging.nextStartAt;
+    if (typeof next !== 'number' || (startAt !== undefined && next <= startAt)) {
+      return {
+        rows,
+        why: `${tool} reported a partial page with no usable nextStartAt`,
+      };
+    }
+    startAt = next;
+  }
+  return {
+    rows,
+    why: `${tool} stopped after ${String(RESIDUE_MAX_PAGES)} pages with more to read`,
+  };
+}
+
+/**
  * Read the site back and list everything this gate's naming convention owns.
  *
  * Read-only, and deliberately not derived from `created`: a run that crashed
@@ -2149,7 +2290,13 @@ async function collectResidue(session, flags, site) {
       `project = ${String(flags.project)} AND summary ~ "gate-c verify-live" ` +
       'ORDER BY created ASC';
     let token;
-    for (let page = 0; page < 20; page += 1) {
+    // Set to true only when Jira says there is nothing further. Leaving the
+    // loop any other way — the page cap, a `hasMore` with no cursor — means
+    // rows may exist that were never read, and the class must print UNKNOWN
+    // rather than a count that looks complete (CC-85).
+    let complete = false;
+    let failed = false;
+    for (let page = 0; page < RESIDUE_MAX_PAGES; page += 1) {
       const envelope = await call(session, 'jira_search', {
         jql,
         maxResults: 50,
@@ -2158,6 +2305,7 @@ async function collectResidue(session, flags, site) {
       });
       if (envelope.ok !== true) {
         inventory.unavailable.push({ kind: 'issues', why: String(envelope.error?.kind) });
+        failed = true;
         break;
       }
       for (const row of envelope.data?.issues ?? []) {
@@ -2169,21 +2317,36 @@ async function collectResidue(session, flags, site) {
           });
         }
       }
-      if (envelope.data?.hasMore !== true) break;
-      if (typeof envelope.data.nextPageToken !== 'string') break;
+      if (envelope.data?.hasMore !== true) {
+        complete = true;
+        break;
+      }
+      if (typeof envelope.data.nextPageToken !== 'string') {
+        inventory.unavailable.push({
+          kind: 'issues',
+          why: 'jira_search reported hasMore with no nextPageToken',
+        });
+        failed = true;
+        break;
+      }
       token = envelope.data.nextPageToken;
+    }
+    if (!complete && !failed) {
+      inventory.unavailable.push({
+        kind: 'issues',
+        why: `stopped after ${String(RESIDUE_MAX_PAGES)} pages with more to read`,
+      });
     }
 
     for (const [tool, key, sink] of [
       ['jira_list_versions', 'versions', inventory.versions],
       ['jira_list_components', 'components', inventory.components],
     ]) {
-      const envelope = await call(session, tool, { project: flags.project });
-      if (envelope.ok !== true) {
-        inventory.unavailable.push({ kind: key, why: String(envelope.error?.kind) });
-        continue;
+      const read = await readAllPages(session, tool, { project: flags.project }, key);
+      if (read.why !== undefined) {
+        inventory.unavailable.push({ kind: key, why: read.why });
       }
-      for (const row of envelope.data?.[key] ?? []) {
+      for (const row of read.rows) {
         if (!isGateCArtifact(row.name)) continue;
         sink.push({
           id: String(row.id),
@@ -2198,38 +2361,43 @@ async function collectResidue(session, flags, site) {
     }
   }
 
-  const boards = await call(session, 'jira_list_boards', {});
-  if (boards.ok !== true) {
+  const boards = await readAllPages(session, 'jira_list_boards', {}, 'boards');
+  if (boards.why !== undefined) {
     // The overwhelmingly likely reason on a scratch site: no Jira Software
     // licence, so `/rest/agile/1.0` 403s wholesale (CC-34). A sprint cannot
-    // exist on such a site either, but saying so is the inventory's job.
-    inventory.unavailable.push({ kind: 'sprints', why: String(boards.error?.kind) });
-  } else {
-    for (const board of boards.data?.boards ?? []) {
-      const sprints = await call(session, 'jira_list_sprints', { boardId: board.id });
-      if (sprints.ok !== true) {
-        // `unsupported` here means the board is kanban or team-managed, so it
-        // cannot hold a sprint at all (D89). That is not an unread board — no
-        // residue can hide on it — so it must not degrade the verdict to
-        // UNKNOWN; on a site of any size those boards outnumber the scrum ones
-        // and would bury a genuine "could not read" (CC-85).
-        if (sprints.error?.kind !== 'unsupported') {
-          inventory.unavailable.push({
-            kind: 'sprints',
-            why: `board ${String(board.id)}: ${String(sprints.error?.kind)}`,
-          });
-        }
-        continue;
-      }
-      for (const sprint of sprints.data?.sprints ?? []) {
-        if (!isGateCArtifact(sprint.name)) continue;
-        inventory.sprints.push({
-          id: sprint.id,
-          name: String(sprint.name).trim(),
-          state: sprint.state,
-          boardId: board.id,
+    // exist on such a site either, but saying so is the inventory's job. A
+    // board list cut short is the same verdict: a sprint may sit on a board
+    // that was never listed.
+    inventory.unavailable.push({ kind: 'sprints', why: `boards: ${boards.why}` });
+  }
+  for (const board of boards.rows) {
+    const sprints = await readAllPages(
+      session,
+      'jira_list_sprints',
+      { boardId: board.id },
+      'sprints',
+    );
+    if (sprints.why !== undefined) {
+      // `unsupported` here means the board is kanban or team-managed, so it
+      // cannot hold a sprint at all (D89). That is not an unread board — no
+      // residue can hide on it — so it must not degrade the verdict to
+      // UNKNOWN; on a site of any size those boards outnumber the scrum ones
+      // and would bury a genuine "could not read" (CC-85).
+      if (sprints.kind !== 'unsupported') {
+        inventory.unavailable.push({
+          kind: 'sprints',
+          why: `board ${String(board.id)}: ${sprints.why}`,
         });
       }
+    }
+    for (const sprint of sprints.rows) {
+      if (!isGateCArtifact(sprint.name)) continue;
+      inventory.sprints.push({
+        id: sprint.id,
+        name: String(sprint.name).trim(),
+        state: sprint.state,
+        boardId: board.id,
+      });
     }
   }
 
@@ -2517,16 +2685,9 @@ async function run(argv = process.argv.slice(2)) {
     return EXIT_OK;
   }
 
-  if (flags.purge === true && flags.residue !== true) {
-    console.error('verify-live: --purge only makes sense with --residue.\n');
-    return EXIT_CONFIG;
-  }
-  if (flags.purge === true && flags.irreversible !== true) {
-    console.error(
-      'verify-live: --purge deletes issues, so it needs --irreversible too.\n' +
-        'That is the same opt-in the delete tier uses; the gate does not get a\n' +
-        'quieter one.\n',
-    );
+  const flagError = flagCombinationError(flags);
+  if (flagError !== undefined) {
+    console.error(`verify-live: ${flagError}\n`);
     return EXIT_CONFIG;
   }
 
@@ -2579,42 +2740,65 @@ async function run(argv = process.argv.slice(2)) {
   }
 
   const residueOnly = flags.residue === true;
+  /**
+   * Run one phase so that a phase which cannot even start — a child that dies
+   * before `initialize`, a temp directory that cannot be made — is recorded as
+   * a FAIL instead of unwinding the whole run. The write phase may already
+   * have created tenant artifacts by then, and the residue inventory, the
+   * purge, the ledger and the cleanup table are exactly what the operator
+   * needs next; they must still run and print (the exit code still says 1).
+   */
+  const phase = async (name, body) => {
+    try {
+      await body();
+    } catch (error) {
+      ledger.push({
+        id: 'P',
+        title: `${name} phase: the child server ran to completion`,
+        status: 'FAIL',
+        note: messageOf(error),
+      });
+    }
+  };
   console.error(`verify-live: driving ${site} as ${credentials.email}`);
-  console.error(
-    residueOnly
-      ? `verify-live: phases — residue${flags.purge === true ? ' + purge' : ''}\n`
-      : `verify-live: phases — doctor + read${flags.write === true ? ' + write' : ''}` +
-          `${flags.irreversible === true ? ' + delete' : ''} + residue\n`,
-  );
+  console.error(`verify-live: phases — ${phaseList(flags)}\n`);
 
   if (!residueOnly) {
     recordingFor = 'preflight';
-    await preflightPhase(credentials, flags);
+    await phase('preflight', () => preflightPhase(credentials, flags));
 
     recordingFor = 'read';
-    await withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
-      readPhase(session, flags, credentials),
+    await phase('read', () =>
+      withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
+        readPhase(session, flags, credentials),
+      ),
     );
 
     if (flags.write === true) {
       recordingFor = 'write';
-      await withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
-        writePhase(session, flags),
+      await phase('write', () =>
+        withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
+          writePhase(session, flags),
+        ),
       );
 
       recordingFor = 'refusal';
       // A separate child on purpose: the refusal must come from a server that was
       // STARTED without the opt-in, which is the only configuration that proves it.
-      await withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
-        refusalPhase(session),
+      await phase('refusal', () =>
+        withServer(credentials, { JIRA_WRITE_MODE: 'apply' }, (session) =>
+          refusalPhase(session),
+        ),
       );
 
-      if (flags.irreversible === true && flags.keep !== true) {
+      if (runsDeletePhase(flags)) {
         recordingFor = 'delete';
-        await withServer(
-          credentials,
-          { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
-          (session) => deletePhase(session, flags),
+        await phase('delete', () =>
+          withServer(
+            credentials,
+            { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
+            (session) => deletePhase(session, flags),
+          ),
         );
       }
     }
@@ -2624,29 +2808,50 @@ async function run(argv = process.argv.slice(2)) {
   // who has to remember a flag to find out what is on their site will not
   // remember it. A plan-mode child is enough — the inventory only reads.
   recordingFor = 'residue';
-  await withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
-    residuePhase(session, flags, site),
+  await phase('residue', () =>
+    withServer(credentials, { JIRA_WRITE_MODE: 'plan' }, (session) =>
+      residuePhase(session, flags, site),
+    ),
   );
 
   if (flags.purge === true) {
     recordingFor = 'purge';
-    await withServer(
-      credentials,
-      { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
-      (session) => purgePhase(session),
+    await phase('purge', () =>
+      withServer(
+        credentials,
+        { JIRA_WRITE_MODE: 'apply', JIRA_ALLOW_IRREVERSIBLE: 'true' },
+        (session) => purgePhase(session),
+      ),
     );
   }
 
   const { text, failed } = report();
   console.log(text);
 
+  // No inventory means nobody looked: every class prints UNKNOWN, never
+  // `none` (CC-85) — the run that most needs the table is the one whose
+  // residue phase could not start.
   console.error(
-    renderResidue(residuePlan(residue ?? { purgeCommand: purgeCommand(flags, site) })),
+    renderResidue(
+      residuePlan(
+        residue ?? {
+          purgeCommand: purgeCommand(flags, site),
+          unavailable: ['issues', 'versions', 'components', 'sprints', 'media'].map(
+            (kind) => ({ kind, why: 'the residue inventory did not run' }),
+          ),
+        },
+      ),
+    ),
   );
 
   if (typeof flags.record === 'string' && flags.record !== '') {
-    const file = await writeRecording(flags.record, credentials);
-    console.error(`verify-live: redacted capture written to ${file}`);
+    try {
+      const file = await writeRecording(flags.record, credentials);
+      console.error(`verify-live: redacted capture written to ${file}`);
+    } catch (error) {
+      console.error(`verify-live: could not write the capture: ${messageOf(error)}`);
+      return EXIT_FAILURE;
+    }
   }
 
   return failed > 0 ? EXIT_FAILURE : EXIT_OK;
@@ -2660,8 +2865,25 @@ async function run(argv = process.argv.slice(2)) {
  * be a Gate C run — under a network fence, with no credentials, in the middle of
  * the unit suite (D75).
  */
-const invokedDirectly =
-  process.argv[1] !== undefined && resolve(process.argv[1]) === MODULE_PATH;
+/**
+ * `argv[1]` and this module, compared through realpath: Node realpaths the
+ * entry module, so a symlinked checkout (macOS `/tmp` is one) or a path with
+ * spaces would otherwise fail the guard and exit 0 having done nothing (CC-217).
+ */
+function isEntryPoint(moduleUrl) {
+  const entry = process.argv[1];
+  if (entry === undefined || entry === '') return false;
+  const real = (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return path;
+    }
+  };
+  return real(resolve(entry)) === real(fileURLToPath(moduleUrl));
+}
+
+const invokedDirectly = isEntryPoint(import.meta.url);
 
 if (invokedDirectly) {
   process.exitCode = await run();

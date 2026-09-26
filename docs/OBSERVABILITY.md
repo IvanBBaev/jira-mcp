@@ -34,16 +34,16 @@
 | Event | Level | Fields (beyond `cid`) |
 |---|---|---|
 | `server_start` | info | version, transport, packageCount, toolCount, writeMode, allowIrreversible, profile, host |
-| `settings_report` | info | findingCount, worst severity (report text is the startup line, redacted) |
+| `settings_report` | info | findingCount, worst severity (the per-finding text stays in `doctor`; see §Startup) |
 | `token_expiry_warning` | warn | daysLeft (from `JIRA_TOKEN_EXPIRES`; emitted ≤ 30 days) |
 | `tool_call_start` | debug | tool |
-| `tool_call_end` | info | tool, ok, durationMs, truncated? |
+| `tool_call_end` | info | tool, ok, durationMs, truncated?; on `ok: false` also errorKind, retryable, httpStatus? |
 | `http_request` | debug | method, pathTemplate |
 | `http_response` | debug | method, pathTemplate, status, durationMs, attempt |
 | `http_retry` | warn | method, pathTemplate, reason (`429` \| `5xx` \| `transport`), attempt, delayMs |
 | `rate_limited` | warn | retryAfterS (server value), waitS (capped value) |
-| `ambiguous_write` | error | tool, method, pathTemplate |
-| `budget_exceeded` | error | tool, budgetMs, elapsedMs |
+| `ambiguous_write` | error | method, pathTemplate |
+| `budget_exceeded` | error | budgetMs, elapsedMs |
 | `auth_failure` | error | status, pathTemplate |
 | `journal_write_failed` | warn | errorKind (journal failure is never a tool failure — surfaced as a hint) |
 | `upstream_degraded` | warn | consecutiveFailures, host (emitted on the 3rd consecutive 5xx/transport failure; see §No circuit breaker) |
@@ -68,9 +68,12 @@ Notes:
   `code_verifier`, no client secret ever appears in a field of either event** —
   and a failure sits at `error` alongside `auth_failure` for the same reason: it
   ends the session until a human runs `login` again.
-- The `tool` field above exists in **log events only**. The model-facing
-  `ErrorRecord` (frozen contract, core/types.ts) has no `tool` field; for
-  `budget_exceeded` and `ambiguous_write` the registry instead appends
+- The `tool` field exists in **log events only**, and only on the two
+  `tool_call_*` events: `budget_exceeded` and `ambiguous_write` are emitted
+  from `core/http.ts`, which does not know the tool name, so the name reaches
+  stderr through the `tool_call_end` that follows under the same `cid`. The
+  model-facing `ErrorRecord` (frozen contract, core/types.ts) has no `tool`
+  field either; for those two kinds the registry instead appends
   ` Tool: <name>.` to the error message once (idempotent suffix), so the
   result a model reads still names the tool that failed.
 
@@ -94,17 +97,21 @@ in a log event.
 - **Offline-only**: no network I/O before the transport connects. Settings
   load, redactor registration and manifest assembly are all local; the first
   network call is always a tool call (or a doctor probe in CLI mode).
-- One-line redacted config report to stderr at start (the `settings_report`
-  text): host, active profile, package selection, write mode, transport —
-  enough to diagnose "wrong site/wrong mode" from a support transcript alone.
-- Version observability: server version appears in `server_start`, in the
-  startup line, and in `jira_capabilities` output.
+- Two redacted lines to stderr at start: `settings_report` (how many
+  findings, worst severity) and, once the transport is up, `server_start` —
+  host, active profile, package count, write mode, transport, version — enough
+  to diagnose "wrong site/wrong mode" from a support transcript alone. The
+  findings themselves are not echoed: `doctor` prints them, and an
+  error-severity one aborts the start with all of them in the error text.
+- Version observability: server version appears in `server_start` and in
+  `jira_capabilities` output.
 - A transcript that comes back as a wall of placeholders has a stated cause: a
   registered secret that is very short, or that spells a word this server prints
   itself, scrubs the diagnostics along with itself — including the
-  `settings_report` line above. Redaction is never weakened for it
+  startup lines above. Redaction is never weakened for it
   (THREAT-MODEL.md §Credentials); startup validation adds a `warning`-severity
-  finding naming the variable to edit [test: src/core/settings.test.ts].
+  finding naming the variable to edit, visible in `doctor`
+  [test: src/core/settings.test.ts].
 
 ## Write journal
 
@@ -123,6 +130,12 @@ happened).
   happened; the tool returns `ok: true` with hint `journal_unavailable` and the
   `journal_write_failed` event (CC-33). Failing the tool would tell the model
   to retry a write that in fact succeeded — the worst possible outcome.
+- The journal errs toward recording. A mutation whose request failed with no
+  HTTP status is journaled as attempted (`ok: false`, no `httpStatus`), even
+  when the failure came before the wire (credential resolution, a host check).
+  The request seam cannot tell that case from a transport failure after the
+  bytes left, and an audit trail that drops a write that may have landed is
+  worse than one line too many.
 - The file is created 0600; it inherits the redactor, not bypasses it.
 
 ## No circuit breaker (D13)

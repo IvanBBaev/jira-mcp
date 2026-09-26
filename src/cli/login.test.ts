@@ -14,7 +14,14 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import {
   createServer,
   request as httpRequest,
@@ -37,6 +44,7 @@ import {
   type FakeRedactor,
 } from '../core/fakes/index.js';
 import type { AuthRequestFn, AuthRequestSpec, AuthResponse } from '../core/http.js';
+import { createTokenStore, type TokenStore } from '../core/oauth.js';
 import {
   EXIT_CONFIG,
   EXIT_FLOW_FAILED,
@@ -716,6 +724,25 @@ test('login --no-browser prints the authorization URL instead of opening one', a
   assertNoSecrets(r);
 });
 
+test('[CC-207] login --json --no-browser prints the URL on stderr and keeps stdout one object', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  const running = run({ ...r.options, argv: ['--json', '--no-browser'] });
+
+  await until(() => r.stderr().includes('code_challenge'), 'the authorization URL');
+  assert.equal(r.authorizeUrl(), undefined, 'nothing may be launched under --no-browser');
+  const printed = /https:\/\/\S+/.exec(r.stderr())?.[0] ?? '';
+  const state = new URL(printed).searchParams.get('state') ?? '';
+  const answered = await r.callback({ code: AUTH_CODE, state });
+  assert.equal(answered.status, 200);
+
+  assert.equal(await running, EXIT_OK);
+  const report = JSON.parse(r.stdout()) as LoginReport;
+  assert.equal(report.ok, true);
+  assertNoSecrets(r);
+});
+
 // ---------------------------------------------------------------------------
 // The loopback listener
 // ---------------------------------------------------------------------------
@@ -777,23 +804,25 @@ test('the loopback callback binds 127.0.0.1 only and rejects a request without a
   assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
 });
 
-test('a state mismatch on the callback aborts before the token exchange [CC-97]', async (t) => {
+test('a state mismatch on the callback is refused before the token exchange, and the wait goes on [CC-97][CC-246]', async (t) => {
   const r = await rig();
   t.after(() => r.cleanup());
 
   let answered: HttpResult | undefined;
   const code = await run({
     ...r.options,
+    argv: ['--timeout', '30'],
     openBrowser: (url: string): boolean => {
       // The shape of the attack: a callback that did not come from the
       // authorization this process started, carrying somebody else's code.
       assert.notEqual(new URL(url).searchParams.get('state'), null);
-      void r.callback({ code: 'attacker-code', state: 'not-our-state' }).then(
-        (result) => {
-          answered = result;
-        },
-        () => undefined,
-      );
+      void (async (): Promise<void> => {
+        answered = await r.callback({ code: 'attacker-code', state: 'not-our-state' });
+        await r.callback({ code: 'attacker-code', state: 'not-our-state' });
+        // Still listening after both: the forged callbacks did not end it.
+        assert.equal(await accepts(LOOPBACK_HOST, r.port), true);
+        r.clock.advance(30_000);
+      })().catch(() => undefined);
       return true;
     },
   });
@@ -803,13 +832,35 @@ test('a state mismatch on the callback aborts before the token exchange [CC-97]'
   // callback was never spent.
   assert.deepEqual(r.auth.calls, []);
   assert.equal(r.seen.length, 0);
-  assert.match(r.stderr(), /state value that does not match/);
-  assert.match(r.stderr(), /jira-mcp-ai login/);
   assert.equal(r.storeFile(), undefined);
-
-  await until(() => answered !== undefined, 'the callback response');
   assert.equal(answered?.status, 400);
   assert.match(answered?.body ?? '', /State mismatch/);
+  // Explained once while waiting, and again — with the count — at the timeout.
+  assert.equal(r.stderr().match(/Ignored a callback whose state/g)?.length, 1);
+  assert.match(r.stderr(), /2 callback\(s\) with a state value that does not match/);
+  assert.match(r.stderr(), /stale tab/);
+});
+
+test('[CC-246] a forged callback does not cancel the login the operator then completes', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  const code = await run({
+    ...r.options,
+    openBrowser: (url: string): boolean => {
+      const state = new URL(url).searchParams.get('state') ?? '';
+      void (async (): Promise<void> => {
+        await r.callback({ code: 'attacker-code', state: 'not-our-state' });
+        await r.callback({ code: 'good-code', state });
+      })().catch(() => undefined);
+      return true;
+    },
+  });
+
+  assert.equal(code, EXIT_OK, r.stderr());
+  assert.equal(r.auth.calls.length > 0, true);
+  assert.doesNotMatch(JSON.stringify(r.auth.calls), /attacker-code/);
+  assert.notEqual(r.storeFile(), undefined);
 });
 
 test('sameState treats a length mismatch as a mismatch instead of throwing', () => {
@@ -826,9 +877,14 @@ test('an error redirect from Atlassian ends the wait with what it said', async (
 
   const code = await run({
     ...r.options,
-    openBrowser: (): boolean => {
+    openBrowser: (url: string): boolean => {
+      const state = new URL(url).searchParams.get('state') ?? '';
       void r
-        .callback({ error: 'access_denied', error_description: 'The user said no' })
+        .callback({
+          error: 'access_denied',
+          error_description: 'The user said no',
+          state,
+        })
         .catch(() => undefined);
       return true;
     },
@@ -877,6 +933,92 @@ test('login rejects a --timeout that is not a positive number of seconds', async
   assert.equal(code, EXIT_CONFIG);
   assert.match(r.stderr(), /--timeout takes a positive number of seconds/);
   assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
+});
+
+test('login refuses a valued option that arrived without its value', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  // Three ways to leave the value out: nothing after the flag, the next
+  // token is another option, and an explicit empty `--flag=`. None of them
+  // may fall through to a default the operator never chose.
+  for (const argv of [['--site'], ['--site', '--json'], ['--site=']]) {
+    assert.equal(await run({ ...r.options, argv }), EXIT_CONFIG, JSON.stringify(argv));
+  }
+  assert.equal(await run({ ...r.options, argv: ['--profile'] }), EXIT_CONFIG);
+  assert.equal(await run({ ...r.options, argv: ['--cloud-id='] }), EXIT_CONFIG);
+  assert.equal(
+    await run({ ...r.options, argv: ['--timeout', '--no-browser'] }),
+    EXIT_CONFIG,
+  );
+
+  const stderr = r.stderr();
+  assert.match(stderr, /--site needs a value\./);
+  assert.match(stderr, /--profile needs a value\./);
+  assert.match(stderr, /--cloud-id needs a value\./);
+  assert.match(stderr, /--timeout needs a value\./);
+  assert.match(stderr, /Usage: jira-mcp-ai login/);
+  // Nothing was started: no listener, no browser, no request, no store.
+  assert.equal(r.authorizeUrl(), undefined);
+  assert.deepEqual(r.auth.calls, []);
+  assert.equal(r.storeFile(), undefined);
+  assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
+});
+
+test('the timeout message scales its unit to the wait the operator asked for', async (t) => {
+  // Long waits are legitimate (`--timeout 86400` for an unattended box), and
+  // "No callback arrived within 86400 seconds" is the kind of number nobody
+  // reads. The rounding lives in one place and this pins its upper bands.
+  for (const [seconds, phrase] of [
+    ['600', '10 minutes'],
+    ['7200', '2 hours'],
+    ['259200', '3 days'],
+  ] as const) {
+    const r = await rig();
+    t.after(() => r.cleanup());
+
+    const code = await run({
+      ...r.options,
+      argv: ['--timeout', seconds],
+      openBrowser: (): boolean => {
+        queueMicrotask(() => {
+          r.clock.advance(Number(seconds) * 1000);
+        });
+        return true;
+      },
+    });
+
+    assert.equal(code, EXIT_FLOW_FAILED, seconds);
+    assert.match(r.stderr(), new RegExp(`No callback arrived within ${phrase},`));
+    assert.equal(r.clock.pendingSleeps(), 0);
+  }
+});
+
+test('login names the port and the env var when the loopback listener cannot bind', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  // Something else already owns the redirect port — a second `login` in
+  // another terminal, or an unrelated dev server that happened to pick 3335.
+  const blocker = createSocketServer();
+  await new Promise<void>((resolve) => {
+    blocker.listen({ host: LOOPBACK_HOST, port: r.port }, resolve);
+  });
+  t.after(() => new Promise<void>((resolve) => blocker.close(() => resolve())));
+
+  const code = await run(r.options);
+
+  assert.equal(code, EXIT_FLOW_FAILED);
+  const stderr = r.stderr();
+  assert.match(stderr, new RegExp(`could not bind 127\\.0\\.0\\.1:${r.port}`));
+  assert.match(stderr, /JIRA_OAUTH_REDIRECT_PORT/);
+  assert.match(stderr, /Callback URL registered for the app/);
+  // The failure came before the browser and before any network call: nothing
+  // to open, nothing to exchange, nothing to store.
+  assert.equal(r.authorizeUrl(), undefined);
+  assert.deepEqual(r.auth.calls, []);
+  assert.equal(r.storeFile(), undefined);
+  assert.equal(r.clock.pendingSleeps(), 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -953,6 +1095,59 @@ test('login --cloud-id picks one of several sites by id', async (t) => {
   assert.equal(storedEntry(r.storeFile())?.['site'], OTHER_SITE_URL);
 });
 
+test('[CC-245] login --cloud-id picks another site than JIRA_SITE names', async (t) => {
+  const r = await rig({ env: { JIRA_SITE: SITE_URL } });
+  r.auth.resources = { status: 200, body: twoSites() };
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['--cloud-id', OTHER_CLOUD_ID] });
+
+  assert.equal(code, EXIT_OK, r.stderr());
+  assert.equal(storedEntry(r.storeFile())?.['site'], OTHER_SITE_URL);
+});
+
+test('[CC-245] login --cloud-id with --site still applies both', async (t) => {
+  const r = await rig({ env: { JIRA_SITE: OTHER_SITE_URL } });
+  r.auth.resources = { status: 200, body: twoSites() };
+  t.after(() => r.cleanup());
+
+  const code = await run({
+    ...r.options,
+    argv: ['--cloud-id', OTHER_CLOUD_ID, '--site', SITE_URL],
+  });
+
+  assert.equal(code, EXIT_FLOW_FAILED);
+  assert.match(r.stderr(), /No accessible site matches/);
+  assert.equal(r.storeFile(), undefined);
+});
+
+test('[CC-166] login --profile matches the site of that profile, not of the active one', async (t) => {
+  const r = await rig({
+    env: { JIRA_SITE: SITE_URL, JIRA_PROFILE_WORK_SITE: OTHER_SITE_URL },
+  });
+  r.auth.resources = { status: 200, body: twoSites() };
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['--profile', 'work'] });
+
+  assert.equal(code, EXIT_OK, r.stderr());
+  assert.equal(storedEntry(r.storeFile(), 'work')?.['cloudId'], OTHER_CLOUD_ID);
+  assert.equal(storedEntry(r.storeFile(), 'work')?.['site'], OTHER_SITE_URL);
+});
+
+test('[CC-248] login --profile with padding matches the site of the profile it stores under', async (t) => {
+  const r = await rig({
+    env: { JIRA_SITE: SITE_URL, JIRA_PROFILE_WORK_SITE: OTHER_SITE_URL },
+  });
+  r.auth.resources = { status: 200, body: twoSites() };
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['--profile', ' Work '] });
+
+  assert.equal(code, EXIT_OK, r.stderr());
+  assert.equal(storedEntry(r.storeFile(), 'work')?.['site'], OTHER_SITE_URL);
+});
+
 // ---------------------------------------------------------------------------
 // logout
 // ---------------------------------------------------------------------------
@@ -989,6 +1184,24 @@ test('logout --all empties a store holding several profiles', async (t) => {
   assert.match(r.stdout(), /Removed 2 profiles \(default, sandbox\)/);
 });
 
+test('[CC-211] logout --all deletes a hand-edited key that is not in normalized form', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await run(r.options), EXIT_OK);
+  const file = JSON.parse(readFileSync(r.storePath, 'utf8')) as {
+    tokens: Record<string, unknown>;
+  };
+  file.tokens = { Work: file.tokens['default'] };
+  writeFileSync(r.storePath, JSON.stringify(file), { mode: 0o600 });
+
+  const code = await runLogout({ ...r.options, argv: ['--all'] });
+
+  assert.equal(code, EXIT_OK);
+  assert.deepEqual(r.storeFile()?.['tokens'], {});
+  assert.match(r.stdout(), /Removed 1 profile \(Work\)/);
+});
+
 test('logout on a store that was never written says there was nothing to remove', async (t) => {
   const r = await rig();
   t.after(() => r.cleanup());
@@ -1020,4 +1233,227 @@ test('logout --help says the deletion is local only', async (t) => {
   assert.equal(code, EXIT_OK);
   assert.match(r.stdout(), /This is local only/);
   assert.match(r.stdout(), /revoke the grant/);
+});
+
+test('logout --profile without a value is a usage error', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await runLogout({ ...r.options, argv: ['--profile'] }), EXIT_CONFIG);
+  assert.equal(await runLogout({ ...r.options, argv: ['--profile='] }), EXIT_CONFIG);
+  assert.equal(
+    await runLogout({ ...r.options, argv: ['--profile', '--all'] }),
+    EXIT_CONFIG,
+  );
+
+  assert.match(r.stderr(), /--profile needs a value\./);
+  assert.match(r.stderr(), /Usage: jira-mcp-ai logout/);
+  assert.equal(r.storeFile(), undefined);
+});
+
+test('logout rejects an unknown option and a stray positional by name', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await runLogout({ ...r.options, argv: ['--browser'] }), EXIT_CONFIG);
+  assert.equal(await runLogout({ ...r.options, argv: ['sandbox'] }), EXIT_CONFIG);
+
+  const stderr = r.stderr();
+  assert.match(stderr, /Unknown option "--browser"\./);
+  assert.match(stderr, /Unexpected argument "sandbox"; logout takes options only\./);
+  assert.match(stderr, /Usage: jira-mcp-ai logout/);
+});
+
+test('logout on a damaged token store reports the file instead of pretending it removed anything', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+  writeFileSync(r.storePath, '{ this is not json', { mode: 0o600 });
+
+  const code = await runLogout(r.options);
+
+  assert.equal(code, EXIT_CONFIG);
+  const stderr = r.stderr();
+  assert.match(stderr, /is not valid JSON/);
+  assertContains(stderr, r.storePath);
+  assert.doesNotMatch(r.stdout(), /Removed|nothing to remove/);
+  // Refused, not repaired: the damaged file is still there for the operator
+  // to look at before they follow the remediation and delete it.
+  assert.equal(readFileSync(r.storePath, 'utf8'), '{ this is not json');
+});
+
+// ---------------------------------------------------------------------------
+// Corners of the parsers, the report and the store seam
+// ---------------------------------------------------------------------------
+
+test('both commands accept -h as the short help alias', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await run({ ...r.options, argv: ['-h'] }), EXIT_OK);
+  assert.match(r.stdout(), /Usage: jira-mcp-ai login/);
+  assert.equal(r.authorizeUrl(), undefined);
+
+  assert.equal(await runLogout({ ...r.options, argv: ['-h'] }), EXIT_OK);
+  assert.match(r.stdout(), /Usage: jira-mcp-ai logout/);
+  assert.equal(r.stderr(), '');
+});
+
+test('login rejects a stray positional argument as options-only', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['sandbox'] });
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /Unexpected argument "sandbox"; login takes options only\./);
+  assert.match(r.stderr(), /Usage: jira-mcp-ai login/);
+  assert.equal(r.authorizeUrl(), undefined);
+});
+
+test('logout --profile removes that profile and leaves the others alone', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+  assert.equal(await run(r.options), EXIT_OK);
+  assert.equal(await run({ ...r.options, argv: ['--profile', 'Sandbox'] }), EXIT_OK);
+
+  const code = await runLogout({ ...r.options, argv: ['--profile', 'Sandbox'] });
+
+  assert.equal(code, EXIT_OK);
+  assert.match(r.stdout(), /Removed the stored OAuth tokens for profile "sandbox"/);
+  assert.equal(storedEntry(r.storeFile(), 'sandbox'), undefined);
+  assert.notEqual(storedEntry(r.storeFile(), 'default'), undefined);
+});
+
+test('logout --all says so on an empty store and counts one profile in the singular', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await runLogout({ ...r.options, argv: ['--all'] }), EXIT_OK);
+  assert.match(r.stdout(), /No stored OAuth tokens in .*; nothing to remove\./);
+  assert.equal(r.storeFile(), undefined);
+
+  assert.equal(await run(r.options), EXIT_OK);
+  assert.equal(await runLogout({ ...r.options, argv: ['--all'] }), EXIT_OK);
+  assert.match(r.stdout(), /Removed 1 profile \(default\) from/);
+  assert.equal(storedEntry(r.storeFile()), undefined);
+});
+
+test('a site listed without a name is greeted as "the site"', async (t) => {
+  const r = await rig();
+  r.auth.resources = { status: 200, body: [{ id: CLOUD_ID, url: SITE_URL }] };
+  t.after(() => r.cleanup());
+
+  const code = await run(r.options);
+
+  assert.equal(code, EXIT_OK);
+  assertContains(r.stdout(), `Signed in to the site (${SITE_URL})`);
+  assert.equal(storedEntry(r.storeFile())?.['cloudId'], CLOUD_ID);
+});
+
+test('on Windows the report leaves the file mode out', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, platform: 'win32' });
+
+  assert.equal(code, EXIT_OK);
+  // A POSIX mode means nothing on NTFS, so the report does not invent one.
+  assertContains(r.stdout(), `stored in ${r.storePath}\n`);
+  assert.doesNotMatch(r.stdout(), /\(mode /);
+});
+
+test('a lifetime of one second is described in the singular', async (t) => {
+  const r = await rig();
+  r.auth.token = { status: 200, body: tokenResponse({ expires_in: 1 }) };
+  t.after(() => r.cleanup());
+
+  const code = await run(r.options);
+
+  assert.equal(code, EXIT_OK);
+  assertContains(r.stdout(), 'the access token expires in 1 second;');
+  assert.equal(storedEntry(r.storeFile())?.['expiresAt'], START_MS + 1000);
+});
+
+test('[CC-144] an error redirect without our state is ignored, and control characters never reach the terminal', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  let forged: HttpResult | undefined;
+  const code = await run({
+    ...r.options,
+    openBrowser: (url: string): boolean => {
+      const state = new URL(url).searchParams.get('state') ?? '';
+      void (async (): Promise<void> => {
+        // Any page can navigate here; without the state it cannot end the login.
+        forged = await r.callback({
+          error: 'access_denied',
+          error_description: 'forged',
+        });
+        await r.callback({
+          error: 'access_denied\u001b[2J',
+          error_description: 'no\u001b]0;pwned\u0007 thanks',
+          state,
+        });
+      })().catch(() => undefined);
+      return true;
+    },
+  });
+
+  assert.equal(forged?.status, 400);
+  assert.match(forged?.body ?? '', /State mismatch/);
+  assert.equal(code, EXIT_FLOW_FAILED);
+  assert.doesNotMatch(r.stderr(), /forged/);
+  // eslint-disable-next-line no-control-regex
+  assert.doesNotMatch(r.stderr(), /[\u0000-\u0008\u000b-\u001f\u007f]/);
+  assert.match(r.stderr(), /access_denied\[2J \(no\]0;pwned thanks\)/);
+});
+
+test('an error redirect without a description ends the sentence at the code', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  const code = await run({
+    ...r.options,
+    openBrowser: (url: string): boolean => {
+      const state = new URL(url).searchParams.get('state') ?? '';
+      void r.callback({ error: 'access_denied', state }).catch(() => undefined);
+      return true;
+    },
+  });
+
+  assert.equal(code, EXIT_FLOW_FAILED);
+  // No "(description)" between the code and the full stop.
+  assert.match(
+    r.stderr(),
+    /Atlassian refused the authorization: access_denied\. Approve/,
+  );
+  assert.deepEqual(r.auth.calls, []);
+});
+
+test('a store failure without a remediation of its own gets the doctor hint', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+  const real = createTokenStore({ path: r.storePath, clock: r.clock });
+  const store: TokenStore = {
+    ...real,
+    put: () =>
+      Promise.reject(
+        createJiraError({
+          kind: 'config',
+          reason: 'The token file lives on a read-only volume.',
+          remediation: '',
+        }),
+      ),
+  };
+
+  const code = await run({ ...r.options, store });
+
+  assert.equal(code, EXIT_FLOW_FAILED);
+  const stderr = r.stderr();
+  assert.match(stderr, /The token file lives on a read-only volume\./);
+  // The generic hint stands in for the missing one — and the redirect hint
+  // stays out, since the exchange itself had already succeeded.
+  assert.match(stderr, /Run `jira-mcp-ai doctor`/);
+  assert.doesNotMatch(stderr, /Callback URL/);
+  assert.equal(r.storeFile(), undefined);
 });

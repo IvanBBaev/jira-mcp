@@ -12,17 +12,19 @@
  *                  nowhere else (the single-writer rule of the fact-ownership
  *                  table in docs/README.md).
  *   4. cc-ref    — every `CC-nn` reference resolves to an id defined in
- *                  docs/CORNER-CASES.md.
+ *                  docs/CORNER-CASES.md, and no id is defined twice.
  *   5. pin-mirror — copies of the pinned registration example that live outside
  *                  check 3's reach (README.md is outside docs/, the Pages page
  *                  is not markdown) carry the same version CONFIGURATION.md does.
  *   6. test-bound — every **[test]** claim is backed by a test that exists: an
  *                  inline tag names its test (`[test: CC-nn]` / `[test: path]`),
- *                  and every CC-nn defined is reached by a real test NAME.
+ *                  and every CC-nn defined is reached by a real test NAME (not a
+ *                  `.skip` / `.todo` one).
  *   7. status    — no document outside DECISIONS.md calls an owner decision
  *                  open that DECISIONS.md has struck through as resolved.
- *   8. cc-src    — the same as check 4, over `src/**` and `scripts/**`: code may
- *                  cite a corner case only if the ledger defines it.
+ *   8. cc-src    — the same as check 4, over `src/**`, `scripts/**`, `bin/**`
+ *                  and the root README / CHANGELOG / CONTRIBUTING / SECURITY:
+ *                  they may cite a corner case only if the ledger defines it.
  *
  * Run standalone (`node scripts/docs-lint.mjs`) or as part of `npm run check`.
  * Exit code 1 with one `path:line: message` per finding; 0 when clean.
@@ -344,10 +346,30 @@ const CC_REF_RE = /\bCC-\d+\b/g;
 
 const CORNER_CASES_DOC = join(DOCS_DIR, 'CORNER-CASES.md');
 
-/** Every defined `CC-nn` mapped to the line that defines it. Check 6b wants the line. */
+/**
+ * Every defined `CC-nn` mapped to the line that defines it. Check 6b wants the
+ * line. A second `- **CC-nn**` definition is a finding, not a silent overwrite:
+ * a Map keeps one of the two, so every citation would resolve against whichever
+ * row happened to win while the other row explained a different case under the
+ * same id.
+ */
 function definedCornerCases() {
   const text = readFileSync(CORNER_CASES_DOC, 'utf8');
-  return new Map([...text.matchAll(CC_DEF_RE)].map((m) => [m[1], lineOf(text, m.index)]));
+  const defined = new Map();
+  for (const m of text.matchAll(CC_DEF_RE)) {
+    const line = lineOf(text, m.index);
+    if (defined.has(m[1])) {
+      report(
+        CORNER_CASES_DOC,
+        line,
+        `${m[1]} is defined twice (first at line ${String(defined.get(m[1]))}) — ` +
+          'every id names exactly one case',
+      );
+      continue;
+    }
+    defined.set(m[1], line);
+  }
+  return defined;
 }
 
 function checkCornerCaseRefs(files, defined) {
@@ -383,7 +405,13 @@ function checkCornerCaseRefs(files, defined) {
  * not ours, so both are skipped, and the extension list is the two languages the
  * repo actually has.
  */
-const SOURCE_ROOTS = ['src', 'scripts'];
+const SOURCE_ROOTS = ['src', 'scripts', 'bin'];
+/**
+ * Root-level documents outside docs/ that cite corner cases too — the README and
+ * CHANGELOG are what a stranger reads first, so a dangling id there is the most
+ * visible one of all.
+ */
+const ROOT_DOCS = ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md'];
 const SOURCE_EXTS = ['.ts', '.mjs', '.cjs', '.js'];
 const SOURCE_SKIP_DIRS = new Set(['node_modules', 'build', 'coverage']);
 
@@ -401,19 +429,22 @@ function listSource(dir) {
 }
 
 function checkSourceCornerCaseRefs(defined) {
+  const files = ROOT_DOCS.map((name) => join(REPO_ROOT, name)).filter((file) =>
+    existsSync(file),
+  );
   for (const root of SOURCE_ROOTS) {
     const full = join(REPO_ROOT, root);
-    if (!existsSync(full)) continue;
-    for (const file of listSource(full)) {
-      const text = readFileSync(file, 'utf8');
-      for (const m of text.matchAll(CC_REF_RE)) {
-        if (defined.has(m[0])) continue;
-        report(
-          file,
-          lineOf(text, m.index),
-          `${m[0]} is cited here but not defined in CORNER-CASES.md`,
-        );
-      }
+    if (existsSync(full)) files.push(...listSource(full));
+  }
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(CC_REF_RE)) {
+      if (defined.has(m[0])) continue;
+      report(
+        file,
+        lineOf(text, m.index),
+        `${m[0]} is cited here but not defined in CORNER-CASES.md`,
+      );
     }
   }
 }
@@ -487,9 +518,19 @@ function checkPinMirrors() {
 
 const SRC_DIR = join(REPO_ROOT, 'src');
 
-/** `test('…')`, `it.skip("…")`, `describe(\`…\`)` — the name a runner prints. */
+/**
+ * `test('…')`, `it.only("…")`, `describe(\`…\`)` — the name a runner prints.
+ * Group 1 is the modifier (`skip`, `todo`, `only`, …), group 3 the name.
+ */
 const TEST_NAME_RE =
-  /\b(?:test|it|describe)\s*(?:\.\s*[A-Za-z]+\s*)?\(\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  /\b(?:test|it|describe)\s*(?:\.\s*([A-Za-z]+)\s*)?\(\s*(['"`])((?:\\.|(?!\2)[\s\S])*?)\2/g;
+
+/**
+ * A `.skip` / `.todo` test never runs, so its name proves nothing about the case
+ * it carries and must not bind it. (A `{ skip: true }` options object is not
+ * detected — that would need a parser, not a regex.)
+ */
+const NON_RUNNING_MODIFIERS = new Set(['skip', 'todo']);
 
 const TEST_TAG_RE = /\[test\b(?::([^\]]*))?\]/g;
 const POINTER_PATH_RE = /^src\/[\w./-]+\.test\.ts$/;
@@ -516,7 +557,8 @@ function boundCornerCases() {
   if (!existsSync(SRC_DIR)) return boundCache;
   for (const file of listTests(SRC_DIR)) {
     for (const m of readFileSync(file, 'utf8').matchAll(TEST_NAME_RE)) {
-      for (const id of m[2].matchAll(CC_REF_RE)) boundCache.add(id[0]);
+      if (NON_RUNNING_MODIFIERS.has(m[1])) continue;
+      for (const id of m[3].matchAll(CC_REF_RE)) boundCache.add(id[0]);
     }
   }
   return boundCache;

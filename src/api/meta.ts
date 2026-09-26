@@ -26,8 +26,8 @@
 //     through `fetchAll` from `api/shared.ts` and inherits its page cap, budget
 //     checks and stop reasons verbatim. The `partial` / `stopReason` /
 //     `nextStartAt` metadata is passed straight out to the caller — the tool
-//     ring turns it into the `truncated` hint; the api ring never invents hints
-//     or envelopes.
+//     ring reports it as `data.paging` (never as the `truncated` hint, which is
+//     the rendering budget's); the api ring never invents hints or envelopes.
 //  2. **Wire data enters as `unknown`.** Each response is narrowed by a
 //     hand-rolled guard (ARCHITECTURE.md §Typing strategy); a shape Jira should
 //     never send becomes a `JiraError` with `kind: "unexpected_shape"`, never a

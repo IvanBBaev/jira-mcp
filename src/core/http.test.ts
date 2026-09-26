@@ -420,6 +420,20 @@ test('a 429 with no Retry-After falls back to exponential backoff', async () => 
   });
 });
 
+test('[CC-203] a zero Retry-After backs off instead of retrying at once', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({ status: 429, headers: { 'retry-after': '0' } })
+      .enqueue({ json: { ok: true } });
+    const { request, clock, logger } = harness();
+
+    await settle(clock, request(GET_ISSUE));
+
+    assert.equal(fieldsOf(logger.eventsOf('http_retry')[0])['delayMs'], 500);
+    assert.equal(fieldsOf(logger.eventsOf('rate_limited')[0])['retryAfterS'], 0);
+  });
+});
+
 test('a 429 that outlives the retry budget surfaces as rate_limited', async () => {
   await withFetch(async (mock: FetchMock) => {
     for (let i = 0; i < 4; i += 1)
@@ -665,6 +679,83 @@ test('semaphore queueing counts against the budget', async () => {
   }
 });
 
+test('[CC-204] a caller cancel releases a call queued for a slot at once', async () => {
+  const restore = installHangingFetch();
+  try {
+    const { request, clock } = harness({ hostConcurrency: 1, callBudgetMs: 60_000 });
+
+    const blocking = request(GET_ISSUE);
+    blocking.catch(() => {
+      /* abandoned on purpose */
+    });
+    await tick();
+
+    const controller = new AbortController();
+    const queued = request({ ...GET_ISSUE, signal: controller.signal });
+    await tick();
+    const startedAt = clock.now();
+    controller.abort();
+
+    const err = await rejects(clock, queued, 1);
+    assert.equal(err.kind, 'transport');
+    assert.match(
+      err.message,
+      /cancelled by the caller while waiting for a connection slot/,
+    );
+    assert.ok(clock.now() - startedAt < 1_000, 'the cancel did not wait for the budget');
+  } finally {
+    restore();
+  }
+});
+
+test('[CC-135] an attempt that waited for a slot gets only the budget the wait left', async () => {
+  const previous = globalThis.fetch;
+  let releaseFirst: (() => void) | undefined;
+  let calls = 0;
+  globalThis.fetch = (): Promise<Response> => {
+    calls += 1;
+    if (calls === 1) {
+      return new Promise<Response>((resolve) => {
+        releaseFirst = () => resolve(Response.json({ ok: true }));
+      });
+    }
+    return new Promise<Response>(() => {
+      /* never settles: only the attempt timeout can end it */
+    });
+  };
+  try {
+    const { request, clock, logger } = harness({
+      hostConcurrency: 1,
+      callBudgetMs: 10_000,
+    });
+    const blocking = request(GET_ISSUE);
+    await tick();
+    let failure: unknown;
+    request(GET_ISSUE).catch((error: unknown) => {
+      failure = error;
+    });
+    await tick();
+
+    // The queued call waits 6 s of its 10 s budget, then gets the slot.
+    clock.advance(6_000);
+    assert.ok(releaseFirst);
+    releaseFirst();
+    await blocking;
+    for (let i = 0; i < 10; i += 1) await tick();
+    assert.equal(calls, 2);
+
+    // Its attempt must end with the budget, not 10 s after the slot.
+    clock.advance(4_000);
+    for (let i = 0; i < 20; i += 1) await tick();
+    assert.ok(failure instanceof JiraError, 'the call must have ended at the deadline');
+    assert.equal(failure.kind, 'budget_exceeded');
+    const elapsed = fieldsOf(logger.eventsOf('budget_exceeded')[0])['elapsedMs'];
+    assert.equal(elapsed, 10_000);
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
 test('the per-host semaphore limits how many requests are in flight at once', async () => {
   const previous = globalThis.fetch;
   let inFlight = 0;
@@ -779,7 +870,7 @@ test('a stalled body is charged to the call budget, not just to the attempt', as
   assert.match(err.message, /timed out after 5000 ms/);
 });
 
-test('an unsafe write whose body stalls is ambiguous and is sent exactly once', async () => {
+test('[CC-205] an unsafe write whose 2xx body stalls says it was applied and is sent exactly once', async () => {
   const err = await withRawFetch(
     () => Promise.resolve(new Response(stallingBody(), { status: 200 })),
     async (calls) => {
@@ -797,7 +888,9 @@ test('an unsafe write whose body stalls is ambiguous and is sent exactly once', 
   );
 
   assert.equal(err.kind, 'ambiguous_write');
-  assert.match(err.message, /timed out after the request was sent/);
+  assert.equal(err.httpStatus, 200);
+  assert.match(err.message, /was applied \(Jira answered 200\)/);
+  assert.match(err.remediation ?? '', /Do not send it again/);
 });
 
 test('the host slot is held until the body settles, not until the headers arrive', async () => {
@@ -1046,6 +1139,41 @@ test('the injected redactor scrubs the token out of error text', async () => {
 
     assert.equal(err.detail?.includes(TOKEN), false);
     assert.match(err.detail ?? '', /\[REDACTED\]/);
+  });
+});
+
+test('[CC-238] a secret straddling the detail cut is redacted, not left as a prefix', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    // The token starts 10 chars before the 200-char cut.
+    mock.enqueue({ status: 400, text: `${'x'.repeat(190)}${TOKEN} tail` });
+    const redactor = createFakeRedactor([TOKEN]);
+    const { request, clock } = harness({ redactor });
+
+    const err = await rejects(
+      clock,
+      request({ method: 'POST', path: '/issue', body: {} }),
+    );
+
+    assert.equal(err.detail?.includes(TOKEN.slice(0, 10)), false);
+    assert.match(err.detail ?? '', /\[REDACTED\]/);
+    assert.ok((err.detail?.length ?? 0) <= 200);
+  });
+});
+
+test('[CC-240] Jira error messages embedded in the message are capped like errors.ts caps them', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 400, json: { errorMessages: ['y'.repeat(2000)] } });
+    const { request, clock } = harness();
+
+    const err = await rejects(
+      clock,
+      request({ method: 'POST', path: '/issue', body: {} }),
+    );
+
+    assert.ok(err.message.length < 700, `message is ${String(err.message.length)} chars`);
+    assert.match(err.message, /y…/);
+    // The array keeps the full entries; only the prose is bounded.
+    assert.equal(err.jiraMessages?.[0]?.length, 2000);
   });
 });
 
@@ -1717,6 +1845,29 @@ test('a runtime without a global fetch fails as config, before anything is sent'
   }
 });
 
+test('[CC-175] a caller abort during a retry backoff is reported as a cancellation', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 503 });
+    mock.enqueue({ json: { key: 'ABC-1' } });
+    const controller = new AbortController();
+    const { request, clock } = harness();
+    const promise = request({ ...GET_ISSUE, signal: controller.signal });
+
+    // Let the first attempt answer 503 and the loop enter its backoff sleep.
+    for (let i = 0; i < 20 && mock.requests.length === 0; i += 1) await tick();
+    for (let i = 0; i < 20; i += 1) await tick();
+    assert.equal(mock.requests.length, 1);
+    controller.abort();
+
+    const err = await rejects(clock, promise);
+    assert.equal(err.kind, 'transport');
+    assert.equal(err.retryable, false);
+    assert.match(err.message, /cancelled by the caller while waiting to retry/);
+    assert.match(err.remediation ?? '', /Call again/);
+    assert.equal(mock.requests.length, 1, 'no attempt after the cancel');
+  });
+});
+
 test('CC-94: aborting an unsafe write warns that the change may already have landed', async () => {
   const restore = installHangingFetch();
   try {
@@ -1851,6 +2002,22 @@ test('bearer credentials send an OAuth access token, never a Basic header', asyn
       'https://api.atlassian.com/ex/jira/11223344-5566-7788-99aa-bbccddeeff00/rest/api/3/issue/ABC-1',
     );
     assert.equal(JSON.stringify(logger.events).includes(ACCESS_TOKEN), false);
+  });
+});
+
+test('[CC-208] a 401 under OAuth points at login, not at the API token variables', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 401, json: { errorMessages: ['Unauthorized'] } });
+    const { request, clock } = harness({
+      credentials: { kind: 'bearer', host: GATEWAY, accessToken: ACCESS_TOKEN },
+      allowedHosts: ['api.atlassian.com'],
+    });
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(err.kind, 'auth');
+    assert.match(err.remediation ?? '', /jira-mcp-ai login/);
+    assert.doesNotMatch(err.remediation ?? '', /JIRA_API_TOKEN/);
   });
 });
 
@@ -2020,6 +2187,41 @@ test('a URL outside the declared OAuth origins never reaches fetch', async () =>
   });
 });
 
+test('a relative OAuth URL is a caller bug, refused before the origin check', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ json: {} });
+    const { authRequest, clock } = authHarness();
+
+    const err = await rejects(
+      clock,
+      authRequest({ ...REFRESH_SPEC, url: '/oauth/token' }),
+    );
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /not an absolute URL/);
+    assert.match(String(err.remediation), /caller bug/);
+    assert.equal(mock.requests.length, 0);
+  });
+});
+
+test('a configured origin that is not a URL matches nothing, never everything', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ json: {} });
+    // A scheme-less entry cannot be normalised to an origin, so it is kept
+    // verbatim — and a verbatim host never equals a real `URL.origin`, which
+    // fails closed: the token endpoint on that host is refused.
+    const { authRequest, clock } = authHarness({
+      allowedOrigins: ['auth.atlassian.com', GATEWAY_ORIGIN],
+    });
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /not one of the OAuth origins/);
+    assert.equal(mock.requests.length, 0);
+  });
+});
+
 test('accessible-resources is reachable on the gateway origin, with a bearer token', async () => {
   await withFetch(async (mock: FetchMock) => {
     mock.enqueue({ json: [{ id: 'cid-1', url: 'https://acme.atlassian.net' }] });
@@ -2085,6 +2287,52 @@ test('a 429 on the accessible-resources GET is retried, honouring Retry-After', 
   });
 });
 
+test('the accessible-resources GET is retried after a transport failure and a 503', async () => {
+  // The no-replay rule is a property of the POST alone: a GET carries nothing a
+  // replay could spend, so it gets the same retry policy as any Jira read.
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ error: new Error('socket hang up') });
+    mock.enqueue({ status: 503, json: { error: 'temporarily_unavailable' } });
+    mock.enqueue({ json: [{ id: 'cid-1' }] });
+    const { authRequest, clock, logger } = authHarness();
+
+    const res = await settle(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json, [{ id: 'cid-1' }]);
+    assert.equal(mock.requests.length, 3);
+    assert.deepEqual(
+      logger.eventsOf('http_retry').map((event) => fieldsOf(event)['reason']),
+      ['transport', '5xx'],
+    );
+    for (const sent of mock.requests) {
+      assert.equal(sent.headers['authorization'], `Bearer ${ACCESS_TOKEN}`);
+    }
+  });
+});
+
+test('a 429 on the token POST is rate_limited and still sent exactly once', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ status: 429, headers: { 'retry-after': '1' } });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'rate_limited');
+    assert.equal(err.httpStatus, 429);
+    assert.match(err.remediation ?? '', /never replayed automatically/);
+    // This layer cannot tell a refresh from a login exchange, so it names
+    // neither; core/oauth.ts restates it (CC-247).
+    assert.doesNotMatch(err.remediation ?? '', /jira-mcp-ai login/);
+    assert.equal(mock.requests.length, 1);
+    assert.equal(logger.eventsOf('rate_limited').length, 1);
+    assert.equal(logger.eventsOf('http_retry').length, 0);
+  });
+});
+
 test('invalid_grant is an auth failure that names the login command', async () => {
   await withFetch(async (mock: FetchMock) => {
     mock.enqueue({
@@ -2136,5 +2384,225 @@ test('the redactor covers the OAuth path too', async () => {
 
     assert.equal(err.detail?.includes(REFRESH_TOKEN), false);
     assert.match(err.detail ?? '', /\[REDACTED\]/);
+  });
+});
+
+test('a runtime without a global fetch fails the OAuth path as config too', async () => {
+  const previous = globalThis.fetch;
+  (globalThis as { fetch?: typeof fetch }).fetch = undefined;
+  try {
+    const { authRequest, clock } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /no global fetch/);
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test('a token POST that hangs times out once and is never retried', async () => {
+  const restore = installHangingFetch();
+  try {
+    const { authRequest, clock, logger } = authHarness({ requestTimeoutMs: 30_000 });
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'timeout');
+    assert.match(err.message, /timed out after 30000 ms and was not retried\./);
+    assert.match(err.remediation ?? '', /never sent twice/);
+    assert.equal(logger.eventsOf('http_retry').length, 0);
+    assert.equal(clock.pendingSleeps(), 0, 'no timer may leak');
+  } finally {
+    restore();
+  }
+});
+
+test('a hung accessible-resources GET is retried, then times out with the connectivity hint', async () => {
+  let sends = 0;
+  const restore = installHangingFetch(() => {
+    sends += 1;
+  });
+  try {
+    const { authRequest, clock, logger } = authHarness({ requestTimeoutMs: 30_000 });
+
+    const err = await rejects(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(err.kind, 'timeout');
+    assert.match(err.remediation ?? '', /Check network connectivity/);
+    assert.equal(sends, 4, 'the first send plus the default three retries');
+    // A timed-out attempt is retried as a transport failure: the reason on the
+    // wire is "nothing came back", whichever side gave up first.
+    assert.deepEqual(
+      logger.eventsOf('http_retry').map((event) => fieldsOf(event)['reason']),
+      ['transport', 'transport', 'transport'],
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('an aborted fetch on the OAuth path is not retried and reads as unreachable', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ error: Object.assign(new Error('aborted'), { name: 'AbortError' }) });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(err.kind, 'transport');
+    assert.match(err.message, /Could not reach https:\/\/api\.atlassian\.com for GET/);
+    assert.equal(mock.requests.length, 1, 'an abort is final, not a hiccup');
+    assert.equal(logger.eventsOf('http_retry').length, 0);
+  });
+});
+
+test('a 429 without Retry-After on the accessible-resources GET backs off on the client clock', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 429 });
+    mock.enqueue({ json: [{ id: 'cid-1' }] });
+    // No `rng` injected: the default source is a constant, so the backoff
+    // carries no jitter at all rather than a hidden Math.random.
+    const clock = createFakeClock(1_700_000_000_000);
+    const logger = createFakeLogger({ clock });
+    const authRequest = createAuthRequest({
+      clock,
+      logger,
+      allowedOrigins: [AUTH_ORIGIN, GATEWAY_ORIGIN],
+    });
+
+    const res = await settle(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(mock.requests.length, 2);
+    const limited = fieldsOf(logger.eventsOf('rate_limited')[0]);
+    assert.equal(limited['retryAfterS'], undefined, 'the server named no wait');
+    assert.equal(limited['waitS'], 1, '500 ms of first-step backoff, rounded');
+    assert.equal(fieldsOf(logger.eventsOf('http_retry')[0])['delayMs'], 500);
+  });
+});
+
+test('[CC-203] a zero Retry-After on the accessible-resources GET still backs off', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 429, headers: { 'retry-after': '0' } });
+    mock.enqueue({ json: [{ id: 'cid-1' }] });
+    const clock = createFakeClock(1_700_000_000_000);
+    const logger = createFakeLogger({ clock });
+    const authRequest = createAuthRequest({
+      clock,
+      logger,
+      allowedOrigins: [AUTH_ORIGIN, GATEWAY_ORIGIN],
+    });
+
+    await settle(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(fieldsOf(logger.eventsOf('http_retry')[0])['delayMs'], 500);
+  });
+});
+
+test('a GET that stays rate limited ends as rate_limited with the plain wait hint', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({ status: 429, headers: { 'retry-after': '1' } });
+    const { authRequest, clock } = authHarness();
+
+    const err = await rejects(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    assert.equal(err.kind, 'rate_limited');
+    assert.equal(err.httpStatus, 429);
+    assert.equal(err.remediation, 'Wait before calling again.');
+    assert.equal(
+      mock.requests.length,
+      4,
+      'the first send plus the default three retries',
+    );
+  });
+});
+
+test('a 401 with an OAuth error code and description carries both as detail', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({
+      status: 401,
+      json: {
+        error: 'invalid_client',
+        error_description: 'Client authentication failed',
+      },
+    });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'auth');
+    assert.equal(err.httpStatus, 401);
+    assert.match(err.message, /rejected POST \/oauth\/token with HTTP 401\./);
+    assert.equal(err.detail, 'invalid_client: Client authentication failed');
+    assert.deepEqual(fieldsOf(logger.eventsOf('auth_failure')[0]), {
+      status: 401,
+      pathTemplate: '/oauth/token',
+    });
+  });
+});
+
+test('a 400 without invalid_grant is validation with the client-config hint; a 500 is transport with the status page', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 400, json: { error: 'invalid_request' } });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(clock, authRequest(REFRESH_SPEC));
+
+    assert.equal(err.kind, 'validation');
+    assert.equal(err.detail, 'invalid_request', 'a code alone is the whole detail');
+    assert.match(err.remediation ?? '', /JIRA_OAUTH_CLIENT_ID/);
+    assert.equal(logger.eventsOf('auth_failure').length, 0);
+  });
+
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 500, text: 'Internal Server Error' });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    // A 500 is a bug rather than a hiccup, so not even the GET retries it.
+    assert.equal(err.kind, 'transport');
+    assert.equal(err.httpStatus, 500);
+    assert.equal(err.detail, undefined, 'a body that is not JSON names no code');
+    assert.match(err.remediation ?? '', /status\.atlassian\.com/);
+    assert.equal(mock.requests.length, 1);
+    assert.equal(logger.eventsOf('http_retry').length, 0);
+  });
+
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 403, json: { error: '', error_description: '' } });
+    const { authRequest, clock, logger } = authHarness();
+
+    const err = await rejects(
+      clock,
+      authRequest({ method: 'GET', url: RESOURCES_URL, bearer: ACCESS_TOKEN }),
+    );
+
+    // Empty OAuth fields are absent ones: nothing is quoted, and a 403 on this
+    // path is still the grant's problem, not a permission of the caller's.
+    assert.equal(err.kind, 'auth');
+    assert.equal(err.httpStatus, 403);
+    assert.equal(err.detail, undefined);
+    assert.match(err.message, /HTTP 403\./);
+    assert.equal(logger.eventsOf('auth_failure').length, 1);
   });
 });

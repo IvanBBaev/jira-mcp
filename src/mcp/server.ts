@@ -51,7 +51,11 @@ import type {
   Rng,
   Settings,
 } from '../core/types.js';
-import { sessionRecentWrites, writtenIssueIds } from './recent-writes.js';
+import {
+  sessionRecentWrites,
+  withRecentWrites,
+  writtenIssueIds,
+} from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
 import { createRegistry } from './registry.js';
 import type { RenderedResult } from './result.js';
@@ -97,9 +101,10 @@ export interface BuildServerDeps {
   readonly gate?: WriteGate | undefined;
   /**
    * CC-02 — where applied writes leave their issue ids for `jira_search` to
-   * reconcile. Defaults to the ambient `sessionRecentWrites`, which is the
-   * instance the search tool reads (`mcp/recent-writes.ts` explains why the read
-   * side cannot be injected); a test passes its own to keep the session clean.
+   * reconcile. Defaults to the ambient `sessionRecentWrites`. Every tool call
+   * runs with this instance in scope, so the search tool reads the registry this
+   * server records into (`mcp/recent-writes.ts`); the HTTP transport passes one
+   * per session (CC-244), a test its own to keep the session clean.
    */
   readonly recentWrites?: RecentWrites | undefined;
 }
@@ -222,10 +227,13 @@ function withJournalHint(result: ToolResult<unknown>): ToolResult<unknown> {
  * - LOCAL FAILURE — the handler rejected the arguments, or a read it needed
  *   failed, before issuing its mutation. Again nothing reached the wire.
  *
- * Only a request that actually left the process produces a line, which is
- * exactly what an audit trail must mean. A mutation that came back 4xx IS
- * journaled, with `ok: false` and its status: the request was made, and "was
- * this attempted?" is the question the journal exists to answer.
+ * Only a mutation the handler actually issued produces a line. One that threw
+ * with no HTTP status is journaled as attempted even if the throw came before
+ * the wire (credential resolution, a host check): the seam cannot tell that
+ * from a transport failure after the bytes left, and an audit trail must err
+ * toward the write that may have landed (OBSERVABILITY.md). A mutation that
+ * came back 4xx IS journaled, with `ok: false` and its status: the request was
+ * made, and "was this attempted?" is the question the journal exists to answer.
  *
  * The FIRST mutation wins when a tool issues several (a transition with a
  * comment): it is the operation the plan described and the tool is named after.
@@ -339,7 +347,12 @@ export function recordingGate(
     },
 
     async execute(call: WriteGateCall): Promise<ToolResult<unknown>> {
-      if (call.tool.writeTier === undefined) return inner.execute(call);
+      // An irreversible write deletes or bulk-enqueues: the ids it names are
+      // gone, or not written yet, and a bulk batch of them would evict the
+      // real recent writes from the 50-id registry (CC-192).
+      if (call.tool.writeTier === undefined || call.tool.writeTier === 'irreversible') {
+        return inner.execute(call);
+      }
 
       let executed = false;
       const observing: JiraRequestFn = async <T = unknown>(
@@ -349,11 +362,42 @@ export function recordingGate(
         return call.jira<T>(req);
       };
 
-      const result = await inner.execute({ ...call, jira: observing });
-      if (executed && result.ok) deps.recent.record(writtenIssueIds(call.args, result));
+      let result: ToolResult<unknown>;
+      try {
+        result = await inner.execute({ ...call, jira: observing });
+      } catch (error) {
+        // A handler that lets its JiraError escape (the registry's catch-all
+        // turns it into the envelope) is judged the same way.
+        if (executed && isJiraError(error) && wasApplied({ ok: false, error })) {
+          deps.recent.record(writtenIssueIds(call.args));
+        }
+        throw error;
+      }
+      if (executed && wasApplied(result))
+        deps.recent.record(writtenIssueIds(call.args, result));
       return result;
     },
   };
+}
+
+/**
+ * Whether Jira accepted the write. A success, or an `ambiguous_write` that
+ * carries a 2xx: Jira said yes and only the reply body was lost (CC-205), so
+ * the ids the arguments name are as written as any success's (CC-221). An
+ * ambiguous write with no status may or may not have landed and stays out.
+ */
+function wasApplied(result: {
+  readonly ok: boolean;
+  readonly error?: { readonly kind: string; readonly httpStatus?: number };
+}): boolean {
+  if (result.ok) return true;
+  const status = result.error?.httpStatus;
+  return (
+    result.error?.kind === 'ambiguous_write' &&
+    status !== undefined &&
+    status >= 200 &&
+    status < 300
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +430,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
       ? baseGate
       : journalingGate(baseGate, { journal: deps.journal });
 
+  const recent = deps.recentWrites ?? sessionRecentWrites;
   const registry = createRegistry(deps.packages, {
     settings,
     jira: deps.jira,
@@ -396,7 +441,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     // CC-02 outermost: it observes the result the journal may already have
     // hinted on, and journaling stays the last thing that can touch an envelope.
     gate: recordingGate(journaled, {
-      recent: deps.recentWrites ?? sessionRecentWrites,
+      recent,
     }),
   });
 
@@ -406,8 +451,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
       capabilities: {
         // `listChanged` is honest rather than aspirational: the surface is fixed
         // at startup, so the server simply never sends the notification. What it
-        // buys is a client that keeps the capability path open for the v1.5
-        // profile switch, which does change the surface mid-session.
+        // buys is a client that keeps the capability path open should a future
+        // change ever move the surface mid-session; nothing shipped does.
         tools: { listChanged: true },
         logging: {},
       },
@@ -425,12 +470,16 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     // `registry.call` never throws — an unknown name, a schema refusal and a
     // handler bug all come back as rendered envelopes — so there is deliberately
     // no try/catch here to convert a throw into a bare protocol error.
-    const rendered = await registry.call(
-      request.params.name,
-      request.params.arguments ?? {},
-      // Client cancellation and request timeouts arrive on this signal; the
-      // registry forwards it into `ToolCtx.signal` and thence to fetch.
-      { signal: extra.signal },
+    // The call runs with this server's registry in scope: the gate records into
+    // it and `jira_search` reads it, so HTTP sessions stay apart (CC-244).
+    const rendered = await withRecentWrites(recent, () =>
+      registry.call(
+        request.params.name,
+        request.params.arguments ?? {},
+        // Client cancellation and request timeouts arrive on this signal; the
+        // registry forwards it into `ToolCtx.signal` and thence to fetch.
+        { signal: extra.signal },
+      ),
     );
     return toCallToolResult(rendered);
   });

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
+import { parseEnv } from 'node:util';
 
 import { createJiraError } from '../core/errors.js';
 import {
@@ -119,13 +120,13 @@ function rig(setup: RigOptions = {}): Rig {
     touchAppend: () => {
       if (setup.appendError !== undefined) throw setup.appendError;
     },
-    writeSecret: (path, contents, options) => {
+    writeSecret: (path, render, options) => {
       // The real seam warns here when it breaks a stale lock; doctor must put
       // that on stderr, not into the report.
       if (setup.saveWarning !== undefined) options.onWarning?.(setup.saveWarning);
       if (setup.writeError !== undefined) return Promise.reject(setup.writeError);
       written.path = path;
-      written.contents = contents;
+      written.contents = render(texts[path]);
       return Promise.resolve();
     },
   };
@@ -981,6 +982,99 @@ test('a stored grant is described by site, cloudId, scopes and horizon — never
   assert.equal(out.includes(CLIENT_SECRET), false);
 });
 
+test('the OAuth horizon grows its unit with the time left, never rounding it away', async () => {
+  const cases: readonly (readonly [number, string])[] = [
+    [89, '89 minutes'],
+    [90, '1 hour'],
+    [5 * 60, '5 hours'],
+    [47 * 60, '47 hours'],
+    [3 * 24 * 60, '3 days'],
+  ];
+  for (const [minutes, expected] of cases) {
+    const store = fakeStore({
+      default: grant({ expiresAt: START_MS + minutes * MS_PER_MINUTE }),
+    });
+    const r = rig({
+      env: oauthEnv(),
+      files: { [TOKEN_FILE]: 0o600 },
+      extra: { tokenStore: store.store },
+    });
+
+    const code = await run({ ...r.options, argv: ['--offline'] });
+
+    const out = r.stdout();
+    assert.equal(code, EXIT_OK, out);
+    assert.match(
+      out,
+      new RegExp(`oauth token store: the OAuth access token expires in ${expected}\\n`),
+    );
+  }
+});
+
+test('a grant that recorded no scopes says so instead of printing an empty list', async () => {
+  const store = fakeStore({ default: grant({ scopes: [] }) });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o600 },
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(out, /\[info] oauth token store: the grant recorded no scopes/);
+  assert.doesNotMatch(out, /granted scopes/);
+});
+
+test('on Windows the store mode is neither judged nor printed', async () => {
+  // POSIX bits mean nothing on NTFS: a 0644 that would warn on Linux is
+  // reported as a plain "store <path>" with no mode at all.
+  const store = fakeStore({ default: grant() });
+  const r = rig({
+    env: oauthEnv(),
+    files: { [TOKEN_FILE]: 0o644 },
+    extra: { tokenStore: store.store, platform: 'win32' },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(out, new RegExp(`\\[ ok \\] oauth token store: store "${TOKEN_FILE}"\\n`));
+  assert.doesNotMatch(out, /readable beyond the owner|mode 0644/);
+});
+
+test('without an injected store, doctor reads the file JIRA_OAUTH_TOKEN_FILE names', async () => {
+  const dir = tempDir();
+  try {
+    const tokenFile = join(dir, 'oauth.json');
+    writeFileSync(
+      tokenFile,
+      JSON.stringify({ version: TOKEN_STORE_VERSION, tokens: { default: grant() } }),
+      { mode: 0o600 },
+    );
+    const r = rig({
+      env: oauthEnv({ JIRA_OAUTH_TOKEN_FILE: tokenFile }),
+      files: { [tokenFile]: 0o600 },
+    });
+
+    const code = await run({ ...r.options, argv: ['--offline'] });
+
+    const out = r.stdout();
+    assert.equal(code, EXIT_OK, out);
+    assert.match(
+      out,
+      new RegExp(
+        `oauth token store: a grant for https://acme\\.atlassian\\.net \\(cloudId ${CLOUD_ID}\\) is stored under profile "default"`,
+      ),
+    );
+    assert.equal(out.includes(ACCESS_TOKEN), false, 'no access token may reach stdout');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('oauth mode with no store fails the probe and names the login command', async () => {
   const store = fakeStore();
   const r = rig({ env: oauthEnv(), extra: { tokenStore: store.store } });
@@ -1341,6 +1435,45 @@ test('the report counts what the probes cost on the wire', async () => {
   assert.deepEqual(report.counters?.errors, {});
 });
 
+test('without an injected request, doctor builds the real one on the loaded settings', async () => {
+  // Nothing is injected, so the probes travel on `createJiraRequest` itself,
+  // which reads `fetch` off `globalThis` at call time. The test owns that fetch
+  // rather than leaning on the network fence: the fence is lifted under
+  // JIRA_LIVE_TEST=1, and this test must never send a request anywhere. The
+  // transport error the real layer raises names the host it was built on, and
+  // that is the proof. Retries are off because the fake clock never advances on
+  // its own, and a retry backoff would wait on it forever.
+  const r = rig({ env: baseEnv({ JIRA_RETRY_ATTEMPTS: '0' }) });
+  const previous = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (input: string | URL | Request): Promise<Response> => {
+    urls.push(input instanceof Request ? input.url : String(input));
+    return Promise.reject(new TypeError('fetch failed'));
+  };
+
+  let code: number;
+  try {
+    code = await run({ ...r.options, argv: ['--json'] });
+  } finally {
+    globalThis.fetch = previous;
+  }
+
+  assert.equal(code, EXIT_PROBE_FAILED, r.stdout());
+  assert.ok(
+    urls.includes('https://acme.atlassian.net/rest/api/3/myself'),
+    JSON.stringify(urls),
+  );
+  const report = JSON.parse(r.stdout()) as DoctorReport;
+  const identity = report.probes.find((probe) => probe.id === 'identity');
+  assert.equal(identity?.status, 'fail');
+  assert.match(
+    identity?.findings.map((finding) => finding.text).join('\n') ?? '',
+    /Could not reach Jira at https:\/\/acme\.atlassian\.net for GET \/rest\/api\/3\/myself/,
+  );
+  // The counters come from the real `core/http.ts`, so they are reported.
+  assert.ok((report.counters?.requests ?? 0) >= 1, JSON.stringify(report.counters));
+});
+
 test('an injected request function leaves the counters out rather than reporting zeros', async () => {
   const r = rig();
 
@@ -1450,6 +1583,73 @@ test('--save writes the merged env file and does not probe', async () => {
   assert.equal(r.stdout().includes(TOKEN), false, 'the token is written, never echoed');
 });
 
+test('[CC-180] --save never writes into the project-local .env it loaded', async () => {
+  // `loadSettings` only reads an env file when it runs over `process.env`, so
+  // this test has to as well — otherwise nothing is loaded and the target
+  // falls back to the XDG path for the wrong reason.
+  const saved = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('JIRA_') || key === 'XDG_CONFIG_HOME') delete process.env[key];
+    }
+    const projectEnv = join(CWD, '.env');
+    const r = rig({
+      texts: { [projectEnv]: 'JIRA_SITE=old.atlassian.net\n' },
+      extra: {
+        env: process.env,
+        envFileHost: {
+          statFile: (path) => (path === projectEnv ? 0o600 : undefined),
+          loadFile: () => undefined,
+        },
+      },
+    });
+    const answers = ['acme.atlassian.net', 'ops@example.com', TOKEN, ''];
+    let asked = 0;
+
+    const code = await run({
+      ...r.options,
+      argv: ['--save'],
+      jiraRequest: healthy(r.jira).fn,
+      prompt: () => Promise.resolve(answers[asked++] ?? ''),
+    });
+
+    assert.equal(code, EXIT_OK, r.stderr());
+    assert.equal(r.written.path, XDG_ENV_PATH);
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});
+
+test('[CC-212] --save refuses when an active profile or oauth mode would ignore what it writes', async () => {
+  const cases = [
+    {
+      env: baseEnv({
+        JIRA_ACTIVE_PROFILE: 'eu',
+        JIRA_PROFILE_EU_API_TOKEN: 'eu-profile-token-value',
+      }),
+      says: /overrides them with JIRA_PROFILE_EU_API_TOKEN/,
+    },
+    { env: oauthEnv(), says: /jira-mcp-ai login/ },
+  ];
+  for (const { env, says } of cases) {
+    const r = rig({ env });
+    let asked = 0;
+    const code = await run({
+      ...r.options,
+      argv: ['--save'],
+      prompt: () => {
+        asked += 1;
+        return Promise.resolve('x');
+      },
+    });
+    assert.equal(code, EXIT_CONFIG, r.stderr());
+    assert.match(r.stderr(), says);
+    assert.equal(asked, 0, 'nothing is asked for that would not be used');
+    assert.equal(r.written.contents, undefined);
+  }
+});
+
 test('--save aborts without writing when an answer is empty', async () => {
   const r = rig();
   const answers = ['acme.atlassian.net', ''];
@@ -1464,6 +1664,38 @@ test('--save aborts without writing when an answer is empty', async () => {
   assert.equal(code, EXIT_CONFIG);
   assert.match(r.stderr(), /Aborted: nothing was written/);
   assert.equal(r.written.contents, undefined);
+});
+
+test('[CC-190] [CC-210] --save refuses a site, email or expiry the next start would refuse, and a value a .env file cannot hold', async () => {
+  const cases = [
+    {
+      answers: ['http://acme.atlassian.net', 'ops@example.com', TOKEN, ''],
+      says: /https/,
+    },
+    { answers: ['acme.atlassian.net', 'ops', TOKEN, ''], says: /JIRA_EMAIL "ops"/ },
+    {
+      answers: ['acme.atlassian.net', 'ops@example.com', TOKEN, '1/31/2027'],
+      says: /JIRA_TOKEN_EXPIRES "1\/31\/2027"/,
+    },
+    {
+      // [CC-210] a value no .env quoting can carry is refused, not mangled.
+      answers: ['acme.atlassian.net', 'ops@example.com', "it's", ''],
+      says: /JIRA_API_TOKEN contains a single quote/,
+    },
+  ];
+  for (const { answers, says } of cases) {
+    const r = rig();
+    let asked = 0;
+    const code = await run({
+      ...r.options,
+      argv: ['--save'],
+      prompt: () => Promise.resolve(answers[asked++] ?? ''),
+    });
+    assert.equal(code, EXIT_CONFIG, answers.join(' '));
+    assert.match(r.stderr(), says);
+    assert.match(r.stderr(), /Aborted: nothing was written/);
+    assert.equal(r.written.contents, undefined);
+  }
 });
 
 test('--save records the expiry date when one is given', async () => {
@@ -1551,10 +1783,11 @@ test('--save reports a failed write on stderr and exits 2', async () => {
   assert.equal(r.stderr().includes(TOKEN), false);
 });
 
-test('mergeEnvFile keeps foreign lines and quotes what needs quoting', () => {
+test('[CC-210] mergeEnvFile keeps foreign lines and quotes values so they read back intact', () => {
+  const token = 'has space, "quote", back\\slash and #hash';
   const merged = mergeEnvFile('# header\nexport JIRA_EMAIL=old@example.com\nOTHER=1', [
     ['JIRA_EMAIL', 'new@example.com'],
-    ['JIRA_API_TOKEN', 'has space and "quote"'],
+    ['JIRA_API_TOKEN', token],
   ]);
 
   assert.equal(
@@ -1563,14 +1796,27 @@ test('mergeEnvFile keeps foreign lines and quotes what needs quoting', () => {
       '# header',
       'JIRA_EMAIL=new@example.com',
       'OTHER=1',
-      'JIRA_API_TOKEN="has space and \\"quote\\""',
+      `JIRA_API_TOKEN='${token}'`,
       '',
     ].join('\n'),
   );
+  // The reader is Node's own parser, so the round trip is judged by it.
+  assert.equal(parseEnv(merged)['JIRA_API_TOKEN'], token);
   assert.equal(
     mergeEnvFile(undefined, [['JIRA_SITE', 'acme.atlassian.net']]),
     'JIRA_SITE=acme.atlassian.net\n',
   );
+});
+
+test('[CC-237] mergeEnvFile rewrites every assignment of a key, so a later duplicate cannot win', () => {
+  const merged = mergeEnvFile(
+    'JIRA_API_TOKEN=first\nOTHER=1\nexport JIRA_API_TOKEN=last',
+    [['JIRA_API_TOKEN', 'fresh']],
+  );
+
+  assert.equal(merged, 'JIRA_API_TOKEN=fresh\nOTHER=1\nJIRA_API_TOKEN=fresh\n');
+  // Node's parser keeps the last assignment — that is what the next start reads.
+  assert.equal(parseEnv(merged)['JIRA_API_TOKEN'], 'fresh');
 });
 
 // ---------------------------------------------------------------------------
@@ -1637,7 +1883,7 @@ test('nodeDoctorFs.writeSecret writes 0600 under the lock and releases it', asyn
     const warnings: string[] = [];
     const clock = createFakeClock(START_MS);
 
-    await nodeDoctorFs.writeSecret(path, `JIRA_API_TOKEN=${TOKEN}\n`, {
+    await nodeDoctorFs.writeSecret(path, () => `JIRA_API_TOKEN=${TOKEN}\n`, {
       clock,
       onWarning: (message) => warnings.push(message),
     });
@@ -1650,9 +1896,38 @@ test('nodeDoctorFs.writeSecret writes 0600 under the lock and releases it', asyn
     assert.equal(existsSync(`${path}.lock`), false);
 
     // Second write over an existing file: still 0600, contents replaced whole.
-    await nodeDoctorFs.writeSecret(path, 'JIRA_SITE=acme.atlassian.net\n', { clock });
+    await nodeDoctorFs.writeSecret(path, () => 'JIRA_SITE=acme.atlassian.net\n', {
+      clock,
+    });
     assert.equal(readFileSync(path, 'utf8'), 'JIRA_SITE=acme.atlassian.net\n');
     assert.equal(statSync(path).mode & 0o777, 0o600);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('[CC-239] nodeDoctorFs.writeSecret reads the file it merges into while holding the lock', async () => {
+  const dir = tempDir();
+  try {
+    const path = join(dir, '.env');
+    // Written by "someone else" after doctor prompted, before it saves.
+    writeFileSync(path, 'OTHER=edited-meanwhile\n');
+    let lockHeldDuringRead = false;
+
+    await nodeDoctorFs.writeSecret(
+      path,
+      (existing) => {
+        lockHeldDuringRead = existsSync(`${path}.lock`);
+        return mergeEnvFile(existing, [['JIRA_SITE', 'acme.atlassian.net']]);
+      },
+      { clock: createFakeClock(START_MS) },
+    );
+
+    assert.equal(lockHeldDuringRead, true, 'the read must happen inside the lock');
+    assert.equal(
+      readFileSync(path, 'utf8'),
+      'OTHER=edited-meanwhile\nJIRA_SITE=acme.atlassian.net\n',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

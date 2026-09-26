@@ -34,9 +34,16 @@
 
 ### Credentials
 - Single redaction choke point (`core/redact.ts`): secret values registered at
-  startup; all logs, `JiraError` messages (redacted in constructor), and shaped
-  results pass through it. Structural stripping of `Authorization` echoes and
-  token-bearing query strings happens before value redaction.
+  startup; all logs, `JiraError` messages (redacted where they are built —
+  `createJiraError`, `core/http.ts`'s `makeFail` — and again in the result
+  envelope), and shaped results pass through it. Structural stripping of
+  `Authorization` and `Cookie` echoes, URL-userinfo passwords and token-bearing
+  query strings runs after value redaction, as a shape-based backstop for a
+  credential nobody registered. Because that backstop also sees issue text, a
+  word after `Basic`/`Bearer`/`Authorization:`/`Cookie:` is masked only when it
+  looks like a credential (a digit, a token symbol or an internal case change),
+  so ordinary prose is not corrupted (CC-155). Error texts are scrubbed before
+  they are cut to length, never after (CC-158).
 - Registered values are matched as **literal text**, so protection never depends
   on a secret looking like a credential — but a placeholder token that is very
   short, or that spells a word this server prints itself (`t`, `settings`), also
@@ -44,15 +51,16 @@
   redactor registers it anyway: declining to protect a value the operator
   believes is protected trades a usability problem for a disclosure one. Startup
   validation raises a `warning`-severity finding naming the variable instead —
-  visible in doctor and in the startup report, and never blocking the run
-  [test: src/core/settings.test.ts].
+  visible in doctor (the server's stderr shows only the finding count and worst
+  severity), and never blocking the run [test: src/core/settings.test.ts].
 - **Scope note: redaction targets secrets, not PII.** Emails, display names and
   account ids in tool results are legitimate payload — minimizing them is a
   shaping-level concern (see Data handling below and the user-shaping contract
   in TOOLS.md), not the redactor's job. Conflating the two would either break
   results or give false privacy assurance.
-- Basic-auth header built in `core/http.ts` only; `extraHeaders` rejects
-  `authorization`/`accept`/`content-type` overrides (ported rule). The bearer
+- Basic-auth header built in `core/http.ts` only; the request spec exposes no
+  header override at all, so `authorization`/`accept`/`content-type` are set
+  in exactly one place and nothing upstream can replace them. The bearer
   header of oauth mode is built by the same function, switching on the
   credential's `kind` — one Authorization producer, not two.
 - Env files 0600, atomic writes, cross-process lock.
@@ -64,7 +72,8 @@ the exposure is this document's.
 
 - **The refresh token is the durable credential, and it lives in a file.**
   `<config dir>/oauth.json` (or `JIRA_OAUTH_TOKEN_FILE`) is written `0600`,
-  atomically, under the same cross-process lock as the env file, and every token
+  atomically, under the same cross-process locking scheme as the env file (its
+  own `oauth.json.lock`), and every token
   read out of it is registered with the redactor before use. Treat it exactly
   like the env file: anyone who can read it can act as the operator against the
   granted scopes until the rolling 90-day inactivity window elapses. Backups,
@@ -140,7 +149,8 @@ the exposure is this document's.
   the allowlist keeps its meaning: it says which *Jira site* this server talks
   to. What bounds the hop instead: `redirect: 'manual'` on every fetch, so
   nothing is ever followed implicitly; `https` only; the private/link-local
-  blocklist still applies; exactly ONE hop, and only from a binary GET; and no
+  blocklist still applies (IPv6 literals are parsed numerically, so mapped,
+  NAT64 and 6to4 spellings of a blocked IPv4 are refused too, CC-157); exactly ONE hop, and only from a binary GET; and no
   credentials on it — no `Authorization`, no XSRF header, no cookies, because
   the signature in the URL is the only credential the media host needs (and is
   therefore itself a secret, never logged). A second redirect, a missing or
@@ -198,8 +208,9 @@ the exposure is this document's.
   untrue (D58). An attachment upload that fails mid-flight is the same shape —
   `ambiguous_write`, never replayed, remediation naming the attachment listing,
   because a blind resend leaves the issue with two copies (CC-59).
-- Optional write journal (`JIRA_JOURNAL_PATH`): JSONL audit of every write call
-  (content form: open decision O-8 in DECISIONS.md).
+- Optional write journal (`JIRA_JOURNAL_PATH`): JSONL audit of every executed
+  write call, metadata only — a hash of the arguments, never their values (O-8;
+  line shape in OBSERVABILITY.md §Write journal).
 
 ### Local filesystem
 Attachments are the only feature that touches local disk, and both directions
@@ -241,7 +252,10 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
   `Host` checked against the bound loopback authority and `Origin`, when
   present, against loopback origins before any JSON-RPC is processed (CC-116);
   one session per `Mcp-Session-Id`, whose teardown takes its armed plans with
-  it (CC-117).
+  it (CC-117); a POST body read under a 4 MiB cap, after the bearer check, so
+  an authenticated client still cannot make the process buffer an unbounded
+  body (CC-139); and at most 32 sessions at once, so an initialize loop that
+  never sends DELETE cannot grow the server set either (CC-209).
 
 ### Untrusted content
 - ADF flattening produces plain text — no markdown link smuggling from rendered
@@ -274,7 +288,14 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
   renderer emits link markup only for `http(s):` and `mailto:` hrefs — any
   other scheme (`javascript:`, `data:`, `file:`) loses its href and renders as
   text, so a description written by a third party cannot smuggle an executable
-  URL into a client that renders the markdown. Mention synthesis stays closed
+  URL into a client that renders the markdown. Strings the renderer takes
+  from node attributes (mention and status text, card URLs, media names) are
+  markdown-escaped too, so an attribute cannot forge a link or a fake
+  placeholder (CC-147). The write side mirrors the scheme rule:
+  `adfFromMarkdown` never plants a `javascript:`, `vbscript:` or `data:` link
+  mark — the link is written as plain text (CC-153) — and its inline scans run
+  on a linear budget, so a crafted input at the size cap cannot stall the
+  server (CC-149). Mention synthesis stays closed
   under D100's opt-in resolution: `adfFromMarkdown` still emits no `mention`
   node on its own — only the tool ring can hand it one, keyed to a
   `@[Display Name]` token, and only when the caller set `resolveMentions:
@@ -318,13 +339,17 @@ exists because an MCP server is a data conduit, not just a client:
 - **Outbound flow**: every tool result — issue content, comments, user names —
   enters the MCP client's model context and is transmitted to the AI provider
   (e.g. Anthropic) under *that* subscription's terms. The server adds no
-  telemetry and calls no endpoint other than the configured Jira site, but it
-  cannot control what the client does with results. Whether provider terms
-  permit training on the data depends on the user's plan (consumer vs
-  Team/Enterprise) — open decision O-13 records which applies here. Attachment
-  *content* is the deliberate exception: it goes to disk and the tool returns a
-  path, so a downloaded file is the one payload that does not enter the model's
-  context.
+  telemetry and calls no endpoint other than the configured Jira site (plus
+  Atlassian's auth and gateway hosts in oauth mode, and the one bounded media
+  hop of `jira_download_attachment`), but it cannot control what the client
+  does with results. Whether provider terms
+  permit training on the data depends on the operator's own plan (consumer vs
+  Team/Enterprise), and this document cannot state it for them: the package is
+  public, so every deployment runs under a different subscription (O-13). Check
+  the terms of the plan the MCP client is signed into before pointing the
+  server at tenant data. Attachment *content* is the deliberate exception: it
+  goes to disk and the tool returns a path, so a downloaded file is the one
+  payload that does not enter the model's context.
 - **Authorization duty**: pointing this server at an employer's Jira tenant
   makes the operator responsible for having the right to export that data into
   an AI context — same duty as with any Jira API script, but worth stating
@@ -336,7 +361,9 @@ exists because an MCP server is a data conduit, not just a client:
   into `JIRA_MEDIA_DIR` — real tenant documents, at `0600`, kept until the
   operator deletes them. In oauth mode the token store is a third file the
   server writes, but it holds credentials and a site identifier, never tenant
-  content. Nothing else is written; there is no cache.
+  content. No other tenant data is written and there is no cache; the only
+  other files the server touches are operator-initiated (`doctor --save`'s env
+  file) or transient (`<file>.lock` directories, `<journal>.1` rotation).
 - **Acceptable use**: the tool surface (worklogs, changelogs, user search, and
   now watcher/vote lists and project-role membership) can technically
   reconstruct colleague activity. Using it for workplace

@@ -86,6 +86,16 @@ test('an allowlist entry matches exactly, and a trailing-dot variant still match
   assert.equal(checkHost('evil.jira.example.com', ['jira.example.com']), 'not_allowed');
 });
 
+test('a blank allowlist entry matches nothing, and an empty host is blocked', () => {
+  // A stray comma in JIRA_ALLOWED_HOSTS must not become "allow everything".
+  assert.equal(checkHost('jira.example.com', ['', '  ']), 'not_allowed');
+  assert.equal(checkHost('jira.example.com', ['', 'jira.example.com']), 'allowlisted');
+  // And a host that normalises to nothing is refused rather than looked up.
+  assert.equal(isBlockedHost(''), true);
+  assert.equal(isBlockedHost(' . '), true);
+  assert.equal(isBlockedHost('[]'), true);
+});
+
 test('an allowlist regex must be anchored, and matches only the whole host', () => {
   assert.equal(
     checkHost('jira.example.com', ['/^jira\\.example\\.com$/']),
@@ -162,6 +172,32 @@ test('isBlockedHost covers loopback, private, link-local, CGNAT and metadata', (
   }
 });
 
+test('[CC-157] isBlockedHost reads IPv6 literals numerically, not by spelling', () => {
+  for (const host of [
+    // What `URL` makes of `[::ffff:169.254.169.254]` and `[::ffff:127.0.0.1]`.
+    '[::ffff:a9fe:a9fe]',
+    '::ffff:7f00:1',
+    '::ffff:0:7f00:1',
+    '0:0:0:0:0:ffff:7f00:1',
+    '0:0:0:0:0:0:0:1',
+    '0000::1',
+    '::7f00:1',
+    '64:ff9b::a9fe:a9fe',
+    '64:ff9b::169.254.169.254',
+    '64:ff9b:1::1',
+    '2002:7f00:1::1',
+    'fe80::1%eth0',
+    'fe80:0::1',
+    'zz::1',
+    '1:2:3:4:5:6:7:8:9',
+  ]) {
+    assert.equal(isBlockedHost(host), true, `${host} must be blocked`);
+  }
+  for (const host of ['[2606:4700::1111]', '::ffff:8.8.8.8', '64:ff9b::808:808']) {
+    assert.equal(isBlockedHost(host), false, `${host} must not be blocked`);
+  }
+});
+
 test('assertHostAllowed distinguishes blocked from not-allowed and names the context', () => {
   assert.equal(assertHostAllowed('acme.atlassian.net'), undefined);
 
@@ -226,6 +262,20 @@ test('encodeSegment rejects CR/LF (header injection), never encodes it away', ()
   assert.equal(err.kind, 'validation');
 });
 
+test('control characters outside the whitespace class are rejected by code point', () => {
+  // ESC (C0), DEL and NEL (C1) are not `\s`, so only the code-point walk sees
+  // them; a plain non-ASCII letter above the C1 block is still encoded.
+  assert.equal(catchJiraError(() => encodeSegment('ABC-1\u001b')).kind, 'validation');
+  assert.equal(catchJiraError(() => encodeSegment('ABC-1\u007f')).kind, 'validation');
+  assert.equal(catchJiraError(() => encodeSegment('ABC-1\u0085')).kind, 'validation');
+  assert.equal(
+    catchJiraError(() => assertApiPath('/issue/ABC-1\u009f')).kind,
+    'validation',
+  );
+  assert.equal(encodeSegment('Čeština'), encodeURIComponent('Čeština'));
+  assert.doesNotThrow(() => assertApiPath('/issue/Čeština'));
+});
+
 test('assertApiPath rejects absolute URLs, query strings and dot segments', () => {
   assert.equal(assertApiPath('/issue/ABC-1'), undefined);
   assert.equal(assertApiPath('/search/jql'), undefined);
@@ -242,6 +292,14 @@ test('assertApiPath rejects absolute URLs, query strings and dot segments', () =
     '/issue/ ABC',
   ]) {
     assert.equal(catchJiraError(() => assertApiPath(bad)).kind, 'validation', bad);
+  }
+});
+
+test('[CC-202] a backslash dot segment cannot climb out of the API root', () => {
+  // The URL parser reads `\` as `/` and would then resolve the `..` segments.
+  for (const bad of ['/issue/..\\..\\..\\secret', '/issue\\x']) {
+    assert.equal(catchJiraError(() => assertApiPath(bad)).kind, 'validation', bad);
+    assert.throws(() => buildRequestUrl(SITE, 'v3', bad));
   }
 });
 
@@ -362,6 +420,33 @@ test('backoff doubles to an 8 s cap and adds injected jitter only', () => {
   );
 });
 
+test('an Rng that misbehaves is clamped: no NaN, no negative, no over-unit jitter', () => {
+  assert.equal(
+    backoffMs(1, () => Number.NaN),
+    500,
+  );
+  assert.equal(
+    backoffMs(1, () => Number.POSITIVE_INFINITY),
+    500,
+  );
+  assert.equal(
+    backoffMs(1, () => -1),
+    500,
+  );
+  assert.equal(
+    backoffMs(1, () => 2),
+    backoffMs(1, maxRng),
+  );
+  assert.equal(
+    jitterMs(1000, 0.1, () => Number.NaN),
+    1000,
+  );
+  assert.equal(
+    jitterMs(1000, 0.1, () => 2),
+    jitterMs(1000, 0.1, maxRng),
+  );
+});
+
 test('parseRetryAfterMs accepts delta-seconds and HTTP-dates against the injected clock', () => {
   assert.equal(parseRetryAfterMs('30', 0), 30_000);
   assert.equal(parseRetryAfterMs(' 0 ', 0), 0);
@@ -393,6 +478,15 @@ test('a hostile Retry-After is capped at 60 s, and jitter is added after the cap
 /* ------------------------------------------------------------------------- *
  * Per-host semaphore
  * ------------------------------------------------------------------------- */
+
+test('a semaphore limit that is not a positive integer is a config error', () => {
+  for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const err = catchJiraError(() => createSemaphorePool(limit));
+    assert.equal(err.kind, 'config');
+    assert.match(err.message, /Host concurrency must be a positive integer/);
+    assert.match(err.remediation ?? '', /JIRA_HOST_CONCURRENCY/);
+  }
+});
 
 test('the semaphore admits `limit` holders per host and queues the rest', async () => {
   const pool = createSemaphorePool(2);
@@ -455,6 +549,32 @@ test('an aborted waiter leaves the queue and never holds a slot afterwards', asy
   // The abandoned waiter must not be handed the slot the holder releases.
   held();
   assert.equal(pool.active('acme.atlassian.net'), 0);
+});
+
+test('a granted waiter drops its abort listener, so a later abort is a no-op', async () => {
+  const pool = createSemaphorePool(1);
+  const held = await pool.acquire('acme.atlassian.net');
+  const later = new AbortController();
+
+  const queued = pool.acquire('acme.atlassian.net', later.signal);
+  await Promise.resolve();
+  assert.equal(pool.queued('acme.atlassian.net'), 1);
+
+  held();
+  const release = await queued;
+  assert.equal(pool.active('acme.atlassian.net'), 1);
+
+  // Aborting after the grant must neither reject the settled promise nor
+  // touch the queue the waiter already left.
+  later.abort();
+  assert.equal(pool.queued('acme.atlassian.net'), 0);
+  assert.equal(pool.active('acme.atlassian.net'), 1);
+  release();
+  assert.equal(pool.active('acme.atlassian.net'), 0);
+
+  // A host nobody has asked about has no queue, not an error.
+  assert.equal(pool.queued('never.seen.example'), 0);
+  assert.equal(pool.active('never.seen.example'), 0);
 });
 
 test('acquiring with an already-aborted signal rejects instead of taking a slot', async () => {

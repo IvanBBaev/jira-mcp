@@ -36,7 +36,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * The thirteen hint codes of TOOLS.md §Hint catalog, in table order. Adding a
+ * The fourteen hint codes of TOOLS.md §Hint catalog, in table order. Adding a
  * code is a spec change there first, then here. A hint NEVER changes `ok`:
  * truncation, approximation and eventual consistency are successful results with
  * caveats, not failures.
@@ -55,10 +55,11 @@ export const HINT_CODES = [
   'sprint_move_required',
   'untrusted_content',
   'mentions_skipped',
+  'enqueued',
 ] as const;
 
 /**
- * One of the thirteen machine-stable hint codes.
+ * One of the fourteen machine-stable hint codes.
  *
  * Produced by: every tool (WP-30…WP-34), the write gate (WP-24), pagination
  * helpers (WP-15).
@@ -104,7 +105,11 @@ export interface TruncationMarker {
   /** Items present before truncation. */
   readonly of: number;
   readonly reason: TruncationReason;
-  /** Field that was ellipsized; only meaningful for `item_too_large`. */
+  /**
+   * Path under `data` of what was cut: the array trimmed (`budget`) or the
+   * longest string ellipsized (`item_too_large`). Absent at the floor, where
+   * `data` itself is gone.
+   */
   readonly field?: string;
 }
 
@@ -145,7 +150,8 @@ export interface ToolResult<T = unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Tool descriptors (ARCHITECTURE.md §defineTool, TOOLS.md §Annotations)
+// 3. Tool descriptors (ARCHITECTURE.md §Tool definition contract,
+//    TOOLS.md §Annotations reference)
 // ---------------------------------------------------------------------------
 
 /** Write-risk tiers; `irreversible` (deletes) additionally needs `JIRA_ALLOW_IRREVERSIBLE` — D45. */

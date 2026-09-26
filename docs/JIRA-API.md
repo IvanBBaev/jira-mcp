@@ -127,8 +127,11 @@ Atlassian **removed** the legacy search endpoints (`GET/POST /rest/api/3/search`
   - an invalid/expired token returns **HTTP 400** (NOT 410 — 410 is what the
     *removed legacy* endpoints return) with a message like "The provided next
     page token is invalid or expired". Disambiguate from a JQL-syntax 400 by
-    that message substring; on token-400 restart the search from page one with
-    a loop guard and surface hint `pagination_restarted`.
+    that message substring; when the token that expired is one Jira issued
+    mid-loop, restart the search from page one exactly once and surface hint
+    `pagination_restarted`. A caller-supplied `nextPageToken` that is refused
+    on the first request is a `validation` error instead — nothing to restart
+    from, and the caller's cursor is what is wrong.
 - **In oauth mode, JQL may not refer to entity properties** — a documented 3LO
   restriction, not a client limitation, and the one place where the same JQL
   string behaves differently between the two auth modes. See §OAuth 2.0 (3LO).
@@ -219,6 +222,9 @@ Cloud identifies users **only by `accountId`** — no usernames, no user keys.
   O-5): GET `/rest/api/3/user/assignable/search?query=` with `issueKey=` or
   `project=`. Exactly one scope is sent; when both are supplied, `issueKey`
   wins (server precedence is undocumented, so the choice is fixed client-side).
+  The endpoint filters a window of `maxResults` candidates, so a short page
+  is normal: the offset advances by the whole window, and only an empty
+  window or the thousandth candidate ends the sweep (CC-201).
 - Mention resolution (D100) uses the plain-query endpoint, deliberately NOT
   the assignable variant — mentionable ≠ assignable. `resolveMentionNames`
   issues one `GET /rest/api/3/user/search?query=` per distinct name
@@ -387,7 +393,8 @@ Extracted from Atlassian's own OpenAPI document for the platform v3 API
   `BulkOperationProgress`: `taskId`, `status` (one of `ENQUEUED`, `RUNNING`,
   `COMPLETE`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`, `DEAD`),
   `progressPercent`, `submittedBy`, `created`/`started`/`updated`,
-  `totalIssueCount`, `processedAccessibleIssues` (issue ids),
+  `totalIssueCount`, `processedAccessibleIssues` (the ids the operation
+  SUCCEEDED on — failures are only in the next field, CC-214),
   `failedAccessibleIssues` (issue id → error strings) and
   `invalidOrInaccessibleIssueCount`. A task stays viewable for **14 days**
   after completion. Permission: global **Bulk Change** only — nothing
@@ -516,7 +523,7 @@ Reference groups consulted 2026-08-13:
 - Jira Cloud rate limits per user/app; on breach returns `429` with
   `Retry-After` seconds header.
 - Policy (canonical — matches donor semantics in `core/http-util.ts`, imported
-  by `core/jira/http.ts`; corrected by the 2026-08-07 panel):
+  by `core/http.ts`; corrected by the 2026-08-07 panel):
   - `429`: retried for ALL methods, honouring `Retry-After` capped at **60 s**
     (cap-and-retry, matching donor `MAX_RETRY_AFTER_MS`), plus **+0–20 %
     jitter** from the injected RNG — synchronized agents must not stampede the
@@ -529,9 +536,12 @@ Reference groups consulted 2026-08-13:
     reads that deserve retries despite the POST verb;
   - unsafe writes are never replayed on 5xx/transport failure — an ambiguous
     write surfaces a `JiraError` with `kind: "ambiguous_write"` telling the
-    model to verify state before retrying;
-  - backoff `min(500·2^n, 8000) + jitter` (jitter from an injected RNG for test
-    determinism), attempts capped (default 3);
+    model to verify state before retrying. When the 2xx headers arrived and
+    only the body failed, the same kind carries the status and says the write
+    was applied — do not send it again, read it back (CC-205);
+  - backoff `min(500·2^(attempt−1), 8000) + 0–250 ms jitter` (the first retry
+    waits ~500 ms; jitter from an injected RNG for test determinism), attempts
+    capped (default 3);
   - per-host concurrency semaphore (default 4);
   - the whole tool call runs under a wall-clock budget `JIRA_CALL_BUDGET_MS`
     (default 120 s) — retry waits and semaphore queueing count against it; on
@@ -566,7 +576,6 @@ permission").
 
 - `Accept: application/json` on all calls; write bodies `Content-Type:
   application/json`.
-- `X-AACCOUNTID` response header can confirm acting identity in doctor.
 - JQL strings are passed through verbatim — the server never builds JQL from
   fragments (injection surface belongs to the model, quoting rules documented in
   the tool description).

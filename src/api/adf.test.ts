@@ -131,6 +131,21 @@ test('delta: date renders an ISO calendar date (the donor dropped it)', () => {
   assert.equal(adfToText({ type: 'date' }), '');
 });
 
+test('a text node without text, or with marks that are not records, renders as plain text', () => {
+  const odd = doc({
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: 't', marks: ['strong', { type: 'strong' }] },
+      { type: 'text' },
+      { type: 'text', text: 5 } as unknown as AdfNode,
+    ],
+  });
+  // The string mark is skipped, the record one applies; the two textless
+  // nodes contribute nothing rather than "undefined" or "5".
+  assert.equal(adfToMarkdown(odd), '**t**');
+  assert.equal(adfToText(odd), 't');
+});
+
 test('cards render the title when Jira resolved one, the URL otherwise', () => {
   const url = 'https://example.atlassian.net/browse/ABC-1';
   assert.equal(adfToText({ type: 'inlineCard', attrs: { url } }), url);
@@ -142,6 +157,19 @@ test('cards render the title when Jira resolved one, the URL otherwise', () => {
   assert.equal(
     adfToText({ type: 'inlineCard', attrs: { data: { name: 'Design doc' } } }),
     'Design doc',
+  );
+  // Resolved data without a name still has a URL of its own; an empty name is
+  // no name, so the card's own URL is what is left.
+  assert.equal(
+    adfToText({ type: 'inlineCard', attrs: { data: { url: 'https://x.test/d' } } }),
+    'https://x.test/d',
+  );
+  assert.equal(
+    adfToText({
+      type: 'inlineCard',
+      attrs: { data: { name: '' }, url: 'https://x.test/u' },
+    }),
+    'https://x.test/u',
   );
   // A card with nothing resolvable contributes nothing rather than throwing.
   assert.equal(adfToText({ type: 'inlineCard' }), '');
@@ -488,6 +516,8 @@ test('toAdf wraps a string, normalises a document and rejects everything else', 
 
   // A caller-built doc missing the pinned header is repaired, not rejected.
   assert.equal(toAdf({ type: 'doc', content: [] }).version, 1);
+  // …and one with no `content` at all gets the empty array Jira insists on.
+  assert.deepEqual(toAdf({ type: 'doc', version: 1 }).content, []);
   assert.equal(toAdf({ content: [para('x')] } as unknown as AdfNode).type, 'doc');
 
   // A bare node is not a document: replacing a description with one corrupts it.
@@ -860,6 +890,32 @@ test('CC-43: markdown: only http(s) and mailto links keep their markup', () => {
   assert.equal(adfToText(links), 'ok mail script data broken bare');
 });
 
+test('[CC-174] markdown: a hardBreak inside a heading stays on the heading line', () => {
+  const doc: AdfNode = {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'heading',
+        attrs: { level: 2 },
+        content: [
+          { type: 'text', text: 'a' },
+          { type: 'hardBreak' },
+          { type: 'text', text: '- b' },
+          { type: 'text', text: '\nc' },
+        ],
+      },
+    ],
+  };
+
+  const markdown = adfToMarkdown(doc);
+
+  assert.equal(markdown.split('\n').length, 1, markdown);
+  const back = adfFromMarkdown(markdown);
+  assert.equal(back.content.length, 1);
+  assert.equal(back.content[0]?.type, 'heading');
+});
+
 test('markdown: heading levels are clamped into 1..6', () => {
   const heading = (attrs: Record<string, unknown> | undefined): AdfNode => ({
     type: 'heading',
@@ -886,7 +942,6 @@ test('CC-41: CC-06/CC-07 markdown parity: everything outside the subset renders 
     { type: 'status', attrs: { text: 'DOWN' } },
     { type: 'date', attrs: { timestamp: '1754697600000' } },
     { type: 'inlineCard', attrs: { url: 'https://x.test/OPS-9' } },
-    { type: 'mediaSingle', content: [{ type: 'media', attrs: { alt: 'trace.png' } }] },
     {
       type: 'taskList',
       content: [
@@ -911,7 +966,6 @@ test('CC-41: CC-06/CC-07 markdown parity: everything outside the subset renders 
     },
     { type: 'panel', attrs: { panelType: 'error' }, content: [para('Customer facing.')] },
     { type: 'rule' },
-    { type: 'somethingAtlassianAddedLater', attrs: { localId: 'z' } },
   ];
 
   for (const node of outside) {
@@ -919,8 +973,52 @@ test('CC-41: CC-06/CC-07 markdown parity: everything outside the subset renders 
   }
   // Spot-check the two the subset is most often asked about.
   assert.equal(adfToMarkdown(outside[0]), '@Alice Example');
-  assert.equal(adfToMarkdown(outside[8]), 'Env | State');
+  assert.equal(adfToMarkdown(outside[7]), 'Env | State');
+  // Media is the one deliberate difference: its brackets are escaped (CC-147).
+  const media: AdfNode = {
+    type: 'mediaSingle',
+    content: [{ type: 'media', attrs: { alt: 'trace.png' } }],
+  };
+  assert.equal(adfToText(media), '[media: trace.png]');
+  assert.equal(adfToMarkdown(media), '\\[media: trace.png\\]');
+  // So is an unknown leaf's placeholder, for the same reason (CC-224).
+  const leaf: AdfNode = { type: 'somethingAtlassianAddedLater', attrs: { localId: 'z' } };
+  assert.equal(adfToText(leaf), '[somethingAtlassianAddedLater]');
+  assert.equal(adfToMarkdown(leaf), '\\[somethingAtlassianAddedLater\\]');
 });
+
+test('[CC-147] attr strings are escaped on the markdown path, so tenant text cannot forge a link', () => {
+  const payload = '[click](javascript:alert(1))';
+  const nodes: AdfNode[] = [
+    { type: 'status', attrs: { text: payload } },
+    { type: 'mention', attrs: { text: payload } },
+    { type: 'emoji', attrs: { shortName: payload } },
+    { type: 'inlineCard', attrs: { url: payload } },
+    { type: 'date', attrs: { timestamp: payload } },
+  ];
+  for (const node of nodes) {
+    const md = adfToMarkdown(para2(node));
+    assert.equal(/(?<!\\)\[[^\]]*(?<!\\)\]\(/.test(md), false, `${node.type}: ${md}`);
+    // The text path is untouched.
+    assert.ok(adfToText(para2(node)).includes(payload), `${node.type} text path`);
+  }
+  // Media alt carrying `](`, and bare media followed by a `(…)` text node.
+  const media = para2(
+    { type: 'mediaInline', attrs: { alt: 'x](javascript:alert(1)' } },
+    { type: 'text', text: '(javascript:alert(1))' },
+  );
+  assert.equal(/(?<!\\)\]\(/.test(adfToMarkdown(media)), false, adfToMarkdown(media));
+  const panel: AdfNode = {
+    type: 'panel',
+    attrs: { panelType: 'x](javascript:alert(1)' },
+    content: [para('body')],
+  };
+  assert.equal(/(?<!\\)\]\(/.test(adfToMarkdown(panel)), false, adfToMarkdown(panel));
+});
+
+function para2(...content: AdfNode[]): AdfNode {
+  return { type: 'paragraph', content };
+}
 
 test('CC-09 markdown parity: the depth and indent caps hold on the markdown path', () => {
   let nested: AdfNode = { type: 'listItem', content: [para('deepest')] };
@@ -1010,6 +1108,45 @@ test('adfFromMarkdown: constructs outside the subset stay paragraph text', () =>
   );
 });
 
+test('adfFromMarkdown: code spans and links at the edges of the grammar', () => {
+  // A backtick run of another length inside a span is content, not a closer
+  // (CommonMark), so a single-backtick span can carry a double backtick.
+  assert.deepEqual(
+    adfFromMarkdown('`a``b`'),
+    doc({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'a``b', marks: [{ type: 'code' }] }],
+    }),
+  );
+  // An empty span is not a span; the backticks stay literal.
+  assert.deepEqual(adfFromMarkdown('``'), doc(para('``')));
+  assert.deepEqual(adfFromMarkdown('x `` y'), doc(para('x `` y')));
+
+  // A destination may be wrapped in angle brackets, which lets it hold a space.
+  assert.deepEqual(
+    adfFromMarkdown('[x](<https://x.test/a b>)'),
+    doc({
+      type: 'paragraph',
+      content: [
+        {
+          type: 'text',
+          text: 'x',
+          marks: [{ type: 'link', attrs: { href: 'https://x.test/a b' } }],
+        },
+      ],
+    }),
+  );
+  // An unclosed or empty destination is not a link at all.
+  for (const line of ['[x](unclosed', '[x]()', '[x](<>)']) {
+    assert.deepEqual(adfFromMarkdown(line), doc(para(line)), line);
+  }
+});
+
+test('adfFromMarkdown: a tab indents a nested item exactly like two spaces', () => {
+  assert.deepEqual(adfFromMarkdown('- a\n\t- b'), adfFromMarkdown('- a\n  - b'));
+  assert.equal(adfFromMarkdown('- a\n\t- b').content[0]?.type, 'bulletList');
+});
+
 test('adfFromMarkdown: an unterminated fence still yields its code block', () => {
   assert.deepEqual(
     adfFromMarkdown('```py\nx = 1'),
@@ -1070,6 +1207,134 @@ test('adfFromMarkdown: list nesting stops at the parse cap', () => {
   assert.equal(listDepthOf(parsed), 16);
   // Everything past the cap joins the deepest open list rather than growing it.
   assert.equal(itemCountOf(parsed), 24);
+});
+
+test('[CC-137] adfFromMarkdown: a link with an empty label keeps its URL as the text', () => {
+  const href = 'https://x.test/a';
+  assert.deepEqual(
+    adfFromMarkdown(`see [](${href}) end`),
+    doc({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'see ' },
+        { type: 'text', text: href, marks: [{ type: 'link', attrs: { href } }] },
+        { type: 'text', text: ' end' },
+      ],
+    }),
+  );
+});
+
+test('[CC-148] adfFromMarkdown: a code span keeps link but never strong or em', () => {
+  const marksOf = (md: string): unknown[] =>
+    adfFromMarkdown(md).content[0]?.content?.map((node) => node.marks) ?? [];
+  assert.deepEqual(marksOf('**`x`**'), [[{ type: 'code' }]]);
+  assert.deepEqual(marksOf('*`x`*'), [[{ type: 'code' }]]);
+  assert.deepEqual(marksOf('**[`x`](https://u.test)**'), [
+    [{ type: 'code' }, { type: 'link', attrs: { href: 'https://u.test' } }],
+  ]);
+  // Plain text beside the span still takes the bold.
+  assert.deepEqual(marksOf('**a `x`**'), [[{ type: 'strong' }], [{ type: 'code' }]]);
+});
+
+test('[CC-149] adfFromMarkdown: unclosed-opener floods at the size cap parse in linear time', () => {
+  const size = 65_536;
+  const inputs = [
+    '['.repeat(size),
+    `${'['.repeat(size - 1)}]`,
+    '[``'.repeat(Math.floor(size / 3)),
+    '[a]('.repeat(size / 4),
+    '[a](<'.repeat(Math.floor(size / 5)),
+    '*'.repeat(size),
+  ];
+  // Linear parses take ~25 ms bare; the bound is loose because coverage
+  // instrumentation and a parallel suite slow them 20x or more. The quadratic
+  // parser took ~10 s bare, so 2 s still tells the two apart.
+  const boundMs = 2_000;
+  for (const input of inputs) {
+    const started = process.hrtime.bigint();
+    const parsed = adfFromMarkdown(input);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(ms < boundMs, `${input.slice(0, 6)}… took ${ms.toFixed(0)} ms`);
+    assert.equal(parsed.type, 'doc');
+  }
+  const mentions = new Map([['a', ALICE]]);
+  const started = process.hrtime.bigint();
+  adfFromMarkdown('@['.repeat(size / 2), { mentions });
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < boundMs);
+  // Ordinary markdown is untouched by the budget.
+  assert.deepEqual(
+    adfFromMarkdown('[a](https://x.test) **b** `c`').content[0]?.content?.length,
+    5,
+  );
+});
+
+test('[CC-151] adfFromMarkdown: the angle-bracket href form wins over paren counting', () => {
+  const href = 'https://a.test/x)y';
+  const md = adfToMarkdown(
+    doc({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'x', marks: [{ type: 'link', attrs: { href } }] }],
+    }),
+  );
+  assert.equal(md, `[x](<${href}>)`);
+  assert.deepEqual(
+    adfFromMarkdown(md),
+    doc({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'x', marks: [{ type: 'link', attrs: { href } }] }],
+    }),
+  );
+  // A `<` that is not a closed angle form still parses the paren way.
+  assert.deepEqual(
+    adfFromMarkdown('[x](<a)'),
+    doc({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'x', marks: [{ type: 'link', attrs: { href: '<a' } }] },
+      ],
+    }),
+  );
+});
+
+test('[CC-152] adfFromMarkdown: a link whose label is only a mention keeps its URL', () => {
+  const href = 'http://x.test';
+  assert.deepEqual(
+    adfFromMarkdown(`[@[Alice]](${href})`, { mentions: new Map([['Alice', ALICE]]) }),
+    doc({
+      type: 'paragraph',
+      content: [
+        { type: 'mention', attrs: { id: 'acc-alice', text: '@Alice Example' } },
+        { type: 'text', text: ' ' },
+        { type: 'text', text: href, marks: [{ type: 'link', attrs: { href } }] },
+      ],
+    }),
+  );
+});
+
+test('[CC-153] adfFromMarkdown: javascript:, vbscript: and data: links are written as plain text', () => {
+  for (const href of [
+    'javascript:alert(1)',
+    'JavaScript:x',
+    'java\tscript:x',
+    'data:text/html,x',
+    'vbscript:x',
+  ]) {
+    const parsed = adfFromMarkdown(`[a](${href})`);
+    assert.deepEqual(
+      parsed,
+      doc({ type: 'paragraph', content: [{ type: 'text', text: 'a' }] }),
+      href,
+    );
+  }
+  assert.deepEqual(
+    adfFromMarkdown('[](javascript:x)'),
+    doc({ type: 'paragraph', content: [{ type: 'text', text: 'javascript:x' }] }),
+  );
+  // Safe schemes and relative targets keep the link.
+  for (const href of ['https://x.test', 'mailto:a@b.test', '/browse/ABC-1']) {
+    const node = adfFromMarkdown(`[a](${href})`).content[0]?.content?.[0];
+    assert.deepEqual(node?.marks, [{ type: 'link', attrs: { href } }], href);
+  }
 });
 
 test('adfFromMarkdown: nested emphasis and links stop at the inline cap', () => {
@@ -1189,6 +1454,14 @@ test('extractMentions: distinct raw tokens in document order', () => {
   assert.deepEqual(extractMentions('@[ Alice ]'), [' Alice ']);
   assert.deepEqual(extractMentions(''), []);
   assert.deepEqual(extractMentions('no tokens here'), []);
+});
+
+test('[CC-241] a whitespace-only @[   ] stays literal text, like @[]', () => {
+  assert.deepEqual(extractMentions('@[   ] and @[\t]'), []);
+  assert.deepEqual(
+    adfFromMarkdown('hi @[   ]', { mentions: new Map([['   ', ALICE]]) }).content,
+    [{ type: 'paragraph', content: [{ type: 'text', text: 'hi @[   ]' }] }],
+  );
 });
 
 test('extractMentions: unterminated, empty and overlong tokens are not tokens', () => {
@@ -1392,6 +1665,34 @@ test('adfFromMarkdown: mentions resolve in headings, list items and continuation
   );
 });
 
+test('CC-108: a mention inside emphasis or a link label keeps its node, without the mark', () => {
+  const map = new Map([['Alice', ALICE]]);
+  const mention = { type: 'mention', attrs: { id: 'acc-alice', text: '@Alice Example' } };
+  // The mark is a text-node property; the mention node carries none, and is
+  // neither dropped nor flattened to text by the wrapping.
+  assert.deepEqual(
+    adfFromMarkdown('**hi @[Alice]**', { mentions: map }),
+    doc({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'hi ', marks: [{ type: 'strong' }] }, mention],
+    }),
+  );
+  assert.deepEqual(
+    adfFromMarkdown('[see @[Alice]](https://x.test/a)', { mentions: map }),
+    doc({
+      type: 'paragraph',
+      content: [
+        {
+          type: 'text',
+          text: 'see ',
+          marks: [{ type: 'link', attrs: { href: 'https://x.test/a' } }],
+        },
+        mention,
+      ],
+    }),
+  );
+});
+
 test('adfFromMarkdown: without a map a document full of tokens reads as literal text', () => {
   const text =
     '# @[Head]\n\nPing @[Alice] and \\@[escaped]\n\n- @[Item]\n\n```\n@[code]\n```';
@@ -1456,4 +1757,293 @@ test('renderAdfDocs stops descending at the render depth cap', () => {
     cursor = (cursor as { readonly nested: unknown }).nested;
   }
   assert.ok(isAdfDoc(cursor));
+});
+
+test('[CC-154] adfFromMarkdown: a code block or second paragraph inside a list item round-trips', () => {
+  const item = (...content: AdfNode[]): AdfNode => ({ type: 'listItem', content });
+  const doc: AdfNode = {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'bulletList',
+        content: [
+          item(
+            para('step'),
+            {
+              type: 'codeBlock',
+              attrs: { language: 'sh' },
+              content: [{ type: 'text', text: 'npm i\n  npm test' }],
+            },
+            para('then'),
+          ),
+          item(para('next')),
+        ],
+      },
+    ],
+  };
+  const md = adfToMarkdown(doc);
+  assert.deepEqual(adfFromMarkdown(md), doc, md);
+  // A fence indented under an item belongs to it even without a blank line.
+  assert.deepEqual(
+    adfFromMarkdown('- a\n  ```\n  x\n  ```'),
+    adfFromMarkdown('- a\n  \n  ```\n  x\n  ```'),
+  );
+  // A blank line with no indent of its own still ends the list.
+  assert.deepEqual(adfFromMarkdown('-\n\n a').content.length, 2);
+  assert.deepEqual(adfFromMarkdown('- a\n\n  b').content.length, 2);
+});
+
+test('[CC-191] markdown: a star with space on its inner side is literal, not emphasis', () => {
+  const texts = (md: string): unknown =>
+    adfFromMarkdown(md).content[0]?.content?.map((n) => [
+      n.text,
+      Array.isArray(n.marks) ? n.marks.length : 0,
+    ]);
+  assert.deepEqual(texts('2 * 3 * 4'), [['2 * 3 * 4', 0]]);
+  assert.deepEqual(texts('a ** b ** c'), [['a ** b ** c', 0]]);
+  assert.deepEqual(texts('x * y *z*'), [
+    ['x * y ', 0],
+    ['z', 1],
+  ]);
+  assert.deepEqual(texts('*a b*'), [['a b', 1]]);
+});
+
+test('[CC-193] markdown: an indented top-level fence strips its own indent from the body', () => {
+  const doc = adfFromMarkdown('   ```\n   x\n     y\n   ```');
+  assert.deepEqual(doc.content, [
+    { type: 'codeBlock', content: [{ type: 'text', text: 'x\n  y' }] },
+  ]);
+});
+
+test('[CC-222] markdown: emphasis wraps the text inside its whitespace, never the whitespace', () => {
+  const marked = (text: string, ...marks: string[]): AdfNode => ({
+    type: 'text',
+    text,
+    marks: marks.map((type) => ({ type })),
+  });
+  const note = doc({
+    type: 'paragraph',
+    content: [marked('Note: ', 'strong'), { type: 'text', text: 'rest' }],
+  });
+  assert.equal(adfToMarkdown(note), '**Note:** rest');
+  assert.deepEqual(adfFromMarkdown(adfToMarkdown(note)).content[0]?.content, [
+    { type: 'text', text: 'Note:', marks: [{ type: 'strong' }] },
+    { type: 'text', text: ' rest' },
+  ]);
+  const lead = doc({
+    type: 'paragraph',
+    content: [{ type: 'text', text: 'a' }, marked(' b ', 'em', 'strong')],
+  });
+  assert.equal(adfToMarkdown(lead), 'a ***b***');
+  // Whitespace alone carries no emphasis at all.
+  const blank = doc({
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: 'a' },
+      marked('  ', 'strong'),
+      { type: 'text', text: 'b' },
+    ],
+  });
+  assert.equal(adfToMarkdown(blank), 'a  b');
+  // Code keeps its spaces inside the span.
+  const code = doc({ type: 'paragraph', content: [marked(' x ', 'code')] });
+  assert.equal(adfToMarkdown(code), '`  x  `');
+});
+
+test('[CC-223] a paragraph after a nested list stays after it, on both paths', () => {
+  const tree = doc({
+    type: 'bulletList',
+    content: [
+      {
+        type: 'listItem',
+        content: [
+          para('one'),
+          {
+            type: 'bulletList',
+            content: [{ type: 'listItem', content: [para('nested')] }],
+          },
+          para('two'),
+        ],
+      },
+    ],
+  });
+  assert.equal(adfToText(tree), '- one\n  - nested\n  two');
+  const md = adfToMarkdown(tree);
+  assert.equal(md, '- one\n  - nested\n  \n  two');
+  assert.deepEqual(adfFromMarkdown(md), tree, md);
+});
+
+test('[CC-224] an unknown node is escaped on the markdown path like a known one', () => {
+  const withText = para2({ type: 'weird', text: '[x](javascript:alert(1))' });
+  assert.equal(adfToMarkdown(withText), '\\[x\\](javascript:alert(1))');
+  assert.equal(adfToText(withText), '[x](javascript:alert(1))');
+  // A leaf placeholder directly before `(…)` text, and a type naming a link.
+  const leaf = para2({ type: 'x' }, { type: 'text', text: '(javascript:alert(1))' });
+  assert.equal(/(?<!\\)\]\(/.test(adfToMarkdown(leaf)), false, adfToMarkdown(leaf));
+  const named = para2({ type: '](https://evil.test)' });
+  assert.equal(adfToMarkdown(named), '\\[\\](https://evil.test)\\]');
+  assert.equal(adfToText(named), '[](https://evil.test)]');
+});
+
+test('[CC-225] a table cell renders flat on the markdown path, as on the text path', () => {
+  const table = doc({
+    type: 'table',
+    content: [
+      {
+        type: 'tableRow',
+        content: [
+          {
+            type: 'tableCell',
+            content: [
+              {
+                type: 'heading',
+                attrs: { level: 1 },
+                content: [{ type: 'text', text: 'H' }],
+              },
+            ],
+          },
+          {
+            type: 'tableCell',
+            content: [
+              {
+                type: 'bulletList',
+                content: [{ type: 'listItem', content: [para('x')] }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'tableRow',
+        content: [
+          {
+            type: 'tableCell',
+            content: [
+              {
+                type: 'bulletList',
+                content: [{ type: 'listItem', content: [para('y')] }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(adfToText(table), 'H | - x\n- y');
+  const md = adfToMarkdown(table);
+  assert.equal(md, 'H | - x\n\\- y');
+  assert.deepEqual(
+    adfFromMarkdown(md).content.map((node) => node.type),
+    ['paragraph'],
+  );
+});
+
+test('[CC-226] markdown: a backtick in an href takes the angle-bracket form', () => {
+  const linked = doc({
+    type: 'paragraph',
+    content: [
+      {
+        type: 'text',
+        text: 'x',
+        marks: [{ type: 'link', attrs: { href: 'https://a.test/`' } }],
+      },
+      { type: 'text', text: 'y`' },
+    ],
+  });
+  const md = adfToMarkdown(linked);
+  assert.equal(md, '[x](<https://a.test/`>)y\\`');
+  assert.deepEqual(adfFromMarkdown(md), linked, md);
+});
+
+test('[CC-227] markdown: marked text over a line break is marked line by line', () => {
+  const marked = (text: string, type: string): AdfNode =>
+    doc({ type: 'paragraph', content: [{ type: 'text', text, marks: [{ type }] }] });
+  // No block-start escape lands inside a code span.
+  assert.equal(adfToMarkdown(marked('a\n- b', 'code')), '`a`\n`- b`');
+  assert.equal(adfToMarkdown(marked('a\nb', 'strong')), '**a**\n**b**');
+  assert.deepEqual(
+    adfFromMarkdown(adfToMarkdown(marked('a\n- b', 'code'))).content[0]?.content,
+    [
+      { type: 'text', text: 'a', marks: [{ type: 'code' }] },
+      { type: 'hardBreak' },
+      { type: 'text', text: '- b', marks: [{ type: 'code' }] },
+    ],
+  );
+});
+
+test('[CC-228] markdown: a list continuation line keeps the spaces after its indent', () => {
+  const tree = doc({
+    type: 'bulletList',
+    content: [
+      {
+        type: 'listItem',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'a' },
+              { type: 'hardBreak' },
+              { type: 'text', text: '  indented' },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const md = adfToMarkdown(tree);
+  assert.equal(md, '- a\n    indented');
+  assert.deepEqual(adfFromMarkdown(md), tree, md);
+  // An ordered marker's text column is its own width, not a fixed two.
+  assert.deepEqual(
+    adfFromMarkdown('10. a\n     b').content[0]?.content?.[0]?.content?.[0]?.content,
+    [{ type: 'text', text: 'a' }, { type: 'hardBreak' }, { type: 'text', text: ' b' }],
+  );
+});
+
+test('[CC-232] text after a nested list in a task item stays after it', () => {
+  const tasks: AdfNode = {
+    type: 'taskList',
+    content: [
+      {
+        type: 'taskItem',
+        attrs: { state: 'TODO' },
+        content: [
+          { type: 'text', text: 'one' },
+          {
+            type: 'taskList',
+            content: [
+              {
+                type: 'taskItem',
+                attrs: { state: 'DONE' },
+                content: [{ type: 'text', text: 'sub' }],
+              },
+            ],
+          },
+          { type: 'text', text: 'two' },
+        ],
+      },
+    ],
+  };
+  assert.equal(adfToText(tasks), '[ ] one\n  [x] sub\n    two');
+  assert.equal(adfToMarkdown(tasks), '[ ] one\n  [x] sub\n\n    two');
+});
+
+test('[CC-232] a task item that opens with a nested list keeps an empty box line', () => {
+  const tasks: AdfNode = {
+    type: 'taskList',
+    content: [
+      {
+        type: 'taskItem',
+        attrs: { state: 'DONE' },
+        content: [
+          {
+            type: 'taskList',
+            content: [{ type: 'taskItem', content: [{ type: 'text', text: 'sub' }] }],
+          },
+        ],
+      },
+    ],
+  };
+  assert.equal(adfToText(tasks), '[x]\n  [ ] sub');
 });

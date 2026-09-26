@@ -458,6 +458,106 @@ test('arguments are validated before the handler runs, with a strict schema', as
   assert.deepEqual(h.jira.calls, [], 'a rejected call never reaches the network');
 });
 
+test('a schema rejection lists at most eight issues and counts the rest', async () => {
+  const wide = defineTool({
+    name: 'jira_wide',
+    title: 'Wide',
+    description: 'Wants nine fields.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    input: toolInput({
+      a: z.string(),
+      b: z.string(),
+      c: z.string(),
+      d: z.string(),
+      e: z.string(),
+      f: z.string(),
+      g: z.string(),
+      h: z.string(),
+      i: z.string(),
+    }),
+    handler() {
+      return Promise.resolve(ok({}));
+    },
+  });
+  const registry = createRegistry(
+    [packageOf('core', [wide])],
+    harness(settingsOf()).deps,
+  );
+
+  const result = await registry.call('jira_wide', {});
+
+  const message = result.structuredContent.error?.message ?? '';
+  assert.equal(result.structuredContent.error?.kind, 'validation');
+  assert.match(message, /^Arguments rejected by the schema of jira_wide: a: /);
+  assert.match(message, /; h: [^;]+ \(\+1 more\)\.$/);
+  assert.doesNotMatch(message, /; i: /, 'the ninth issue is counted, not listed');
+});
+
+test('a result the renderer cannot serialize still answers with a complete envelope', async () => {
+  // `ok()` accepts anything; a BigInt only fails at JSON time, inside the
+  // renderer. That failure must come back as an `ok: false` envelope with a
+  // parseable text channel, never as a thrown error or an empty reply.
+  const bigint = defineTool({
+    name: 'jira_bigint',
+    title: 'BigInt',
+    description: 'Returns a value JSON cannot carry.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    input: toolInput({}),
+    handler() {
+      return Promise.resolve(ok({ total: BigInt(1) }));
+    },
+  });
+  const h = harness(settingsOf());
+  const registry = createRegistry([packageOf('core', [bigint])], h.deps);
+
+  const result = await registry.call('jira_bigint', {});
+
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.error?.kind, 'unexpected_shape');
+  assert.match(result.structuredContent.error?.message ?? '', /cannot be serialized/);
+  assert.equal(result.truncated, false);
+  assert.deepEqual(JSON.parse(result.text), result.structuredContent);
+});
+
+test('[CC-200] tool_call_end reports the envelope the caller got, not the handler result', async () => {
+  const bigint = defineTool({
+    name: 'jira_bigint',
+    title: 'BigInt',
+    description: 'Returns a value JSON cannot carry.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    input: toolInput({}),
+    handler() {
+      return Promise.resolve(ok({ total: BigInt(1) }));
+    },
+  });
+  const h = harness(settingsOf());
+  const registry = createRegistry([packageOf('core', [bigint])], h.deps);
+
+  await registry.call('jira_bigint', {});
+
+  const end = fieldsOf(h.logger.eventsOf('tool_call_end')[0]);
+  assert.equal(end['ok'], false);
+  assert.equal(end['errorKind'], 'unexpected_shape');
+});
+
 test('a handler that throws becomes a complete ok:false envelope', async () => {
   const boom = defineTool({
     name: 'jira_boom',
@@ -567,6 +667,41 @@ test('budget_exceeded and ambiguous_write are enriched with the tool name here',
     );
     assert.equal(fieldsOf(h.logger.eventsOf('tool_call_end')[0])['errorKind'], kind);
   }
+});
+
+test('an error that already names the tool is not stamped a second time', async () => {
+  // A lower layer may re-throw an envelope the boundary has already enriched
+  // (a tool composed of other tools); the marker must appear exactly once.
+  const tool = defineTool({
+    name: 'jira_deep_failure',
+    title: 'Deep failure',
+    description: 'Fails with a message that already carries the marker.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    input: toolInput({}),
+    handler() {
+      throw new JiraError({
+        kind: 'budget_exceeded',
+        message: 'The call budget was exhausted. Tool: jira_deep_failure.',
+        retryable: false,
+      });
+    },
+  });
+  const registry = createRegistry(
+    [packageOf('core', [tool])],
+    harness(settingsOf()).deps,
+  );
+
+  const result = await registry.call('jira_deep_failure', {});
+
+  const message = result.structuredContent.error?.message ?? '';
+  assert.equal(message.split('Tool: jira_deep_failure.').length - 1, 1);
+  assert.equal(message, 'The call budget was exhausted. Tool: jira_deep_failure.');
 });
 
 test('other error kinds are left exactly as the lower layer wrote them', async () => {

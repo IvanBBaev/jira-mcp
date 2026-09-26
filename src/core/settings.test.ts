@@ -137,6 +137,16 @@ describe('loadSettings — shape and gate', () => {
       formatStartupReport({ ...report, errors: [], warnings: [] }),
       'Configuration OK.',
     );
+
+    // A warning-only report gets its own heading, and no "errors" one.
+    const warned = load({ ...VALID, JIRA_API_TOKEN: 't' }).report;
+    const warnedText = formatStartupReport(warned);
+    assert.equal(warned.errors.length, 0);
+    assert.match(
+      warnedText,
+      /^Configuration warnings \(1\):\n {2}- \[redaction_collision\]/,
+    );
+    assert.doesNotMatch(warnedText, /Configuration errors/);
   });
 });
 
@@ -169,6 +179,22 @@ describe('loadSettings — host and allowlist', () => {
     assert.equal(report.ok, true);
     assert.equal(host?.origin, 'https://jira.example.com');
     assert.deepEqual(settings.allowedHosts, ['other.example.com', 'jira.example.com']);
+  });
+
+  it('[CC-231] fails startup on a suffix or unanchored JIRA_ALLOWED_HOSTS entry', () => {
+    // Each of these used to be either compared as a literal host or accepted at
+    // startup and thrown on the first request; all three are startup errors now.
+    for (const entry of ['*.example.com', '.example.com', '/jira\\.example\\.com/']) {
+      const { report } = load({ ...VALID, JIRA_ALLOWED_HOSTS: entry });
+      assert.equal(report.ok, false, entry);
+      const error = report.errors.find((e) => e.field === 'JIRA_ALLOWED_HOSTS');
+      assert.equal(error?.code, 'allowlist_invalid_pattern', entry);
+      assert.ok(String(error?.message).includes(JSON.stringify(entry)), entry);
+      assert.match(String(error?.message), /\/\^/, `${entry}: names the anchored fix`);
+    }
+
+    const anchored = load({ ...VALID, JIRA_ALLOWED_HOSTS: '/^jira\\.example\\.com$/' });
+    assert.equal(anchored.report.ok, true);
   });
 
   it('does not accept a look-alike host (evil-atlassian.net)', () => {
@@ -267,6 +293,31 @@ describe('loadSettings — auth mode and the OAuth block', () => {
       const { settings, report } = load({ ...VALID, JIRA_OAUTH_AUTH_ORIGIN: value });
       assert.deepEqual(codes(report), ['invalid_origin'], value);
       assert.equal(settings.oauth.authOrigin, DEFAULT_OAUTH_AUTH_ORIGIN, value);
+    }
+  });
+
+  it('[CC-140] an origin carrying a password never echoes it in the finding', () => {
+    for (const key of ['JIRA_OAUTH_AUTH_ORIGIN', 'JIRA_OAUTH_GATEWAY_ORIGIN']) {
+      const { report } = load({
+        ...VALID,
+        [key]: 'https://svc:hunter2@auth.localhost.test',
+      });
+      assert.deepEqual(codes(report), ['invalid_origin'], key);
+      const message = String(report.errors[0]?.message);
+      assert.doesNotMatch(message, /hunter2/, key);
+      assert.match(message, /https:\/\/\*\*\*@auth\.localhost\.test/, key);
+    }
+  });
+
+  it('[CC-185] a password holding @ or / is masked whole, not up to its first @', () => {
+    for (const secret of ['hun@ter2', 'hun/ter2', 'a@b/c@d']) {
+      const { report } = load({
+        ...VALID,
+        JIRA_OAUTH_AUTH_ORIGIN: `https://svc:${secret}@auth.localhost.test`,
+      });
+      const message = String(report.errors[0]?.message);
+      assert.doesNotMatch(message, /ter2|c@d|svc/, secret);
+      assert.match(message, /https:\/\/\*\*\*@auth\.localhost\.test/, secret);
     }
   });
 
@@ -384,15 +435,82 @@ describe('loadSettings — profiles (v1: locked single profile)', () => {
     assert.equal(host?.origin, 'https://mycompany.atlassian.net');
   });
 
+  it('[CC-189] a finding about a value the active profile supplied names the profile variable', () => {
+    const { report } = load({
+      ...VALID,
+      JIRA_ACTIVE_PROFILE: 'work',
+      [profileVar('work', 'EMAIL')]: 'not-an-email',
+      [profileVar('work', 'SITE')]: 'http://work.atlassian.net',
+    });
+    const email = report.errors.find((f) => f.code === 'invalid_email');
+    assert.equal(email?.field, 'JIRA_PROFILE_WORK_EMAIL');
+    assert.match(email?.message ?? '', /^JIRA_PROFILE_WORK_EMAIL /);
+    const site = report.errors.find((f) => f.code.startsWith('site_'));
+    assert.equal(site?.field, 'JIRA_PROFILE_WORK_SITE');
+    assert.match(site?.message ?? '', /^JIRA_PROFILE_WORK_SITE /);
+  });
+
   it('reports an unknown JIRA_ACTIVE_PROFILE', () => {
     const { report } = load({ ...VALID, JIRA_ACTIVE_PROFILE: 'nope' });
     assert.deepEqual(codes(report), ['unknown_profile']);
     assert.equal(report.errors[0]?.field, 'JIRA_ACTIVE_PROFILE');
   });
 
+  it('names the profiles it does know when JIRA_ACTIVE_PROFILE misses them all', () => {
+    const { report } = load({
+      ...VALID,
+      JIRA_ACTIVE_PROFILE: 'nope',
+      [profileVar('work', 'SITE')]: 'workco',
+      [profileVar('home', 'SITE')]: 'homeco',
+    });
+    assert.deepEqual(codes(report), ['unknown_profile']);
+    assert.match(report.errors[0]?.message ?? '', /Known profiles: work, home\./);
+  });
+
+  it('a missing credential under an active profile is reported by its profile name', () => {
+    const { report } = load({
+      JIRA_SITE: 'mycompany',
+      JIRA_ACTIVE_PROFILE: 'work',
+      [profileVar('work', 'SITE')]: 'workco',
+    });
+    assert.deepEqual(codes(report), ['missing_credential', 'missing_credential']);
+    // The message points at the variable the operator would actually set; the
+    // field stays the base name, which is where doctor's fix-up hint lives.
+    assert.match(report.errors[0]?.message ?? '', /^JIRA_PROFILE_WORK_EMAIL is not set/);
+    assert.equal(report.errors[0]?.field, 'JIRA_EMAIL');
+    assert.match(
+      report.errors[1]?.message ?? '',
+      /^JIRA_PROFILE_WORK_API_TOKEN is not set/,
+    );
+    assert.equal(report.errors[1]?.field, 'JIRA_API_TOKEN');
+  });
+
+  it('rejects a profile name outside [A-Za-z0-9_-] without parsing its value', () => {
+    const { report, settings } = load({
+      ...VALID,
+      'JIRA_PROFILE_MY.TEAM_SITE': 'teamco',
+    });
+    assert.deepEqual(codes(report), ['invalid_profile_name']);
+    assert.equal(report.errors[0]?.field, 'JIRA_PROFILE_MY.TEAM_SITE');
+    assert.deepEqual(settings.profiles, {});
+  });
+
   it('reports an empty profile variable', () => {
     const { report } = load({ ...VALID, [profileVar('work', 'SITE')]: '   ' });
     assert.deepEqual(codes(report), ['empty_profile_value']);
+  });
+
+  it('[CC-188] refuses two profile variables that differ only in case', () => {
+    const { report } = load({
+      ...VALID,
+      JIRA_PROFILE_eu_API_TOKEN: 'first-secret-token',
+      JIRA_PROFILE_EU_API_TOKEN: 'second-secret-token',
+    });
+    assert.deepEqual(codes(report), ['duplicate_profile_variable']);
+    const message = report.errors[0]?.message ?? '';
+    assert.match(message, /JIRA_PROFILE_eu_API_TOKEN/);
+    assert.match(message, /JIRA_PROFILE_EU_API_TOKEN/);
+    assert.doesNotMatch(message, /secret-token/);
   });
 
   it('locks the profile by default (O-6) and honours an explicit setting', () => {
@@ -504,6 +622,26 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(settings.mediaDir, '/srv/jira-media');
   });
 
+  it('[CC-184] expands ~ and resolves relative media and journal paths like JIRA_ENV_FILE', () => {
+    const tilde = load(
+      {
+        ...VALID,
+        JIRA_MEDIA_DIR: '~/jira-media',
+        JIRA_JOURNAL_PATH: '~/jira/writes.jsonl',
+      },
+      PATHS,
+    ).settings;
+    assert.equal(tilde.mediaDir, '/home/tester/jira-media');
+    assert.equal(tilde.journalPath, '/home/tester/jira/writes.jsonl');
+
+    const relative = load(
+      { ...VALID, JIRA_MEDIA_DIR: 'media', JIRA_JOURNAL_PATH: 'logs/writes.jsonl' },
+      PATHS,
+    ).settings;
+    assert.equal(relative.mediaDir, '/work/project/media');
+    assert.equal(relative.journalPath, '/work/project/logs/writes.jsonl');
+  });
+
   it('treats an invalid number as an error finding, not a silent fallback', () => {
     for (const bad of ['abc', '1.5', '-1', '', ' ']) {
       const { report, settings } = load({ ...VALID, JIRA_HOST_CONCURRENCY: bad });
@@ -516,6 +654,17 @@ describe('loadSettings — numeric and enum knobs', () => {
       }
       assert.equal(settings.hostConcurrency, DEFAULT_HOST_CONCURRENCY, bad);
     }
+  });
+
+  it('[CC-141] a number is plain decimal digits: hex, exponent and fraction forms are refused', () => {
+    for (const bad of ['0x0D06', '3e4', '4.0', '+4', '1_000']) {
+      const { report, settings } = load({ ...VALID, JIRA_HOST_CONCURRENCY: bad });
+      assert.deepEqual(codes(report), ['invalid_number'], bad);
+      assert.equal(settings.hostConcurrency, DEFAULT_HOST_CONCURRENCY, bad);
+    }
+    const { report, settings } = load({ ...VALID, JIRA_HOST_CONCURRENCY: '3' });
+    assert.equal(report.ok, true);
+    assert.equal(settings.hostConcurrency, 3);
   });
 
   it('treats an out-of-range number as an error finding', () => {
@@ -608,6 +757,29 @@ describe('loadSettings — token expiry', () => {
       { clock: createFakeClock(now) },
     );
     assert.deepEqual(codes(report), ['invalid_date']);
+  });
+
+  it('[CC-142] only an ISO 8601 expiry is read; a locale-shaped date is invalid', () => {
+    for (const bad of ['1/2/2027', 'Jan 2 2027', '2027-1-2', '2 January 2027']) {
+      const { report } = load(
+        { ...VALID, JIRA_TOKEN_EXPIRES: bad },
+        { clock: createFakeClock(now) },
+      );
+      assert.deepEqual(codes(report), ['invalid_date'], bad);
+    }
+    for (const good of [
+      '2027-01-02',
+      '2027-01-02T10:00',
+      '2027-01-02T10:00:00.5Z',
+      '2027-01-02T10:00+02:00',
+    ]) {
+      const { report } = load(
+        { ...VALID, JIRA_TOKEN_EXPIRES: good },
+        { clock: createFakeClock(now) },
+      );
+      assert.equal(report.ok, true, good);
+      assert.equal(codes(report).includes('invalid_date'), false, good);
+    }
   });
 
   it('skips the horizon check when no clock is injected', () => {

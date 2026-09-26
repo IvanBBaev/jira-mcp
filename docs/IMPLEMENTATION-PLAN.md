@@ -79,8 +79,12 @@ runbook for the mechanical half is [RELEASING.md](RELEASING.md).
       the gate cannot clean up after itself — the 2026-08-18 run stranded two
       issues it was not allowed to delete. (The other five still unproven — the
       sprint writes — need no permission, only another run: the gate's own
-      over-long sprint name stopped them, and that is fixed.) Fixture recording
-      still needs the same site.
+      over-long sprint name stopped them, and that is fixed.) Phases 11 and 12
+      then widened the ask without reopening it: the three D102 deletes have
+      never met Atlassian and need the same project-admin grant, and the three
+      D103 bulk tools landed after the last run — the two writes also need
+      site-wide "Make bulk changes". Eighteen of 58 unproven, one grant and one
+      run away. Fixture recording still needs the same site.
 
 Exit: `npm run check` green on an empty-but-wired repo (one placeholder test).
 **Met.** The gate has been green continuously since Phase 1 and is now green on
@@ -347,6 +351,13 @@ is bound to a test *name* under `src/**` and the binding is mechanically checked
 nobody but the owner can record it. This exit therefore stands at "met except
 for the one clause that is a decision".
 
+Status 2026-08-18: that clause is met too. O-9 resolved on 2026-08-17 by
+publishing rather than reserving — `jira-mcp-ai` 0.9.0 from tag `v0.9.0` with
+`publish.yml` green, and 0.9.4 from `v0.9.4` the next day (D86, RELEASING.md
+§5). What the publish left behind is the credential sequence in §5 — trusted
+publisher, then delete `NPM_TOKEN`, then revoke — which is owner work after the
+exit, not a clause of it.
+
 ## Phase 6 — v1.5 (graduated by D38, Wave 6)
 
 - [x] WP-60: markdown ↔ ADF subset converters in `api/adf.ts`;
@@ -435,10 +446,12 @@ wave, and the floors — not the counts — are the thing the gate enforces. Tre
 mismatch here as this line being stale, and the floors in TESTING.md as the
 claim with teeth.
 
-### What is left outside Phase 8, and why none of it is code
+### What was left outside Phase 8, and why none of it was code
 
-Phase 8 is code and is tracked below. Everything else that is outstanding is
-blocked on an owner action rather than on a keyboard:
+Status as written on 2026-08-18, kept as the record of that point: Phase 8 was
+the code still to come (phases 9–12 followed and closed — see below), and
+everything else outstanding was blocked on an owner action rather than on a
+keyboard:
 
 - **Gate C (O-2)** — a scratch Jira Cloud site. Half of this is now done: the
   read phase ran green against a real tenant on 2026-08-17 (22 claims, exit 0),
@@ -453,8 +466,11 @@ blocked on an owner action rather than on a keyboard:
   the watcher pair, the version pair, the component pair and `jira_delete_issue`
   — came back as correctly shaped permission refusals rather than as proof they
   work. Those seven, the five sprint writes that the naming defect stranded, and
-  a site where the gate can clean up after itself, are what still stand between
-  0.9.4 and 1.0.0 (D87). RELEASING.md §6 has the full account.
+  a site where the gate can clean up after itself, were what stood between
+  0.9.4 and 1.0.0 at the time (D87). Phases 11 and 12 have since added six tools
+  that have never run live — the D102 deletes and the D103 bulk tools — so the
+  count is eighteen of 58 now; the Phase 0 O-2 note above and RELEASING.md §6
+  keep the current account.
 - ~~**O-9**~~ — resolved 2026-08-17: published. It cost one repository variable,
   one environment and one tag, as the inert-by-construction design intended
   (D37). What it left behind is the bootstrap token to retire (D86,
@@ -823,7 +839,7 @@ can survey.
 | Risk | Mitigation |
 |---|---|
 | `search/jql` token instability (community-reported) | restart-with-guard strategy (CC-01); fixture for expired-token response |
-| ADF fidelity complaints (formatting lost) | explicit v1 scope (plain text), markdown subset tracked for v1.5 |
+| ADF fidelity complaints (formatting lost) | explicit v1 scope (plain text); the markdown subset (Phase 6) and mention resolution (Phase 9) have since shipped — anything outside the subset is still refused, not approximated |
 | Scoped-token permission surprises | doctor probes per-endpoint; error remediation names the scope |
 | Rate limits under agent load | semaphore + capped Retry-After honouring; hints teach the model to narrow fields/maxResults |
 | Scratch-site drift in fixtures | fixtures redacted + stable placeholders; record script versioned |

@@ -14,19 +14,25 @@
 // writes there. The READ side is not: a tool handler sees only `ToolCtx`, a
 // frozen contract (`mcp/types.ts`) with no seam for this, and `searchPackage` is
 // a plain const that `tools/index.ts` re-exports, so there is no factory to
-// thread a dependency through either. {@link sessionRecentWrites} is what makes
-// the read side reachable without touching either contract; `buildServer`
-// defaults to it, and a test injects its own instance instead. Two servers in
-// ONE process would share the ambient registry — irrelevant for the stdio
-// server (one process, one server), stated here so it is not a surprise.
+// thread a dependency through either. {@link currentRecentWrites} is what makes
+// the read side reachable without touching either contract: `buildServer` runs
+// every tool call inside {@link withRecentWrites} with the SAME instance its
+// gate records into, and the search tool reads whatever is in scope. Outside a
+// call (a handler invoked directly, as unit tests do) it falls back to
+// {@link sessionRecentWrites}, which is also `buildServer`'s default. That is
+// what keeps HTTP sessions apart: `index.ts` gives each session's server its
+// own registry, so one client's writes never widen another client's searches
+// (CC-244). Before, every session in the process shared the ambient instance.
 //
 // The registry is IN-MEMORY and SESSION-SCOPED: it dies with the process, like
 // the plan ids of the write gate. Nothing here is persisted, and nothing here is
 // a fact about Jira — a stale id costs at most one wasted reconcile.
 //
-// Layering: `mcp` ring, no imports beyond a type. Only `core/http.ts` talks to
+// Layering: `mcp` ring, no imports beyond a type and `node:async_hooks`. Only `core/http.ts` talks to
 // the network and nothing here does any I/O.
 // ---------------------------------------------------------------------------
+
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { ToolResult } from './types.js';
 
@@ -101,10 +107,28 @@ export function createRecentWrites(max: number = MAX_RECENT_WRITES): RecentWrite
 }
 
 /**
- * The process-wide registry the search tool reads and `buildServer` writes to by
- * default. See the module header for why the read side cannot be injected.
+ * The process-wide fallback registry: `buildServer`'s default, and what the
+ * search tool reads outside a {@link withRecentWrites} scope. See the module
+ * header for why the read side cannot be injected.
  */
 export const sessionRecentWrites: RecentWrites = createRecentWrites();
+
+/** The registry of the tool call in flight, set by {@link withRecentWrites}. */
+const callScope = new AsyncLocalStorage<RecentWrites>();
+
+/**
+ * Run `fn` with `recent` as the registry {@link currentRecentWrites} returns —
+ * `buildServer` wraps each tool call in it, so a search reads the registry of
+ * the server (HTTP session) that received the call (CC-244).
+ */
+export function withRecentWrites<T>(recent: RecentWrites, fn: () => T): T {
+  return callScope.run(recent, fn);
+}
+
+/** The registry of the current tool call, else the ambient one. */
+export function currentRecentWrites(): RecentWrites {
+  return callScope.getStore() ?? sessionRecentWrites;
+}
 
 /** The value at `field`, if it is a numeric id spelled as a string or a number. */
 function numericId(value: unknown): string | undefined {

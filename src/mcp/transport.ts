@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// Transport wiring (D5 — the low-level SDK `Server`; OBSERVABILITY.md §Log
-// events for `shutdown`).
+// Transport wiring (D5 — the low-level SDK `Server`; OBSERVABILITY.md
+// §Log-event table for `shutdown`).
 //
 // This module owns exactly one decision — how the STDIO transport is attached
 // and detached. It does not build the server, register handlers, or install

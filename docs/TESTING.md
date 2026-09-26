@@ -14,11 +14,13 @@
   global `fetch` with a synchronously-throwing guard — any accidental real
   network call fails loudly. `withFetch()` swaps in a recording mock and restores
   the fence on exit.
-- No ambient env leaks: the harness strips `JIRA_*` vars on import. Suite 9 is
-  the one exception and it is the same exception in both directions: with
-  `JIRA_LIVE_TEST=1` the harness neither strips the credentials nor installs the
-  fence, because a live read suite needs real vars *and* real sockets. One flag
-  opens both doors, so a run cannot end up half-fenced.
+- No ambient env leaks: the harness strips `JIRA_*` vars on import. The fence
+  still honours one escape hatch — with `JIRA_LIVE_TEST=1` it neither strips the
+  credentials nor installs the fence, one flag for both doors so a run cannot end
+  up half-fenced — but **no unit test uses it**: there is no live test under
+  `src/`, and nothing in CI sets it. Suite 9 does not run through `npm test` at
+  all (below). Setting `JIRA_LIVE_TEST=1` on a unit run only switches the fence
+  off; it proves nothing about Jira.
 - All time via injected `Clock`; `mockClock` drives retries/backoff
   deterministically.
 
@@ -151,16 +153,25 @@ minimum set is recorded.
    An undocumented env var and a documented-but-dead one both fail. This is the
    mechanical half of the single-writer rule for env facts (docs/README.md);
    `scripts/docs-lint.mjs` covers the prose half.
-9. **Live read suite** (env-gated, off by default) — runs only with
-   `JIRA_LIVE_TEST=1` plus real credentials against the scratch site (Gate C /
-   O-2). **Read tools only** — no write tool is ever exercised live, so the
-   suite cannot mutate a site and needs no cleanup path. It answers the one
-   question fixtures cannot: has Atlassian changed the wire? Asserts the shapes
-   the guards depend on (search page + `nextPageToken`/`isLast` presence, issue
-   with ADF description, transitions, createmeta, field list, `/myself`), not
-   values. Scheduled **weekly** in CI (not per-PR: it needs a secret, it is slow,
-   and a red build from someone else's outage teaches the team to ignore red).
-   A failure opens an issue rather than blocking a merge.
+9. **Live read suite** (credential-gated, off by default) — not a unit test:
+   the read-only default of `scripts/verify-live.mjs` (the automatable half of
+   Gate C, RELEASING.md §6) against the scratch site. It spawns the BUILT
+   server (`build/index.js`, so `npm run build` first) over real stdio and
+   runs the doctor preflight, the read claims and the residue inventory; every
+   child is pinned to `JIRA_WRITE_MODE=plan`, and the write, delete and purge
+   phases need `--write` / `--irreversible` / `--purge` plus `--confirm-site`,
+   none of which this suite passes — so it cannot mutate a site and needs no
+   cleanup path. Credentials come only from `JIRA_SITE` / `JIRA_EMAIL` /
+   `JIRA_API_TOKEN`; with any of them missing the script exits 0 having done
+   nothing. It answers the one question fixtures cannot: has Atlassian changed
+   the wire? Each claim is a named PASS/FAIL/SKIP; exit `1` on any FAIL, `2` on
+   a usage or setup error (no build, bad flags). Scheduled **weekly** in CI
+   (`ci.yml` job `live`; not per-PR: it needs a secret, it is slow, and a red
+   build from someone else's outage teaches the team to ignore red), with the
+   scratch projects named by the optional repository variables
+   `JIRA_LIVE_PROJECT` / `JIRA_LIVE_PROJECT2`. A failure is a red scheduled run
+   on the default branch, never a blocked merge: the job runs on the schedule
+   or by hand, not on a pull request.
 10. **Distribution manifests** [test: src/manifest-sync.test.ts] — the three files
     that describe this server to somebody else's installer: `server.json`,
     `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. None is
@@ -360,12 +371,17 @@ nothing more — so the rest is unreachable from this suite by design, and letti
 a 2000-line Gate C driver set the floor for the shipped server would make the
 floor mean nothing.
 
-Thresholds reached their Phase-5 levels — the servicenow-mcp donor levels, lines
-94 / branches 82 / functions 97, plus a statements floor of 94 the donor does not
-pin — and `check-coverage: true` makes any c8 run fail when one is missed. They
-sit a few points under the measured tree on purpose: a floor is something that
-must not creep down, not a target to chase. `npm run check` runs the suite under
-c8 (`test:coverage`); plain `npm run test` stays uninstrumented for quick loops.
+Thresholds are **lines 97 / branches 94 / functions 98**, plus a statements
+floor of 97, and `check-coverage: true` makes any c8 run fail when one is
+missed. They started at the Phase-5 levels — the servicenow-mcp donor levels of
+94 / 82 / 97 — and were ratcheted there in D105, after the branch-coverage
+sweeps left the measured tree fifteen points above its own floor: a floor that
+far below the tree stops catching the regression it exists to catch. They still
+sit a few points under the measured tree on purpose (a floor is something that
+must not creep down, not a target to chase), and that gap is also what absorbs
+the small coverage differences between the two Node versions CI runs.
+`npm run check` runs the suite under c8 (`test:coverage`); plain `npm run test`
+stays uninstrumented for quick loops.
 
 ## Gate
 

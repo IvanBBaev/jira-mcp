@@ -188,7 +188,11 @@ function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => canonicalize(item));
   if (value !== null && typeof value === 'object') {
     const source = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
+    // Null-prototype on purpose (CC-145): on a plain `{}`, `out['__proto__'] = x`
+    // re-parents the object instead of adding a key, so an own `__proto__` in
+    // the args — JSON.parse makes one, and `z.unknown()` passes it through —
+    // would vanish from the fingerprint and two different bodies would match.
+    const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const key of Object.keys(source).sort()) {
       const item = source[key];
       if (item === undefined) continue;

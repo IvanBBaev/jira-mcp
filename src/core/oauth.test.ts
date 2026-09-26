@@ -16,17 +16,19 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 
+import { DEFAULT_STALE_MS } from './env-lock.js';
 import { createJiraError } from './errors.js';
 import { createFakeClock } from './fakes/fakeClock.js';
 import { createFakeLogger } from './fakes/fakeLogger.js';
 import type { FakeLogger } from './fakes/fakeLogger.js';
-import { createFakeRedactor } from './fakes/fakeRedactor.js';
+import { createFakeRedactor, type FakeRedactor } from './fakes/fakeRedactor.js';
 import type {
   AuthRequestFn,
   AuthRequestSpec,
@@ -37,10 +39,12 @@ import type {
 import {
   ACCESSIBLE_RESOURCES_PATH,
   DEFAULT_PROFILE_KEY,
+  LOCKED_REFRESH_TIMEOUT_MS,
   OAUTH_AUDIENCE,
   PKCE_VERIFIER_BYTES,
   TERMINAL_TOKEN_ERRORS,
   TOKEN_REFRESH_SKEW_MS,
+  TOKEN_STORE_ACQUIRE_TIMEOUT_MS,
   TOKEN_STORE_VERSION,
   accessibleResourcesEndpoint,
   buildAuthorizeUrl,
@@ -136,6 +140,17 @@ function raised(status: number, code: string, kind: 'auth' | 'validation'): Jira
   });
 }
 
+/** A 429 the way `createAuthRequest` raises one: status only, no body. */
+function throttled(): JiraError {
+  return createJiraError({
+    kind: 'rate_limited',
+    reason: 'Atlassian rate limited POST /oauth/token.',
+    remediation:
+      'A token request is never replayed automatically; wait before trying again.',
+    httpStatus: 429,
+  });
+}
+
 const CLOUD_ID = '11111111-2222-3333-4444-555555555555';
 const OTHER_CLOUD_ID = '99999999-8888-7777-6666-555555555555';
 
@@ -185,6 +200,7 @@ interface ResolverHarness {
   readonly resolve: ReturnType<typeof createOAuthCredentialResolver>;
   readonly auth: FakeAuthRequest;
   readonly logger: FakeLogger;
+  readonly redactor: FakeRedactor;
   readonly store: TokenStore;
   readonly path: string;
   onDisk(profile?: string): StoredTokens | undefined;
@@ -216,19 +232,21 @@ function harness(options: HarnessOptions = {}): ResolverHarness {
   const store = options.decorate === undefined ? real : options.decorate(real);
   const auth = fakeAuthRequest(options.replies ?? []);
   const logger = createFakeLogger();
+  const redactor = createFakeRedactor();
   const resolve = createOAuthCredentialResolver({
     settings: settings(options.settings),
     store,
     authRequest: auth.fn,
     clock,
     logger,
-    redactor: createFakeRedactor(),
+    redactor,
     allowedHosts: options.allowedHosts ?? ['api.atlassian.com'],
   });
   return {
     resolve,
     auth,
     logger,
+    redactor,
     store,
     path,
     onDisk: (profile = DEFAULT_PROFILE_KEY) => {
@@ -259,6 +277,7 @@ function emptyHarness(options: HarnessOptions = {}): ResolverHarness {
     resolve,
     auth,
     logger,
+    redactor: createFakeRedactor(),
     store,
     path,
     onDisk: () => undefined,
@@ -453,6 +472,16 @@ describe('buildAuthorizeUrl', () => {
     );
     assert.equal(error.kind, 'config');
     assert.match(error.message, /nobody asked for/);
+  });
+
+  it('[CC-169] points a space-separated scope list at commas, the separator settings parses', () => {
+    const spaced = throws(() =>
+      buildAuthorizeUrl({ ...input, scopes: ['read:jira-work write:jira-work'] }),
+    );
+    assert.match(spaced.remediation ?? '', /commas/);
+    assert.doesNotMatch(spaced.remediation ?? '', /single spaces/);
+    const empty = throws(() => buildAuthorizeUrl({ ...input, scopes: [''] }));
+    assert.match(empty.remediation ?? '', /comma-separated/);
   });
 
   it('refuses a missing redirect uri, state or challenge', () => {
@@ -660,6 +689,29 @@ describe('selectSite', () => {
     assert.equal(selectSite([acme], { cloudId: '  ', site: '  ' }).id, CLOUD_ID);
   });
 
+  it('a pin that is only slashes matches nothing rather than everything', () => {
+    // Trailing slashes are stripped before comparing; what is left of "/" is
+    // the empty string, which must not equal the empty form of any site.
+    const error = throws(() => selectSite([acme, beta], { site: '/' }));
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /No accessible site matches "\/"/);
+  });
+
+  it('bounds an over-long pin in the refusal it is quoted in', () => {
+    const wanted = `https://${'a'.repeat(120)}.atlassian.net`;
+    const error = throws(() => selectSite([acme], { site: wanted }));
+    assert.match(error.message, /No accessible site matches "https:\/\/a{71}…"\./);
+    assert.doesNotMatch(error.message, /a{72}/);
+  });
+
+  it('collapsing a container with no scopes keeps the scopes of its twin', () => {
+    const scoped: AccessibleSite = { ...acme, scopes: ['read:jira-work'] };
+    const bare: AccessibleSite = { ...acme };
+    assert.deepEqual(selectSite([scoped, bare]).scopes, ['read:jira-work']);
+    assert.deepEqual(selectSite([bare, scoped]).scopes, ['read:jira-work']);
+    assert.equal(selectSite([bare, { ...acme }]).scopes, undefined);
+  });
+
   it('does not crash on a site whose url will not parse', () => {
     const broken: AccessibleSite = {
       id: OTHER_CLOUD_ID,
@@ -803,6 +855,38 @@ describe('createTokenStore', () => {
     });
   }
 
+  it('[CC-167] waits out a lock that goes stale after the generic 10s budget, then writes', async () => {
+    // A killed writer's lock that turns stale 15s from now: the generic 10s
+    // budget would give up first, the token store's budget outlasts staleness.
+    const path = join(dir, 'oauth.json');
+    const lockDir = `${path}.lock`;
+    mkdirSync(lockDir);
+    writeFileSync(
+      join(lockDir, 'owner.json'),
+      '{"pid":1,"host":"gone","acquiredAt":0}\n',
+    );
+    const start = Date.now();
+    const stamp = (start - (DEFAULT_STALE_MS - 15_000)) / 1000;
+    utimesSync(lockDir, stamp, stamp);
+    assert.ok(TOKEN_STORE_ACQUIRE_TIMEOUT_MS > DEFAULT_STALE_MS);
+
+    const s = createTokenStore({ path, clock: autoClock(start) });
+    await s.put(undefined, storedTokens());
+    assert.deepEqual(await s.get(), storedTokens());
+  });
+
+  it('[CC-170] a profile named after an Object.prototype member reads as absent or as its own record', async () => {
+    const s = store();
+    await s.put(undefined, storedTokens());
+    assert.equal(await s.get('constructor'), undefined);
+    assert.equal(await s.get('toString'), undefined);
+    assert.equal(await s.get('__proto__'), undefined);
+    await s.put('__proto__', storedTokens({ refreshToken: 'proto-r' }));
+    assert.equal((await s.get('__proto__'))?.refreshToken, 'proto-r');
+    assert.equal((await s.get())?.refreshToken, storedTokens().refreshToken);
+    assert.equal(await s.remove('constructor'), false);
+  });
+
   it('reads an empty store when the file does not exist yet', async () => {
     const file = await store().read();
     assert.equal(file.version, TOKEN_STORE_VERSION);
@@ -874,6 +958,38 @@ describe('createTokenStore', () => {
     });
     const error = await rejects(() => s.read());
     assert.match(error.message, /nothing recognisable/);
+  });
+
+  it('quotes a version that is a string, bounded to a label', async () => {
+    const s = store('vs.json');
+    writeFileSync(s.path, JSON.stringify({ version: '1'.repeat(30), tokens: {} }), {
+      mode: 0o600,
+    });
+    const error = await rejects(() => s.read());
+    assert.match(error.message, /records format version "1{19}…", but/);
+  });
+
+  it('refuses a file that is JSON but not an object', async () => {
+    const s = store('array.json');
+    writeFileSync(s.path, '[]', { mode: 0o600 });
+    const error = await rejects(() => s.read());
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /does not contain a JSON object/);
+  });
+
+  it('reads back an entry that holds a grant but no access token yet', async () => {
+    const s = store('refresh-only.json');
+    const entry: Record<string, unknown> = { ...storedTokens() };
+    delete entry['accessToken'];
+    delete entry['expiresAt'];
+    writeFileSync(s.path, JSON.stringify({ version: 1, tokens: { default: entry } }), {
+      mode: 0o600,
+    });
+    const stored = await s.get();
+    assert.ok(stored);
+    assert.equal('accessToken' in stored, false);
+    assert.equal('expiresAt' in stored, false);
+    assert.equal(stored.refreshToken, 'refresh-1');
   });
 
   it('refuses a store with no tokens object', async () => {
@@ -1011,6 +1127,23 @@ describe('exchangeAuthorizationCode', () => {
     assert.equal(auth.calls(), 0);
   });
 
+  it('[CC-247] tells a throttled login exchange to run login again', async () => {
+    const auth = fakeAuthRequest([throttled()]);
+    const error = await rejects(() =>
+      exchangeAuthorizationCode({
+        settings: settings(),
+        authRequest: auth.fn,
+        clock: createFakeClock(0),
+        code: 'c',
+        redirectUri: 'http://localhost:8250/callback',
+        verifier: 'v',
+      }),
+    );
+    assert.equal(error.kind, 'rate_limited');
+    assert.match(error.remediation ?? '', /jira-mcp-ai login/);
+    assert.equal(auth.calls(), 1);
+  });
+
   it('turns a returned rejection into a terminal auth error', async () => {
     const auth = fakeAuthRequest([ok({ error: 'invalid_grant' }, 403)]);
     const error = await rejects(() =>
@@ -1103,6 +1236,52 @@ describe('createOAuthCredentialResolver', () => {
       h.logger.eventsOf('oauth_token_refreshed')[0]?.fields?.['rotated'],
       true,
     );
+  });
+
+  it('[CC-138] bounds the lock-held refresh POST inside the lock staleness horizon', async () => {
+    const h = harness({
+      seed: storedTokens({ expiresAt: 0 }),
+      replies: [
+        ok({ access_token: 'access-2', refresh_token: 'refresh-2', expires_in: 3600 }),
+      ],
+    });
+    await bearer(h);
+    // Not the configured request timeout: a POST outliving DEFAULT_STALE_MS
+    // would let another process break the lock and rotate the same token.
+    assert.equal(h.auth.specs[0]?.timeoutMs, LOCKED_REFRESH_TIMEOUT_MS);
+    assert.ok(LOCKED_REFRESH_TIMEOUT_MS < DEFAULT_STALE_MS);
+  });
+
+  it('[CC-206] a call that names no profile resolves the active profile login stored under', async () => {
+    const path = join(dir, 'oauth.json');
+    const clock = createFakeClock(1_000_000);
+    writeFileSync(
+      path,
+      `${JSON.stringify({ version: TOKEN_STORE_VERSION, tokens: { work: storedTokens({ accessToken: 'work-access' }) } }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    const resolve = createOAuthCredentialResolver({
+      settings: settings(),
+      store: createTokenStore({ path, clock }),
+      authRequest: fakeAuthRequest([]).fn,
+      clock,
+      logger: createFakeLogger(),
+      allowedHosts: ['api.atlassian.com'],
+      activeProfile: 'work',
+    });
+    const credentials = await resolve();
+    assert.equal(credentials.kind, 'bearer');
+    assert.equal(
+      credentials.kind === 'bearer' ? credentials.accessToken : '',
+      'work-access',
+    );
+  });
+
+  it('[CC-171] registers the stored refresh token with the redactor on read, before any refresh', async () => {
+    const h = harness();
+    await bearer(h);
+    assert.equal(h.auth.calls(), 0);
+    assert.ok(h.redactor.secrets.includes('refresh-1'));
   });
 
   it('never puts a token in a log field', async () => {
@@ -1243,6 +1422,100 @@ describe('createOAuthCredentialResolver', () => {
     );
   });
 
+  it('records the scopes a refresh reports, replacing the stored ones', async () => {
+    const h = harness({
+      seed: storedTokens({ expiresAt: 0 }),
+      replies: [
+        ok({
+          access_token: 'access-2',
+          expires_in: 3600,
+          scope: 'read:jira-work write:jira-work offline_access',
+        }),
+      ],
+    });
+    await bearer(h);
+    assert.deepEqual(h.onDisk()?.scopes, [
+      'read:jira-work',
+      'write:jira-work',
+      'offline_access',
+    ]);
+  });
+
+  it('refreshes at once when the stored entry carries a grant but no access token', async () => {
+    const seed: Record<string, unknown> = { ...storedTokens() };
+    delete seed['accessToken'];
+    delete seed['expiresAt'];
+    const h = harness({
+      seed: seed as unknown as StoredTokens,
+      replies: [ok({ access_token: 'access-2', expires_in: 3600 })],
+    });
+    const credentials = await bearer(h);
+    assert.equal(credentials.accessToken, 'access-2');
+    assert.equal(h.auth.calls(), 1);
+    assert.equal(h.onDisk()?.accessToken, 'access-2');
+  });
+
+  it('[CC-102] names login when the entry vanished between the read and the lock', async () => {
+    const h = harness({
+      seed: storedTokens({ expiresAt: 0 }),
+      replies: [ok({ access_token: 'access-2', expires_in: 3600 })],
+    });
+    // The first read sees the expired entry; a logout in another process lands
+    // before the locked section re-reads, and the re-read must believe the file.
+    const pending = resolved(h);
+    writeFileSync(h.path, JSON.stringify({ version: 1, tokens: {} }), { mode: 0o600 });
+    const error = await rejects(() => pending);
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /holds no authorization for profile "default"/);
+    assert.equal(h.auth.calls(), 0);
+  });
+
+  it('logs "none" when a returned rejection carries no error code', async () => {
+    const h = harness({
+      seed: storedTokens({ expiresAt: 0 }),
+      replies: [ok({ message: 'upstream unavailable' }, 502)],
+    });
+    const error = await rejects(() => resolved(h));
+    assert.equal(error.kind, 'transport');
+    assert.match(error.message, /rejected the refresh with HTTP 502\./);
+    const failure = h.logger.eventsOf('oauth_token_refresh_failed')[0];
+    assert.equal(failure?.fields?.['status'], 502);
+    assert.equal(failure?.fields?.['code'], 'none');
+  });
+
+  it('logs a raised JiraError that carries no status, or a detail with no code', async () => {
+    const cases: readonly (readonly [JiraError, number, string])[] = [
+      [
+        createJiraError({
+          kind: 'transport',
+          reason: 'The connection was reset.',
+          remediation: 'Retry.',
+        }),
+        0,
+        'none',
+      ],
+      [
+        createJiraError({
+          kind: 'auth',
+          reason: 'Atlassian rejected POST /oauth/token with HTTP 400.',
+          remediation: 'Check the client credentials.',
+          httpStatus: 400,
+          detail: ': a description with no code in front of it',
+        }),
+        400,
+        'none',
+      ],
+    ];
+    for (const [thrown, status, code] of cases) {
+      const h = harness({ seed: storedTokens({ expiresAt: 0 }), replies: [thrown] });
+      const error = await rejects(() => resolved(h));
+      assert.equal(error, thrown);
+      const failure = h.logger.eventsOf('oauth_token_refresh_failed')[0];
+      assert.equal(failure?.fields?.['status'], status);
+      assert.equal(failure?.fields?.['code'], code);
+    }
+  });
+
   it('adopts a token another process refreshed while we waited for the lock', async () => {
     const h = harness({ seed: storedTokens({ expiresAt: 0 }) });
     // Simulate the other process by rewriting the file from inside the lock,
@@ -1346,6 +1619,20 @@ describe('createOAuthCredentialResolver', () => {
     const error = await rejects(() => resolved(h));
     assert.equal(error.kind, 'rate_limited');
     assert.equal(h.auth.calls(), 1);
+  });
+
+  it('[CC-247] tells a throttled refresh to retry, not to log in again', async () => {
+    const h = harness({
+      seed: storedTokens({ expiresAt: 0 }),
+      replies: [throttled()],
+    });
+    const error = await rejects(() => resolved(h));
+    assert.equal(error.kind, 'rate_limited');
+    assert.equal(error.httpStatus, 429);
+    assert.match(error.remediation ?? '', /retry the tool call/);
+    assert.doesNotMatch(error.remediation ?? '', /jira-mcp-ai login/);
+    assert.equal(h.auth.calls(), 1);
+    assert.equal(h.onDisk()?.refreshToken, 'refresh-1');
   });
 
   it('passes a non-terminal raised failure through with its own kind', async () => {
@@ -1452,10 +1739,18 @@ describe('createOAuthCredentialResolver', () => {
     assert.equal(h.auth.calls(), 0);
   });
 
-  it('lets JIRA_OAUTH_CLOUD_ID override the stored site', async () => {
+  it('[CC-165] JIRA_OAUTH_CLOUD_ID checks the stored site instead of overriding it', async () => {
+    const matching = harness({ settings: { cloudId: ` ${CLOUD_ID} ` } });
+    const credentials = await bearer(matching);
+    assert.equal(credentials.host.pathPrefix, `/ex/jira/${CLOUD_ID}`);
+
     const h = harness({ settings: { cloudId: OTHER_CLOUD_ID } });
-    const credentials = await bearer(h);
-    assert.equal(credentials.host.pathPrefix, `/ex/jira/${OTHER_CLOUD_ID}`);
+    const error = await rejects(() => resolved(h));
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /JIRA_OAUTH_CLOUD_ID pins cloudId/);
+    assert.match(error.message, /Nothing was sent\./);
+    assert.match(error.message, /jira-mcp-ai login/);
+    assert.equal(h.auth.calls(), 0);
   });
 
   it('refuses a cloudId that is not a plain identifier', async () => {
@@ -1470,6 +1765,25 @@ describe('createOAuthCredentialResolver', () => {
     assert.equal(error.kind, 'config');
     assert.match(error.message, /JIRA_ALLOWED_HOSTS/);
     assert.match(error.message, /api\.atlassian\.com/);
+  });
+
+  it('[CC-230] refuses a loopback gateway even when the allowlist names it', async () => {
+    for (const [origin, hostname] of [
+      ['https://127.0.0.1:8443', '127.0.0.1'],
+      ['https://[::1]:8443', '[::1]'],
+      ['https://10.0.0.5', '10.0.0.5'],
+    ] as const) {
+      const h = harness({
+        settings: { gatewayOrigin: origin },
+        allowedHosts: [hostname],
+      });
+      const error = await rejects(() => resolved(h));
+      assert.equal(error.kind, 'config', origin);
+      assert.match(error.message, /never contacted/, origin);
+      assert.match(String(error.remediation), /JIRA_OAUTH_GATEWAY_ORIGIN/, origin);
+      assert.doesNotMatch(String(error.remediation), /JIRA_ALLOWED_HOSTS/, origin);
+      assert.equal(h.auth.calls(), 0, origin);
+    }
   });
 
   it('registers the access token it hands out with the redactor', async () => {

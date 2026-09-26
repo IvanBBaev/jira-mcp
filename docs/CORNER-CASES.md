@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-133`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-253`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -502,10 +502,11 @@ with a note, and gaps stay gaps.
   that "the site is clean" is read rather than inferred from silence. Two
   properties matter more than completeness. First, `removal` is a fact and not a
   wish: only throwaway issues and local files can be removed by a command, while
-  versions, components and sprints say *manual* with a UI path, because this
-  server ships no delete for them and D73 refused to add one purely to service the
-  gate (since D102, 2026-09-01, the deletes exist for users and `--purge` uses
-  them — a class the tenant's permissions refuse still prints *manual*, honestly).
+  versions, components and sprints said *manual* with a UI path for as long as
+  this server shipped no delete for them (D73 refused to add one purely to
+  service the gate); since D102 (2026-09-01) the deletes exist for users and
+  `--purge` uses them — a class the tenant's permissions refuse still prints
+  *manual*, honestly.
   Second, a class the inventory could not read prints `UNKNOWN — could not
   read (…)` and never `none` — on a site whose token cannot see sprints,
   `sprints: none` is a lie the operator has no way to catch. A partially-read
@@ -603,11 +604,12 @@ with a note, and gaps stay gaps.
 
 ## Appended with Phase 8 — OAuth 2.0 (3LO) (2026-08-21)
 
-- **CC-97** A `state` mismatch on the callback aborts **before** the token
+- **CC-97** A `state` mismatch on the callback is refused **before** the token
   exchange. The loopback handler compares the returned `state` against the one
-  `login` generated, in constant time, and a mismatch ends the run with an exit
-  code and no request to the token endpoint — the authorization code is
-  discarded unspent. Atlassian documents `state` as "(required for security)"
+  `login` generated, in constant time, and a mismatch gets a 400 and no request
+  to the token endpoint — the authorization code is discarded unspent. (It
+  ended the run until CC-246; now the flow keeps waiting for its own
+  callback.) Atlassian documents `state` as "(required for security)"
   and walks through the session-fixation attack it prevents: an attacker who can
   get their own authorization code into somebody else's callback ends up with
   the victim's client holding a session against the *attacker's* account, which
@@ -731,7 +733,9 @@ with a note, and gaps stay gaps.
   is constant-time (`timingSafeEqual` behind a length gate, the login CLI's
   `state` pattern); missing or mismatched → **401** with a terse JSON-RPC
   error body that never echoes the presented value. The token is already a
-  registered secret, so it cannot reach a log field either.
+  registered secret, so it cannot reach a log field either. The `Bearer`
+  scheme name matches case-insensitively (RFC 7235 §2.1); the token itself
+  never does.
 - **CC-115** The listener binds `127.0.0.1` only — `listen({ host, port })`
   with both named, never a bare port — so no other interface can connect.
   Transport close leaves no listener behind: the port accepts nothing
@@ -831,3 +835,476 @@ with a note, and gaps stay gaps.
   action come together, `REMOVE_ALL` takes no values, and at least one edit
   family must be present — every violation is a validation error with nothing
   sent.
+
+## Appended with the 2026-09-23 defect hunt
+
+- **CC-134** An `expand` never widens the user projection. On `jira_search`
+  every section of a row is shaped like `fields` — an expanded `changelog`
+  author loses `emailAddress` and `avatarUrls` exactly as an assignee does. On
+  `jira_get_issue`, sections the tool does not restate itself (`renderedFields`,
+  `names`, `schema`, `versionedRepresentations`, …) come back under `expanded`,
+  shaped the same way, instead of being requested and then silently dropped.
+- **CC-135** A queued call's attempt timeout is measured after the host slot
+  is granted, from the budget the wait left. Measured before it, an attempt
+  that queued for most of `JIRA_CALL_BUDGET_MS` could run a full request
+  timeout past the deadline; a call that gets its slot with no budget left
+  releases it and fails as `budget_exceeded` without sending.
+- **CC-136** A rich-text string input is capped at 65,536 characters, and a
+  longer one is a validation error with nothing sent. Jira stores at most
+  32,767 characters in a text field, so the cap costs no write that could
+  succeed; what it buys is a bound on the markdown parser, whose link and
+  code-span scans are quadratic in the length of a line.
+- **CC-137** A markdown link with an empty label (`[]` followed by a
+  destination) keeps its URL: the href becomes the visible text and carries
+  the link mark, instead of the link vanishing.
+- **CC-138** The OAuth refresh POST, which runs while the token-store lock is
+  held, has its own timeout (`LOCKED_REFRESH_TIMEOUT_MS`, 20 s) below the
+  lock's staleness horizon (`DEFAULT_STALE_MS`, 30 s), whatever
+  `JIRA_REQUEST_TIMEOUT_MS` says. A waiting process breaks a lock older than
+  the horizon; a refresh that outlived it would let a second process rotate
+  the same refresh token, and one rotation would be lost — a logout.
+- **CC-139** The HTTP transport reads a POST body itself, capped at 4 MiB
+  (`HTTP_MAX_BODY_BYTES`, the SDK's own SSE limit), and hands the SDK the
+  parsed value — the SDK's Streamable HTTP transport reads a body whole with
+  no cap. Over the cap, declared or crossed mid-stream → **413**, after the
+  body is drained without being kept, so the client reads the refusal rather
+  than a reset. A body that is not JSON → **400** `-32700`, the SDK's own
+  parse-error shape.
+- **CC-140** An invalid `JIRA_OAUTH_AUTH_ORIGIN` / `JIRA_OAUTH_GATEWAY_ORIGIN`
+  is echoed in its `invalid_origin` finding with any userinfo masked
+  (`https://***@host`): the value is not a registered secret, and no redaction
+  pattern matches a URL password, so the finding itself must not carry it.
+- **CC-141** Integer knobs accept plain decimal digits only. `Number()` alone
+  would take `0x0D06`, `3e4`, `4.0` or `+4` as valid; each is an
+  `invalid_number` error instead.
+- **CC-142** `JIRA_TOKEN_EXPIRES` is read only as ISO 8601 (a date, optionally
+  a time and a zone). `Date.parse` alone takes `1/2/2027` in US order and
+  local time, so the same value would name different days on different
+  machines; it is `invalid_date` instead.
+- **CC-143** A bare `JIRA_SITE=host:port` is a host with a port, not a URL
+  with the scheme `host:` — only `name://` counts as a scheme. The port then
+  meets the same rules as in a full URL (kept on an allowlisted host,
+  `site_port` on a canonical Cloud host).
+- **CC-144** The login callback ignores a provider-error redirect whose
+  `state` is not ours (400, the flow keeps waiting): any page can navigate to
+  the loopback listener, and only the authorization we started may end it.
+  The `error` and `error_description` of a genuine one reach the terminal
+  with C0/C1 control characters stripped, so no escape sequence rides along.
+
+## Appended with the third 2026-09-23 defect hunt
+
+- **CC-145** The plan fingerprint canonicalizes arguments into a
+  null-prototype object. `JSON.parse` makes `__proto__` an own key; assigned
+  into a plain `{}` it would re-parent the object instead of becoming a key,
+  so two plans differing only there would share a fingerprint and one plan's
+  token would apply the other's arguments.
+- **CC-146** `jira_get_project` is content-bearing (`_untrusted`): the
+  project, component and version descriptions it returns are tenant text,
+  like any issue field.
+- **CC-147** On the markdown read path, every string taken from a node
+  attribute — mention, emoji, status and date text, card URLs, panel type,
+  media labels — is markdown-escaped. Tenant text in an attribute cannot forge
+  a link, emphasis or a fake media placeholder in what the model reads. A
+  media node renders as `\[media: name\]` in markdown and `[media: name]` in
+  plain text.
+- **CC-148** `adfFromMarkdown`: a code span keeps a surrounding `link` mark
+  but never `strong` or `em` — Jira refuses a `code` mark combined with any
+  mark other than `link` and `annotation`, so `**`x`**` would fail the whole
+  write.
+- **CC-149** `adfFromMarkdown` parses in linear time. Every inline scan
+  (delimiter search, code-span closer, emphasis run) spends from one budget per
+  top-level parse, 4,096 steps plus 32 per input character; once it is spent,
+  the rest of the markup is read as literal text. Unclosed-opener floods at
+  the CC-136 size cap (`[` × 65,536, `` ` `` runs, `*` runs, nested brackets)
+  finish in milliseconds instead of seconds.
+- **CC-150** A media basename is capped in UTF-8 bytes as well as characters
+  (`MAX_MEDIA_NAME_BYTES`, 240) and truncated on code-point boundaries.
+  Filesystems count bytes, so 120 CJK characters (360 bytes) would fail with
+  `ENAMETOOLONG`; a cut through a surrogate pair would leave a lone half in
+  the name on disk.
+- **CC-151** `adfFromMarkdown`: the angle-bracket destination form (the
+  href wrapped in `<` and `>` inside the parentheses) is recognised before
+  paren counting, so an href with
+  unbalanced parentheses written that way survives intact.
+- **CC-152** `adfFromMarkdown`: a link whose label is only a mention keeps its
+  URL — the mention, a space, then the URL as linked text — because a mention
+  node cannot carry a link mark and the link would otherwise vanish.
+- **CC-153** `adfFromMarkdown`: a link whose href is `javascript:`,
+  `vbscript:` or `data:` (case-insensitive, after stripping control
+  characters and spaces) is written as plain text — label, then the href —
+  never as a link mark the model could be steered into planting.
+
+## Appended with the fourth 2026-09-23 defect hunt
+
+- **CC-154** `adfFromMarkdown`: a fenced code block or a second paragraph
+  indented under a list item belongs to that item, and a blank line counts only
+  as far as its own indent reaches. The renderer writes the continuation
+  indent on blank lines inside an item, so `markdownFromAdf` →
+  `adfFromMarkdown` round-trips a list item holding a code block.
+- **CC-155** The credential-shape backstop in `core/redact.ts` masks the word
+  after `Basic`, `Bearer`, `Authorization:` or `Cookie:` only when it looks
+  like a credential: it has a digit, a token symbol (`+/=._~-`) or an internal
+  case change. The pass runs over every tool result and planned body, so
+  "Fix basic navigation" or "Cookie: chocolate chip" in an issue summary must
+  survive. Registered secrets are still masked as literals everywhere.
+- **CC-156** The root logger `start()` builds is not bound to a correlation
+  id. http, retry, journal and OAuth events receive it, and a bound `-` would
+  win over the ambient id each tool call sets, so none of those lines could be
+  tied to the call that caused them.
+- **CC-157** `isBlockedHost` parses an IPv6 literal into its eight groups
+  before classifying it, instead of matching the spelling. `URL` rewrites
+  `::ffff:169.254.169.254` to `::ffff:a9fe:a9fe`, and `0:0:0:0:0:0:0:1` is
+  `::1`. IPv4-mapped, SIIT, IPv4-compatible, NAT64 (`64:ff9b::/96`, and all of
+  `64:ff9b:1::/48`) and 6to4 (`2002::/16`) addresses are checked against the
+  IPv4 rules. A colon-bearing host that does not parse is refused.
+- **CC-158** Error texts are scrubbed BEFORE they are cut to
+  `MESSAGE_DETAIL_MAX`. A cut through a registered secret leaves a prefix that
+  no literal needle matches any more.
+- **CC-159** A `Cookie:` / `Set-Cookie:` echo is masked to the end of the line,
+  not just the first pair. The password in URL userinfo
+  (`scheme://user:password@host`) is masked; the user name survives.
+- **CC-160** `fetchAll` trusts an explicit `isLast: false` over a short page.
+  Permission-filtered endpoints (boards, filters, projects) drop the rows the
+  caller cannot see and still have more to give. The short-page rule applies
+  only when the server reports no `isLast`.
+- **CC-161** The comment, worklog and changelog readers report how many rows
+  the server sent (`ClassicPage.scanned`) when they drop one they cannot map.
+  The offset and the short-page test count server rows. Counting kept rows
+  would stop the loop early and re-read the tail.
+- **CC-162** `jira_update_issue` refuses a raw `fields.labels` combined with
+  `labelsAdd`/`labelsRemove`, just as it refuses the named `labels`. Both write
+  the same field, and Jira's result for a set combined with an add/remove is
+  undefined. The refusal happens before any request is sent.
+- **CC-163** `jira_delete_component` and `jira_delete_version` refuse a swap
+  target (`moveIssuesTo`, `moveFixIssuesTo`, `moveAffectedIssuesTo`) that names
+  the record being deleted. The request builder refuses it, so the plan fails
+  too, and nothing is sent.
+- **CC-164** HTTP transport shutdown has two guards:
+  - `close()` raises a stopping flag before its teardown loop. Until the process exits, every request gets 503 with `connection: close`. Otherwise a request arriving on an already-open connection while the loop awaits could register a session nobody closes.
+  - When a speculative (never-initialized) pair is closed, the transport close and the Server close are guarded separately. A rejected transport close no longer skips the Server's.
+- **CC-165** Under OAuth, `JIRA_OAUTH_CLOUD_ID` is checked against the cloudId
+  stored with the profile's tokens, not substituted for it. A token granted for
+  one site sent to another site's gateway path fails in confusing ways. A
+  mismatch is a `config` error before any request is sent.
+- **CC-166** `login --profile <name>` matches the site of that profile
+  (`JIRA_PROFILE_<NAME>_SITE`) when `--site` is absent, not the active
+  profile's `JIRA_SITE`.
+- **CC-167** Token-store writers wait `TOKEN_STORE_ACQUIRE_TIMEOUT_MS`, which is
+  longer than `DEFAULT_STALE_MS`, for the lock. The generic 10s budget
+  expired before a live holder's refresh finished, and before a killed
+  holder's lock went stale enough to break.
+- **CC-168** `acquireEnvLock` removes a lock directory it made but could not
+  claim, for example when the owner record write fails. Left behind, the
+  directory blocked every other writer until it went stale.
+- **CC-169** The OAuth scope errors point at commas. `JIRA_OAUTH_SCOPES` is a
+  comma list, and the old remediation ("space-separated", "single spaces")
+  sent the user back to the input that had just failed.
+- **CC-170** The token store holds its profile map with a null prototype and
+  reads it with `Object.hasOwn`. A profile named `constructor` or `toString`
+  reads as absent, not as an `Object.prototype` function. A profile named
+  `__proto__` round-trips as its own record.
+- **CC-171** The OAuth resolver registers the refresh token it read from the
+  store with the redactor, before any refresh. Tokens from a token response
+  were registered already; one that came off disk was not, so an echo of the
+  refresh POST body could quote it unmasked.
+- **CC-172** A stale env lock is broken by rename, verify, then remove, not by
+  removing the path. Two breakers that observed the same stale lock could
+  both succeed: the second deleted the fresh lock the first had just taken.
+  The rename moves one directory. If its owner record is not the one observed
+  as stale, the directory is renamed back.
+- **CC-173** `fetchAll` advances a permission-filtered window (`isLast:
+  false`, fewer rows than the echoed `maxResults`) by the echoed `maxResults`,
+  not by the rows read. The hidden rows were counted server-side, so advancing
+  by rows read re-read the tail of the window as duplicates. An empty window
+  marked `isLast: false` continues too, but only while the offset can move.
+  A page that echoes no `maxResults` still stops, which keeps the anti-spin
+  guard.
+- **CC-174** ADF to markdown renders a heading on one line. A `hardBreak`
+  inside a heading ended the ATX line early, and the rest parsed back as a new
+  block: `## a` followed by `- b` became a heading and a list.
+- **CC-175** A caller abort during a retry backoff is a typed `transport`
+  cancellation, the same answer as an abort mid-attempt. It surfaced as a bare
+  `AbortError`. For a write that is not replayable, the remediation says the
+  write may or may not have been applied.
+- **CC-176** Sprint goals are board-user prose. `jira_list_sprints` is branded
+  untrusted, and so is a `jira_start_sprint` echo that carries a goal (and only
+  then).
+- **CC-177** The transition hint is attached only to the two transition
+  failures: a name that matched no transition, and a 400 from Jira. Another
+  local refusal of the same call, such as an unresolved mention in the comment,
+  no longer points the client at the transition list.
+- **CC-178** Every label argument, including `jira_bulk_edit_issues`, refuses
+  a label that contains whitespace, and names the value. Jira refused it with a
+  400 after a plan that looked fine.
+- **CC-179** A dot-less `JIRA_SITE` is completed to `.atlassian.net` only when
+  it has no port and is not allowlisted as given. Completing an allowlisted
+  single-label internal host sent the credentials to someone else's Cloud site.
+- **CC-180** `doctor --save` never writes into a project-local `.env` that it
+  loaded. It saves to the XDG env file instead, so credentials never land in a
+  checkout.
+- **CC-181** The numeric-id arguments of the component, version and delete
+  tools accept a canonical digit string (`"10100"`) as well as a number. The
+  list tools report ids as strings, so a client passing an id back as it read
+  it was refused. `"0"`, `"010"`, `"1e3"` and names are still refused.
+- **CC-182** A version date that is not on the calendar (`2026-02-30`,
+  `2026-13-01`, `2025-02-29`) is refused before anything is sent. Jira rolled
+  it over into a different, real date.
+- **CC-183** A bulk write that Jira accepted into its task queue (201) carries
+  its own hint code, `enqueued`, pointing at `jira_get_bulk_status`. It had
+  borrowed `discovery`, which sent the client to a lookup tool.
+- **CC-184** `JIRA_MEDIA_DIR` and `JIRA_JOURNAL_PATH` expand a leading `~` and
+  resolve a relative path against the cwd, like `JIRA_ENV_FILE`. A literal `~`
+  directory was created under the cwd.
+- **CC-185** The `invalid_origin` message masks the whole userinfo of a site
+  URL. The mask stopped at the first `@`, so a password that contained `@` or
+  `/` leaked its tail.
+- **CC-186** Upload names stay within the name cap in two places:
+  - A collision variant (`name-2.ext`) of a full-length name is cut on the
+    stem, on code points, so the name still fits the cap.
+  - Truncating a name without an extension never leaves a trailing dot or
+    space, which Windows would strip on creation and strand the file.
+- **CC-187** `jira_search` normalises the reconcile ids it compares
+  (`recentlyWrittenIssueIds`) to Jira's own spelling. `007` went on the wire
+  as 7 and came back as `"7"`, so an issue that was returned was also reported
+  as missing.
+- **CC-188** Two profile variables that differ only in case
+  (`JIRA_PROFILE_eu_API_TOKEN` and `JIRA_PROFILE_EU_API_TOKEN`) are refused
+  with `duplicate_profile_variable`. Profile names are case-insensitive, so
+  one value silently won, and the other token never reached the redactor.
+- **CC-189** A finding about a site or email that the active profile supplied
+  names the profile variable (`JIRA_PROFILE_EU_SITE`), not `JIRA_SITE`, which
+  the user never set.
+- **CC-190** `doctor --save` refuses a site, email or expiry date that the
+  next start would refuse, and writes nothing. It had saved a file the server
+  then would not start with.
+- **CC-191** Markdown emphasis follows the whitespace half of CommonMark
+  flanking: a `*` or `**` with a space on its inner side is literal. The
+  expression `2 * 3 * 4` came out as `2 ` plus the italic text ` 3 ` plus ` 4`.
+- **CC-192** An applied irreversible write (a delete, a bulk edit) records
+  nothing in the recent writes. Its ids are deleted or only enqueued, and a
+  bulk batch evicted the issues the session really wrote.
+- **CC-193** A top-level code fence indented by one to three spaces strips that
+  indent from its body lines, as CommonMark does. The indent had stayed in
+  the code.
+- **CC-194** `jira_get_comments` offers only the sort keys that Jira
+  documents for comments (`created`, `-created`). `updated` was accepted and
+  echoed back as the order used, though Jira ignores or refuses it.
+- **CC-195** A digit-string id past `Number.MAX_SAFE_INTEGER` is refused at
+  the schema. The conversion rounded it to a neighbouring id, which could
+  then be updated or deleted.
+- **CC-196** A due date is sent as the system field id `duedate`. The API
+  layer sent `dueDate`, an unknown field to Jira, so the whole create or edit
+  was refused. A raw `duedate` next to the named option now counts as
+  setting the field twice.
+- **CC-197** Redacting a credential parameter (`token=`, `password=`…) stops
+  at a backslash. The redactor also runs over serialized JSON lines, and
+  swallowing the `\` of an escaped quote wrote a journal or log line that no
+  longer parsed.
+- **CC-198** A `__proto__` key in data (an entity-property key is
+  tenant-defined) survives redaction as an own property. Plain assignment set
+  the copy's prototype instead, so the key and its value silently vanished.
+- **CC-199** A journal rotation whose rename fails still appends the entry.
+  The file runs over its budget until the next append retries the rotation.
+  The rename error had escaped the append, so the entry was lost and the
+  write reported `journal_unavailable`.
+- **CC-200** `tool_call_end` logs the `ok` of the envelope the caller got. A
+  result the renderer could not serialize reached the caller as an error but
+  was logged as a success.
+- **CC-201** An assignable user search (`issue` or `project` given) treats
+  a short page as a filtered window, not the end. Jira takes `maxResults`
+  candidates and then drops the unassignable ones, so the offset advances by
+  the whole window, and only an empty window or the thousandth candidate
+  ends the sweep. A short first page had been reported as complete.
+- **CC-202** A request path with a backslash is refused. The URL parser
+  reads `\` as `/` and then resolves `..`, so a backslash dot segment
+  climbed out of the API root (or the gateway's cloud id prefix) behind the
+  dot-segment check.
+- **CC-203** A `Retry-After` of zero (or a date already past) earns the
+  same backoff as no header at all. It had retried back to back with no
+  jitter.
+- **CC-204** A caller cancel reaches a call that is queued for a host slot.
+  The cancelled call had held its place ahead of live ones until a slot
+  freed or the budget ran out.
+- **CC-205** An unsafe write whose 2xx headers arrived but whose body then
+  timed out or broke is reported as applied, with the status, and told not
+  to be sent again. It had been called ambiguous, which invites a resend,
+  and a resend of a create is a duplicate.
+- **CC-206** In oauth mode a tool call that names no profile resolves
+  `JIRA_ACTIVE_PROFILE`, as `login`, `logout` and `doctor` do. It had read
+  the `default` key, so a grant stored under the active profile was invisible
+  to every call, and the `login` the error named stored it there again.
+- **CC-207** `login --json --no-browser` (or `--json` where no browser opens)
+  prints the authorize URL on stderr, keeping stdout one JSON object. It had
+  printed nothing and waited out the timeout.
+- **CC-208** A 401 or login-denied 403 under OAuth names `login` and the
+  scopes, not `JIRA_EMAIL`/`JIRA_API_TOKEN`, which sign nothing in that mode.
+- **CC-209** The HTTP transport holds at most 32 sessions; an initialize past
+  that is refused 503 until one closes or expires. An initialize loop without
+  DELETE had grown the server set, each with its own plan store, for the
+  30-minute idle window.
+- **CC-210** `doctor --save` single-quotes a value that needs quoting, and
+  refuses one holding a single quote or a line break. Node's `.env` parser
+  unescapes nothing, so the double-quoted `\"` it had written read back
+  truncated, and a backslash read back doubled.
+- **CC-211** `logout --all` removes a stored key that is not in normalized
+  form (a hand-edited `"Work"`), and reports only what it removed. It had
+  said "Removed" while the refresh token stayed on disk.
+- **CC-212** `doctor --save` refuses in oauth mode, and under an active
+  profile that overrides the site, email or token, naming the variables that
+  win. It had written top-level values that nothing reads, then said "Saved."
+- **CC-213** `jira_list_statuses` refuses a `projectId` that is not a
+  numeric id. The description asked for the number, but a project key went
+  to `/statuses/search` as-is, and the result came back labelled with the
+  key.
+- **CC-214** `jira_get_bulk_status` says `processedCount` counts the
+  issues that succeeded, and that COMPLETE can carry failures. The wire's
+  `processedAccessibleIssues` holds only successes, and a partial failure
+  ends COMPLETE. The description had pointed the model at FAILED or DEAD
+  tasks, so a COMPLETE task read as a clean run.
+- **CC-215** The bulk delete and bulk edit issue lists are trimmed in
+  validation. The plan had echoed `" PROJ-1"` while apply sent `PROJ-1`,
+  and an all-blank entry passed validation.
+- **CC-216** The site's tier cards count the tools the manifest holds. They
+  still said 27 reads, 22 writes and 6 irreversible after phases 9–12 took
+  the surface to 28/22/8, and nothing checked them.
+- **CC-217** The README generator, the live-gate driver and the fake Jira
+  compare real paths when they decide whether they were run directly. Run
+  through a symlink, the generator's `--check` had exited 0 without
+  checking anything.
+- **CC-218** `server.json` declares no computed default as a literal. It
+  gave `JIRA_OAUTH_TOKEN_FILE` the default `<config dir>/oauth.json`, and a
+  registry client that pre-fills defaults would have set that placeholder
+  as the real path.
+- **CC-219** `verify-live` refuses `--irreversible` without `--write` (the
+  residue purge keeps its own route), and its banner announces the delete
+  phase from the same predicate the phase runs on. It had promised a delete
+  phase under `--keep` and with `--irreversible` alone, then ran none.
+- **CC-220** `jira_get_bulk_status` tells the model to compare
+  `processedCount` with `totalIssueCount`, and that a count Jira did not
+  report is absent rather than 0. The mapper never invents a zero, and the
+  description had said only "check failedCount", which a terse body leaves
+  out.
+- **CC-221** A write Jira answered 2xx whose body was then lost (the
+  CC-205 `ambiguous_write`) is recorded for search reconcile like any other
+  applied write. The server told the model the write had landed and to
+  search for it, while the registry treated it as a rejection.
+- **CC-222** Markdown emphasis wraps the text inside its whitespace: strong
+  `Note: ` renders `**Note:** `, and whitespace alone carries no emphasis.
+  `**Note: **rest` had come back as a stray star and the wrong italics
+  (CC-191 flanking).
+- **CC-223** A list item keeps its children in document order on both paths;
+  on the markdown path a paragraph after a nested list opens with a blank
+  continuation line. The paragraph had been hoisted above the nested list.
+- **CC-224** An unknown node is escaped on the markdown path like a known one:
+  its text is markdown-escaped and its placeholder renders `\[type\]`. Both
+  were emitted raw, so tenant text could forge a link (the CC-147 class).
+- **CC-225** A table cell renders flat on the markdown path, as on the text
+  path: a heading drops its `#`, and a row opening with a list marker is
+  escaped. `# H | - x` had come back as a heading swallowing the whole row.
+- **CC-226** A link href containing a backtick takes the `<…>` form. In the
+  bare form the closer scan stepped into a code span opened in the href and
+  swallowed the `)`, so the link was lost.
+- **CC-227** Marked text over a line break is marked line by line
+  (`` `a` `` / `` `- b` ``). The reader parses one line at a time: `**a\nb**`
+  came back as literal stars, and a code span got a block-start escape
+  planted inside it.
+- **CC-228** A list continuation line drops only its item's own indent, so
+  spaces after a hardBreak survive the round trip. `line.trim()` had
+  removed them.
+- **CC-229** A downloaded name is one the upload side accepts unchanged:
+  leading dots and whitespace are stripped together, and trailing whitespace
+  of any kind goes. `. .env` had become ` .env` (refused), and ` .. a` had
+  become ` a`, which uploads as a different name.
+- **CC-230** A `JIRA_OAUTH_GATEWAY_ORIGIN` whose host is loopback, private,
+  link-local or a metadata address is refused by the OAuth resolver before
+  anything is sent, naming that variable. It had passed the allowlist check,
+  and every call died in the request layer with advice about `JIRA_SITE`.
+- **CC-231** A `JIRA_ALLOWED_HOSTS` regex without both `^` and `$` is a
+  startup error naming the entry and its anchored form. Startup had silently
+  anchored it, and every request then threw "not anchored".
+- **CC-232** A task item keeps its children in document order, as a list
+  item does (CC-223). Text after a nested list becomes a continuation line
+  after it, preceded by a blank line on the markdown path. It had been
+  collapsed into the box line above the nested list.
+- **CC-233** A `JIRA_SITE` host that is loopback, private, link-local or
+  internal (`10.0.0.5`, `localhost`, `jira.internal`) is a startup error
+  (`host_blocked`) even when it is in `JIRA_ALLOWED_HOSTS`. It had started
+  cleanly, and every request was then refused by the blocklist.
+- **CC-234** The HTTP session cap counts initialize requests still in
+  flight, so a parallel burst cannot open more than `HTTP_MAX_SESSIONS`.
+  The check had counted only registered sessions, which register two awaits
+  later, so every request in a burst passed it.
+- **CC-235** A session that registers after `close()` has begun is torn down
+  as it registers. An initialize already past the `stopping` check had
+  registered after close copied the session keys, and nothing ever closed it.
+- **CC-236** A blank process-env value does not shadow the env file: the
+  file's value loads, and a blank the file lacks is left as it was.
+  `JIRA_API_TOKEN=""` had hidden a valid file token, and startup reported it
+  as not set.
+- **CC-237** `doctor --save` rewrites every assignment of a key, so the saved
+  value is the one the next start reads. Only the first line had been
+  rewritten, and a later duplicate (the one Node keeps) silently won.
+- **CC-238** A non-JSON error body is redacted in full, then cut to 200
+  characters. It had been cut first, so a secret straddling the cut left an
+  unredactable prefix.
+- **CC-239** `doctor --save` reads and merges the env file inside the env
+  lock. It had read outside the lock, so an edit made between the read and
+  the write was lost.
+- **CC-240** Jira `errorMessages`/`errors` embedded in `JiraError.message` are
+  scrubbed and capped at 300 characters, as `errors.ts` does. `http.ts` had
+  embedded them uncapped.
+- **CC-241** `@[ Alice Smith ]` resolves by trimmed exact match and shares one
+  search with `@[Alice Smith]`; a whitespace-only `@[   ]` stays literal like
+  `@[]`. The untrimmed compare had never matched exactly (an ambiguous
+  refusal, or a lone partial match won), and a blank token hit a generic
+  "non-empty query" error.
+- **CC-242** Bulk-edit `priorityId`, `assigneeAccountId` and `fixVersionIds`
+  are trimmed at the schema, so the plan echoes what apply sends. The plan
+  had shown the padded values `api/bulk.ts` trimmed before sending.
+- **CC-243** Bulk issue lists drop exact duplicates (after trim, first-seen
+  order) before the 1000 cap and the count. Duplicates had inflated an
+  irreversible plan's `issueCount` and used up the cap.
+- **CC-244** Each HTTP session has its own recent-writes registry, and every
+  tool call runs with its server's registry in scope, so `jira_search` only
+  reconciles the writes of the session that searches. All sessions in the
+  process had shared one ambient registry, so one client's writes widened
+  another client's searches.
+- **CC-245** `login --cloud-id` without `--site` picks the site by id alone.
+  The environment's site (`JIRA_SITE`, or the profile's) was applied on top as
+  a second filter, so a cloud id naming any other site of the grant was
+  refused with "No accessible site matches". Both flags given together still
+  both apply.
+- **CC-246** A code callback whose `state` is not ours is answered 400 and
+  ignored, and the login keeps waiting. Its code is still discarded unspent
+  (CC-97), one stderr line explains the stale-tab case, and the timeout
+  message counts the ignored callbacks. The login used to abort on it, so any
+  page that navigated to the loopback listener could cancel every login the
+  operator started (CC-144 had closed the same hole for error redirects only).
+- **CC-247** A 429 from the token endpoint is advised by what was throttled.
+  A throttled refresh says to retry the tool call, because the stored grant is
+  intact. A throttled login exchange says to run `jira-mcp-ai login` again.
+  The transport's text sent both to a new login, which throws away a valid
+  authorization for a transient limit.
+- **CC-248** `profileOf` trims the profile name as the token store's
+  `profileKey` does. `login --profile " work "` stored the tokens under `work`
+  but matched the site against the default profile's.
+- **CC-249** The character-budget ladder trims the largest array at any depth
+  under `data` (`data.project.components`, not only top-level rows), provided
+  it holds at least half of the payload. The `_truncation` marker names its
+  path in `field`. Only a top-level array was a candidate, so a result whose
+  bulk sat one level down skipped straight to the string cut or the floor.
+- **CC-250** Rung 3 caps every string leaf under `data` at one common length,
+  found by binary search, and `field` names the longest. Only the single
+  longest string was cut, so many medium strings (comment bodies, descriptions)
+  that together broke the budget dropped the result to the floor.
+- **CC-251** The `truncated` hint says not to follow `nextPageToken` or
+  `nextStartAt` from a trimmed page — both skip the dropped rows — and to
+  resume at `startAt` + rows received instead. It named only
+  `nextPageToken`.
+- **CC-252** `jira_get_changelog`'s description gives the tail offset as
+  `startAt = max(0, total - maxResults)`. The bare difference is negative
+  for a changelog shorter than one page, which the input schema rejects.
+- **CC-253** `jira_list_fields` and `jira_list_link_types` say their result
+  is complete unless a `truncated` hint is present. They said "always
+  complete", which is false once the character budget trims the array, and a
+  model told so would not look for the hint.

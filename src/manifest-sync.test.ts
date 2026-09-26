@@ -56,6 +56,17 @@ function readJson(path: string): unknown {
 }
 
 const DOC = 'docs/CONFIGURATION.md';
+
+/**
+ * What the registry must declare for a documented default: the same text, or
+ * nothing when the docs describe a COMPUTED default (`<config dir>/…`) — a
+ * registry default is a literal an installer may pre-fill (CC-218).
+ */
+function registryDefault(row: {
+  readonly defaultValue: string | undefined;
+}): string | undefined {
+  return row.defaultValue?.includes('<') ? undefined : row.defaultValue;
+}
 const REGISTRY = 'server.json';
 const PLUGIN = '.claude-plugin/plugin.json';
 const MARKETPLACE = '.claude-plugin/marketplace.json';
@@ -407,6 +418,17 @@ describe('server.json ↔ docs/CONFIGURATION.md', () => {
     );
   });
 
+  test('[CC-218] declares no computed default as a literal', () => {
+    // An installer that pre-fills defaults would inject the text verbatim, and
+    // `<config dir>/oauth.json` then reads as a relative path in the cwd.
+    const literal = declaredEnvVars().filter((entry) => entry.default?.includes('<'));
+    assert.deepEqual(
+      literal.map((entry) => entry.name),
+      [],
+      'a placeholder default must stay out of the registry',
+    );
+  });
+
   test('carries the default the docs document, for every variable', () => {
     const declared = new Map(declaredEnvVars().map((entry) => [entry.name, entry]));
     const show = (value: string | undefined): string =>
@@ -417,7 +439,7 @@ describe('server.json ↔ docs/CONFIGURATION.md', () => {
     const drift = expectedRows()
       .map((row) => ({ row, entry: declared.get(row.name) }))
       .filter(
-        ({ row, entry }) => entry !== undefined && entry.default !== row.defaultValue,
+        ({ row, entry }) => entry !== undefined && entry.default !== registryDefault(row),
       )
       .map(
         ({ row, entry }) =>

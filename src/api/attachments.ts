@@ -201,11 +201,18 @@ export interface UploadAttachmentResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Longest basename this server writes. Filesystems allow 255 bytes; a Jira
- * filename can be far longer than that in UTF-8, and a 120-character cap leaves
- * room for a `-1` collision suffix without any byte-length arithmetic.
+ * Longest basename this server writes, in UTF-16 code units — the model-facing
+ * cap (the upload name schema uses it too).
  */
 export const MAX_MEDIA_NAME_CHARS = 120;
+
+/**
+ * The same cap in UTF-8 bytes (CC-150). Filesystems count BYTES (ext4 and APFS
+ * allow 255): 120 CJK characters are 360 bytes and fail with ENAMETOOLONG, so
+ * the character cap alone is not enough. 240 leaves headroom for the store's
+ * collision suffix.
+ */
+export const MAX_MEDIA_NAME_BYTES = 240;
 
 /** Used when nothing printable survives sanitization. */
 export const FALLBACK_MEDIA_NAME = 'attachment';
@@ -245,29 +252,66 @@ export function safeMediaName(raw: string): string {
     cleaned += ch;
   }
 
-  const trimmed = stripTrailing(cleaned.trim().replace(/^\.+/, ''));
+  // Leading dots and whitespace go together, until neither is left (CC-229):
+  // one trim then one strip turned `. .env` into ` .env`, which the upload
+  // side refuses, and ` .. a` into ` a`, which it trims into a different name.
+  const trimmed = stripTrailing(cleaned.replace(/^[\s.]+/, ''));
   const base = trimmed === '' ? FALLBACK_MEDIA_NAME : trimmed;
   const guarded = RESERVED_NAME.test(base) ? `_${base}` : base;
   return truncateName(guarded);
 }
 
-/** Strip trailing dots and spaces, which Windows drops on creation. */
+/**
+ * Strip trailing dots and spaces, which Windows drops on creation — and any
+ * other whitespace, which the upload side trims (CC-229): `a\u00a0.` lost only
+ * its dot and left a name that uploads as `a`.
+ */
 function stripTrailing(value: string): string {
   let end = value.length;
   while (end > 0) {
-    const ch = value[end - 1];
-    if (ch !== '.' && ch !== ' ') break;
+    const ch = value[end - 1] ?? '';
+    if (ch !== '.' && !/\s/.test(ch)) break;
     end -= 1;
   }
   return value.slice(0, end);
 }
 
-/** Cap the length, keeping a short extension so the file stays openable. */
+/** UTF-8 length of `text`, without reaching for a Buffer. */
+function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/**
+ * Cap the length in characters AND in UTF-8 bytes, keeping a short extension so
+ * the file stays openable. The stem is cut on code-point boundaries (CC-150): a
+ * cut through a surrogate pair would leave a lone half in the name on disk.
+ */
 function truncateName(name: string): string {
-  if (name.length <= MAX_MEDIA_NAME_CHARS) return name;
+  if (name.length <= MAX_MEDIA_NAME_CHARS && utf8Bytes(name) <= MAX_MEDIA_NAME_BYTES) {
+    return name;
+  }
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 && name.length - dot <= MAX_EXTENSION_CHARS ? name.slice(dot) : '';
-  return `${name.slice(0, MAX_MEDIA_NAME_CHARS - ext.length)}${ext}`;
+  const stem = ext === '' ? name : name.slice(0, dot);
+  let chars = ext.length;
+  let bytes = utf8Bytes(ext);
+  let kept = '';
+  for (const ch of stem) {
+    const size = utf8Bytes(ch);
+    if (chars + ch.length > MAX_MEDIA_NAME_CHARS || bytes + size > MAX_MEDIA_NAME_BYTES)
+      break;
+    kept += ch;
+    chars += ch.length;
+    bytes += size;
+  }
+  // Without an extension the cut itself can end on a dot or a space, which
+  // Windows would strip on creation (CC-186).
+  return ext === '' ? stripTrailing(kept) : `${kept}${ext}`;
 }
 
 /**
@@ -531,7 +575,7 @@ function requireText(value: string, what: string, remediation: string): string {
   return text;
 }
 
-/** The size refusal, worded the same way the client words its own (CC-15). */
+/** The size refusal, worded the same way the client words its own (CC-54). */
 function tooLarge(bytes: number): JiraError {
   return createJiraError({
     kind: 'validation',

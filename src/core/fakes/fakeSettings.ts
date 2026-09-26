@@ -1,7 +1,7 @@
 // The `authMode` + `oauth` half of a `Settings` fixture, for the suites that
 // build a settings literal by hand and do not exercise OAuth at all.
 //
-// It exists because `Settings.authMode` and `Settings.oauth` are REQUIRED (D93):
+// It exists because `Settings.authMode` and `Settings.oauth` are REQUIRED:
 // `loadSettings` always populates both, so every consumer sees a total value and
 // no code path has to branch on `undefined`. The cost lands on test fixtures,
 // which now have to spell out an OAuth block they never read. Spreading this

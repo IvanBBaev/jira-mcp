@@ -20,7 +20,8 @@
 // and the shim calls `main()` explicitly. Renaming this export turns every
 // installed binary into a no-op that exits 0 — a failure with no error message.
 //
-// EXIT CODES ARE SET, NEVER FORCED. `process.exitCode` lets Node flush a piped
+// EXIT CODES ARE SET, NEVER FORCED (save a second signal — see
+// `installShutdownHandlers`). `process.exitCode` lets Node flush a piped
 // stdout before it leaves; `process.exit()` truncates it mid-frame, which on the
 // stdio transport means a half-written JSON-RPC message on the client's side.
 // ---------------------------------------------------------------------------
@@ -99,8 +100,9 @@ Usage:
   jira-mcp-ai --version       Print the server version.
   jira-mcp-ai --help          Print this message.
 
-With no subcommand the process speaks JSON-RPC on stdin/stdout and must be
-registered as a stdio MCP server; diagnostics always go to stderr.
+With no subcommand the process serves MCP: JSON-RPC on stdin/stdout by default
+(register it as a stdio MCP server), or a loopback Streamable HTTP listener
+with JIRA_TRANSPORT=http; diagnostics always go to stderr.
 Configuration is environment-only (JIRA_*) — see
 https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md`;
 
@@ -206,7 +208,7 @@ async function serve(): Promise<void> {
   const { systemRng } = await import('./core/rng.js');
   const { assertStartupOk, loadSettings } = await import('./core/settings.js');
   const { createRedactor } = await import('./core/redact.js');
-  const { NO_CID, createLogger } = await import('./core/log.js');
+  const { createLogger } = await import('./core/log.js');
 
   const clock = systemClock;
   const rng = systemRng;
@@ -217,9 +219,11 @@ async function serve(): Promise<void> {
   // Registration happens BEFORE the first line is written: from here on a token
   // cannot reach stderr even through a message nobody anticipated (AUTH.md).
   const redactor = createRedactor({ secrets: loaded.secrets });
-  const logger = createLogger({ level: settings.logLevel, clock, redactor }).withCid(
-    NO_CID,
-  );
+  // Left UNBOUND on purpose: http, retry, journal and OAuth events receive this
+  // logger, and a bound id would win over the ambient one `runWithCid` sets for
+  // each tool call — every such line would read `cid:"-"` (CC-156). Outside a
+  // call the ambient store is empty and the logger falls back to NO_CID itself.
+  const logger = createLogger({ level: settings.logLevel, clock, redactor });
 
   try {
     // The redacted config report every support transcript starts with.
@@ -342,11 +346,15 @@ async function serve(): Promise<void> {
     let handle: TransportHandle;
     if (settings.transport === 'http') {
       const { connectHttpTransport } = await import('./mcp/transport-http.js');
+      const { createRecentWrites } = await import('./mcp/recent-writes.js');
       handle = await connectHttpTransport({
         settings,
         logger,
         clock,
-        createServer: () => buildServer(serverDeps),
+        // Each session also gets its own recent-writes registry, so one client's
+        // writes never widen another client's searches (CC-244).
+        createServer: () =>
+          buildServer({ ...serverDeps, recentWrites: createRecentWrites() }),
       });
     } else {
       const { connectTransport } = await import('./mcp/transport.js');
@@ -421,6 +429,7 @@ async function buildOAuthResolver(deps: OAuthDeps): Promise<CredentialResolver> 
     logger,
     redactor,
     allowedHosts: settings.allowedHosts,
+    activeProfile: settings.activeProfile,
   });
 }
 
@@ -457,10 +466,15 @@ async function openJournal(deps: JournalDeps): Promise<Journal | undefined> {
 /**
  * Take the server down on a signal.
  *
- * `once` rather than `on`: a second Ctrl-C should reach the default handler and
- * kill a process that is stuck closing, rather than being swallowed. Closing
- * detaches the stdio listeners and pauses stdin, so the event loop drains and
- * the process exits on its own — no `process.exit()` and no truncated stdout.
+ * The first signal closes gracefully: closing detaches the stdio listeners and
+ * pauses stdin, so the event loop drains and the process exits on its own — no
+ * `process.exit()` and no truncated stdout.
+ *
+ * `once` rather than `on`: the listener is gone after the first signal, so a
+ * second Ctrl-C (or SIGTERM) reaches Node's default handler, which terminates
+ * the process immediately. That is the one deliberate forced exit, the
+ * operator's escape from a close that hangs; it can cut stdout mid-frame,
+ * which is the price of not swallowing the second signal.
  */
 function installShutdownHandlers(handle: TransportHandle): void {
   const shutdown = (reason: ShutdownReason) => (): void => {

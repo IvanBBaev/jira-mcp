@@ -140,8 +140,20 @@ export const DEFAULT_OAUTH_GATEWAY_ORIGIN = `https://${OAUTH_GATEWAY_HOST}`;
 export const DEFAULT_OAUTH_TOKEN_FILE_DOC = `<config dir>/${OAUTH_TOKEN_FILE_NAME}`;
 
 const MS_PER_DAY = 86400000;
+
+/** A calendar date, optionally with a time and a zone: what CONFIGURATION.md documents. */
+const ISO_DATE_RE =
+  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
 /** `JIRA_OAUTH_REDIRECT_PORT` range: unprivileged ports only — `login` binds it. */
 const MIN_OAUTH_REDIRECT_PORT = 1024;
+
+/**
+ * Whether `value` is a `JIRA_TOKEN_EXPIRES` the loader accepts — exported so
+ * `doctor --save` refuses what the next start would refuse (CC-190).
+ */
+export function isIsoDate(value: string): boolean {
+  return ISO_DATE_RE.test(value) && !Number.isNaN(Date.parse(value));
+}
 const MAX_PORT = 65535;
 
 /**
@@ -312,7 +324,9 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   const int = (key: string, def: number, min: number, max: number): number => {
     const raw = str(key);
     if (raw === undefined) return def;
-    const parsed = Number(raw);
+    // Plain decimal digits only: `Number` would also take `0x0D06`, `3e4` and
+    // `4.0`, none of which the documentation promises (CC-141).
+    const parsed = /^-?\d+$/.test(raw) ? Number(raw) : Number.NaN;
     if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
       add({
         severity: 'error',
@@ -369,7 +383,11 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
       add({
         severity: 'error',
         code: 'invalid_origin',
-        message: `${key} must be an https origin with no path, query, fragment or credentials (e.g. ${def}); got ${JSON.stringify(raw)}. Using the documented default ${def}.`,
+        // The value is echoed with any userinfo masked: a password pasted into
+        // the origin must not reach the report (CC-140). The mask runs to the
+        // LAST `@` before any query or fragment, because a password may itself
+        // hold an `@` or a `/` (CC-185).
+        message: `${key} must be an https origin with no path, query, fragment or credentials (e.g. ${def}); got ${JSON.stringify(raw.replace(/\/\/[^?#]*@/, '//***@'))}. Using the documented default ${def}.`,
         field: key,
       });
       return def;
@@ -492,6 +510,16 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     activeProfile: activeProfileKey,
   });
   const profileName = activeProfile?.name;
+  // The variable each effective value was READ from, so a finding about a value
+  // the active profile supplied names the profile's variable (CC-189).
+  const emailVariable =
+    profileName !== undefined && activeProfile?.email !== undefined
+      ? profileVar(profileName, 'EMAIL')
+      : 'JIRA_EMAIL';
+  const siteVariable =
+    profileName !== undefined && activeProfile?.site !== undefined
+      ? profileVar(profileName, 'SITE')
+      : 'JIRA_SITE';
 
   // Which credentials are REQUIRED is the one thing the mode changes here.
   // `JIRA_SITE` is required either way — oauth resolves the tenant through the
@@ -503,14 +531,14 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
         severity: 'error',
         code: 'missing_credential',
         message: `${profileName === undefined ? 'JIRA_EMAIL' : profileVar(profileName, 'EMAIL')} is not set. Basic auth needs the Atlassian account email.`,
-        field: profileName === undefined ? 'JIRA_EMAIL' : 'JIRA_EMAIL',
+        field: 'JIRA_EMAIL',
       });
     } else if (!effectiveEmail.includes('@')) {
       add({
         severity: 'error',
         code: 'invalid_email',
-        message: `JIRA_EMAIL ${JSON.stringify(effectiveEmail)} is not an email address. Basic auth sends email:token, so a login name will always 401.`,
-        field: 'JIRA_EMAIL',
+        message: `${emailVariable} ${JSON.stringify(effectiveEmail)} is not an email address. Basic auth sends email:token, so a login name will always 401.`,
+        field: emailVariable,
       });
     }
 
@@ -551,7 +579,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   }
 
   // --- Host ----------------------------------------------------------------
-  const resolution = resolveHost(effectiveSite, allowedHosts);
+  const resolution = resolveHost(effectiveSite, allowedHosts, siteVariable);
   for (const problem of resolution.problems) add(fromHostProblem(problem));
 
   // --- Token expiry horizon ------------------------------------------------
@@ -568,7 +596,10 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
       field: 'JIRA_TOKEN_EXPIRES',
     });
   } else if (tokenExpires !== undefined) {
-    const expiresAt = Date.parse(tokenExpires);
+    // ISO 8601 only: `Date.parse` alone also takes `1/2/2027`, read in US order
+    // and local time, so the same value would mean different days on
+    // different machines (CC-142).
+    const expiresAt = isIsoDate(tokenExpires) ? Date.parse(tokenExpires) : Number.NaN;
     if (Number.isNaN(expiresAt)) {
       add({
         severity: 'error',
@@ -631,7 +662,12 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     10000000,
   );
   const maxPages = int('JIRA_MAX_PAGES', DEFAULT_MAX_PAGES, 1, 1000);
-  const mediaDir = str('JIRA_MEDIA_DIR');
+  // Both paths are normalised the way `JIRA_ENV_FILE` is (CC-184): an env var
+  // carries no shell expansion, so `~/jira-media` would otherwise name a
+  // directory called `~` under whatever cwd the client spawned the server in.
+  const mediaDirRaw = str('JIRA_MEDIA_DIR');
+  const mediaDir =
+    mediaDirRaw === undefined ? undefined : resolveConfigPath(mediaDirRaw, options);
 
   if (callBudgetMs < requestTimeoutMs) {
     add({
@@ -662,7 +698,9 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
 
   // --- Diagnostics ---------------------------------------------------------
   const logLevel = enumOf<LogLevel>('JIRA_LOG_LEVEL', LOG_LEVELS, DEFAULT_LOG_LEVEL);
-  const journalPath = str('JIRA_JOURNAL_PATH');
+  const journalPathRaw = str('JIRA_JOURNAL_PATH');
+  const journalPath =
+    journalPathRaw === undefined ? undefined : resolveConfigPath(journalPathRaw, options);
 
   const settings: Settings = {
     site,
@@ -754,7 +792,7 @@ function withOAuthHosts(
 }
 
 /** `JIRA_PROFILE_<NAME>_<FIELD>`, built rather than spelled out. */
-function profileVar(name: string, field: 'SITE' | 'EMAIL' | 'API_TOKEN'): string {
+export function profileVar(name: string, field: 'SITE' | 'EMAIL' | 'API_TOKEN'): string {
   return `JIRA_PROFILE_${name.toUpperCase()}_${field}`;
 }
 
@@ -772,6 +810,12 @@ function parseProfiles(
     string,
     { name: string; site?: string; email?: string; apiToken?: string }
   >();
+  // The variable each profile field was read from, keyed `<name>:<FIELD>`.
+  // Names are case-insensitive, so `JIRA_PROFILE_eu_SITE` and
+  // `JIRA_PROFILE_EU_SITE` are the same field: taking the last one silently
+  // would pick a site by environment order, and a second API token would never
+  // reach the redactor (CC-188).
+  const sources = new Map<string, string>();
 
   for (const key of Object.keys(env)) {
     const match = PROFILE_KEY_RE.exec(key);
@@ -802,6 +846,17 @@ function parseProfiles(
     }
 
     const lower = rawName.toLowerCase();
+    const earlier = sources.get(`${lower}:${field}`);
+    if (earlier !== undefined) {
+      add({
+        severity: 'error',
+        code: 'duplicate_profile_variable',
+        message: `${key} and ${earlier} set the same profile field (profile names are case-insensitive). Keep one of them.`,
+        field: key,
+      });
+      continue;
+    }
+    sources.set(`${lower}:${field}`, key);
     const draft = drafts.get(lower) ?? { name: lower };
     if (field === 'SITE') draft.site = value;
     else if (field === 'EMAIL') draft.email = value;
