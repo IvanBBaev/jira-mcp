@@ -229,15 +229,21 @@ export interface ApproximateCountBase {
 /** Options for {@link approximateCount}. */
 export type ApproximateCountOptions = ApproximateCountBase & BudgetGuard;
 
-/** What {@link approximateCount} returns. */
+/** What {@link approximateCount} and {@link countIssuesDataCenter} return. */
 export interface ApproximateCountResult {
-  /** Jira's index-derived estimate — never a guaranteed row count. */
+  /**
+   * On Cloud, Jira's index-derived estimate — never a guaranteed row count. On
+   * Data Center, the classic search's `total` (D114).
+   */
   readonly count: number;
   /**
-   * Always `true`. Kept as a field rather than as folklore so the tool ring has
-   * something concrete to hang the `approximate` hint on (TOOLS.md §jira_count).
+   * `true` on Cloud, always: kept as a field rather than as folklore so the tool
+   * ring has something concrete to hang the `approximate` hint on (TOOLS.md
+   * §jira_count). `false` on Data Center, where the number is the `total` the
+   * classic search counted at query time — exact for that moment, not an
+   * estimate (D114).
    */
-  readonly approximate: true;
+  readonly approximate: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +512,55 @@ export async function approximateCount(
   }
   return { count: data.count, approximate: true };
 }
+
+/**
+ * {@link approximateCount} on Jira Data Center — `POST /rest/api/2/search` with
+ * `maxResults: 0`, reading `total` (D114).
+ *
+ * Data Center has no `/search/approximate-count`; the classic search counts the
+ * matches exactly and reports them as `total`, and `maxResults: 0` asks for the
+ * count alone. POST rather than `GET ?jql=` because it is the route the search
+ * twin already uses, it is a documented read on Data Center, and it keeps a long
+ * JQL out of the URL and the access log. One field is named so that a host that
+ * ignored `maxResults: 0` would still send only a little per row.
+ *
+ * The result says `approximate: false`: the number is the host's own count at
+ * query time, so the tool ring raises no `approximate` hint for it.
+ */
+export async function countIssuesDataCenter(
+  options: ApproximateCountOptions,
+): Promise<ApproximateCountResult> {
+  const where = `/rest/api/2${DATACENTER_SEARCH_PATH}`;
+  const response = await options.jira({
+    method: 'POST',
+    root: 'v2',
+    path: DATACENTER_SEARCH_PATH,
+    // A read that uses POST for the JQL body — replayable like a GET.
+    safe: true,
+    body: {
+      jql: options.jql,
+      startAt: 0,
+      maxResults: 0,
+      fields: [...DATACENTER_COUNT_FIELDS],
+    },
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
+  });
+
+  const data = response.data;
+  if (
+    !isRecord(data) ||
+    typeof data.total !== 'number' ||
+    !Number.isInteger(data.total) ||
+    data.total < 0
+  ) {
+    throw shapeError(`${where} did not return a non-negative integer "total" property`);
+  }
+  return { count: data.total, approximate: false };
+}
+
+/** The one field a Data Center count names (see {@link countIssuesDataCenter}). */
+const DATACENTER_COUNT_FIELDS: readonly string[] = Object.freeze(['summary']);
 
 // ---------------------------------------------------------------------------
 // 4. Response narrowing

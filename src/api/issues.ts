@@ -59,7 +59,11 @@ import {
   type ClassicPage,
   type PageStopReason,
 } from './shared.js';
-import { shapeDataCenterUser } from './users.js';
+import {
+  refuseAccountIdOnDataCenter,
+  refuseUsernameOnCloud,
+  shapeDataCenterUser,
+} from './users.js';
 import { wikiToText } from './wiki.js';
 import type { JiraUser, ShapedUser } from './users.js';
 
@@ -293,6 +297,29 @@ export interface WorklogsResult extends ClassicListMeta {
 export interface ChangelogResult extends ClassicListMeta {
   /** Oldest first — Jira's order, kept (TOOLS.md §jira_get_changelog). */
   readonly histories: readonly ChangelogEntry[];
+  /**
+   * Data Center only (D114): present when the changelog the issue read embedded
+   * did not cover the whole history, so some of it cannot be read through this
+   * server. Never present on Cloud, whose paginated route reaches every row.
+   */
+  readonly incomplete?: ChangelogIncomplete;
+}
+
+/**
+ * Which part of an issue's history a Data Center changelog read could reach
+ * (D114). Data Center has no paginated changelog route; its history comes
+ * embedded in `GET /issue/{key}?expand=changelog`, and when that embedded block
+ * holds fewer histories than its `total`, the rest are out of reach.
+ */
+export interface ChangelogIncomplete {
+  /** The offset of the first history the embedded block held. */
+  readonly reachableStartAt: number;
+  /** One past the offset of the last history the embedded block held. */
+  readonly reachableEndAt: number;
+  /** How many histories the issue has, by Jira's `total`. */
+  readonly total: number;
+  /** An `INCOMPLETE:` sentence the model can repeat. */
+  readonly note: string;
 }
 
 export interface TransitionsResult {
@@ -310,7 +337,8 @@ export interface IssueRequestBase {
   /** Cancellation from the MCP request; stamped onto every request. */
   readonly signal?: AbortSignal;
   /**
-   * Which user dialect the read shaping projects (D106). Absent means `cloud`,
+   * Which user dialect the read shaping projects (D106) — and the shaping of
+   * the comment or worklog a write answers with (D109). Absent means `cloud`,
    * so every existing caller is unchanged; the Data Center adapter passes
    * `datacenter`. It changes how users are recognised and nothing else.
    */
@@ -493,6 +521,105 @@ export async function listChangelog(
     map: (value) => shapeChangelogEntry(value, options.deployment),
   });
   return { ...page.meta, histories: page.items };
+}
+
+/**
+ * {@link listChangelog} on Jira Data Center — the history embedded in
+ * `GET /rest/api/2/issue/{issueIdOrKey}?expand=changelog&fields=` (D114).
+ *
+ * Data Center has no `/issue/{key}/changelog` route (it is Cloud-only), so the
+ * history is read the long-standing way: embedded in an issue read, with
+ * `fields=` asking for no fields beside it. The embedded block is one window,
+ * `[startAt, startAt + histories.length)` of `total`; the caller's `startAt` /
+ * `maxResults` page INSIDE that window, client-side, so the result keeps the
+ * Cloud shape and `nextStartAt` means the same thing. Each call re-reads the
+ * issue: the window is not cached between pages.
+ *
+ * Truncation is never silent: when the window does not cover `[0, total)`, the
+ * result carries {@link ChangelogIncomplete} with an `INCOMPLETE:` note naming
+ * the reachable range, and paging stops at the window's end.
+ *
+ * Authors take the Data Center projection (name/key/displayName — no email, no
+ * accountId); items pass through as on Cloud. UNVERIFIED: whether a Data Center
+ * host caps the embedded block, and that `fields=` means "no fields" there.
+ */
+export async function listChangelogDataCenter(
+  options: ListChangelogOptions,
+): Promise<ChangelogResult> {
+  const startAt = normalizeStartAt(options.startAt);
+  const pageSize = normalizePageSize(options.maxResults ?? DEFAULT_CHANGELOG_PAGE_SIZE);
+  const response = await send(options, {
+    method: 'GET',
+    root: 'v2',
+    path: issuePath(options.issue),
+    pathTemplate: ISSUE_PATH_TEMPLATE,
+    query: { expand: 'changelog', fields: '' },
+  });
+
+  const data = requireRecord(response.data, 'issue');
+  if (!isRecord(data.changelog)) {
+    throw shapeError(
+      'the issue read embedded no "changelog" object for expand=changelog',
+    );
+  }
+  const block = data.changelog;
+  const rows = block.histories ?? [];
+  if (!isUnknownArray(rows)) {
+    throw shapeError('the embedded changelog has a non-array "histories"');
+  }
+  const windowStart = nonNegativeInteger(block.startAt) ?? 0;
+  const windowEnd = windowStart + rows.length;
+  const declared = nonNegativeInteger(block.total);
+  const total = declared === undefined ? windowEnd : Math.max(declared, windowEnd);
+
+  const pageEnd = Math.min(startAt + pageSize, windowEnd);
+  const histories: ChangelogEntry[] = [];
+  for (let offset = Math.max(startAt, windowStart); offset < pageEnd; offset += 1) {
+    const entry = shapeChangelogEntry(rows[offset - windowStart], 'datacenter');
+    if (entry !== undefined) histories.push(entry);
+  }
+  const more = startAt + pageSize < windowEnd;
+  const complete = windowStart === 0 && windowEnd >= total;
+
+  return {
+    histories,
+    pages: 1,
+    stopReason: more ? 'max_pages' : 'exhausted',
+    partial: more,
+    startAt,
+    maxResults: pageSize,
+    total,
+    ...(more ? { nextStartAt: startAt + pageSize } : {}),
+    ...(complete
+      ? {}
+      : {
+          incomplete: {
+            reachableStartAt: windowStart,
+            reachableEndAt: windowEnd,
+            total,
+            note: incompleteChangelogNote(windowStart, windowEnd, total),
+          },
+        }),
+  };
+}
+
+function incompleteChangelogNote(start: number, end: number, total: number): string {
+  const held =
+    end === start
+      ? 'none of them'
+      : `only histories ${String(start)}–${String(end - 1)} (0-based, oldest first)`;
+  return (
+    `INCOMPLETE: this issue has ${String(total)} change histories, and Jira Data ` +
+    `Center embedded ${held} in the issue read. Data Center has no paginated ` +
+    'changelog route, so the rest cannot be read through this server; do not ' +
+    'present this history as complete.'
+  );
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 /**
@@ -684,20 +811,41 @@ export type UpdateCommentOptions = IssueRequestBase & UpdateCommentInput & Budge
 
 export interface AssignIssueInput {
   readonly issue: string;
-  /** The accountId to assign to. Mutually exclusive with `unassign` (CC-22). */
+  /**
+   * The accountId to assign to (Jira Cloud). Mutually exclusive with `username`
+   * and `unassign` (CC-22); refused on Data Center (D111).
+   */
   readonly accountId?: string;
-  /** `true` sends `accountId: null`, which is how Jira clears an assignee. */
+  /**
+   * The username to assign to — Jira Data Center only (D111). Refused on Cloud,
+   * which identifies users by accountId only.
+   */
+  readonly username?: string;
+  /** `true` sends an explicit null, which is how Jira clears an assignee. */
   readonly unassign?: boolean;
 }
 
 export type AssignIssueOptions = IssueRequestBase & AssignIssueInput & BudgetGuard;
 
-export interface AssignIssueResult {
+/** The result of an assignment on Jira Cloud. */
+export interface CloudAssignIssueResult {
   readonly issue: string;
   /** `null` when the issue was unassigned. */
   readonly accountId: string | null;
+  readonly username?: never;
   readonly assigned: true;
 }
+
+/** The result of an assignment on Jira Data Center (D111): a username, not an accountId. */
+export interface DataCenterAssignIssueResult {
+  readonly issue: string;
+  /** `null` when the issue was unassigned. */
+  readonly username: string | null;
+  readonly accountId?: never;
+  readonly assigned: true;
+}
+
+export type AssignIssueResult = CloudAssignIssueResult | DataCenterAssignIssueResult;
 
 export interface AddWorklogInput {
   readonly issue: string;
@@ -932,6 +1080,23 @@ export function assignIssueRequest(input: AssignIssueInput): JiraRequestSpec {
 }
 
 /**
+ * {@link assignIssueRequest} on Jira Data Center (D111) —
+ * `PUT /rest/api/2/issue/{issueIdOrKey}/assignee` with `{ "name": … }`, and an
+ * explicit `{ "name": null }` to unassign.
+ */
+export function assignIssueDataCenterRequest(input: AssignIssueInput): JiraRequestSpec {
+  const name = resolveDataCenterAssignee(input);
+  return {
+    method: 'PUT',
+    root: 'v2',
+    path: issuePath(input.issue, '/assignee'),
+    pathTemplate: ISSUE_ASSIGNEE_PATH_TEMPLATE,
+    // Explicit null for the same reason as on Cloud.
+    body: { name },
+  };
+}
+
+/**
  * CC-23 — the worklog POST. `started` is formatted with an EXPLICIT offset taken
  * from `utcOffsetMinutes`; Jira rejects a `Z` suffix on this field, so
  * {@link formatJiraTimestamp} can never produce one.
@@ -1045,7 +1210,7 @@ export async function transitionIssue(
 /** Add a comment — `POST /rest/api/3/issue/{issueIdOrKey}/comment`. */
 export async function addComment(options: AddCommentOptions): Promise<IssueComment> {
   const response = await send(options, addCommentRequest(options));
-  const comment = shapeComment(response.data);
+  const comment = shapeComment(response.data, undefined, options.deployment);
   if (comment === undefined) throw shapeError('the created comment has no string "id"');
   return comment;
 }
@@ -1064,7 +1229,7 @@ export async function updateComment(
   options: UpdateCommentOptions,
 ): Promise<IssueComment> {
   const response = await send(options, updateCommentRequest(options));
-  const comment = shapeComment(response.data);
+  const comment = shapeComment(response.data, undefined, options.deployment);
   if (comment === undefined) throw shapeError('the updated comment has no string "id"');
   return comment;
 }
@@ -1080,6 +1245,18 @@ export async function assignIssue(
   const accountId = resolveAssignee(options);
   await send(options, assignIssueRequest(options));
   return { issue: options.issue, accountId, assigned: true };
+}
+
+/**
+ * {@link assignIssue} on Jira Data Center (D111) — the user is a username. The
+ * same idempotency holds; UNVERIFIED like the rest of the adapter.
+ */
+export async function assignIssueDataCenter(
+  options: AssignIssueOptions,
+): Promise<AssignIssueResult> {
+  const username = resolveDataCenterAssignee(options);
+  await send(options, assignIssueDataCenterRequest(options));
+  return { issue: options.issue, username, assigned: true };
 }
 
 /**
@@ -1104,7 +1281,7 @@ export async function addWorklog(options: AddWorklogOptions): Promise<IssueWorkl
   }
 
   const response = await send(options, addWorklogRequest({ ...options, startedAt }));
-  const worklog = shapeWorklog(response.data);
+  const worklog = shapeWorklog(response.data, options.deployment);
   if (worklog === undefined) throw shapeError('the created worklog has no string "id"');
   return worklog;
 }
@@ -1329,9 +1506,39 @@ export function shapeIssueFields(
       out[key] = wikiToText(entry);
     } else if (key === 'issuelinks') out[key] = shapeIssueLinks(entry, render, user);
     else if (key === 'parent') out[key] = shapeLinkedIssue(entry) ?? null;
-    else out[key] = shapeValue(entry, render, 0, user);
+    else if (wiki && Object.hasOwn(EMBEDDED_WIKI_PAGES, key)) {
+      out[key] = shapeValue(flattenEmbeddedWiki(entry, key), render, 0, user);
+    } else out[key] = shapeValue(entry, render, 0, user);
   }
   return out;
+}
+
+/**
+ * The embedded pages a default issue read carries on Data Center, and the
+ * wiki-markup text field of each row: `fields.comment.comments[].body` and
+ * `fields.worklog.worklogs[].comment` (CC-298). The standalone reads flatten
+ * the same fields (CC-274); without this the same comment read through
+ * `jira_get_issue` came back as raw markup.
+ */
+const EMBEDDED_WIKI_PAGES: Readonly<Record<string, readonly [string, string]>> = {
+  comment: ['comments', 'body'],
+  worklog: ['worklogs', 'comment'],
+};
+
+function flattenEmbeddedWiki(entry: unknown, key: string): unknown {
+  const [list, text] = EMBEDDED_WIKI_PAGES[key] ?? ['', ''];
+  const page = asRecord(entry);
+  const rows = page?.[list];
+  if (page === undefined || !Array.isArray(rows)) return entry;
+  return {
+    ...page,
+    [list]: rows.map((row: unknown) => {
+      const record = asRecord(row);
+      return record !== undefined && typeof record[text] === 'string'
+        ? { ...record, [text]: wikiToText(record[text]) }
+        : row;
+    }),
+  };
 }
 
 /**
@@ -1818,8 +2025,12 @@ function mergeExtraFields(
   return out;
 }
 
-/** CC-22 — `accountId` and `unassign` are mutually exclusive, and one is required. */
+/**
+ * CC-22 — `accountId` and `unassign` are mutually exclusive, and one is
+ * required. A `username` is refused first: Cloud has none (D111).
+ */
 function resolveAssignee(input: AssignIssueInput): string | null {
+  refuseUsernameOnCloud(input.username);
   const unassign = input.unassign === true;
   const named = input.accountId !== undefined && input.accountId.trim() !== '';
   if (unassign && named) {
@@ -1844,6 +2055,40 @@ function resolveAssignee(input: AssignIssueInput): string | null {
     });
   }
   return requireText(input.accountId ?? '', 'accountId');
+}
+
+/**
+ * CC-22 on Jira Data Center (D111) — `username` and `unassign` are mutually
+ * exclusive, one is required, and an `accountId` is refused first: Data Center
+ * has none.
+ */
+function resolveDataCenterAssignee(input: AssignIssueInput): string | null {
+  refuseAccountIdOnDataCenter(input.accountId);
+  const unassign = input.unassign === true;
+  const named = input.username !== undefined && input.username.trim() !== '';
+  if (unassign && named) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'username and unassign: true were both supplied, so the intended ' +
+        'assignee is ambiguous.',
+      remediation:
+        'Pass username to assign, or unassign: true to clear the assignee — ' +
+        'never both.',
+    });
+  }
+  if (unassign) return null;
+  if (!named) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'An assignment on Jira Data Center needs either a username or unassign: true.',
+      remediation:
+        'Jira Data Center identifies users by username — the `name` its user ' +
+        'fields return.',
+    });
+  }
+  return requireText(input.username ?? '', 'username');
 }
 
 /** Exactly one of `timeSpentSeconds` / `timeSpent`, as TOOLS.md specifies. */

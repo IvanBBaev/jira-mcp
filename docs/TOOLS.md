@@ -272,7 +272,7 @@ to run it.
 | `jira_transition_issue` | `POST .../transitions` | Input: `issue`, `transition` (id **or** name — resolved server-side against the live transition list), `fields?`, `comment?`. An unresolvable name/id returns a `validation` error that **lists the currently valid transitions** — the anti-hallucination path (CC-21). |
 | `jira_add_comment` | `POST .../comment` | Input: `issue`, `body` (text → ADF), `visibility?` (role/group). |
 | `jira_update_comment` | `PUT .../comment/{id}` | Input: `issue`, `commentId` (numeric id from `jira_get_comments`), `body` (text → ADF, or raw ADF), `visibility?`. **Replace semantics**: `body` overwrites the whole comment — CC-31's hazard on a comment, so the description tells the model to read the comment first and resend the complete text. A `commentId` that is not a positive integer is refused before anything is sent (D22). A restriction the comment already carries is not read back; pass `visibility` again to keep it. |
-| `jira_assign_issue` | `PUT .../assignee` | Input: `issue`, `accountId` — or `unassign: true` (sends null). Idempotent. |
+| `jira_assign_issue` | `PUT .../assignee` | Input: `issue`, and exactly one of `accountId` (Cloud), `username` (Data Center, D111) or `unassign: true` (sends null). `username` on Cloud is refused before any request (use `jira_search_users`). Idempotent. |
 | `jira_add_worklog` | `POST .../worklog` | Input: `issue`, `timeSpentSeconds` OR `timeSpent` (e.g. "2h 30m"), `started?` (default: now), `comment?`. `started` is always sent with an explicit offset taken from the authenticated user's Jira timezone, not the host's (D16; `Z` is rejected by Jira — CC-23). |
 | `jira_link_issues` | `POST /rest/api/3/issueLink` | Input: `linkType` (name), `inwardIssue`, `outwardIssue`, `comment?`. Link type names discoverable via `jira_list_link_types` (meta). |
 
@@ -384,8 +384,8 @@ irreversible tier, where destruction pays the tier's full ceremony.
 | Tool | Endpoint | Notes |
 |---|---|---|
 | `jira_list_watchers` | `GET /rest/api/3/issue/{key}/watchers` | Not paginated. Reports `watchCount`, `isWatching` (this server's own account) and the watcher list. Needs "View voters and watchers" on top of "Browse projects": without it Jira answers **200 with the array absent**, so `watchersVisible: false` plus a `note` says the list was WITHHELD, not empty (CC-47). Content-bearing: `_untrusted`. |
-| `jira_add_watcher` | `POST /rest/api/3/issue/{key}/watchers` | Write tier `standard`. Input: `issue`, `accountId`. The body is the accountId as a **bare JSON string**, not an object. Adding an account that already watches is a no-op. Watching on someone else's behalf needs "Manage watchers"; watching yourself does not. |
-| `jira_remove_watcher` | `DELETE /rest/api/3/issue/{key}/watchers?accountId=…` | Write tier `standard`, `destructiveHint: false` (D50). The account travels as a QUERY parameter — this `DELETE` carries no body. Undone exactly by `jira_add_watcher`; no issue content changes. Removing an account that was not watching is a no-op. |
+| `jira_add_watcher` | `POST /rest/api/3/issue/{key}/watchers` | Write tier `standard`. Input: `issue`, and exactly one of `accountId` (Cloud) or `username` (Data Center, D111; refused on Cloud). The body is the accountId as a **bare JSON string**, not an object. Adding an account that already watches is a no-op. Watching on someone else's behalf needs "Manage watchers"; watching yourself does not. |
+| `jira_remove_watcher` | `DELETE /rest/api/3/issue/{key}/watchers?accountId=…` | Write tier `standard`, `destructiveHint: false` (D50). Input as `jira_add_watcher`. The account travels as a QUERY parameter — this `DELETE` carries no body. Undone exactly by `jira_add_watcher`; no issue content changes. Removing an account that was not watching is a no-op. |
 | `jira_add_vote` | `POST /rest/api/3/issue/{key}/votes` | Write tier `standard`. Input: `issue` only — the endpoint takes **no accountId**, so the vote is always the authenticated account's own and voting for someone else is impossible, not merely unimplemented. Jira refuses a vote on an issue this account reported and on a resolved issue. |
 | `jira_remove_vote` | `DELETE /rest/api/3/issue/{key}/votes` | Write tier `standard`, `destructiveHint: false`. Withdraws this server's own vote; other people's votes are untouched and unreachable. Re-cast with `jira_add_vote`. |
 | `jira_list_components` | `GET /rest/api/3/project/{projectIdOrKey}/component` | Classic pagination, one page per call, ≤ 50 rows. Optional `query` substring over name and description. The singular route is the PAGINATED one; `/components` returns every component unbounded and is not used. Content-bearing: `_untrusted`. |
@@ -473,7 +473,7 @@ that can lose content or end something for good (D50).
 
 ## Jira Data Center (preview)
 
-Under `JIRA_DEPLOYMENT=datacenter` (an unverified read-only preview, D107) the
+Under `JIRA_DEPLOYMENT=datacenter` (an unverified preview — reads since D107, a first set of writes since D109, the user writes since D111, mention resolution since D112, the admin and agile writes since D113, the count, changelog and attachment list since D114, the saved filters since D115; 26 reads and 20 writes, 46 tools, since D116) the
 server serves a subset of this catalog; `jira_capabilities` lists it and names
 the rest in `excludedTools` with reason `deployment_unsupported`. Three things
 read differently there, and the tool descriptions above describe Cloud:
@@ -487,6 +487,67 @@ read differently there, and the tool descriptions above describe Cloud:
   Center); `format: "markdown"` is refused (CC-265).
 - **`jira_search`** cursors are `dc1:<offset>` strings — still opaque, still
   passed back verbatim; `reconcileIssues` is refused (CC-267).
+- **`jira_search_users`** (D110) searches by `username` — Data Center matches it
+  against the username, display name and email — and answers with the user
+  projection above, so the `name` it returns is what a Data Center write takes.
+  `issue`/`project` switch to the assignable search as on Cloud (issue wins);
+  `includeEmail: true` is refused as `validation` (CC-307…CC-310).
+- **`jira_list_project_roles`** (D110) reads the same role map; a user actor is
+  `{ type, name, displayName }` with no `accountId`, a group actor is as on
+  Cloud (CC-311).
+- **`jira_count`** (D114) is the classic search's `total`, which is exact: the
+  result says `approximate: false` and carries no `approximate` hint. The
+  description above describes Cloud's estimate (CC-340).
+- **`jira_get_changelog`** (D114) reads the history embedded in the issue
+  (`expand=changelog`) — Data Center has no paginated changelog route — and
+  pages inside it in the Cloud shape, authors in the user projection above.
+  When Jira embedded fewer histories than its `total`, the result carries
+  `incomplete: { reachableStartAt, reachableEndAt, total, note }`: the rest of
+  the history cannot be read through this server, and it must not be presented
+  as complete (CC-342…CC-344).
+- **`jira_list_attachments`** (D114) is the Cloud metadata list with the author
+  in the user projection above. `jira_download_attachment` and
+  `jira_upload_attachment` are not served (CC-345…CC-347).
+- **`jira_list_filters`** and **`jira_get_filter`** (D115) avoid
+  `/filter/search`, which many Data Center releases lack. `jira_get_filter`
+  reads `/rest/api/2/filter/{id}`. `jira_list_filters` reads
+  `/rest/api/2/filter/favourite` — **only your favourite filters**, not every
+  filter you can see — and says so in `scope: { source: "favourites", note }`.
+  `filterName` is applied here (case-insensitive substring), paging is done
+  here over the one response, and `accountId` is refused as `validation`
+  before anything is sent. Owners are in the user projection above; share
+  permissions are never returned (CC-350…CC-357).
+- **`jira_get_create_meta`** (D116) reads only the paged per-project routes
+  Jira Data Center 8.4 added, in the Cloud result shape; the legacy
+  all-projects `createmeta` (removed in Jira 9.0) is never used. On an older
+  host the tool answers `unsupported` naming the 8.4 floor; a 404 that names
+  a missing project or issue type stays `not_found`. Field defaults are not
+  returned, and a user-typed allowed value carries only its username
+  (CC-360…CC-365).
+- **Writes** (D109): `jira_create_issue`, `jira_update_issue`,
+  `jira_transition_issue`, `jira_add_comment`, `jira_update_comment`,
+  `jira_add_worklog` and `jira_link_issues`, behind the same `JIRA_WRITE_MODE`
+  gate. Rich-text arguments are sent as wiki markup — text escaped, markdown
+  rendered, a raw ADF document rendered when wiki markup can express it.
+  `assigneeAccountId`/`reporterAccountId` are refused: Data Center users are
+  usernames — find one with `jira_search_users` and set
+  `fields: { "assignee": { "name": "…" } }` instead. `resolveMentions: true`
+  (D112) resolves `@[Name]` through the Data Center user search and writes
+  `[~username]`, with the Cloud refusals (no match, inactive, ambiguous, more
+  than 20 names); a username wiki markup cannot hold safely is refused, and a
+  mention inside a raw ADF body stays literal text.
+- **User writes** (D111): `jira_assign_issue`, `jira_add_watcher`,
+  `jira_remove_watcher`, `jira_add_vote` and `jira_remove_vote`, behind the
+  same gate. Pass `username` — the `name` `jira_search_users`, a user field or
+  `jira_get_myself` returns — in place of `accountId`, which is refused before any request. The
+  assign and watcher results carry `username` instead of `accountId`.
+- **Admin and agile writes** (D113): `jira_create_component`,
+  `jira_update_component`, `jira_create_version`, `jira_update_version`,
+  `jira_create_sprint`, `jira_start_sprint`, `jira_move_to_sprint` and
+  `jira_move_to_backlog`, behind the same gate, with the Cloud arguments.
+  `leadAccountId` is refused before any request (set a component lead in
+  Jira's project settings). `jira_close_sprint`, the deletes and the bulk
+  tools are not served: none of them can be undone.
 
 ## Counts
 

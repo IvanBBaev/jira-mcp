@@ -190,7 +190,9 @@ issues-write family runs user search before it writes, so those calls need
 `read:jira-user` in addition to `write:jira-work` — the same scope
 `jira_search_users` needs, and already in the default set. Under a narrowed
 scope list, a 403 on a mention-resolving write is this read dependency, not a
-write-scope problem.
+write-scope problem. On Data Center (D112) a PAT carries no scopes; the
+resolving search runs as the PAT's user, so it needs that user's permission to
+browse users (UNVERIFIED — never run against a Data Center host).
 
 Two rules that catch people out:
 
@@ -441,7 +443,7 @@ Contract (D11 in DECISIONS.md):
   Parked by D104 and **un-parked in stages by D106**. Stage 13.2 built the
   settings half — `JIRA_DEPLOYMENT=datacenter`, `JIRA_AUTH_MODE=pat` with
   `JIRA_PAT`, and the PAT resolver on the `bearer` arm (CONFIGURATION.md) — and
-  stage 13.3 a read-only preview that runs only with
+  stages 13.3–13.4 a preview (reads, then a first set of writes) that runs only with
   `JIRA_DATACENTER_PREVIEW=true` (D107, CC-269). Note
   what OAuth changed and what it did not: the bearer *header* is now free —
   `authorizationHeader` switches on `kind` and the `bearer` arm ships — so the

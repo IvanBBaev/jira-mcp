@@ -313,7 +313,7 @@ function escapeBlockStart(line: string): string {
  * someone" into "assigned to". The accountId is at least resolvable via
  * `jira_search_users`.
  */
-function renderMention(node: AdfNode): string {
+export function renderMention(node: AdfNode): string {
   const name = attrString(node, 'text') ?? attrString(node, 'displayName');
   if (name !== undefined) return name.startsWith('@') ? name : `@${name}`;
   const id = attrString(node, 'id') ?? attrString(node, 'accountId');
@@ -1133,7 +1133,7 @@ const CODE_COMPATIBLE_MARKS = new Set(['link', 'annotation']);
  */
 const UNSAFE_WRITE_SCHEME = /^(?:javascript|vbscript|data):/i;
 
-function unsafeHref(href: string): boolean {
+export function unsafeHref(href: string): boolean {
   // eslint-disable-next-line no-control-regex -- stripping them is the point
   return UNSAFE_WRITE_SCHEME.test(href.replace(/[\u0000-\u0020\u007f]+/g, ''));
 }

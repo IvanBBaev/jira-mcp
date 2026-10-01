@@ -120,7 +120,7 @@ export interface CapabilitiesInfo {
   readonly site?: string;
   /**
    * Present only on Jira Data Center (D106): the adapter serving this server is
-   * a read-only preview that has never been verified against a Data Center
+   * a preview (reads, and writes since D109) never verified against a Data Center
    * instance. Absent on Cloud, whose report is unchanged.
    */
   readonly deployment?: {

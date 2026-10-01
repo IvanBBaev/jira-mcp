@@ -775,6 +775,38 @@ test('jira_assign_issue assigns by accountId', async () => {
   assert.deepEqual(lastBody(fake), { accountId: ACCOUNT_ID });
 });
 
+test('CC-321: username is refused on Jira Cloud before any request (D111)', async () => {
+  const fake = createFakeJiraRequest().on(ASSIGNEE_ROUTE, NO_CONTENT);
+
+  const result = await assignIssueTool.handler(
+    { issue: KEY, username: 'jdoe' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(result.error?.message ?? '', /username/);
+  assert.match(result.error?.remediation ?? '', /jira_search_users/);
+  assert.equal(fake.calls.length, 0);
+});
+
+test('CC-322: the assign schema takes exactly one of accountId, username and unassign', () => {
+  for (const [args, pattern] of [
+    [{ accountId: ACCOUNT_ID, username: 'jdoe' }, /ambiguous/],
+    [{ username: 'jdoe', unassign: true }, /mutually exclusive/],
+    [{}, /username/],
+  ] as const) {
+    const parsed = assignIssueTool.input.safeParse({ issue: KEY, ...args });
+    assert.equal(parsed.success, false, JSON.stringify(args));
+    const message = parsed.success ? '' : (parsed.error.issues[0]?.message ?? '');
+    assert.match(message, pattern);
+  }
+  assert.equal(
+    assignIssueTool.input.safeParse({ issue: KEY, username: 'jdoe' }).success,
+    true,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // jira_add_worklog (CC-23 / D16)
 // ---------------------------------------------------------------------------

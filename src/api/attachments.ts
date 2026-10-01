@@ -37,6 +37,7 @@ import { createJiraError } from '../core/errors.js';
 import { MAX_ATTACHMENT_BYTES, encodeSegment } from '../core/http-util.js';
 import type { JiraError, JiraRequestFn, JiraResponse } from '../core/types.js';
 import type { BudgetGuard } from './shared.js';
+import { shapeDataCenterUser } from './users.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants
@@ -68,8 +69,22 @@ export const DEFAULT_ATTACHMENT_MIME = 'application/octet-stream';
 // ---------------------------------------------------------------------------
 
 /** The author of an attachment, narrowed to the two fields anything prints. */
-export interface AttachmentAuthor {
+export type AttachmentAuthor = CloudAttachmentAuthor | DataCenterAttachmentAuthor;
+
+/** On Cloud: the accountId and the display name. */
+export interface CloudAttachmentAuthor {
   readonly accountId: string;
+  readonly displayName?: string;
+}
+
+/**
+ * On Jira Data Center (D114): the username and user key in place of the
+ * accountId Data Center does not have, and the display name — the Data Center
+ * user projection, without its `active` flag. Never an email or an avatar.
+ */
+export interface DataCenterAttachmentAuthor {
+  readonly name?: string;
+  readonly key?: string;
   readonly displayName?: string;
 }
 
@@ -359,9 +374,34 @@ export function requireLocalName(raw: string): string {
 export async function listAttachments(
   options: ListAttachmentsOptions,
 ): Promise<ListAttachmentsResult> {
+  return readIssueAttachments(options, 'v3', toAuthor);
+}
+
+/**
+ * {@link listAttachments} on Jira Data Center —
+ * `GET /rest/api/2/issue/{issueIdOrKey}?fields=attachment` (D114).
+ *
+ * The same route and the same allowlist as Cloud on the v2 root: the `self`,
+ * `content` and `thumbnail` URLs are dropped, and the author takes the Data
+ * Center projection (name/key/displayName — no email, no avatar, no
+ * accountId). Downloads and uploads are not served on Data Center.
+ */
+export async function listAttachmentsDataCenter(
+  options: ListAttachmentsOptions,
+): Promise<ListAttachmentsResult> {
+  return readIssueAttachments(options, 'v2', toDataCenterAuthor);
+}
+
+async function readIssueAttachments(
+  options: ListAttachmentsOptions,
+  root: 'v2' | 'v3',
+  author: (value: unknown) => AttachmentAuthor | undefined,
+): Promise<ListAttachmentsResult> {
   const key = requireIssueKey(options.issueKey);
   const response = await options.jira({
     method: 'GET',
+    // Cloud keeps its request exactly as it was: no `root` (v3 by default).
+    ...(root === 'v2' ? { root } : {}),
     path: `/issue/${encodeSegment(key, 'issue key or id')}`,
     pathTemplate: ISSUE_PATH_TEMPLATE,
     query: { fields: 'attachment' },
@@ -383,7 +423,7 @@ export async function listAttachments(
   return {
     issueKey: readString(body, 'key') ?? key,
     attachments: rows.map((row, index) =>
-      toJiraAttachment(row, `attachment at position ${index}`),
+      toJiraAttachment(row, `attachment at position ${index}`, author),
     ),
   };
 }
@@ -509,7 +549,11 @@ export async function uploadAttachment(
 // ---------------------------------------------------------------------------
 
 /** Narrow one attachment record; `id` and `filename` are the required pair. */
-function toJiraAttachment(row: unknown, what: string): JiraAttachment {
+function toJiraAttachment(
+  row: unknown,
+  what: string,
+  readAuthor: (value: unknown) => AttachmentAuthor | undefined = toAuthor,
+): JiraAttachment {
   const record = requireRecord(row, what);
   const id = readIdentifier(record, 'id');
   if (id === undefined) throw shapeError(`${what} has no "id"`);
@@ -517,7 +561,7 @@ function toJiraAttachment(row: unknown, what: string): JiraAttachment {
   if (filename === undefined) throw shapeError(`${what} has no "filename"`);
 
   const size = record['size'];
-  const author = toAuthor(record['author']);
+  const author = readAuthor(record['author']);
   return {
     id,
     filename,
@@ -529,11 +573,25 @@ function toJiraAttachment(row: unknown, what: string): JiraAttachment {
 }
 
 /** Narrow the author sub-record; anything without an accountId is dropped. */
-function toAuthor(value: unknown): AttachmentAuthor | undefined {
+function toAuthor(value: unknown): CloudAttachmentAuthor | undefined {
   if (!isRecord(value)) return undefined;
   const accountId = readString(value, 'accountId');
   if (accountId === undefined) return undefined;
   return { accountId, ...optionalString(value, 'displayName') };
+}
+
+/**
+ * The Data Center author: the Data Center user allowlist, less `active`. A
+ * record with an accountId, or with neither a name nor a key, is dropped.
+ */
+function toDataCenterAuthor(value: unknown): DataCenterAttachmentAuthor | undefined {
+  const user = shapeDataCenterUser(value);
+  if (user === undefined) return undefined;
+  return {
+    ...(user.name === undefined ? {} : { name: user.name }),
+    ...(user.key === undefined ? {} : { key: user.key }),
+    ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
+  };
 }
 
 // ---------------------------------------------------------------------------

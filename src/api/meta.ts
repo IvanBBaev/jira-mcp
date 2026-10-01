@@ -36,7 +36,9 @@
 //     keys to these payloads constantly.
 //  3. **Errors are propagated, not translated.** A 403 on `/project/{key}` is a
 //     `JiraError` built by `core/http.ts` and it travels out of here untouched —
-//     this ring adds no fallbacks, no empty-list-on-failure, no retry.
+//     this ring adds no fallbacks, no empty-list-on-failure, no retry. The one
+//     exception is the Data Center create metadata (D116): a 404 there is
+//     re-aimed at the Data Center 8.4 floor, and still never falls back.
 //
 // The old monolithic `GET /issue/createmeta` (all projects at once) is
 // deliberately absent: Atlassian deprecated it for performance and JIRA-API.md
@@ -46,8 +48,8 @@
 import { createJiraError } from '../core/errors.js';
 import { encodeSegment } from '../core/http-util.js';
 import {
+  JiraError,
   type JiraDeployment,
-  type JiraError,
   type JiraRequestFn,
   type JiraRequestSpec,
   type JiraResponse,
@@ -712,6 +714,134 @@ export async function listStatusesDataCenter(
         (category === undefined || status.statusCategory === category),
     );
   return wholeList(statuses);
+}
+
+/**
+ * The Data Center release that added the paged create-metadata routes. Older
+ * releases only have the all-projects `GET /issue/createmeta?expand=...`,
+ * which Jira 9.0 removed and this server never calls (D116).
+ */
+const DC_CREATE_META_FLOOR = 'Jira Data Center 8.4';
+
+/**
+ * Re-aim a 404 from a Data Center create-metadata route (D116).
+ *
+ * A host older than 8.4 has no such route, and answers an unknown REST path
+ * with no Jira error messages of its own; that is `unsupported`, because no
+ * project key will ever fix it. A 404 that carries Jira's own messages ("No
+ * project could be found...") is a missing project or issue type and keeps
+ * `not_found`, with the version floor named as the other possibility. Every
+ * other failure passes through untouched, and neither branch falls back to
+ * the legacy route.
+ */
+function asDataCenterCreateMetaError(error: unknown, step: string): unknown {
+  if (!(error instanceof JiraError) || error.httpStatus !== 404) return error;
+  if (error.kind !== 'not_found') return error;
+  const said = error.jiraMessages ?? [];
+  if (said.length === 0) {
+    return createJiraError({
+      kind: 'unsupported',
+      reason:
+        `This Jira host answered 404 for the paged create metadata (${step}) ` +
+        'without a Jira error message, so the route itself is missing.',
+      remediation:
+        `jira_get_create_meta needs ${DC_CREATE_META_FLOOR} or later; the legacy ` +
+        '/issue/createmeta?expand= route is deliberately not used (Jira 9.0 removed it). ' +
+        'Upgrade the host, or read a field set from an existing issue with jira_get_issue.',
+      httpStatus: 404,
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
+      cause: error,
+    });
+  }
+  return createJiraError({
+    kind: 'not_found',
+    reason: `Jira returned HTTP 404 for the create metadata (${step}): ${said.join('; ')}`,
+    remediation:
+      'Check the project key with jira_list_projects and the issue type id with ' +
+      `jira_get_create_meta without issueTypeId. If both are right, the host may be older than ${DC_CREATE_META_FLOOR}, which added this route.`,
+    httpStatus: 404,
+    jiraMessages: said,
+    ...(error.detail === undefined ? {} : { detail: error.detail }),
+    cause: error,
+  });
+}
+
+/** Run a Data Center create-metadata read with its 404 re-aimed (D116). */
+async function dataCenterCreateMeta<T>(step: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw asDataCenterCreateMetaError(error, step);
+  }
+}
+
+/**
+ * {@link listCreateMetaIssueTypes} on Jira Data Center —
+ * `GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes` (8.4+).
+ *
+ * The path matches Cloud's, but the page does not: Data Center wraps the rows
+ * in `values` beside `startAt`/`maxResults`/`total`/`isLast`, where Cloud says
+ * `issueTypes`. So this is a twin, not an `onV2` reuse. A page without a
+ * `values` array is `unexpected_shape`.
+ */
+export function listCreateMetaIssueTypesDataCenter(
+  options: CreateMetaIssueTypesOptions,
+): Promise<ClassicLoopResult<IssueTypeRef>> {
+  const project = pathSegment(options.project, 'project key or id');
+  return dataCenterCreateMeta('the issue type list', () =>
+    runClassic(
+      options,
+      CREATE_META_PAGE_SIZE,
+      (cursor) => ({
+        method: 'GET',
+        root: 'v2',
+        path: `/issue/createmeta/${project}/issuetypes`,
+        pathTemplate: '/issue/createmeta/{projectIdOrKey}/issuetypes',
+        query: { startAt: cursor.startAt, maxResults: cursor.maxResults },
+      }),
+      (response) =>
+        classicPage(response, 'values', 'createmeta issue types', mapIssueType),
+    ),
+  );
+}
+
+/**
+ * {@link getCreateMeta} on Jira Data Center —
+ * `GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}`
+ * (8.4+).
+ *
+ * Rows come in `values`, not `fields`; each row carries the same `fieldId`,
+ * `required`, `schema`, `operations` and `allowedValues` Cloud sends, so the
+ * Cloud field mapper applies. That mapper never reads `defaultValue` and keeps
+ * only `id`/`value`/`name` of an allowed value, so a user-typed field leaks
+ * neither an email nor a user key — a user allowed value keeps its username.
+ */
+export async function getCreateMetaDataCenter(
+  options: CreateMetaOptions,
+): Promise<CreateMetaResult> {
+  const project = pathSegment(options.project, 'project key or id');
+  const issueTypeId = pathSegment(options.issueTypeId, 'issue type id');
+  const loop = await dataCenterCreateMeta('the create screen', () =>
+    runClassic(
+      options,
+      CREATE_META_PAGE_SIZE,
+      (cursor) => ({
+        method: 'GET',
+        root: 'v2',
+        path: `/issue/createmeta/${project}/issuetypes/${issueTypeId}`,
+        pathTemplate: '/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
+        query: { startAt: cursor.startAt, maxResults: cursor.maxResults },
+      }),
+      (response) =>
+        classicPage(response, 'values', 'createmeta fields', mapCreateMetaField),
+    ),
+  );
+  return {
+    ...loop,
+    project: options.project,
+    issueTypeId: options.issueTypeId,
+    required: loop.items.filter((field) => field.required),
+  };
 }
 
 /**

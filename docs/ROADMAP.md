@@ -108,9 +108,21 @@ scope call:
   first: stage 13.1 shipped the port (`api/port.ts`, `ctx.api`), which changes
   nothing on Cloud, stage 13.2 the settings surface (`JIRA_DEPLOYMENT`,
   PAT auth, the context path), and stages 13.3–13.3b a read-only adapter for
-  18 tools with wiki markup flattened to text — an unverified preview that starts only with
-  `JIRA_DATACENTER_PREVIEW=true` (D107). Writes and the remaining reads are
-  still ahead (IMPLEMENTATION-PLAN.md 13.3b, 13.4). The price above is unchanged, and D104's verification
+  18 tools with wiki markup flattened to text, then stage 13.4 seven writes that
+  render their bodies to wiki markup (D109), stage 13.5a two more reads —
+  user search by username and project roles (D110), 20 reads in all — and
+  stage 13.5b the five user writes — assign, add/remove watcher, add/remove
+  vote — by `username` (D111) — stage 13.6a `resolveMentions` written as
+  `[~username]` (D112), stage 13.6b eight reversible admin and
+  agile writes — component, version and sprint create/update/start, and the
+  two issue moves (D113) — stage 13.6c three more reads — the exact
+  count, the embedded changelog and the attachment list (D114) — stage
+  13.7a the two saved-filter reads, the list scoped to your favourites
+  (D115) — and stage 13.7b the create metadata over the paged 8.4+ routes
+  only (D116) — 46 tools in all, 26 reads and 20 writes — an unverified
+  preview that starts only with `JIRA_DATACENTER_PREVIEW=true` (D107). The
+  remaining reads and writes, `jira_close_sprint` among them, wait for a real
+  host (D108, D109, D111, D113, D114, D115, D116). The price above is unchanged, and D104's verification
   condition is carried rather than waived — with no DC host, every DC stage
   ships fail-closed and labelled UNVERIFIED.
 

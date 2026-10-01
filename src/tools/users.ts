@@ -35,7 +35,7 @@ import type { PageStopReason } from '../api/shared.js';
 import {
   DEFAULT_USER_SEARCH_MAX_RESULTS,
   MAX_USER_SEARCH_RESULTS,
-  type JiraUser,
+  type ShapedUser,
 } from '../api/users.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
@@ -108,7 +108,8 @@ const searchUsersInput = toolInput({
     .min(1)
     .describe(
       'A display name, part of one, or an email address. Matched server-side by ' +
-        'Jira. There are no usernames on Cloud, so this is the only thing to search by.',
+        'Jira. There are no usernames on Cloud, so this is the only thing to search by ' +
+        '(on Data Center it also matches the username).',
     ),
   issue: z
     .string()
@@ -153,13 +154,29 @@ const searchUsersInput = toolInput({
 });
 
 /** One directory row, as TOOLS.md §Read shaping defines a user everywhere. */
-interface UserRow {
+type UserRow = CloudUserRow | DataCenterUserRow;
+
+/** A Cloud row: the accountId every other tool takes. */
+interface CloudUserRow {
   readonly accountId: string;
   /** Absent when Jira sent none — omitted, never the string "undefined". */
   readonly displayName?: string;
   readonly active?: boolean;
   /** Present only with `includeEmail: true` AND an email Jira actually sent. */
   readonly emailAddress?: string;
+}
+
+/**
+ * A Jira Data Center row (D110): `name` (the login) and `key` in place of an
+ * accountId, and never an email — the adapter refuses `includeEmail: true`.
+ */
+interface DataCenterUserRow {
+  readonly name?: string;
+  readonly key?: string;
+  readonly displayName?: string;
+  readonly active?: boolean;
+  readonly accountId?: never;
+  readonly emailAddress?: never;
 }
 
 /** Result of {@link searchUsersTool}. */
@@ -182,7 +199,15 @@ interface UserSearchData {
  * (`accountType`, `timeZone`, `locale`, avatars) is dropped, and `emailAddress`
  * survives only when the caller opted in — THREAT-MODEL.md §PII minimization.
  */
-function projectUser(user: JiraUser, includeEmail: boolean): UserRow {
+function projectUser(user: ShapedUser, includeEmail: boolean): UserRow {
+  if (!('accountId' in user)) {
+    return {
+      ...(user.name === undefined ? {} : { name: user.name }),
+      ...(user.key === undefined ? {} : { key: user.key }),
+      ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
+      ...(user.active === undefined ? {} : { active: user.active }),
+    };
+  }
   return {
     accountId: user.accountId,
     ...(user.displayName === undefined ? {} : { displayName: user.displayName }),
@@ -203,9 +228,10 @@ export const searchUsersTool = defineTool<
     'Finds Jira users by display name or email and returns their accountId — the ' +
     'id every other tool takes, since Cloud has no usernames. Pass `issue` or ' +
     '`project` to restrict the answer to people who can be assigned there (issue ' +
-    'wins). Email is personal data: it is dropped unless includeEmail is true, and ' +
-    'a site that masks it says so with the email_hidden hint. One page per call — ' +
-    'when paging.partial is true, call again with startAt = paging.nextStartAt.',
+    'wins). Email is personal data: dropped unless includeEmail is true; a site ' +
+    'that masks it says so with the email_hidden hint. Data Center answers by ' +
+    'name and key, not accountId. One page per call — when paging.partial is ' +
+    'true, call again with startAt = paging.nextStartAt.',
   package: 'users',
   annotations: READ_ANNOTATIONS,
   input: searchUsersInput,
@@ -218,6 +244,7 @@ export const searchUsersTool = defineTool<
         project: args.project,
         maxResults: args.maxResults,
         startAt: args.startAt,
+        includeEmail: args.includeEmail,
       });
 
       const includeEmail = args.includeEmail === true;

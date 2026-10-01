@@ -160,6 +160,20 @@ const accountIdArg = z
   );
 
 /**
+ * D111: the Data Center user identifier. Taken on every deployment — the tools
+ * ring cannot tell them apart — and refused by the Cloud api before any
+ * request, as the Data Center adapter refuses accountId.
+ */
+const usernameArg = z
+  .string()
+  .min(1)
+  .describe(
+    "Jira Data Center only: the user's username — the `name` jira_search_users " +
+      'and user fields return on Data Center. Refused on Jira Cloud, which takes ' +
+      'accountId.',
+  );
+
+/**
  * Ids on this surface are positive integers and are validated again in
  * `api/collab.ts` before any request is built (D22). Typing them as numbers here
  * keeps a component named "Billing" from ever being mistaken for an id. A
@@ -267,16 +281,52 @@ export const listWatchersTool = defineTool<
 // 4. `jira_add_watcher` / `jira_remove_watcher`
 // ---------------------------------------------------------------------------
 
-const watcherWriteInput = writeToolInput({ issue: issueArg, accountId: accountIdArg });
+/**
+ * CC-22's "exactly one intent", for a watcher (D111): accountId on Jira Cloud,
+ * username on Jira Data Center — which one the site takes is the adapter's
+ * call, the schema only refuses both and neither.
+ */
+const watcherWriteInput = writeToolInput({
+  issue: issueArg,
+  accountId: accountIdArg.optional(),
+  username: usernameArg.optional(),
+}).superRefine((value, ctx) => {
+  const named = value.accountId !== undefined;
+  const byUsername = value.username !== undefined;
+  if (named && byUsername) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['username'],
+      message:
+        'accountId and username are mutually exclusive — the intended watcher ' +
+        'would be ambiguous. Pass exactly one: accountId on Jira Cloud, username ' +
+        'on Jira Data Center.',
+    });
+  }
+  if (!named && !byUsername) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accountId'],
+      message:
+        'A watcher write needs a user: pass accountId (Jira Cloud) or username ' +
+        '(Jira Data Center).',
+    });
+  }
+});
 
-/** Result of the two watcher writes. Jira answers 204 with no body. */
-interface WatcherChangeData {
+/**
+ * Result of the two watcher writes. Jira answers 204 with no body. The user is
+ * the accountId on Cloud and the username on Data Center (D111), never both.
+ */
+type WatcherChangeData = (
+  | { readonly accountId: string; readonly username?: never }
+  | { readonly username: string; readonly accountId?: never }
+) & {
   readonly issue: string;
-  readonly accountId: string;
   readonly watching: boolean;
   /** The upstream status (204 in practice); carried for the journal. */
   readonly status: number;
-}
+};
 
 export const addWatcherTool = defineTool<
   z.infer<typeof watcherWriteInput>,
@@ -289,7 +339,7 @@ export const addWatcherTool = defineTool<
     'an account that already watches changes nothing. Adding SOMEONE ELSE needs ' +
     'the "Manage watchers" permission; adding yourself does not. Reversible with ' +
     'jira_remove_watcher, which is why this is a standard write rather than a ' +
-    'destructive one.',
+    'destructive one. On Jira Data Center pass username in place of accountId.',
   package: 'collab',
   // Idempotent: adding a watcher who is already watching is a no-op upstream,
   // and nothing is overwritten or lost either way.
@@ -302,6 +352,7 @@ export const addWatcherTool = defineTool<
         ...callBase(ctx),
         issue: args.issue,
         accountId: args.accountId,
+        username: args.username,
       });
       return ok<WatcherChangeData>({ ...result, watching: true });
     });
@@ -319,7 +370,8 @@ export const removeWatcherTool = defineTool<
     'is deleted: the watch is a link, jira_add_watcher puts it back with the same ' +
     'accountId, and no issue content changes. Removing SOMEONE ELSE needs the ' +
     '"Manage watchers" permission; removing yourself does not. Removing an account ' +
-    'that was not watching changes nothing.',
+    'that was not watching changes nothing. On Jira Data Center pass username in ' +
+    'place of accountId.',
   package: 'collab',
   // NOT destructive: the only effect is a link that jira_add_watcher restores
   // exactly. `destructiveHint: true` is reserved for writes that lose content.
@@ -332,6 +384,7 @@ export const removeWatcherTool = defineTool<
         ...callBase(ctx),
         issue: args.issue,
         accountId: args.accountId,
+        username: args.username,
       });
       return ok<WatcherChangeData>({ ...result, watching: false });
     });

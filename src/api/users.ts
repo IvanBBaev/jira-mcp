@@ -37,6 +37,7 @@ import type {
   QueryParams,
 } from '../core/types.js';
 import type { MentionTarget } from './adf.js';
+import { isWikiMentionUsername } from './wiki-writer.js';
 import {
   budgetOf,
   fetchAll,
@@ -135,6 +136,38 @@ export interface DataCenterUser {
 
 /** A user on a read result, in whichever dialect the site speaks. */
 export type ShapedUser = JiraUser | DataCenterUser;
+
+/**
+ * D111 — a `username` sent to Jira Cloud. Cloud identifies users by accountId
+ * only, so a username names nobody there; it is refused before any request
+ * exists. The tools ring cannot tell the deployments apart, so this refusal
+ * lives in every Cloud function that takes a user.
+ */
+export function refuseUsernameOnCloud(value: string | undefined): void {
+  if (value === undefined) return;
+  throw createJiraError({
+    kind: 'validation',
+    reason:
+      'username is a Jira Data Center identifier, and Jira Cloud identifies users by accountId only. Nothing was sent.',
+    remediation:
+      'Drop username and pass accountId; jira_search_users turns a name or an email fragment into one.',
+  });
+}
+
+/**
+ * D111 — an `accountId` sent to Jira Data Center, which has none: its users are
+ * `name` + `key`. Refused before any request exists.
+ */
+export function refuseAccountIdOnDataCenter(value: string | undefined): void {
+  if (value === undefined) return;
+  throw createJiraError({
+    kind: 'validation',
+    reason:
+      'accountId is an Atlassian Cloud identifier, and Jira Data Center has no accountIds: its users are identified by username. Nothing was sent.',
+    remediation:
+      'Drop accountId and pass username — the `name` that user fields (assignee, reporter, watchers, jira_get_myself) return on Data Center.',
+  });
+}
 
 /**
  * A Jira Data Center user object, or `undefined` when this record is not one
@@ -236,14 +269,25 @@ export interface SearchUsersBase {
   readonly maxPages?: number;
   /** Cancellation from the MCP request. */
   readonly signal?: AbortSignal;
+  /**
+   * Whether the caller will show `emailAddress`. {@link searchUsers} ignores it
+   * — dropping the email is the tool ring's job there — but the Data Center
+   * twin refuses `true` before anything is sent (D110): its rows go through the
+   * Data Center allowlist, which keeps no email, so the promise could not be
+   * kept.
+   */
+  readonly includeEmail?: boolean;
 }
 
 /** Options for {@link searchUsers}. */
 export type SearchUsersOptions = SearchUsersBase & BudgetGuard;
 
-/** What {@link searchUsers} returns: rows plus everything a hint is derived from. */
-export interface SearchUsersResult {
-  readonly users: readonly JiraUser[];
+/**
+ * What {@link searchUsers} returns: rows plus everything a hint is derived from.
+ * `U` is {@link DataCenterUser} only from {@link searchUsersDataCenter} (D110).
+ */
+export interface SearchUsersResult<U extends ShapedUser = JiraUser> {
+  readonly users: readonly U[];
   /** Which endpoint answered (O-5). */
   readonly scope: UserSearchScope;
   /** How many pages were actually read. */
@@ -392,17 +436,93 @@ export async function getMyselfDataCenter(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a human name or email fragment to `accountId`s.
+ * Resolve a human name or email fragment to `accountId`s — see
+ * {@link runUserSearch} for the endpoints, windows and stop rules.
+ */
+export async function searchUsers(
+  options: SearchUsersOptions,
+): Promise<SearchUsersResult> {
+  return runUserSearch(options, {
+    queryParam: 'query',
+    toUser: (row, what) => {
+      const user = toJiraUser(row, what);
+      return { user, emailHidden: user.emailAddress === undefined };
+    },
+  });
+}
+
+/**
+ * The user search on Jira Data Center (D110) — `GET /rest/api/2/user/search`
+ * and `GET /rest/api/2/user/assignable/search`. UNVERIFIED, like the rest of
+ * the adapter.
  *
+ * Same inputs, windows and caps as {@link searchUsers}; three differences:
+ *
+ *  - the lookup parameter is `username` (it matches the username, the display
+ *    name and the email address) — Data Center has no `query` parameter;
+ *  - the rows are Data Center users (`name` + `key`, no `accountId`), narrowed
+ *    by {@link shapeDataCenterUser}, so no email, avatar or time zone survives;
+ *  - `includeEmail: true` is refused before anything is sent, because the
+ *    allowlist keeps no email to include.
+ */
+export async function searchUsersDataCenter(
+  options: SearchUsersOptions,
+): Promise<SearchUsersResult<DataCenterUser>> {
+  if (options.includeEmail === true) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'includeEmail is not available on Jira Data Center in this version of the server: its user rows carry name, key, displayName and active only.',
+      remediation: 'Omit includeEmail and identify the user by name.',
+    });
+  }
+  return runUserSearch(options, {
+    root: 'v2',
+    queryParam: 'username',
+    toUser: (row, what) => {
+      const user = shapeDataCenterUser(row);
+      if (user === undefined) {
+        throw shapeError(
+          `${what} is not a Data Center user (a string "displayName" with a "name" or "key", and no "accountId")`,
+        );
+      }
+      return {
+        user,
+        emailHidden:
+          !isRecord(row) ||
+          typeof row['emailAddress'] !== 'string' ||
+          row['emailAddress'] === '',
+      };
+    },
+  });
+}
+
+/** What differs between the Cloud and the Data Center user search. */
+interface UserSearchDialect<U extends ShapedUser> {
+  /** The platform root; the Cloud default when absent. */
+  readonly root?: 'v2';
+  /** The name of the lookup parameter. */
+  readonly queryParam: 'query' | 'username';
+  /** One row, narrowed, plus whether it disclosed an email (CC-19). */
+  readonly toUser: (row: unknown, what: string) => UserRowRead<U>;
+}
+
+interface UserRowRead<U extends ShapedUser> {
+  readonly user: U;
+  readonly emailHidden: boolean;
+}
+
+/**
  * Passing `issueKey` or `project` switches to the assignable-user endpoint
  * (O-5) — same inputs, same output shape, narrower candidate set. Both
  * endpoints answer with a bare JSON array and no `total`/`isLast`. On the
  * plain endpoint a short page ends the sweep; the assignable one filters a
  * window of candidates, so there only an empty window ends it (CC-201).
  */
-export async function searchUsers(
+async function runUserSearch<U extends ShapedUser>(
   options: SearchUsersOptions,
-): Promise<SearchUsersResult> {
+  dialect: UserSearchDialect<U>,
+): Promise<SearchUsersResult<U>> {
   const query = requireQuery(options.query);
   const maxResults = resolveMaxResults(options.maxResults);
   // The scope follows the parameter that will actually be SENT, not the one that
@@ -419,9 +539,10 @@ export async function searchUsers(
     sentWindow = cursor;
     return {
       method: 'GET',
+      ...(dialect.root === undefined ? {} : { root: dialect.root }),
       path,
       query: {
-        query,
+        [dialect.queryParam]: query,
         ...scopeQuery,
         startAt: cursor.startAt,
         maxResults: cursor.maxResults,
@@ -429,11 +550,11 @@ export async function searchUsers(
     };
   };
 
-  const loop = await fetchAll<JiraUser>({
+  const loop = await fetchAll<UserRowRead<U>>({
     jira: options.jira,
     request,
     readPage: (response) => {
-      const page = readUserPage(response, path);
+      const page = readUserPage(response, path, dialect.toUser);
       if (scope !== 'assignable' || sentWindow === undefined) return page;
       return assignableWindow(page, sentWindow);
     },
@@ -445,7 +566,7 @@ export async function searchUsers(
   });
 
   return {
-    users: loop.items,
+    users: loop.items.map((row) => row.user),
     scope,
     pages: loop.pages,
     maxPages,
@@ -454,7 +575,7 @@ export async function searchUsers(
     ...(loop.nextStartAt === undefined ? {} : { nextStartAt: loop.nextStartAt }),
     maxResults: maxResults.value,
     clamped: maxResults.clamped,
-    emailHidden: loop.items.some((user) => user.emailAddress === undefined),
+    emailHidden: loop.items.some((row) => row.emailHidden),
   };
 }
 
@@ -501,6 +622,88 @@ function assignableScopeQuery(options: SearchUsersBase): QueryParams {
 export async function resolveMentionNames(
   options: ResolveMentionNamesOptions,
 ): Promise<ReadonlyMap<string, MentionTarget>> {
+  return resolveMentionsIn(options, CLOUD_DIRECTORY);
+}
+
+/**
+ * D112 — {@link resolveMentionNames} on Jira Data Center: the same rules, caps
+ * and refusals (CC-106, CC-107, CC-112, CC-113), over
+ * {@link searchUsersDataCenter} (`GET /rest/api/2/user/search?username=`), and
+ * each target's `id` is the user's `name` — the username `[~name]` takes —
+ * rather than an accountId. Data Center has no app accounts, so every row is a
+ * human candidate. A chosen user with no `name`, or with a name that
+ * {@link isWikiMentionUsername} refuses, is a `validation` error: it cannot be
+ * mentioned by wiki markup, and a rewritten name would mention someone else
+ * (CC-324).
+ */
+export async function resolveMentionNamesDataCenter(
+  options: ResolveMentionNamesOptions,
+): Promise<ReadonlyMap<string, MentionTarget>> {
+  return resolveMentionsIn(options, DATA_CENTER_DIRECTORY);
+}
+
+/**
+ * Where one dialect's mention candidates come from and how they read. The
+ * resolution rules themselves are shared, so Cloud and Data Center cannot
+ * disagree about what is ambiguous (D112).
+ */
+interface MentionDirectory<U extends ShapedUser> {
+  readonly search: (
+    options: ResolveMentionNamesOptions,
+    name: string,
+  ) => Promise<{ readonly users: readonly U[]; readonly partial: boolean }>;
+  /** An account that cannot be a mention candidate at all (a bot). */
+  readonly isApp: (user: U) => boolean;
+  /** The identifier an ambiguity refusal lists next to the display name. */
+  readonly label: (user: U) => string;
+  /** The chosen user as a mention target, or a refusal. */
+  readonly target: (user: U, name: string) => MentionTarget;
+}
+
+const CLOUD_DIRECTORY: MentionDirectory<JiraUser> = {
+  search: (options, name) =>
+    searchUsers({
+      jira: options.jira,
+      query: name,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    }),
+  isApp: (user) => user.accountType === 'app',
+  label: (user) => user.accountId,
+  target: (user) => toMentionTarget(user),
+};
+
+const DATA_CENTER_DIRECTORY: MentionDirectory<DataCenterUser> = {
+  search: (options, name) =>
+    searchUsersDataCenter({
+      jira: options.jira,
+      query: name,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    }),
+  isApp: () => false,
+  label: (user) => user.name ?? user.key ?? '(no username)',
+  target: (user, name) => {
+    const username = user.name;
+    if (username === undefined || !isWikiMentionUsername(username)) {
+      throw createJiraError({
+        kind: 'validation',
+        reason:
+          username === undefined
+            ? `The mention @[${name}] matched a Jira Data Center user with no username, and a wiki mention needs one.`
+            : `The mention @[${name}] matched the Jira Data Center user ${JSON.stringify(username)}, whose username cannot be written as a wiki mention safely (only letters, digits and . _ - @ + are).`,
+        remediation: 'Write the name as plain text instead of an @[...] mention.',
+      });
+    }
+    return {
+      id: username,
+      ...(user.displayName === undefined ? {} : { text: `@${user.displayName}` }),
+    };
+  },
+};
+
+async function resolveMentionsIn<U extends ShapedUser>(
+  options: ResolveMentionNamesOptions,
+  directory: MentionDirectory<U>,
+): Promise<ReadonlyMap<string, MentionTarget>> {
   const groups = groupNames(options.names);
 
   if (groups.length > MAX_MENTION_NAMES) {
@@ -513,7 +716,7 @@ export async function resolveMentionNames(
 
   const resolved = new Map<string, MentionTarget>();
   for (const group of groups) {
-    const target = await resolveOneMention(options, group.query);
+    const target = await resolveOneMention(options, group.query, directory);
     for (const spelling of group.spellings) resolved.set(spelling, target);
   }
   return resolved;
@@ -548,20 +751,17 @@ function groupNames(names: readonly string[]): readonly MentionNameGroup[] {
 }
 
 /** Resolve one name to its unique mention target, or refuse (CC-106/CC-107). */
-async function resolveOneMention(
+async function resolveOneMention<U extends ShapedUser>(
   options: ResolveMentionNamesOptions,
   name: string,
+  directory: MentionDirectory<U>,
 ): Promise<MentionTarget> {
-  const page = await searchUsers({
-    jira: options.jira,
-    query: name,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
+  const page = await directory.search(options, name);
 
   // CC-113 — exclusion happens BEFORE any counting or tiebreak: an `app` row is
   // a bot and an inactive account cannot be notified, so neither may claim an
   // exact-name win nor pad an ambiguity count.
-  const humans = page.users.filter((user) => user.accountType !== 'app');
+  const humans = page.users.filter((user) => !directory.isApp(user));
   const candidates = humans.filter((user) => user.active !== false);
   const [firstCandidate, secondCandidate] = candidates;
 
@@ -587,17 +787,17 @@ async function resolveOneMention(
   const exact = candidates.filter((user) => user.displayName?.toLowerCase() === fold);
   const [firstExact, secondExact] = exact;
   if (firstExact !== undefined && secondExact === undefined) {
-    return toMentionTarget(firstExact);
+    return directory.target(firstExact, name);
   }
 
   // A lone partial match resolves — unless the page is full: `partial` means
   // the directory holds matches this call never saw, and resolving from a
   // truncated view would be a guess (CC-107).
   if (firstExact === undefined && secondCandidate === undefined && !page.partial) {
-    return toMentionTarget(firstCandidate);
+    return directory.target(firstCandidate, name);
   }
 
-  throw ambiguousMentionError(name, candidates, page.partial);
+  throw ambiguousMentionError(name, candidates, page.partial, directory);
 }
 
 /** `text` is `'@' + displayName`; omitted when the tenant blanked the name. */
@@ -609,14 +809,17 @@ function toMentionTarget(user: JiraUser): MentionTarget {
 }
 
 /** CC-107 — the refusal that teaches: candidates first, then the way out. */
-function ambiguousMentionError(
+function ambiguousMentionError<U extends ShapedUser>(
   name: string,
-  candidates: readonly JiraUser[],
+  candidates: readonly U[],
   partial: boolean,
+  directory: MentionDirectory<U>,
 ): JiraError {
   const listed = candidates
     .slice(0, MAX_MENTION_CANDIDATES_LISTED)
-    .map((user) => `${user.displayName ?? '(no display name)'} (${user.accountId})`)
+    .map(
+      (user) => `${user.displayName ?? '(no display name)'} (${directory.label(user)})`,
+    )
     .join(', ');
   const unlisted =
     candidates.length - Math.min(candidates.length, MAX_MENTION_CANDIDATES_LISTED);
@@ -638,13 +841,17 @@ function ambiguousMentionError(
  * is no envelope, so `total`, `isLast` and the echoed `startAt` are all absent
  * and the loop relies on a short page to stop.
  */
-function readUserPage(response: JiraResponse, path: string): ClassicPage<JiraUser> {
+function readUserPage<T>(
+  response: JiraResponse,
+  path: string,
+  toRow: (row: unknown, what: string) => T,
+): ClassicPage<T> {
   const rows = response.data;
   if (!Array.isArray(rows)) {
     throw shapeError(`${path} did not return a JSON array of users`);
   }
   return {
-    items: rows.map((row, index) => toJiraUser(row, `user at position ${index}`)),
+    items: rows.map((row, index) => toRow(row, `user at position ${index}`)),
   };
 }
 
@@ -655,10 +862,7 @@ function readUserPage(response: JiraResponse, path: string): ClassicPage<JiraUse
  * applied page size, which advances the offset past the whole window, and only
  * an empty window or the documented cap at the thousandth user ends the sweep.
  */
-function assignableWindow(
-  page: ClassicPage<JiraUser>,
-  sent: ClassicCursor,
-): ClassicPage<JiraUser> {
+function assignableWindow<T>(page: ClassicPage<T>, sent: ClassicCursor): ClassicPage<T> {
   const windowEnd = sent.startAt + sent.maxResults;
   return {
     ...page,

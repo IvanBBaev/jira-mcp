@@ -76,7 +76,11 @@ import {
   type ClassicLoopResult,
   type ClassicPage,
 } from './shared.js';
-import { shapeDataCenterUser } from './users.js';
+import {
+  refuseAccountIdOnDataCenter,
+  refuseUsernameOnCloud,
+  shapeDataCenterUser,
+} from './users.js';
 import type { DataCenterUser } from './users.js';
 
 // ---------------------------------------------------------------------------
@@ -197,8 +201,16 @@ export type ListWatchersOptions = CollabOptions & {
 
 /** Options for {@link addWatcher} and {@link removeWatcher}. */
 export type WatcherOptions = ListWatchersOptions & {
-  /** The account to add or remove. accountId only — never a username (CC-19). */
-  readonly accountId: string;
+  /**
+   * The account to add or remove on Jira Cloud — accountId only, never a
+   * username (CC-19). Refused on Data Center (D111).
+   */
+  readonly accountId?: string;
+  /**
+   * The user to add or remove on Jira Data Center (D111), by username. Refused
+   * on Cloud, which identifies users by accountId only.
+   */
+  readonly username?: string;
 };
 
 /** Options for {@link addVote} and {@link removeVote} — the vote is always yours. */
@@ -364,9 +376,22 @@ export interface WatcherList {
 }
 
 /** The result of a watcher write. Jira answers 204 with no body. */
-export interface WatcherChange {
+export type WatcherChange = CloudWatcherChange | DataCenterWatcherChange;
+
+/** The result of a watcher write on Jira Cloud. Jira answers 204 with no body. */
+export interface CloudWatcherChange {
   readonly issue: string;
   readonly accountId: string;
+  readonly username?: never;
+  /** The upstream status (204 in practice); carried for the journal. */
+  readonly status: number;
+}
+
+/** The result of a watcher write on Jira Data Center (D111): a username. */
+export interface DataCenterWatcherChange {
+  readonly issue: string;
+  readonly username: string;
+  readonly accountId?: never;
   /** The upstream status (204 in practice); carried for the journal. */
   readonly status: number;
 }
@@ -477,6 +502,11 @@ export interface RoleActor {
   /** `atlassian-user-role-actor` | `atlassian-group-role-actor`. */
   readonly type: string;
   readonly accountId?: string;
+  /**
+   * Jira Data Center only (D110): a user actor's `name`, in place of the
+   * accountId Data Center does not have. Never set on Cloud or on a group.
+   */
+  readonly name?: string;
   readonly displayName?: string;
 }
 
@@ -826,7 +856,11 @@ export async function getProjectRole(
       pathTemplate: PROJECT_ROLE_PATH_TEMPLATE,
     }),
   );
-  return mapRoleDetail(requireRecord(response.data, 'project role'), roleId);
+  return mapRoleDetail(
+    requireRecord(response.data, 'project role'),
+    roleId,
+    options.deployment,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -848,7 +882,7 @@ export async function getProjectRole(
  */
 export async function addWatcher(options: WatcherOptions): Promise<WatcherChange> {
   const issue = issuePath(options.issue, '/watchers');
-  const accountId = requireText(options.accountId, 'accountId', ACCOUNT_ID_REMEDIATION);
+  const accountId = cloudWatcher(options);
   const response = await collabCall(WATCH_WRITE_HINT, () =>
     options.jira({
       method: 'POST',
@@ -873,7 +907,7 @@ export async function addWatcher(options: WatcherOptions): Promise<WatcherChange
  */
 export async function removeWatcher(options: WatcherOptions): Promise<WatcherChange> {
   const issue = issuePath(options.issue, '/watchers');
-  const accountId = requireText(options.accountId, 'accountId', ACCOUNT_ID_REMEDIATION);
+  const accountId = cloudWatcher(options);
   const response = await collabCall(WATCH_WRITE_HINT, () =>
     options.jira({
       method: 'DELETE',
@@ -884,6 +918,53 @@ export async function removeWatcher(options: WatcherOptions): Promise<WatcherCha
     }),
   );
   return { issue: options.issue, accountId, status: response.status };
+}
+
+/**
+ * {@link addWatcher} on Jira Data Center (D111) —
+ * `POST /rest/api/2/issue/{issueIdOrKey}/watchers` with the USERNAME as the bare
+ * JSON string body, the same idiom Cloud uses for the accountId. UNVERIFIED.
+ */
+export async function addWatcherDataCenter(
+  options: WatcherOptions,
+): Promise<WatcherChange> {
+  const issue = issuePath(options.issue, '/watchers');
+  const username = dataCenterWatcher(options);
+  const response = await collabCall(WATCH_WRITE_HINT, () =>
+    options.jira({
+      method: 'POST',
+      root: 'v2',
+      path: issue,
+      pathTemplate: WATCHERS_PATH_TEMPLATE,
+      body: username,
+      ...writeControls(options),
+    }),
+  );
+  return { issue: options.issue, username, status: response.status };
+}
+
+/**
+ * {@link removeWatcher} on Jira Data Center (D111) —
+ * `DELETE /rest/api/2/issue/{issueIdOrKey}/watchers?username=…`: the user
+ * travels as a query parameter, as on Cloud, under Data Center's name for it.
+ * UNVERIFIED.
+ */
+export async function removeWatcherDataCenter(
+  options: WatcherOptions,
+): Promise<WatcherChange> {
+  const issue = issuePath(options.issue, '/watchers');
+  const username = dataCenterWatcher(options);
+  const response = await collabCall(WATCH_WRITE_HINT, () =>
+    options.jira({
+      method: 'DELETE',
+      root: 'v2',
+      path: issue,
+      pathTemplate: WATCHERS_PATH_TEMPLATE,
+      query: { username },
+      ...writeControls(options),
+    }),
+  );
+  return { issue: options.issue, username, status: response.status };
 }
 
 /**
@@ -945,7 +1026,10 @@ export async function createComponent(
     }),
   );
   return {
-    component: mapComponent(requireRecord(response.data, 'component')),
+    component: mapComponent(
+      requireRecord(response.data, 'component'),
+      options.deployment,
+    ),
     status: response.status,
   };
 }
@@ -990,7 +1074,10 @@ export async function updateComponent(
     }),
   );
   return {
-    component: mapComponent(requireRecord(response.data, 'component')),
+    component: mapComponent(
+      requireRecord(response.data, 'component'),
+      options.deployment,
+    ),
     status: response.status,
   };
 }
@@ -1072,6 +1159,18 @@ export async function updateVersion(
 // ---------------------------------------------------------------------------
 // 6. Request plumbing and input normalisation
 // ---------------------------------------------------------------------------
+
+/** The Cloud watcher: an accountId, and never a username (D111). */
+function cloudWatcher(options: WatcherOptions): string {
+  refuseUsernameOnCloud(options.username);
+  return requireText(options.accountId ?? '', 'accountId', ACCOUNT_ID_REMEDIATION);
+}
+
+/** The Data Center watcher: a username, and never an accountId (D111). */
+function dataCenterWatcher(options: WatcherOptions): string {
+  refuseAccountIdOnDataCenter(options.accountId);
+  return requireText(options.username ?? '', 'username', USERNAME_REMEDIATION);
+}
 
 /** The two vote routes differ only by verb, so they share one implementation. */
 async function voteCall(
@@ -1308,6 +1407,10 @@ const PROJECT_ID_REMEDIATION =
 const ACCOUNT_ID_REMEDIATION =
   'Jira Cloud identifies users by accountId only; jira_search_users turns a name ' +
   'or an email fragment into one.';
+
+const USERNAME_REMEDIATION =
+  'Jira Data Center identifies users by username — the `name` its user fields ' +
+  '(assignee, reporter, watchers, jira_get_myself) return.';
 
 const COMPONENT_ID_REMEDIATION =
   'Call jira_list_components to get the numeric component id.';
@@ -1650,13 +1753,16 @@ function mapRoleMap(body: Record<string, unknown>): readonly ProjectRole[] {
 function mapRoleDetail(
   body: Record<string, unknown>,
   fallbackId: string,
+  deployment?: JiraDeployment,
 ): ProjectRoleDetail {
   const raw = body.actors;
   if (raw !== undefined && !Array.isArray(raw)) {
     throw shapeError('Jira returned a project role whose "actors" is not an array.');
   }
   const actors = (raw ?? []).map((entry, index) =>
-    mapActor(requireRecord(entry, `project role actor #${index}`)),
+    deployment === 'datacenter'
+      ? mapDataCenterActor(requireRecord(entry, `project role actor #${index}`))
+      : mapActor(requireRecord(entry, `project role actor #${index}`)),
   );
   return compact({
     // Jira echoes the id; the requested one is the fallback so a terse response
@@ -1673,6 +1779,24 @@ function mapActor(entry: Record<string, unknown>): RoleActor {
   return compact({
     type: requireField(readString(entry, 'type'), 'type', 'project role actor'),
     accountId: user === undefined ? undefined : readString(user, 'accountId'),
+    displayName: readString(entry, 'displayName'),
+  });
+}
+
+/** The Data Center user-actor type — the only actor that names a person. */
+const DATACENTER_USER_ACTOR = 'atlassian-user-role-actor';
+
+/**
+ * A role actor on Jira Data Center (D110): no `actorUser`, no accountId — a
+ * user actor names the person by `name`; a group actor keeps `type` and
+ * `displayName` exactly as on Cloud. `avatarUrl` and the numeric id are dropped
+ * as they are on Cloud, and an `accountId` a proxy might add is never read.
+ */
+function mapDataCenterActor(entry: Record<string, unknown>): RoleActor {
+  const type = requireField(readString(entry, 'type'), 'type', 'project role actor');
+  return compact({
+    type,
+    name: type === DATACENTER_USER_ACTOR ? readString(entry, 'name') : undefined,
     displayName: readString(entry, 'displayName'),
   });
 }

@@ -3,7 +3,7 @@
 > Status: normative and implemented — this document and the code ship together;
 > drift is a bug. Phases 0–13 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished. Phases 0–12 are closed; Phase 13 is open (stages 13.1–13.3 done).
+> finished. Phases 0–12 are closed; Phase 13 is open (stages 13.1–13.7 done).
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -885,13 +885,336 @@ Center mode reachable by a user.
       mutation that switches the flattening off fails CC-274), and
       `jira_list_watchers`, `jira_list_components`, `jira_list_versions`
       served over their long-standing Data Center routes (D108, CC-275) — 18
-      tools. **Still open:** there is no Data Center twin of
-      `scripts/fake-jira.mjs`, so the offline rehearsal still covers Cloud only
-      (the DC tests use the in-process fake); and the reads whose route depends
-      on the Data Center release (create metadata, filters, users, roles) are
-      not served.
-- [ ] 13.4 — DC writes: a markdown → wiki-markup writer (the counterpart of
-      `adfFromMarkdown`) and the write request specs.
+      tools. `scripts/fake-jira.mjs --deployment datacenter` is the fake's
+      Data Center twin (v2 and agile routes under a `/jira` context path, PAT
+      Bearer only, DC users with an email to strip, wiki bodies, classic
+      `/search`, Cloud-only routes 404 — CC-290…CC-294), and
+      `scripts/rehearse-datacenter.mjs` drives all 18 tools through the built
+      server over stdio MCP against it: exact tool list, every call ok, no
+      email/avatar/`accountId` in any result, every DC route hit and nothing
+      else, a wrong PAT → `auth` (CC-295…CC-297; outside `npm run check`, like
+      the Cloud rehearsal — TESTING.md). Deliberate mutations: letting the
+      user projection keep `emailAddress` gives 46 findings, disabling the v2
+      rewrite 40, sending the PAT as `Token` 69, dropping the fake's watchers
+      route 3. The comment and worklog pages embedded in a default
+      `jira_get_issue` (`fields.comment`, `fields.worklog`), which the
+      rehearsal found unflattened, are flattened since 13.4b and the rehearsal
+      checks the embedded comments too (CC-298). **Still open:** create
+      metadata (`jira_get_create_meta`), whose route depends on the Data
+      Center release, is not served and needs a version verdict from a real
+      host (D114). Users and roles are served since 13.5a (D110); the count,
+      changelog and attachment list since 13.6c (D114); the filters
+      (`jira_list_filters`, `jira_get_filter`) since 13.7a (D115), without
+      `/filter/search`.
+- [x] 13.4a — an ADF → wiki-markup writer, `api/wiki-writer.ts`:
+      `wikiFromAdf` over the node and mark subset that `adfFromMarkdown` and
+      `toAdf` emit, with `wikiFromMarkdown` / `wikiFromText` on top. It is
+      built on the ADF tree because the Cloud write builders already produce
+      ADF, and 13.4b rewrites those documents. Text is escaped so tenant text
+      never gains markup: `\X` for the metacharacters, and numeric references
+      for what a backslash cannot say (`wikiToText` now decodes them last).
+      Mentions are written as literal display text, never `[~id]`. Anything
+      outside the subset is a `validation` error. Pinned by CC-276…CC-289 and CC-299…CC-301,
+      including three property tests (round trip, escape soundness, totality).
+      Deliberate mutations, each failing the named tests:
+      - dropping `_` from the escape set fails CC-277, CC-299 and CC-300;
+      - dropping the line-leading `#` reference fails CC-278 and CC-300;
+      - dropping the `unsafeHref` check fails CC-283;
+      - dropping the `{noformat}` fallback fails CC-284 and CC-299;
+      - dropping reference decoding fails 7 tests;
+      - dropping the mark boundary check fails CC-282 and CC-299;
+      - dropping an unknown block instead of throwing fails CC-287;
+      - writing mentions as `[~id]` fails CC-286 and CC-299;
+      - dropping the `;)` rule fails CC-279 and CC-300;
+      - dropping the cell `[ ] |` references fails CC-288;
+      - dropping the reader's escaped-macro lookbehind fails CC-277.
+
+      Not wired into any tool, the port or the served set.
+- [x] 13.4b — DC write request specs (D109): seven writes are served —
+      create, update, transition, add/update comment, add worklog, link —
+      on the Cloud builders' routes under `/rest/api/2`, with every ADF body
+      rendered through `wikiFromAdf` below the plan seam (`onV2Wiki`), so a
+      plan shows the wiki body the apply sends. `assigneeAccountId` /
+      `reporterAccountId` are refused as `validation` with a `name`
+      remediation; `resolveMentions` is `unsupported` (no DC user search);
+      comment and worklog results project the DC author. Assignee, watcher,
+      vote, delete, sprint, component, version and bulk writes stay unserved.
+      The rehearsal lists the writes but calls none. Pinned by CC-302…CC-306
+      (`src/tools/datacenter-write.test.ts`) and CC-298. Deliberate
+      mutations, each failing the named tests:
+      - skipping the wiki render in `onV2Wiki` fails CC-302, CC-303 and CC-306
+        (11 tests);
+      - dropping `deployment: 'datacenter'` from `addComment` or `addWorklog`
+        fails CC-305;
+      - making `refuseAccountId` a no-op fails CC-304 (3 tests);
+      - dropping the embedded-page flattening fails CC-298;
+      - dropping the rehearsal's embedded-comment check fails CC-298.
+
+      **UNVERIFIED:** the writer's entity pass-through and every write shape
+      are confirmed or replaced only once a real Data Center host runs.
+- [x] 13.5a — DC user reads (D110): `jira_search_users` over `GET
+      /rest/api/2/user/search?username=` and `/user/assignable/search`
+      (`issueKey`/`project`, issue wins), with rows in the DC user projection.
+      `includeEmail: true` is refused as `validation`, and a row carrying an
+      accountId or missing name/key is `unexpected_shape`.
+      `jira_list_project_roles` reads `/project/{p}/role[/{id}]` on the v2 root,
+      and user actors come back as `{ type, name, displayName }`. That makes 20
+      reads. The fake serves the four routes (21 in all); a `query=` user search
+      is a 400 and a violation. The rehearsal calls both tools, plus the
+      assignable search and the role list. Pinned by CC-307…CC-312. Deliberate
+      mutations, each failing the named tests:
+      - sending `query` instead of `username` on DC fails CC-307 and CC-308;
+      - dropping the `includeEmail` refusal fails CC-309;
+      - mapping DC actors with the Cloud `mapActor` fails CC-311;
+      - dropping `deployment: 'datacenter'` from the served `getProjectRole`
+        fails CC-311.
+
+      Assign, watcher and vote writes follow in 13.5b (D111); `resolveMentions`
+      follows in 13.6a (D112).
+      **UNVERIFIED:** the `username` parameter and the actor `name` are
+      confirmed only once a real Data Center host runs.
+- [x] 13.5b — DC user writes (D111): `jira_assign_issue`,
+      `jira_add_watcher`, `jira_remove_watcher`, `jira_add_vote` and
+      `jira_remove_vote` are served by `username`. Assign sends
+      `PUT /rest/api/2/issue/{key}/assignee` with `{ "name": … }` (`null`
+      unassigns); add watcher sends the username as a bare JSON string;
+      remove watcher sends `?username=` and no body; the votes reuse the
+      Cloud function through `onV2`. The assign and watcher schemas gain an
+      optional `username` and take exactly one identifier (CC-22 extended);
+      the Cloud functions refuse `username` and the Data Center twins refuse
+      `accountId`, both as `validation` before any request. Cloud request and
+      result shapes are unchanged; the DC results carry `username`. Pinned by
+      CC-317…CC-322 (`src/tools/datacenter-write.test.ts`,
+      `src/tools/issues-write.test.ts`, `src/tools/collab.test.ts`).
+      Deliberate mutations, each failing the named tests:
+      - making `refuseUsernameOnCloud` a no-op fails CC-321 (3 tests);
+      - making `refuseAccountIdOnDataCenter` a no-op fails CC-318 (5 tests);
+      - sending `{ accountId: name }` from the DC assign twin fails CC-317
+        (2 tests) and CC-320;
+      - sending `?accountId=` from the DC remove-watcher twin fails CC-317
+        and CC-320;
+      - dropping `root: 'v2'` from the DC add-watcher twin fails CC-317 and
+        CC-319;
+      - serving `addVote` without `onV2` fails CC-317 and CC-319;
+      - dropping `jira_add_watcher` from `DATACENTER_WRITE_TOOLS` fails CC-302
+        and CC-320;
+      - dropping the watcher schema's ambiguity check fails CC-322;
+      - letting the assign schema accept `username` with `unassign` fails
+        CC-322.
+
+      **UNVERIFIED:** the `{ "name": null }` unassign, the bare-string
+      watcher body and the `username` query parameter are Atlassian's
+      documented Data Center shapes, never run against a host.
+- [x] 13.6a — DC mention resolution (D112): `resolveMentions: true` is
+      served on Data Center. `resolveMentionNames` has a DC twin that searches
+      `GET /rest/api/2/user/search?username=` and applies the D100 rules and
+      errors unchanged (exact display name, active only, one match, at most
+      20 names). The mention id is the DC username (`name`). The DC
+      `adfFromMarkdown` tags only mention nodes built from targets that twin
+      returned (a module-private `WeakSet`), with a module-private symbol that
+      JSON and `structuredClone` drop. The wiki writer emits a tagged mention
+      as `[~username]`; every other mention, caller-supplied ADF included,
+      stays literal (CC-286). The username must match
+      `^[\p{L}\p{N}._@+-]{1,255}$`, checked in the resolver, the tagger and
+      the writer, so `]`, `|`, `{`, `}`, `[`, `\`, whitespace and newlines
+      never reach the wire; a refusal is `validation` before any write. Plan
+      mode shows the `[~username]` body (the resolving GET passes through, as
+      CC-111). The CC-263 stub list loses `resolveMentionNames`. The fake and
+      the reads-only rehearsal are unchanged. Cloud requests, bodies and the
+      manifest are unchanged. Pinned by CC-323…CC-329
+      (`src/tools/datacenter-write.test.ts`, `src/api/wiki-writer.test.ts`).
+      Deliberate mutations (each made, built, tested, reverted), each failing
+      the named tests:
+      - the writer ignores the tag fails CC-323 (2), CC-325, CC-326, CC-327
+        and CC-329;
+      - the writer emits every mention as `[~id]` fails CC-286, CC-299
+        (property), CC-327 (2), CC-328 and CC-329;
+      - dropping the tagger's username check fails CC-324 (the unit test);
+      - tagging every target, not only resolver-produced ones, fails CC-327
+        and CC-328;
+      - resolving through the Cloud directory on DC fails 16 tests across
+        CC-323…CC-327;
+      - leaving `resolveMentionNames` unserved fails 17 tests across
+        CC-323…CC-327;
+      - serving the Cloud `adfFromMarkdown` on DC fails CC-323 (2), CC-325,
+        CC-326 and CC-327.
+
+      Two mutations survive by design, as defense in depth: dropping the
+      resolver's username check alone (the tagger still refuses, so CC-324
+      holds end to end) and dropping the writer's re-check alone (a tag can
+      only be set by the tagger, which validates).
+      **UNVERIFIED:** that `username=` matches display names on real DC
+      releases, that `[~username]` (not `[~key]`) in a v2 wiki body
+      notifies the user, and that the PAT's user needs only the permission
+      to browse users (AUTH.md). None has run against a host.
+
+- [x] 13.6b — DC admin and agile writes (D113): `jira_create_component`,
+      `jira_update_component`, `jira_create_version`,
+      `jira_update_version` on `/rest/api/2` with the Cloud body fields, and
+      `jira_create_sprint`, `jira_start_sprint`, `jira_move_to_sprint`,
+      `jira_move_to_backlog` on `/rest/agile/1.0` as the Cloud functions.
+      `leadAccountId` is refused as `validation` in the adapter before any
+      request; the component answer's lead is projected in the DC dialect
+      (`mapComponent` now takes the deployment). `jira_close_sprint` stays
+      unserved — a closed sprint cannot be reopened — with the deletes and
+      bulk tools. No schema, description or manifest change. The preview now
+      serves 20 writes. Pinned by CC-330…CC-334
+      (`src/tools/datacenter-write.test.ts`, `src/tools/datacenter.test.ts`).
+      Deliberate mutations (change, build, run tests, revert), each failing
+      the named tests:
+      - removing the `refuseComponentLead` calls fails CC-331 (4 tests) and
+        CC-333;
+      - dropping `deployment: 'datacenter'` from the component writes fails
+        CC-332 (the lead leaks the Cloud projection);
+      - serving `createVersion` without `onV2` fails CC-330 and CC-332;
+      - dropping `jira_move_to_backlog` from `DATACENTER_WRITE_TOOLS` fails
+        CC-302 and CC-333;
+      - serving `closeSprint` from `CLOUD_API` fails CC-334 and CC-263.
+
+      **UNVERIFIED:** the v2 component/version bodies, the sprint `goal`
+      field and ISO-8601 sprint dates on older Jira Software Data Center
+      releases, and the 204 answers of the two moves are Atlassian's
+      documented shapes, never run against a host.
+
+- [x] 13.6c — DC count, changelog and attachment reads (D114): three more
+      reads over long-standing routes; with 13.6b that is 23 reads and 20
+      writes, 43 tools in all. `jira_count` sends `POST /rest/api/2/search` with `maxResults: 0`
+      and answers `{ count: total, approximate: false }` with no
+      `approximate` hint (`countIssuesDataCenter`); Cloud still answers
+      `approximate: true` with the hint. `jira_get_changelog` reads
+      `GET /rest/api/2/issue/{key}?expand=changelog&fields=` and pages
+      inside the embedded history in the Cloud shape, items passed through,
+      authors in the DC projection (`listChangelogDataCenter`); an embedded
+      block shorter than its `total` adds `incomplete` with an
+      `INCOMPLETE:` note, and paging stops at the window.
+      `jira_list_attachments` reads `GET /rest/api/2/issue/{key}?fields=attachment`
+      with the Cloud allowlist and the DC author (`listAttachmentsDataCenter`).
+      Download, upload, filters and create metadata stay unserved. No new
+      fake routes: all three reuse the search and issue routes (the fake
+      still serves 21); the rehearsal calls the three tools and checks the
+      exact count, named authors, no `incomplete` and no attachment URL. The
+      manifest is unchanged. Pinned by CC-340…CC-349
+      (`src/tools/datacenter.test.ts`, `src/testing/rehearse-datacenter.test.ts`).
+      Deliberate mutations (change, build, run the tests, revert), each
+      failing the named tests:
+      - answering `approximate: true` from the DC count fails CC-340;
+      - dropping the non-negative integer check on `total` fails CC-341;
+      - sending `maxResults: 50` from the DC count fails CC-340;
+      - never setting `incomplete` fails CC-343 (2 tests);
+      - shaping DC changelog entries with the Cloud projection fails the
+        CC-265 case for `jira_get_changelog`;
+      - offering `nextStartAt` up to `total` instead of the window fails
+        CC-343;
+      - reading a missing changelog block as empty fails CC-344;
+      - projecting the DC attachment author with the Cloud mapper fails
+        CC-265, CC-345 and CC-346;
+      - reading DC attachments on the v3 root fails CC-265, CC-345 and
+        CC-346;
+      - dropping `jira_count` from the rehearsal plan fails CC-297, and the
+        rehearsal itself reports the tool as served but not listed;
+      - dropping the rehearsal's `approximate: false` check fails CC-349 (the
+        rehearsal still holds, so the checker test is what guards it).
+
+      **UNVERIFIED:** that a Data Center host honours `maxResults: 0` and
+      still answers the exact `total`; that `fields=` (empty) with
+      `expand=changelog` returns the changelog with no fields; how many
+      histories a Data Center release embeds before it truncates (the
+      `incomplete` path is pinned only against fixtures); and the attachment
+      rows' author shape — all are Atlassian's documented Data Center
+      behaviour, never run against a host.
+- [x] 13.7a — DC saved filters (D115): `jira_list_filters` and
+      `jira_get_filter` served without `/filter/search`; with 13.6c that is
+      25 reads and 20 writes, 45 tools in all. `jira_get_filter` reads
+      `GET /rest/api/2/filter/{id}` (`getFilterDataCenter`).
+      `jira_list_filters` reads `GET /rest/api/2/filter/favourite` once
+      (`searchFiltersDataCenter`) — the caller's favourites only — and says
+      so in `scope: { source: "favourites", note }`; `filterName` is applied
+      here (case-insensitive substring), paging is client-side over the one
+      response in the Cloud `paging` shape, and `accountId` is refused as
+      `validation` before any request. Owners take the DC user projection;
+      share internals never appear; malformed bodies are `unexpected_shape`.
+      The fake serves the two routes (23 in all) and answers `/filter/search`
+      with a 404 and a violation; the rehearsal calls both tools (28 calls)
+      and checks a named owner, the favourites scope, the JQL and no share
+      internals. The manifest, the README and the Cloud requests and results
+      are unchanged. Pinned by CC-350…CC-359 (`src/tools/datacenter.test.ts`,
+      `src/testing/rehearse-datacenter.test.ts`). Deliberate mutations
+      (change, build, run the tests, revert), each failing the named tests:
+      - not refusing `accountId` fails CC-353;
+      - ignoring `filterName` fails CC-351;
+      - returning every matched row instead of the page fails CC-352;
+      - passing the DC owner through unprojected fails CC-265 (both tools),
+        CC-350 (2 tests) and CC-355;
+      - reading the single filter on the v3 root fails CC-265, CC-350,
+        CC-354 and CC-355;
+      - reading a non-array favourites answer as an empty list fails CC-354;
+      - dropping `scope` fails CC-350;
+      - mapping Cloud filters with the DC owner projection fails CC-356;
+      - not recording the fake's `/filter/search` violation fails CC-358.
+
+      **UNVERIFIED:** that `/filter/favourite` answers a bare, unpaged array
+      of full filter beans carrying the owner, JQL, description and
+      `favourite`; that `/filter/{id}` on v2 has the Cloud-like shape; that
+      the owner is a `name`/`key` user; and that `/filter/search` cannot be
+      relied on across Data Center releases — all are Atlassian's documented
+      Data Center behaviour, never run against a host.
+
+- [x] 13.7b — DC create metadata (D116): `jira_get_create_meta` is served on
+      the Data Center preview — with 13.7a, 26 reads and 20 writes, 46 tools in
+      all. It
+      reads only the paged pair Data Center 8.4 added —
+      `GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes` and
+      `.../issuetypes/{issueTypeId}` — never the legacy
+      `GET /issue/createmeta?expand=projects.issuetypes.fields` (removed in
+      Jira 9.0), not even as a fallback. The paths match Cloud's, but Data
+      Center wraps the rows in `values` beside `startAt`/`maxResults`/
+      `total`/`isLast`, so the adapter carries twins
+      (`listCreateMetaIssueTypesDataCenter`, `getCreateMetaDataCenter`)
+      instead of an `onV2` reuse; a page without a `values` array is
+      `unexpected_shape`. Fields go through the Cloud mapper, which never
+      reads `defaultValue` and keeps only `id`/`value`/`name` of an allowed
+      value, so a user default or a user allowed value leaks no email, user
+      key or avatar (a user allowed value keeps its username). A 404 with no
+      Jira error message is re-aimed at `unsupported` naming Jira Data
+      Center 8.4 as the floor; a 404 carrying Jira's messages stays
+      `not_found` with the 8.4 hint in the remediation; everything else
+      passes through. The fake gains the two paged routes (23 in
+      `DATACENTER_ROUTES`), with a reporter default and a user-picker
+      allowed value carrying `emailAddress`; its legacy
+      `/issue/createmeta` answers 404 and records the violation
+      `legacy_createmeta_removed_in_jira_9`. The rehearsal calls the type
+      list and, as `also` with `checkAlso: true`, the create screen of type
+      10001 — 30 calls with 13.7a — and checks a non-empty type list, a complete screen
+      with `summary` required, and no `defaultValue`. The manifest and every
+      Cloud request and result are unchanged. Pinned by CC-360…CC-367
+      (`src/tools/datacenter.test.ts`, `src/testing/rehearse-datacenter.test.ts`).
+      Deliberate mutations (change, build, run the tests, revert), each
+      failing the named tests:
+      - reading the DC issue type list from `issueTypes` fails CC-265,
+        CC-360 and CC-364;
+      - reading the DC create screen from `fields` fails CC-361 and CC-364;
+      - dropping `root: 'v2'` from the create screen fails CC-361…CC-364;
+      - passing every 404 through un-re-aimed fails CC-362 and CC-363;
+      - treating a 404 with Jira messages as `unsupported` fails CC-363;
+      - mapping `defaultValue` onto a field fails CC-361;
+      - passing the raw allowed values through fails CC-361;
+      - dropping `getCreateMeta` from the served map fails CC-361…CC-364;
+      - not recording the fake's legacy-route violation fails CC-366;
+      - keying the fake's type list `issueTypes` fails CC-366;
+      - dropping a paged route from `DATACENTER_ROUTES` fails CC-366;
+      - dropping `checkAlso` from the rehearsal plan fails CC-367;
+      - dropping the rehearsal's partial, empty-type-list or `defaultValue`
+        check fails CC-367 (each separately; the rehearsal still holds, so
+        the checker test is what guards them).
+
+      **UNVERIFIED:** that Data Center 8.4+ answers both routes with rows in
+      `values` and `isLast` beside them (Atlassian's documented shape, never
+      seen on a host); that a pre-8.4 host answers the unknown path with a
+      404 carrying no Jira error message (a proxy or a release that sends
+      one would read as `not_found`, still with the 8.4 hint); that a missing
+      project or issue type is a 404 with Jira's messages; and that the
+      field rows carry `fieldId`, `schema`, `operations` and
+      `allowedValues` as Cloud's do.
 
 Exit (whole phase): a Data Center deployment serves the tools its adapter
 declares, refuses the rest by exclusion, and is labelled UNVERIFIED in every

@@ -31,8 +31,9 @@
 //   * Lines longer than {@link MAX_INLINE_LINE_CHARS} skip inline processing,
 //     so a hostile line cannot make the pairing regexes quadratic.
 //
-// It is a READ-side rendering only. The write side (markdown → wiki) is stage
-// 13.4 and is not here.
+// It is a READ-side rendering only; the write side is `wiki-writer.ts`
+// (stage 13.4a). Numeric character references (`&#35;`) are decoded last,
+// since that is how the writer spells what a backslash cannot escape.
 // ---------------------------------------------------------------------------
 
 /** Longest line that inline marks are removed from; longer ones pass verbatim. */
@@ -236,7 +237,8 @@ function pushText(out: string[], text: string): void {
 
 /** Inline `{quote}` and `{color}` tags inside a line are markup, not text. */
 function stripBlockMacros(line: string): string {
-  return line.replace(/\{(?:quote|color(?::[^}]*)?)\}/gi, '');
+  // An escaped `\{` is text: `\{quote}` must not lose its tag.
+  return line.replace(/(?<!\\)\{(?:quote|color(?::[^}]*)?)\}/gi, '');
 }
 
 /**
@@ -279,10 +281,31 @@ function inline(text: string): string {
   for (const mark of ['*', '_', '-', '+', '^', '~']) s = unmark(s, mark);
   s = s.replace(/(^|[^\w?])\?\?(?=\S)(.*?\S)\?\?(?![\w?])/g, '$1$2');
   s = s.replace(/\{color(?::[^}]*)?\}/gi, '');
-  if (!park) return s;
+  if (park) {
+    s = s.split(BREAK).join('\n');
+    s = s.replace(ESCAPED_RE, (_m, n: string) => escapes[Number(n)] ?? '');
+  }
+  return decodeReferences(s);
+}
 
-  s = s.split(BREAK).join('\n');
-  return s.replace(ESCAPED_RE, (_m, n: string) => escapes[Number(n)] ?? '');
+/**
+ * Numeric character references (`&#35;`, `&#x23;`) → the character, in one
+ * pass and last, so a decoded character is never read as markup. This is how
+ * the writer (`wiki-writer.ts`) spells what a backslash cannot escape. Named
+ * entities are left alone, as are references to NUL, a surrogate, or past
+ * U+10FFFF.
+ */
+function decodeReferences(text: string): string {
+  if (!text.includes('&#')) return text;
+  return text.replace(
+    /&#(?:(\d{1,7})|[xX]([0-9a-fA-F]{1,6}));/g,
+    (whole: string, dec: string | undefined, hex: string | undefined) => {
+      const code =
+        dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex ?? '', 16);
+      const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+      return valid ? String.fromCodePoint(code) : whole;
+    },
+  );
 }
 
 /** Remove one paired inline mark, with Jira's boundary rules on both sides. */

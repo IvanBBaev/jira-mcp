@@ -20,7 +20,7 @@ must encode these rules.
 - Auth, oauth mode: `Authorization: Bearer <access token>` **and a different
   origin** — see §OAuth 2.0 (3LO) below. The paths above are unchanged; they are
   prefixed, not replaced.
-- Jira Data Center (D106, D107 — read-only preview): platform root
+- Jira Data Center (D106–D113 — unverified preview): platform root
   `/rest/api/2` (there is no v3 on Data Center, and v2 bodies are wiki markup),
   under the instance's context path when it has one
   (`https://jira.example.com/jira/rest/api/2/...`); auth with a personal access
@@ -217,7 +217,11 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
 - `jira_get_create_meta` uses the **new** per-project endpoints
   (`GET /rest/api/3/issue/createmeta/{projectIdOrKey}/issuetypes` and
   `.../issuetypes/{issueTypeId}`) — the old all-projects `createmeta` was
-  deprecated for performance.
+  deprecated for performance. On Data Center (D116) the same two paths exist
+  from 8.4 under `/rest/api/2`, with rows in `values` beside
+  `startAt`/`maxResults`/`total`/`isLast`; the legacy
+  `/issue/createmeta?expand=projects.issuetypes.fields`, removed in Jira 9.0,
+  is never called, not even as a fallback. UNVERIFIED against a host.
 - `jira_create_issue` / `jira_update_issue` accept a passthrough `fields` object
   for custom fields; the tool description tells the model to discover ids first.
 
@@ -529,7 +533,7 @@ Reference groups consulted 2026-08-13:
   permission by name to `remediation` — the CC-34 pattern — while leaving the
   Jira messages verbatim.
 
-## Jira Data Center (D106, D107)
+## Jira Data Center (D106–D116)
 
 **UNVERIFIED** — every verdict below comes from Atlassian's Data Center REST
 documentation and has never met a Data Center instance. The adapter
@@ -540,28 +544,121 @@ excludes every other tool (CC-263).
 |---|---|---|
 | `GET /myself` | `GET /rest/api/2/myself` — `name` + `key`, no `accountId` | served, own mapper (CC-270) |
 | `POST /search/jql` (`nextPageToken`) | `POST /rest/api/2/search` (`startAt`, `total`) | served, twin + `dc1:` cursor (CC-267) |
-| `POST /search/approximate-count` | none | not served |
+| `POST /search/approximate-count` | none — `POST /rest/api/2/search` with `maxResults: 0` answers an exact `total` | served (D114) as `jira_count` over the classic search, `approximate: false`, no `approximate` hint (CC-340, CC-341) |
 | `GET /issue/{key}`, `/comment`, `/worklog`, `/transitions` | same paths under `/rest/api/2` | served, same function on the v2 root, DC user dialect |
-| `GET /issue/{key}/changelog` | none (only `expand=changelog`) | not served |
+| `GET /issue/{key}/changelog` | none — `GET /rest/api/2/issue/{key}?expand=changelog&fields=` embeds it | served (D114), paged here inside the embedded history; `incomplete` when it holds fewer than its `total` (CC-342…CC-344) |
+| `GET /issue/{key}?fields=attachment` | same path under `/rest/api/2`, DC author | served (D114), URLs dropped, DC user dialect (CC-345, CC-346); download and upload not served |
 | `GET /project/search` | `GET /rest/api/2/project` — one bare array | served, twin, filters applied here (CC-268) |
 | `GET /project/{key}` | same path | served, DC `lead` |
 | `GET /field`, `GET /issueLinkType` | same paths | served |
 | `GET /statuses/search` | `GET /rest/api/2/status` — array, category as an object | served, twin (CC-268) |
-| `GET /issue/createmeta/{p}/issuetypes[/{id}]` | exists on newer Data Center releases | not served — needs a version verdict |
-| `/filter/search`, `/filter/{id}` | `/filter/search` absent on many releases | not served |
-| `/user/search`, `/user/assignable/search` | `username=` instead of `query=` | not served |
+| `GET /issue/createmeta/{p}/issuetypes[/{id}]` | same paths under `/rest/api/2` from Data Center 8.4, rows in `values` with `isLast`; the legacy `?expand=` route is gone in 9.0 | served (D116), twin reading `values`, never the legacy route; a bare 404 is `unsupported` naming 8.4 (CC-360…CC-365) |
+| `GET /filter/search`, `GET /filter/{id}` | `/filter/search` absent on many releases; `GET /rest/api/2/filter/favourite` (a bare array of the caller's favourites) and `GET /rest/api/2/filter/{id}` are long-standing | served (D115) without `/filter/search`: the list reads the favourites only and says so in `scope`, `filterName` and paging applied here, `accountId` refused, DC owner, no share permissions (CC-350…CC-357) |
+| `/user/search`, `/user/assignable/search` | `username=` instead of `query=` | served (D110), DC user dialect; `includeEmail: true` refused (CC-307…CC-310) |
 | `/issue/{key}/watchers` | same path, DC users | served, DC user dialect (D108, CC-275) |
-| `/issue/{key}/votes` (write) | same path | not served (writes are stage 13.4) |
+| `/issue/{key}/votes` (write) | same path, no body | served (D111), the authenticated user's own vote (CC-317) |
 | `/project/{p}/component`, `/project/{p}/version` (paged) | `/components`, `/versions` (arrays, long-standing) | served over the arrays, filters applied here (D108, CC-275) |
-| `/project/{p}/role` | same path, DC actors | not served |
+| `/project/{p}/role`, `/project/{p}/role/{id}` | same paths, DC actors (`name`, no `actorUser`) | served (D110), own actor mapper (CC-311) |
 | `/bulk/*` | none | not served |
 | Agile `/board`, `/board/{id}/sprint`, `/sprint/{id}/issue` | same, Jira Software Data Center | served, DC user dialect on issue fields |
-| Every write | wiki-markup bodies, `name` users | not served (stage 13.4) |
+| `POST /issue`, `PUT /issue/{key}`, `POST /issue/{key}/transitions` | same paths under `/rest/api/2`, wiki-markup bodies | served (D109); `assigneeAccountId`/`reporterAccountId` refused |
+| `POST`/`PUT /issue/{key}/comment[/{id}]`, `POST /issue/{key}/worklog`, `POST /issueLink` | same paths under `/rest/api/2`, wiki-markup bodies | served (D109), DC user dialect on the answer |
+| `PUT /issue/{key}/assignee` | same path under `/rest/api/2`, body `{ "name": "<username>" }`, unassign `{ "name": null }` | served (D111) by `username`; `accountId` refused (CC-317, CC-318) |
+| `POST`/`DELETE /issue/{key}/watchers` | same path under `/rest/api/2`; POST body the username as a bare JSON string, DELETE `?username=` | served (D111) by `username`; `accountId` refused (CC-317, CC-318) |
+| `POST /component`, `PUT /component/{id}` | same paths under `/rest/api/2`, same body fields (`project` key, `assigneeType`) | served (D113); `leadAccountId` refused, lead answered in the DC dialect (CC-330…CC-332) |
+| `POST /version`, `PUT /version/{id}` | same paths under `/rest/api/2`, same body fields (numeric `projectId`, `YYYY-MM-DD` dates) | served (D113) (CC-330) |
+| Agile `POST /sprint`, `POST /sprint/{id}` (start), `POST /sprint/{id}/issue`, `POST /backlog/issue` | same, Jira Software Data Center | served (D113), the Cloud request as is (CC-330) |
+| Agile `POST /sprint/{id}` with `state: closed` | same | not served — a closed sprint cannot be reopened (D113, CC-334) |
+| Every other write (deletes, bulk) | same or absent | not served (D109) |
 
 Rich text on Data Center is wiki markup. The known rich-text fields are
 flattened by `api/wiki.ts` in `adfToText`'s conventions (CC-271…CC-274);
 `raw: true` returns the markup as sent, and `format: "markdown"` is refused
 rather than mislabelled (CC-265).
+
+The write side is `api/wiki-writer.ts` (stage 13.4a, CC-276…CC-289 and CC-299…CC-301). It
+renders the ADF the Cloud builders produce as wiki markup, using the
+following notation facts:
+
+- **Escapes.**
+  - The metacharacters `* _ - + ^ ~ ? { } [ ] | !` are escaped with a
+    backslash. This is Atlassian's documented escape.
+  - A backslash cannot escape itself, because `\\` is a line break. A literal
+    backslash, and everything else a backslash cannot neutralise, is written
+    as a numeric character reference (`&#92;`). That covers:
+    - a line-leading `#`, `h1.`–`h6.` or `bq.` (the block parser reads the
+      line before escapes);
+    - an `&` that would start an entity;
+    - emoticons: `:)`, `;)`, `(y)`, `(!)` and the like render as images;
+    - `[ ] |` inside a link label or table cell, because the token is split
+      before escapes;
+    - U+2028/U+2029.
+
+    **UNVERIFIED:** that Jira Data Center passes numeric references through to
+    the rendered text. This is standard in its renderer, but it has not been
+    observed on a real host. `wikiToText` decodes references last, so a
+    round trip through this server is exact either way.
+- **Controls.** C0/C1 control characters other than tab and newline are
+  dropped, and CR/CRLF become LF.
+- **Marks.** A mark renders only with no letter or digit outside it and no
+  whitespace inside its edges. Where that does not hold, the writer keeps the
+  text and drops the mark. Mid-word emphasis is therefore lost; it is not
+  turned into stray `*`.
+- **Code.** A code body containing `{code}` is written in `{noformat}`. A body
+  containing both closers gets a zero-width space after each closer's `{`.
+- **Nesting.** `{quote}` does not nest, so an inner quote is flattened. Wiki
+  list items are single lines: paragraphs in an item join with `\\`, and code
+  inside an item becomes `{{…}}` spans. An ordered list's start number is not
+  kept.
+- **Mentions.** A mention is written as literal display text, never
+  `[~name]` — unless the Data Center adapter resolved it (D112, below). A
+  Cloud accountId is not a Data Center username, and an id from caller JSON is
+  not trusted to be one.
+- **Unsupported content.** Any node or mark outside the subset is a
+  `validation` error, never dropped.
+- **Links.** Jira auto-links a bare URL in text. That is a rendering fact the
+  writer does not suppress; the link target is the text itself.
+
+Stage 13.4b wires it into the writes, as the next paragraph describes.
+
+Writes travel the other way (D109): the Cloud builders produce their ADF
+documents as usual, and the adapter's request wrapper renders every document
+in the body to wiki markup (`api/wiki-writer.ts` `wikiFromAdf`) on its way to
+`/rest/api/2` — so plain text is escaped, markdown keeps its structure, and a
+node wiki markup cannot express is refused before the request is sent.
+
+The user writes (D111) take the Data Center identifier instead of translating
+one: `jira_assign_issue`, `jira_add_watcher` and `jira_remove_watcher` accept
+`username` beside `accountId`, the Data Center twins
+(`assignIssueDataCenter`, `addWatcherDataCenter`, `removeWatcherDataCenter`)
+refuse `accountId`, and the Cloud functions refuse `username` — each before a
+request exists, so plan mode shows the Data Center body. The username comes
+from a user field the reads return (`name`), from `jira_get_myself`, or from
+`jira_search_users` (D110).
+
+Mention resolution (D112, stage 13.6a) is D100 over the Data Center user
+search: `resolveMentionNamesDataCenter` in `api/users.ts` runs the same rules,
+cap and refusals as the Cloud resolver, but searches
+`GET /rest/api/2/user/search?username=` and takes the user's `name` as the
+target id. The adapter records the targets its resolver returned (a
+`WeakSet`, by identity), and its `adfFromMarkdown` tags, with a
+module-private symbol (`tagDataCenterMentions`), exactly the mention nodes
+built from those targets; `wikiFromAdf` writes a tagged node as
+`[~username]` and every other mention as literal text. So a mention in
+caller-supplied ADF, or from any other map, can never become a user link.
+A username is written only if it matches `^[\p{L}\p{N}._@+-]{1,255}$` —
+checked at resolution, when tagging, and when writing — so it can neither end
+the link (`]`), alias it (`|`), open markup (`[ { } ~ \ *`) nor break the
+line; one that does not match is a `validation` error, never rewritten.
+UNVERIFIED: that `username=` matches display names on the target release as
+documented, and that `[~username]` (not `[~key]`) notifies on it.
+
+The admin and agile writes (D113) need no translation beyond the root: the
+component and version functions run on `/rest/api/2` with their Cloud bodies
+(descriptions are plain text on both products, so nothing is rendered), and
+the sprint and move functions are the Cloud ones on `/rest/agile/1.0`. The
+one Cloud-only field, a component's `leadAccountId`, is refused in the
+adapter before a request exists rather than mapped to `leadUserName`.
 
 ## Rate limiting and retries
 

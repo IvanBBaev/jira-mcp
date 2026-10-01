@@ -261,9 +261,10 @@ export function buildCapabilitiesInfo(input: CapabilitiesInput): CapabilitiesInf
             product: 'datacenter' as const,
             verified: false as const,
             note:
-              'Read-only Jira Data Center preview, never verified against a Data Center ' +
-              'instance. Users are name/key (no accountId); rich text is wiki markup; ' +
-              'format "markdown" is refused.',
+              'Jira Data Center preview (reads and a first set of writes), never ' +
+              'verified against a Data Center instance. Users are name/key (no ' +
+              'accountId, so user fields are not written); rich text is wiki markup — ' +
+              'format "markdown" is refused on reads and rendered to wiki markup on writes.',
           },
         }
       : {}),

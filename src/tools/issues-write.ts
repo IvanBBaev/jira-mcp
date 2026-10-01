@@ -152,6 +152,20 @@ const accountIdArg = z
   );
 
 /**
+ * D111: the Data Center user identifier. The schema takes it on every
+ * deployment — the tools ring cannot tell them apart — and the Cloud api
+ * refuses it before any request, as the Data Center adapter refuses accountId.
+ */
+const usernameArg = z
+  .string()
+  .min(1)
+  .describe(
+    "Jira Data Center only: the user's username — the `name` jira_search_users " +
+      'and user fields return on Data Center. Refused on Jira Cloud, which takes ' +
+      'accountId.',
+  );
+
+/**
  * CC-136: the longest string a rich-text input takes. Jira refuses a text field
  * over 32,767 characters anyway, so twice that leaves room for markdown syntax
  * and loses nothing a write could have stored. The bound is what keeps the
@@ -755,37 +769,52 @@ export const updateCommentTool = defineTool({
 
 /**
  * CC-22 — exactly one intent. The schema is where this belongs: a request that
- * carries both an accountId and `unassign: true` never reaches the gate, so
- * there is nothing to plan and nothing to apply. `api/issues.ts` refuses the
- * same pair, and that redundancy is deliberate — the api is reachable from the
- * CLI too.
+ * carries two of accountId, username (D111) and `unassign: true` never reaches
+ * the gate, so there is nothing to plan and nothing to apply. `api/issues.ts`
+ * refuses the same combinations, and that redundancy is deliberate — the api
+ * is reachable from the CLI too. Which of accountId and username the site
+ * takes is the adapter's call, not the schema's.
  */
 const assignIssueInput = writeToolInput({
   issue: issueArg,
   accountId: accountIdArg.optional(),
+  username: usernameArg.optional(),
   unassign: z
     .boolean()
     .optional()
-    .describe('true clears the assignee. Mutually exclusive with accountId.'),
+    .describe(
+      'true clears the assignee. Mutually exclusive with accountId and username.',
+    ),
 }).superRefine((value, ctx) => {
   const named = value.accountId !== undefined;
+  const byUsername = value.username !== undefined;
   const cleared = value.unassign === true;
-  if (named && cleared) {
+  if (named && byUsername) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['username'],
+      message:
+        'accountId and username are mutually exclusive — the intended assignee ' +
+        'would be ambiguous. Pass exactly one: accountId on Jira Cloud, username ' +
+        'on Jira Data Center.',
+    });
+  }
+  if ((named || byUsername) && cleared) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['unassign'],
       message:
-        'accountId and unassign: true are mutually exclusive — the intended ' +
-        'assignee would be ambiguous. Pass exactly one.',
+        `${named ? 'accountId' : 'username'} and unassign: true are mutually ` +
+        'exclusive — the intended assignee would be ambiguous. Pass exactly one.',
     });
   }
-  if (!named && !cleared) {
+  if (!named && !byUsername && !cleared) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['accountId'],
       message:
-        'An assignment needs an intent: pass accountId to assign, or unassign: ' +
-        'true to clear the assignee.',
+        'An assignment needs an intent: pass accountId (Jira Cloud) or username ' +
+        '(Jira Data Center) to assign, or unassign: true to clear the assignee.',
     });
   }
 });
@@ -798,7 +827,8 @@ export const assignIssueTool = defineTool({
     'or unassign: true (clear) — both together is rejected as ambiguous, neither is ' +
     'rejected as intentless. Jira Cloud identifies users by accountId only; ' +
     'jira_search_users turns a display name or email into one. Idempotent: ' +
-    're-assigning the current assignee succeeds.',
+    're-assigning the current assignee succeeds. On Jira Data Center pass username ' +
+    'in place of accountId.',
   package: 'issues-write',
   annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
   writeTier: 'standard',
@@ -809,6 +839,7 @@ export const assignIssueTool = defineTool({
         ...callBase(ctx),
         issue: args.issue,
         accountId: args.accountId,
+        username: args.username,
         unassign: args.unassign,
       });
       return ok(assigned);

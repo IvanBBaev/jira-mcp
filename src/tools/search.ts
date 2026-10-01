@@ -47,7 +47,11 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { FILTER_PAGE_SIZE, type SavedFilter } from '../api/filters.js';
+import {
+  FILTER_PAGE_SIZE,
+  type FilterListScope,
+  type SavedFilter,
+} from '../api/filters.js';
 import type { JiraApi } from '../api/port.js';
 import {
   DEFAULT_SEARCH_FIELDS,
@@ -113,7 +117,7 @@ const EVENTUAL_CONSISTENCY_HINT: Hint = {
     'invisible here: read it directly with jira_get_issue, or retry shortly.',
 };
 
-/** TOOLS.md §Package `search` — `jira_count` always carries this. */
+/** TOOLS.md §Package `search` — `jira_count` carries this whenever the count is an estimate (always, on Cloud). */
 const APPROXIMATE_HINT: Hint = {
   code: 'approximate',
   message:
@@ -380,10 +384,14 @@ export const searchTool = defineTool({
 
 /** `data` of a successful {@link countTool} call. */
 export interface CountData {
-  /** Jira's index-derived estimate. */
+  /** Jira's index-derived estimate on Cloud; the classic search `total` on Data Center. */
   readonly count: number;
-  /** Always `true` — stated in the data as well as in the hint. */
-  readonly approximate: true;
+  /**
+   * `true` on Cloud, always — stated in the data as well as in the hint.
+   * `false` on Data Center, where the number is the host's own count at query
+   * time and no `approximate` hint is raised (D114).
+   */
+  readonly approximate: boolean;
 }
 
 const countInput = toolInput({
@@ -409,9 +417,11 @@ export const countTool = defineTool({
     try {
       const result = await ctx.api.approximateCount({ ...callBase(ctx), jql: args.jql });
       // A number is not Jira free text: no D15 brand here (CC-35).
+      // The hint follows the data: Cloud's estimate always raises it; Data
+      // Center's counted `total` (D114) does not.
       return ok(
         { count: result.count, approximate: result.approximate },
-        { hints: [APPROXIMATE_HINT] },
+        result.approximate ? { hints: [APPROXIMATE_HINT] } : {},
       );
     } catch (error) {
       rethrowUnexpected(error);
@@ -478,6 +488,11 @@ export interface FilterListData {
   readonly filterName?: string;
   /** Echoed back for the same reason. */
   readonly accountId?: string;
+  /**
+   * Data Center only (D115): the list is the caller's favourites, not every
+   * filter they can see — `scope.note` says so. Absent on Cloud.
+   */
+  readonly scope?: FilterListScope;
 }
 
 const listFiltersInput = toolInput({
@@ -547,6 +562,7 @@ export const listFiltersTool = defineTool<
           paging: pagingOf(loop, FILTER_PARTIAL_NOTES),
           ...(args.filterName === undefined ? {} : { filterName: args.filterName }),
           ...(args.accountId === undefined ? {} : { accountId: args.accountId }),
+          ...(loop.scope === undefined ? {} : { scope: loop.scope }),
         },
         { untrusted: true },
       );

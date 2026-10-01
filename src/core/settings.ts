@@ -640,7 +640,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
       severity: 'error',
       code: 'deployment_unavailable',
       message:
-        'JIRA_DEPLOYMENT=datacenter selects a read-only Data Center adapter that has never been run against a Data Center instance (IMPLEMENTATION-PLAN.md Phase 13, D106). It starts only with JIRA_DATACENTER_PREVIEW=true, which says you accept that. Unset JIRA_DEPLOYMENT to use Jira Cloud.',
+        'JIRA_DEPLOYMENT=datacenter selects a Data Center adapter (reads and a first set of writes) that has never been run against a Data Center instance (IMPLEMENTATION-PLAN.md Phase 13, D106). It starts only with JIRA_DATACENTER_PREVIEW=true, which says you accept that. Unset JIRA_DEPLOYMENT to use Jira Cloud.',
       field: 'JIRA_DEPLOYMENT',
     });
   } else if (deployment === 'datacenter') {
@@ -648,7 +648,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
       severity: 'warning',
       code: 'deployment_unverified',
       message:
-        "Jira Data Center preview: a read-only adapter built from Atlassian's documentation and never verified against a Data Center instance. jira_capabilities lists the tools it serves; report what breaks.",
+        "Jira Data Center preview: an adapter (reads and a first set of writes, still behind JIRA_WRITE_MODE) built from Atlassian's documentation and never verified against a Data Center instance. jira_capabilities lists the tools it serves; report what breaks.",
       field: 'JIRA_DATACENTER_PREVIEW',
     });
   }

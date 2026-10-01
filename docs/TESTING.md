@@ -233,6 +233,10 @@ minimum set is recorded.
     gating — `resolveMentions` × `format` refusal, the `mentions_skipped`
     hint, plan-time resolution — in `src/tools/issues-write.test.ts` (CC-105,
     CC-111). No network anywhere: every accountId in a fixture is synthetic.
+    The Data Center twin (D112) — `[~username]` on the wire and in the plan,
+    the username allowlist, the literal fallback for untagged mentions, Cloud
+    unchanged — is in `src/tools/datacenter-write.test.ts` (CC-323…CC-328) and
+    `src/api/wiki-writer.test.ts` (CC-324, CC-329).
 13. **HTTP transport (D101, offline)** — one suite,
     `src/mcp/transport-http.test.ts`: a real loopback listener on an
     ephemeral port, driven with raw `http.request` the way the login-CLI
@@ -314,6 +318,53 @@ and reaches the driver by the same repo-root dynamic `import()` the fixture
 recorder's suite uses (D75). A green rehearsal is a statement about this code,
 never about Jira's.
 
+**Rehearsing Data Center.** `scripts/fake-jira.mjs --deployment datacenter` is
+the fake's Data Center twin: it serves only the twenty-three routes the Data Center
+adapter calls for its twenty-six reads (`DATACENTER_ROUTES`; the count,
+changelog and attachment list of D114 reuse the search and issue routes; the
+filters of D115 add `/filter/favourite` and `/filter/{id}`, and the create
+metadata of D116 its two paged routes), on `/rest/api/2` and
+`/rest/agile/1.0` under a context path (`/jira`), behind a PAT `Bearer` — no
+header, HTTP Basic or a wrong token each get Data Center's 401 with the reason
+recorded. Users are `name`/`key`/`displayName` **with** `emailAddress` and
+`avatarUrls` and without `accountId`, so a result can be checked for what the
+server strips; rich text is wiki markup; `POST /search` pages classically
+(`startAt`/`maxResults`/`total`) and records a `nextPageToken` in the body as a
+violation; `/rest/api/3`, `/search/jql`, `/filter/search` (D115), any `accountId` lookup and anything
+outside the context path answer 404 and are flagged; a user search sent
+Cloud's `query` instead of `username` is a 400 and a violation (CC-312); the
+legacy `GET /issue/createmeta?expand=`, removed in Jira 9.0, is a 404 and a
+violation (CC-366). Cloud mode is unchanged.
+`scripts/rehearse-datacenter.mjs` (after `npm run build`) starts the built
+server with `JIRA_DEPLOYMENT=datacenter`, `JIRA_DATACENTER_PREVIEW=true`,
+`JIRA_AUTH_MODE=pat` and `JIRA_PAT` against it over real stdio MCP, and
+requires: `tools/list` equal to `DATACENTER_TOOLS`; every one of the twenty-six
+reads `ok` (search paged twice through its `dc1:` cursor, without overlap;
+`jira_search_users` also run as an assignable search and
+`jira_list_project_roles` also as the role list, D110; `jira_count` exact,
+the changelog with named authors and not flagged `incomplete`, the attachments
+with named authors and no URL, D114 — CC-349; the favourite filters with a
+named owner and `scope.source: "favourites"`, the single filter with no share
+internals, D115 — CC-359; `jira_get_create_meta` run as
+the type list and again as a complete create screen with `summary` required
+and no `defaultValue`, D116 — CC-367);
+`format: "markdown"` refused as `validation`; a flattened description and
+embedded comment page (CC-298); no
+email address, avatar URL or `accountId` anywhere in any result; every request
+under the context path, with a PAT `Bearer`, nothing Cloud-only or unmatched,
+and every Data Center route hit; and, restarted with a wrong PAT,
+`kind: auth`. The seven D109 writes are listed but never called — the
+rehearsal stays read-only, and `src/tools/datacenter-write.test.ts` pins
+their routes and wiki bodies (CC-302…CC-306). It reaches loopback exactly as the Cloud rehearsal does — the
+allowlisted rehearsal host, the one shared DNS preload
+(`REHEARSAL_DNS_PRELOAD`, injected into the child only) and the fake's CA —
+and adds no bypass. Like the Cloud rehearsal it needs `openssl`, is read-only
+and offline, and is **not** part of `npm run check`; the fake's Data Center
+shape and the rehearsal's checkers are pinned in the suite by
+`src/testing/rehearse-datacenter.test.ts` (CC-290…CC-298). A green run proves
+the adapter against this repo's reading of the Data Center documentation, not
+against a Data Center host.
+
 The single command the rehearsal rehearses is the single command Gate C runs;
 on the day the only differences are the base URL and the credential. That is
 also the limit of what a rehearsal is worth, and the limit is worth writing
@@ -363,13 +414,18 @@ coverage **depends on source maps**, which is why the everyday build keeps them
 
 Development scripts live outside `src`, so c8 reports one only when a test
 loads it. That is the right signal for `scripts/record-fixture.mjs` and
-`scripts/generate-readme.mjs`, which have suites meant to exercise them. The one
-exception is excluded by name: `scripts/verify-live.mjs` is exercised by the
+`scripts/generate-readme.mjs`, which have suites meant to exercise them. Three
+exceptions are excluded by name. `scripts/verify-live.mjs` is exercised by the
 offline rehearsal, which is deliberately outside `npm run check`, while
 `src/testing/verify-live.test.ts` imports it to pin three pure safety helpers and
 nothing more — so the rest is unreachable from this suite by design, and letting
 a 2000-line Gate C driver set the floor for the shipped server would make the
-floor mean nothing.
+floor mean nothing. `scripts/fake-jira.mjs` and `scripts/rehearse-datacenter.mjs`
+follow the same argument: the fake is a test double (the standing of
+`src/core/fakes/**`) and the Data Center rehearsal is a whole-system driver,
+both exercised by the rehearsals outside the gate, while
+`src/testing/rehearse-datacenter.test.ts` loads them only to pin the Data
+Center fake's wire shape and the rehearsal's pure checkers.
 
 Thresholds are **lines 97 / branches 94 / functions 98**, plus a statements
 floor of 97, and `check-coverage: true` makes any c8 run fail when one is

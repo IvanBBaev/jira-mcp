@@ -252,6 +252,42 @@ test('jira_remove_watcher carries the account in the QUERY and no body', async (
   assert.equal(sent?.body, undefined);
 });
 
+for (const [tool, route] of [
+  [addWatcherTool, WATCHERS_ADD_ROUTE],
+  [removeWatcherTool, WATCHERS_REMOVE_ROUTE],
+] as const) {
+  test(`CC-321: ${tool.name} refuses username on Jira Cloud before any request (D111)`, async () => {
+    const fake = createFakeJiraRequest().on(route, jiraOk(undefined, { status: 204 }));
+
+    const error = errorOf(
+      await tool.handler({ issue: 'ABC-1', username: 'jdoe' }, createCtx(fake.fn)),
+    );
+
+    assert.equal(error.kind, 'validation');
+    assert.match(error.message, /username/);
+    assert.match(error.remediation ?? '', /jira_search_users/);
+    assert.equal(fake.calls.length, 0);
+  });
+}
+
+test('CC-322: a watcher write takes exactly one of accountId and username', () => {
+  for (const tool of [addWatcherTool, removeWatcherTool]) {
+    for (const [args, pattern] of [
+      [{ accountId: ACCOUNT_ID, username: 'jdoe' }, /ambiguous/],
+      [{}, /needs a user/],
+    ] as const) {
+      const parsed = tool.input.safeParse({ issue: 'ABC-1', ...args });
+      assert.equal(parsed.success, false, JSON.stringify(args));
+      const message = parsed.success ? '' : (parsed.error.issues[0]?.message ?? '');
+      assert.match(message, pattern);
+    }
+    assert.equal(
+      tool.input.safeParse({ issue: 'ABC-1', username: 'jdoe' }).success,
+      true,
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Votes
 // ---------------------------------------------------------------------------
@@ -897,7 +933,7 @@ test('a planned collaboration write captures the first request and sends nothing
 test('every collab input schema is strict and rejects unknown keys', () => {
   assert.equal(listWatchersTool.input.safeParse({ issueKey: 'ABC-1' }).success, false);
   assert.equal(
-    addWatcherTool.input.safeParse({ issue: 'ABC-1', username: 'ada' }).success,
+    addWatcherTool.input.safeParse({ issue: 'ABC-1', user: 'ada' }).success,
     false,
   );
   assert.equal(

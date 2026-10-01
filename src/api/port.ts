@@ -102,7 +102,14 @@ import {
   listStatuses,
 } from './meta.js';
 import { approximateCount, searchIssues } from './search.js';
-import { getMyself, resolveMentionNames, searchUsers } from './users.js';
+import {
+  getMyself,
+  resolveMentionNames,
+  searchUsers,
+  type SearchUsersOptions,
+  type SearchUsersResult,
+  type ShapedUser,
+} from './users.js';
 import type { JiraDeployment } from '../core/types.js';
 
 /** Which backend an adapter speaks to. Only `cloud` has an adapter so far (D106). */
@@ -213,7 +220,13 @@ export interface JiraApi {
   // --- users ---
   readonly getMyself: typeof getMyself;
   readonly resolveMentionNames: typeof resolveMentionNames;
-  readonly searchUsers: typeof searchUsers;
+  /**
+   * Widened from `typeof searchUsers` (D110): the Data Center twin answers with
+   * `name` + `key` users, which carry no accountId.
+   */
+  readonly searchUsers: (
+    options: SearchUsersOptions,
+  ) => Promise<SearchUsersResult<ShapedUser>>;
 }
 
 /**

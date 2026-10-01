@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-275`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-367`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -1433,3 +1433,433 @@ with a note, and gaps stay gaps.
   `/issue/{key}/watchers` route with DC users, and a withheld list stays
   `watchersVisible: false`.
 
+## Appended with the Data Center fake and rehearsal (2026-09-28, stage 13.3b)
+
+- **CC-290** `scripts/fake-jira.mjs --deployment datacenter` answers in Data
+  Center's shape: the site sits under a context path (`/jira`), users are
+  `name`/`key`/`displayName` with `emailAddress` and `avatarUrls` and no
+  `accountId`, and the description, comment bodies and worklog comments are
+  wiki-markup strings. A fake without the email could not show the server
+  stripping it, and one at the host root could not catch a dropped context
+  path — the rehearsal would be green for the wrong reason.
+- **CC-291** The Data Center fake accepts only `Authorization: Bearer <PAT>`;
+  no header, HTTP Basic (even the Cloud fake's valid credential), another
+  scheme and a wrong token each get Data Center's 401
+  (`X-Seraph-LoginReason: AUTHENTICATED_FAILED`) with the reason and scheme
+  recorded. A fake that took any header would pass a server that sends Basic
+  under `JIRA_AUTH_MODE=pat`.
+- **CC-292** On the Data Center fake `/rest/api/3`, `/search/jql` and
+  `/search/approximate-count`, any `accountId`/`accountIds` query, anything
+  outside the context path and any route the adapter does not call answer 404
+  and are recorded as unmatched with the reason. Otherwise a Cloud-only call
+  the adapter should never make would be served and look fine.
+- **CC-293** The Data Center fake's `POST /search` pages classically
+  (`startAt`/`maxResults`/`total`, oldest first, no cursor), and a
+  `nextPageToken` in the body is a 400 recorded as
+  `cloud_cursor_on_classic_search`. A fake that paged by cursor would hide the
+  `dc1:` translation going wrong.
+- **CC-294** Cloud mode is untouched by the Data Center mode: the origin has no
+  context path, v3 is served behind Basic, a PAT is a 401, and no Data Center
+  bookkeeping appears on a Cloud record; an unknown deployment or a malformed
+  context path is refused at start. Otherwise the Data Center twin could
+  quietly break the Cloud rehearsal it sits beside.
+- **CC-295** The Data Center rehearsal's leak check flags an `accountId`,
+  `emailAddress` or `avatarUrls` key at any depth (any case) and an email
+  address or `useravatar` URL inside any string, naming the path. A weaker
+  check would call a result clean that still carries the identity the server
+  promises to strip.
+- **CC-296** The rehearsal's wire audit flags a request outside
+  `<context>/rest/api/2` and `/rest/agile/1.0`, a Cloud-only or unmatched
+  request, one outside the context path, a non-Bearer credential, an auth
+  failure, a handler crash or a recorded violation — and every
+  `DATACENTER_ROUTES` entry that was never called. Without the last, a tool
+  that silently stopped calling its route would still pass.
+- **CC-297** The rehearsal requires `tools/list` to equal `DATACENTER_TOOLS`
+  in both directions, its plan calls each Data Center read exactly once and no
+  write (D109: the served writes are listed but pinned by
+  `src/tools/datacenter-write.test.ts`, not rehearsed), and the child's
+  environment is built from nothing (a PAT Data Center preview, the rehearsal
+  host allowlisted, no `JIRA_EMAIL`/`JIRA_API_TOKEN`/`JIRA_WRITE_MODE` from the
+  parent). Otherwise an unlisted tool, an unrehearsed read, a write fired at
+  the fake or a developer's Cloud credential would go unnoticed.
+
+## Appended with the Data Center wiki writer (2026-09-28, stage 13.4a)
+
+- **CC-276** `wikiFromAdf` writes the subset that `adfFromMarkdown` and
+  `toAdf` emit: paragraphs (a hardBreak is a newline), `hn.` headings, `*` /
+  `#` lists nested by repeated markers, `{code:lang}` blocks, `{quote}`,
+  `----`, `||h||` / `|c|` tables, strong / em / strike / code / link marks.
+  `wikiFromMarkdown` and `wikiFromText` are that writer over `adfFromMarkdown`
+  and `toAdf`. Anything else would mean parsing markdown twice.
+- **CC-277** Every wiki metacharacter `* _ - + ^ ~ ? { } [ ] | !` in text is
+  written `\X` and `wikiToText` reads it back literally, so `*bold*`,
+  `[label|url]`, `[~admin]`, `!x.png!` and `{color:red}` stay text. An escaped
+  `\{quote}` is text to the reader too. Without that, tenant text would gain
+  markup, links or images on Data Center.
+- **CC-278** A line whose first non-space character would start `h1.`–`h6.`,
+  `bq.` or a `#` list is written with that character as a numeric reference
+  (`&#104;1.`, `&#35;`). The leading `*` / `-` of a list is a plain `\*` /
+  `\-`. Otherwise a sentence could turn into a heading, quote or list.
+- **CC-279** What a backslash cannot say is written `&#N;`: a backslash
+  (`\\` is a line break), an `&` that would start an entity, an emoticon's `(`
+  the `( ) P D` after a `:` and the `)` after a `;`, and U+2028/U+2029 plus the reader's
+  sentinels U+E000/U+E001. Jira renders `:)` and `(y)` as images, and turns
+  `\\` into a break.
+- **CC-280** `wikiToText` decodes decimal and hex numeric references last, in
+  one pass. It leaves named entities alone, and references to NUL, a surrogate
+  or anything past U+10FFFF. So a decoded `#` is never re-read as markup, and
+  a malformed reference stays text.
+- **CC-281** C0/C1 control characters other than tab and newline are dropped,
+  and `\r\n` / `\r` become `\n`. XML-based renderers reject them, and a bare CR
+  would split lines differently on each side.
+- **CC-282** strong / em / strike are written only where Jira's boundary rule
+  renders them. There is no letter or digit outside, edge whitespace moves
+  outside the mark, and there is no same-mark neighbour. Anywhere else the text
+  stays and the mark is dropped. `{{code}}` is always written. A mark Jira
+  would not render would leave stray `*` in the issue.
+- **CC-283** A link keeps its target only if `unsafeHref` passes (CC-153's
+  rule). A `javascript:` link keeps its label as plain text. In the URL,
+  `[ ] | { } ! " < >`, whitespace and a leading `~` / `^` are percent-encoded;
+  in the label `[ ] |` are references. Otherwise a label or URL could close the
+  `[..|..]` token and inject a second link.
+- **CC-284** A code body holding `{code}` is written in `{noformat}`. A body
+  holding both closers gets a zero-width space after each closer's `{`, and a
+  language outside `[\w+#.-]{1,32}` is dropped. The body is verbatim. Without
+  this, a body could close its own block early and render the rest as markup.
+- **CC-285** Lists nest by repeating the marker chain (`*#*`). Paragraphs in
+  one item are joined with `\\`, a code block inside an item becomes
+  `{{line}}` spans, content after a nested list opens a new item, an empty item
+  is `* ` and `order` is not kept. Wiki list items are single lines, so there
+  is no other way to keep the text.
+- **CC-286** A mention is written as its display text (`@Ann Lee`, or `@` +
+  id), escaped like any text, never as `[~id]`. A Cloud accountId is not a
+  Data Center username, so `[~id]` would notify the wrong user or no one.
+- **CC-287** Any node or mark outside the subset (panel, underline, a node
+  with no type, nesting deeper than 64) throws a `validation` JiraError naming
+  it, with a remediation. The name is sanitised and capped at 40 characters. A
+  write must never silently drop content.
+- **CC-288** Tables are written `||h||` / `|c|`. `[ ] |` inside a cell are
+  references, and an empty cell is a space. Because the reader splits cells
+  before reading escapes, a `\|` would still split the cell.
+- **CC-289** `{quote}` does not nest: an inner quote is flattened into the
+  outer one. An empty heading or quote writes nothing. The inner `{quote}`
+  would close the outer one, and an empty `h1.` renders as a stray tag.
+- **CC-299** Property: over generated documents rich in metacharacters,
+  `wikiToText(wikiFromAdf(doc))` equals `adfToText(doc)`. Lines are trimmed,
+  the gap after a list marker is collapsed, blank and fence lines and control
+  characters are ignored, and tables are left out. A missed escape surfaces
+  as text that changed on the way back.
+- **CC-300** Property: once `\X` escapes and references are removed from
+  `wikiFromText` output, no metacharacter, backslash, emoticon, line-leading
+  block tag, CR or sentinel is left, and the text reads back unchanged. This is
+  escape soundness over inputs no example thought of.
+- **CC-301** Property: `wikiFromText` and `wikiFromMarkdown` never throw on
+  any string. The Cloud builders' output is always inside the subset, so a
+  model's text can never reach the validation error.
+
+## Appended with the Data Center writes (2026-09-28, D109 stage 13.4b)
+
+- **CC-298** On Data Center, `jira_get_issue`'s embedded
+  `fields.comment.comments[].body` and `fields.worklog.worklogs[].comment` are
+  flattened from wiki markup like the description, and the rehearsal's step
+  check looks inside embedded comments too. Otherwise `[~jdoe]` or `*bold*`
+  reaches the model inside the issue while the same comment read on its own is
+  clean.
+- **CC-302** Each of the seven served Data Center writes (create, update,
+  transition, add/update comment, add worklog, link) sends exactly one
+  non-GET request under `/rest/api/2/`, with no ADF anywhere in its body and
+  its rich-text field (description, `update.comment[0].add.body`, comment
+  `body`, worklog `comment`, link `comment.body`) rendered as wiki markup
+  with metacharacters escaped. An ADF body on v2 is stored as literal JSON.
+- **CC-303** On Data Center, markdown input is rendered to wiki (`## x` →
+  `h2. x`, `**b**` → `*b*`, `` `c` `` → `{{c}}`), raw ADF input is rendered
+  the same way, and an ADF node outside the writer's subset (`panel`) is a
+  `validation` error naming the node before any request. A silent drop would
+  lose content.
+- **CC-304** Data Center writes refuse `assigneeAccountId` (and the port
+  refuses `reporterAccountId`) with `validation` whose remediation shows
+  `fields: { "assignee": { "name": "<username>" } }` — before any request.
+  Users are by name on Data Center; an accountId would be ignored or rejected
+  late. ~~`resolveMentions` with an `@[Name]` token is `unsupported`~~ —
+  superseded by D112 (stage 13.6a): mentions now resolve on Data Center, see
+  CC-323…CC-329.
+- **CC-305** Comment and worklog writes on Data Center answer with the author
+  projected like the reads (name as the identity, no email). A write result
+  must not leak what the read projection hides.
+- **CC-306** In plan mode a Data Center write reports the root-relative path
+  and the wiki body the apply would send, and makes no call. The plan must
+  show what will actually be stored, not the pre-render ADF.
+
+## Appended with the Data Center user reads (2026-09-30, D110 stage 13.5a)
+
+- **CC-307** `jira_search_users` on Data Center sends `GET
+  /rest/api/2/user/search` with `username=<query>` and never Cloud's `query=`,
+  and each row comes back as `{ name, key, displayName, active }`. Data
+  Center ignores or rejects `query`, so a Cloud-shaped call finds nobody.
+- **CC-308** On Data Center, `issue` or `project` switches the search to `GET
+  /rest/api/2/user/assignable/search` with `issueKey=` or `project=`, and the
+  issue wins when both are given (the same rule as on Cloud). Otherwise
+  "assignable here" silently becomes "anyone".
+- **CC-309** `includeEmail: true` on Data Center is a `validation` error before
+  any request, and `includeEmail: false` is served. The Data Center user
+  projection has no email field; honouring the flag silently would be a lie,
+  and widening the projection is a separate decision.
+- **CC-310** A Data Center user-search row that carries an `accountId`, or
+  has neither `name` nor `key`, or is not an object is `unexpected_shape`, and
+  no email from it reaches the error. Passing it through would put a
+  Cloud-shaped or anonymous user in front of the model.
+- **CC-311** `jira_list_project_roles` on Data Center reads the role map and
+  `/role/{id}` on `/rest/api/2`. A user actor
+  (`atlassian-user-role-actor`) comes back as `{ type, name, displayName }`,
+  with no `accountId` and no avatar. A group actor is `{ type, displayName }`,
+  as on Cloud. The Cloud path does not read `name`. Otherwise a role would
+  list its people with no identity that a Data Center write accepts.
+- **CC-312** The fake's Data Center `/user/search` answers `username=` with
+  name/key rows and no `accountId`. It refuses Cloud's `query=` with a 400 and
+  records a violation, and it requires `username`. Its assignable search
+  requires a project or an issue. Its role detail names a user actor by
+  `name`. The rehearsal's step check flags a user row or a user actor with no
+  `name`. Otherwise a green rehearsal could hide a Cloud-shaped user call.
+
+## Appended with the Data Center user writes (2026-09-30, D111 stage 13.5b)
+
+- **CC-317** On Data Center, `jira_assign_issue` sends
+  `PUT /rest/api/2/issue/{key}/assignee` with `{ "name": "<username>" }` and
+  unassigns with `{ "name": null }`; `jira_add_watcher` sends
+  `POST /rest/api/2/issue/{key}/watchers` with the username as a bare JSON
+  string; `jira_remove_watcher` sends `DELETE .../watchers?username=<username>`
+  with no body; the vote tools send `POST|DELETE /rest/api/2/issue/{key}/votes`
+  with no body. An `accountId` key or a v3 path is ignored or rejected by a
+  Data Center host.
+- **CC-318** On Data Center, `accountId` on `jira_assign_issue`,
+  `jira_add_watcher` and `jira_remove_watcher` is a `validation` error whose
+  remediation says to pass `username`, before any request; the Data Center
+  twins also refuse a username together with `unassign: true`, an assignment
+  with neither, and a watcher write with no username. Data Center has no
+  accountIds, so the call could never mean what it says.
+- **CC-319** The Data Center results carry `username` (the assign result
+  `username: null` on unassign) and no `accountId` key. A result must name the
+  user in the identifier the host actually took.
+- **CC-320** In plan mode the Data Center user writes report the
+  root-relative path with the `{ "name": … }` body, the bare-string watcher
+  body and the `{ username }` query the apply would send, and make no call; an
+  `accountId` refused below the plan seam is still refused in plan mode.
+- **CC-321** On Jira Cloud, `username` on `jira_assign_issue`,
+  `jira_add_watcher` and `jira_remove_watcher` is a `validation` error before
+  any request, with a remediation pointing at `jira_search_users`. Cloud
+  ignores `name` since the GDPR migration; sending it would be a silent no-op
+  or a 400.
+- **CC-322** CC-22's exactly-one rule is extended: the assign schema takes
+  exactly one of `accountId`, `username` and `unassign: true` (two of them are
+  ambiguous, none is intentless), and the watcher schemas take exactly one of
+  `accountId` and `username`. The deployment is unknown to the schema, so it
+  enforces the shape and the adapter enforces the dialect.
+
+## Appended with the Data Center mention resolution (2026-09-30, D112 stage 13.6a)
+
+- **CC-323** On Data Center, `resolveMentions: true` with `format: "markdown"`
+  resolves each `@[Name]` through `GET /rest/api/2/user/search?username=`
+  (the v2 root, `username`, never `query`) and the write body carries the
+  mention as `[~username]`; case-insensitive duplicates share one search and
+  every rich-text field of the call resolves the same way. With
+  `resolveMentions` off the token stays literal text, no search is made, and
+  `mentions_skipped` is hinted, as on Cloud. A Data Center mention must notify
+  the user the caller named, in the only form wiki markup has.
+- **CC-324** A resolved Data Center username is written only when every
+  character is a letter, a digit or one of `. _ - @ +` (1–255 characters).
+  A username holding `]`, `|`, `[`, `{`, `}`, `~`, `\`, `*`, whitespace or a
+  line break — or a matched user with no username at all — is a `validation`
+  error whose remediation says to write the name as plain text, before any
+  write; the check runs at resolution, when the node is tagged, and again
+  when it is written. A username is refused, never rewritten: `]` or `|` would
+  end or alias the link and inject markup, and a rewritten name would mention
+  somebody else.
+- **CC-325** In plan mode a Data Center write with `resolveMentions: true`
+  makes the user-search GET (a read, CC-111) and reports the body with
+  `[~username]` — the body the apply would send — and writes nothing. The plan
+  must show the mention Jira will store, not the pre-render ADF.
+- **CC-326** The D100 rules hold on Data Center unchanged: no match,
+  inactive-only matches and ambiguity refuse the whole call with the Cloud
+  texts (CC-106, CC-107, CC-113), the ambiguity remediation lists candidates as
+  `displayName (username)`, a unique exact display-name match wins over
+  partial ones, and more than 20 distinct names are refused before any search
+  (CC-112). The two deployments must not disagree about who a name means.
+- **CC-327** Only a mention built from a target the Data Center resolver
+  produced in this process is written `[~username]`. A mention node in
+  caller-supplied ADF (a raw `body`, a `fields` value) stays literal display
+  text whatever its `attrs.id`, and so does a mention built from any other map
+  — hand-made, copied, or a Cloud resolution — even with the same id and text.
+  An arbitrary id written as a user link would let a caller notify, or inject
+  markup as, anyone (CC-286 kept).
+- **CC-328** Cloud mention resolution is unchanged: `CLOUD_API` keeps its own
+  `resolveMentionNames` (`GET /rest/api/3/user/search?query=`, accountIds) and
+  `adfFromMarkdown`, and a Cloud target passed through the Data Center parse
+  still writes literal text. The Data Center twin must not leak into Cloud.
+- **CC-329** The wiki writer writes a tagged mention as `[~username]`, as one
+  token (so emphasis around it and word characters next to it do not break
+  it) and inside `*…*` or other expressible marks; under a `code` or `link`
+  mark, which cannot hold a user link, it falls back to literal text. The tag
+  is a module-private symbol: tagging copies the tree (the input is not
+  mutated), the tag does not survive JSON or `structuredClone`, and
+  `wikiToText` reads `[~jdoe]` back as `@jdoe`. A forgeable tag would reopen
+  CC-327.
+
+## Appended with the Data Center admin and agile writes (2026-09-30, D113 stage 13.6b)
+
+- **CC-330** On Data Center, `jira_create_component` / `jira_update_component`
+  send `POST /rest/api/2/component` / `PUT /rest/api/2/component/{id}` and
+  `jira_create_version` / `jira_update_version` send
+  `POST /rest/api/2/version` / `PUT /rest/api/2/version/{id}`, each with the
+  Cloud body fields unchanged (`project` key, numeric `projectId`,
+  `YYYY-MM-DD` dates, plain-text descriptions sent as given);
+  `jira_create_sprint`, `jira_start_sprint`, `jira_move_to_sprint` and
+  `jira_move_to_backlog` send the Cloud request on `/rest/agile/1.0`. One
+  request each, never a v3 path, never ADF. The two products share these
+  routes and fields, so the only change is the root.
+- **CC-331** On Data Center, `leadAccountId` on `jira_create_component` or
+  `jira_update_component` is a `validation` error before any request, raised
+  in the adapter (below the tools ring), with a remediation to drop it. Data
+  Center has no accountIds; a component lead there is a username, which this
+  server does not send yet.
+- **CC-332** A Data Center component answer projects its lead in the Data
+  Center user dialect (no email, no avatar, no accountId); version and sprint
+  answers keep the same allowlist as on Cloud (`userStartDate` /
+  `userReleaseDate` and `self` are dropped). A result must not leak what the
+  Cloud projection would have dropped.
+- **CC-333** In plan mode the Data Center admin and agile writes report the
+  root-relative path and the body the apply would send, and make no call; a
+  `leadAccountId` refused below the plan seam is still refused in plan mode.
+- **CC-334** No served Data Center write has `writeTier: 'irreversible'`, and
+  `jira_close_sprint` is not served (the port member throws `unsupported`,
+  the registry excludes the tool). A closed sprint cannot be reopened, so it
+  waits for a proven host with the deletes and bulk tools (D109, D113).
+
+## Appended with the Data Center count, changelog and attachment reads (2026-09-30, D114 stage 13.6c)
+
+The IDs between CC-334 and CC-340 are unused; the gap is deliberate.
+
+- **CC-340** `jira_count` on Data Center sends `POST /rest/api/2/search` with
+  `maxResults: 0` and answers `{ count: total, approximate: false }` with no
+  `approximate` hint; on Cloud it still reads `/search/approximate-count` and
+  answers `approximate: true` with the hint. The classic search total is the
+  host's exact count, and labelling it an estimate — or an estimate exact —
+  misleads the caller.
+- **CC-341** A Data Center search answering a `total` that is missing, negative,
+  fractional or not a number is `unexpected_shape`, never a count. Zero is a
+  real answer; a guessed zero is not.
+- **CC-342** `jira_get_changelog` on Data Center sends
+  `GET /rest/api/2/issue/{key}?expand=changelog&fields=` and pages
+  (`startAt`/`maxResults`, `nextStartAt`, `partial`) inside the embedded
+  history, oldest first as on Cloud. History items pass through as Jira sent
+  them, and the author takes the Data Center user projection. Data Center has
+  no `/issue/{key}/changelog` route.
+- **CC-343** When the embedded changelog holds fewer histories than its
+  `total`, the result carries `incomplete: { reachableStartAt,
+  reachableEndAt, total, note }`, the note starting `INCOMPLETE:`, and paging
+  stops at the embedded window: `partial` is false and there is no
+  `nextStartAt` past it, even for a `startAt` beyond it. A truncated history
+  presented as complete is a wrong answer about what happened to an issue.
+- **CC-344** A Data Center issue read with no `changelog` object, or with a
+  non-array `histories`, is `unexpected_shape`, never an empty history.
+- **CC-345** `jira_list_attachments` on Data Center sends
+  `GET /rest/api/2/issue/{key}?fields=attachment`, drops the `self`,
+  `content` and `thumbnail` URLs as on Cloud, and projects the author as
+  `{ name, key, displayName }` — no email, avatar or accountId.
+- **CC-346** A Data Center attachment author carrying an `accountId` is dropped
+  rather than passed through; the Cloud list is unchanged — v3, no root
+  override, the `{ accountId, displayName }` author.
+- **CC-347** `jira_download_attachment`, `jira_upload_attachment`,
+  `jira_list_filters`, `jira_get_filter` and `jira_get_create_meta` stay
+  unserved on Data Center; the count, changelog and attachment list are
+  served. The first two move bytes on routes never checked on Data Center; the
+  last three depend on the Data Center release. *Amended by D115 (stage
+  13.7a): `jira_list_filters` and `jira_get_filter` are served without
+  `/filter/search` (CC-350…CC-357). Amended by D116 (stage 13.7b):
+  `jira_get_create_meta` is served over the paged 8.4+ routes
+  (CC-360…CC-365); only the download and the upload stay unserved.*
+- **CC-348** The fake's Data Center twin answers a `maxResults: 0` search with
+  a positive `total` and no issues, embeds a changelog with a named DC author
+  for `expand=changelog&fields=`, and returns attachment rows with a named DC
+  author and a `content` URL for the server to strip.
+- **CC-349** The rehearsal's step checks name an `approximate` count, a missing
+  count, an empty history, a history author with no name, a whole history
+  flagged `incomplete`, an empty attachment list, an attachment author with no
+  name and an attachment that kept a `self`/`content`/`thumbnail` URL.
+
+## Appended with the Data Center filters (2026-10-01, D115 stage 13.7a)
+
+- **CC-350** `jira_list_filters` on Data Center sends one
+  `GET /rest/api/2/filter/favourite` with no query — never `/filter/search`,
+  which many Data Center releases lack — and the result carries
+  `scope: { source: "favourites", note }`, the note starting `SCOPE:`: the
+  list is the caller's favourite filters, not every filter they can see.
+  `jira_get_filter` sends `GET /rest/api/2/filter/{id}`. Both project the owner
+  as `{ name, key, displayName }` — no email, avatar or accountId.
+- **CC-351** `filterName` is applied here on Data Center as a
+  case-insensitive substring of the filter name, and echoed in the result as
+  on Cloud; a blank `filterName` filters nothing.
+- **CC-352** `maxResults` and `startAt` page the favourites here over the one
+  response, with Cloud's paging semantics: `total` is the matched count,
+  `partial` and `nextStartAt` say more rows remain, `stopReason` is
+  `max_pages` or `exhausted`.
+- **CC-353** `accountId` is refused on Data Center as `validation` before any
+  request — Data Center has no accountIds, and ignoring the argument would
+  answer a question that was not asked.
+- **CC-354** A favourites answer that is not an array, a row that is not an
+  object, or a filter body that is not an object is `unexpected_shape`, never
+  an empty list.
+- **CC-355** A Data Center filter owner carrying an `accountId` is dropped
+  rather than passed through, and neither tool returns share permissions, edit
+  permissions, subscriptions or the `viewUrl`/`searchUrl` URLs.
+- **CC-356** On Cloud both tools are unchanged — `/filter/search` and
+  `/filter/{id}` on v3 with the Cloud query, no `scope`, the
+  `{ accountId, displayName }` owner.
+- **CC-357** A filter name passed as `filterId` is refused on Data Center as
+  `validation` before any request, as on Cloud; both tools are in
+  `DATACENTER_TOOLS`.
+- **CC-358** The fake's Data Center twin serves `/filter/favourite` and
+  `/filter/{id}` with a named DC owner and share permissions for the server to
+  strip, and answers `/filter/search` with a 404 recorded as a violation that
+  the rehearsal names.
+- **CC-359** The rehearsal's step checks name an empty favourites list, a
+  filter row with no owner name, a list without `scope.source: "favourites"`,
+  a single filter with no JQL or owner name, and a filter that kept its share
+  permissions, edit permissions or subscriptions.
+
+## Appended with the Data Center create metadata (2026-10-01, D116 stage 13.7b)
+
+The last two IDs of the reserved block (the eighth and ninth after CC-360) are left unused; the gap is deliberate.
+
+- **CC-360** `jira_get_create_meta` without `issueTypeId` on Data Center sends
+  `GET /rest/api/2/issue/createmeta/{project}/issuetypes` with `startAt` and
+  `maxResults`, reads the rows from `values`, and follows `isLast` to the next
+  page; the result is the Cloud `choose_issue_type` shape.
+- **CC-361** With `issueTypeId`, Data Center sends
+  `GET /rest/api/2/issue/createmeta/{project}/issuetypes/{issueTypeId}` and
+  answers the Cloud `create_screen` shape: `required`, `schema`, `operations`
+  and `allowedValues` kept. No field carries a `defaultValue`, and a user-typed
+  allowed value keeps its username only — no email, user key, avatar or
+  accountId reaches the result.
+- **CC-362** A 404 from either paged create-metadata route with no Jira error
+  message is `unsupported`, naming Jira Data Center 8.4 or later; exactly one
+  request is sent, and never to the legacy
+  `/issue/createmeta?expand=projects.issuetypes.fields`, which Jira 9.0
+  removed.
+- **CC-363** A 404 carrying Jira's own messages stays `not_found` with the
+  messages in the reason and the 8.4 floor in the remediation; any other
+  failure (a 403, say) passes through with its own kind and no 8.4 hint.
+- **CC-364** A Data Center create-metadata page without a `values` array —
+  including a Cloud-shaped `issueTypes` or `fields` page — is
+  `unexpected_shape`, never an empty list.
+- **CC-365** On Cloud the create metadata is unchanged: v3, no root override,
+  rows in `issueTypes`/`fields`, and a 404 is not re-aimed at a Data Center
+  version floor.
+- **CC-366** The fake's Data Center twin serves the two paged routes (both in
+  `DATACENTER_ROUTES`) with rows in `values` and `isLast`, a reporter default
+  that carries an email, and a 404 for an unknown issue type; the legacy
+  `GET /issue/createmeta` answers 404 and records the violation
+  `legacy_createmeta_removed_in_jira_9`, which the wire audit reports.
+- **CC-367** The rehearsal calls the type list and, as a checked `also`, the
+  create screen; its step checks name an empty type list, a screen flagged
+  partial, an empty screen, a screen without `summary` required, a field that
+  kept its `defaultValue`, and an unknown step.
