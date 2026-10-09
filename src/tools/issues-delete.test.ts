@@ -37,7 +37,7 @@ import {
 } from '../core/fakes/index.js';
 import { JiraError } from '../core/types.js';
 import type { JiraRequestFn } from '../core/types.js';
-import { journalingGate } from '../mcp/server.js';
+import { journalingGate, toMcpTool } from '../mcp/server.js';
 import type { AnyToolSpec, PlannedRequest, ToolCtx, ToolResult } from '../mcp/types.js';
 import { createWriteGate } from '../mcp/write-mode.js';
 import type { WriteGate } from '../mcp/write-mode.js';
@@ -1542,6 +1542,37 @@ test('[CC-243] duplicate bulk targets are dropped before the count and the 1000 
     bulkDeleteIssuesTool.input.safeParse({ issues: bulkKeys(1001) }).success,
     false,
   );
+});
+
+test('[CC-396] the bulk issues description states the cap on distinct entries, as the schema enforces it', () => {
+  const cases: [AnyToolSpec, Record<string, unknown>][] = [
+    [bulkDeleteIssuesTool, {}],
+    [bulkEditIssuesTool, { priorityId: '2' }],
+  ];
+  for (const [tool, extra] of cases) {
+    const schema = toMcpTool(tool).inputSchema as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    const issues = schema.properties['issues'];
+    assert.ok(issues !== undefined, `${tool.name} advertises issues`);
+    // The advertised array carries no maxItems: the cap applies after the
+    // dedupe, so a schema-validating client must not refuse 1000 + repeats.
+    assert.equal(Object.hasOwn(issues, 'maxItems'), false, tool.name);
+    const description = String(issues['description']);
+    assert.match(description, /at most 1000 distinct entries/, tool.name);
+    assert.match(description, /repeats are dropped first and do not count/, tool.name);
+    // ...and the behaviour the prose promises.
+    assert.equal(
+      tool.input.safeParse({ ...extra, issues: [...bulkKeys(1000), 'PROJ-1'] }).success,
+      true,
+      tool.name,
+    );
+    assert.equal(
+      tool.input.safeParse({ ...extra, issues: bulkKeys(1001) }).success,
+      false,
+      tool.name,
+    );
+  }
 });
 
 test('CC-129: the bulk plan is the request itself — zero reads, a count and a capped echo', async () => {

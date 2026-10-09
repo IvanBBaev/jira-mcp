@@ -2720,8 +2720,8 @@ function buildRoutes(server) {
 // Jira Data Center mode (`deployment: 'datacenter'`)
 // ---------------------------------------------------------------------------
 //
-// The Data Center twin of the Cloud half above, for the twenty-six reads the Data
-// Center adapter serves (`DATACENTER_TOOLS` in src/api/datacenter.ts) and
+// The Data Center twin of the Cloud half above, for the twenty-seven reads the
+// Data Center adapter serves (`DATACENTER_TOOLS` in src/api/datacenter.ts) and
 // nothing else. It shares the seed — the same projects, issues, comments,
 // worklogs, watchers, component, version, board and sprint — and projects it the
 // way `/rest/api/2` documents it:
@@ -2737,6 +2737,9 @@ function buildRoutes(server) {
 //   - the create metadata is the paged 8.4+ pair, rows in `values` with
 //     `isLast` (D116); the legacy `GET /issue/createmeta?expand=` that Jira
 //     9.0 removed answers 404 and is recorded as a violation;
+//   - an attachment's bytes come from the servlet,
+//     `/secure/attachment/{id}/{filename}` (D117); Cloud's
+//     `/attachment/content/{id}` is a violation on either root;
 //   - authentication is a personal access token as `Authorization: Bearer`.
 //
 // The site sits under a context path (`/jira` by default), because that is how
@@ -2777,6 +2780,9 @@ export const DATACENTER_ROUTES = Object.freeze([
   'GET /rest/api/2/filter/{id}',
   'GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes',
   'GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
+  // D117 (stage 13.8): the attachment download — metadata, then the servlet.
+  'GET /rest/api/2/attachment/{id}',
+  'GET /secure/attachment/{id}/{filename}',
 ]);
 
 /** The issue types the Data Center create metadata offers in every project. */
@@ -2930,6 +2936,26 @@ export function dataCenterAuthFailure(header, pat) {
   if (header.startsWith('Basic ')) return 'HTTP Basic, not a PAT bearer';
   if (!header.startsWith('Bearer ')) return 'not a Bearer token';
   return 'wrong token';
+}
+
+/**
+ * One attachment as `/rest/api/2` documents it: the Data Center author, and a
+ * `content` URL on the attachment servlet (`/secure/attachment/{id}/{name}`).
+ * The server must never follow that URL — it builds its own (D117).
+ */
+function dcAttachment(state, attachment, base) {
+  return {
+    self: `${base}/rest/api/2/attachment/${attachment.id}`,
+    id: attachment.id,
+    filename: attachment.filename,
+    author: dcUser(state, attachment.authorAccountId, base),
+    created: attachment.created,
+    size: attachment.size,
+    mimeType: attachment.mimeType,
+    content:
+      attachment.contentOverride ??
+      `${base}/secure/attachment/${attachment.id}/${encodeURIComponent(attachment.filename)}`,
+  };
 }
 
 function dcUser(state, accountId, base) {
@@ -3099,19 +3125,9 @@ function dcIssue(state, issue, base, options = {}) {
       name: project?.name,
       projectTypeKey: project?.projectTypeKey,
     },
-    attachment: issue.attachmentIds.map((id) => {
-      const attachment = state.attachments.get(id);
-      return {
-        self: `${base}/rest/api/2/attachment/${attachment.id}`,
-        id: attachment.id,
-        filename: attachment.filename,
-        author: dcUser(state, attachment.authorAccountId, base),
-        created: attachment.created,
-        size: attachment.size,
-        mimeType: attachment.mimeType,
-        content: `${base}/secure/attachment/${attachment.id}/${attachment.filename}`,
-      };
-    }),
+    attachment: issue.attachmentIds.map((id) =>
+      dcAttachment(state, state.attachments.get(id), base),
+    ),
     // Links are made by writes, and the Data Center adapter serves none.
     issuelinks: [],
     fixVersions: [],
@@ -3610,6 +3626,47 @@ function buildDataCenterRoutes(server, cloudRoutes) {
       },
     ],
 
+    // -- attachment download (D117) -----------------------------------------
+    // Data Center has no `/attachment/content/{id}`: a client that reaches for
+    // it (on either root) is recorded as a violation. Listed before
+    // `/attachment/{id}`, which would otherwise take `content` for an id.
+    [
+      'GET',
+      '/rest/api/2/attachment/content/{id}',
+      (ctx) => {
+        ctx.record.violation = 'cloud_attachment_content_on_datacenter';
+        return jiraError(404, ['Data Center has no GET /rest/api/2/attachment/content']);
+      },
+    ],
+    [
+      'GET',
+      '/rest/api/2/attachment/{id}',
+      (ctx) => {
+        const attachment = state.attachments.get(ctx.params.id);
+        if (attachment === undefined) return notFound('Attachment');
+        return json(200, dcAttachment(state, attachment, base()));
+      },
+    ],
+    // The attachment servlet: outside the REST API, under the context path,
+    // behind the same PAT. The name segment must be the attachment's filename
+    // — the documented URL carries it — so a request for another name is a
+    // 404, as a client that guessed or followed something else would get.
+    [
+      'GET',
+      '/secure/attachment/{id}/{filename}',
+      (ctx) => {
+        const attachment = state.attachments.get(ctx.params.id);
+        if (attachment === undefined || attachment.filename !== ctx.params.filename) {
+          return notFound('Attachment');
+        }
+        return {
+          status: 200,
+          buffer: attachment.bytes,
+          headers: { 'content-type': attachment.mimeType },
+        };
+      },
+    ],
+
     // -- create metadata (D116) ---------------------------------------------
     [
       'GET',
@@ -3807,6 +3864,11 @@ export async function startFakeJira(options = {}) {
         if (!insideContext) record.outsideContextPath = true;
         const cloudOnly = cloudOnlyReason(routePath, query);
         if (cloudOnly !== undefined) record.cloudOnly = cloudOnly;
+        // The Cloud byte route, on either root (D117): Data Center serves the
+        // bytes from `/secure/attachment/{id}/{filename}` only.
+        if (/^\/rest\/api\/[23]\/attachment\/content(?:\/|$)/.test(routePath)) {
+          record.violation = 'cloud_attachment_content_on_datacenter';
+        }
       }
       server.requests.push(record);
 

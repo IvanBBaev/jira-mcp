@@ -122,7 +122,7 @@ test('CC-276: wikiFromMarkdown and wikiFromText are the ADF writer over the Clou
   assert.equal(wikiFromMarkdown(md), wikiFromAdf(adfFromMarkdown(md)));
   assert.equal(
     wikiFromMarkdown(md),
-    'h1. Title\n\nSome *bold* and {{code}}.\n\n* item\n*# sub',
+    'h1. Title\n\nSome *bold* and {{&#99;ode}}.\n\n* item\n*# sub',
   );
   const text = 'first line\nsecond *line*\n\nnext paragraph';
   assert.equal(wikiFromText(text), wikiFromAdf(toAdf(text)));
@@ -361,6 +361,72 @@ test('CC-284: a code body that would close {code} early falls back to {noformat}
   );
   const fallback = doc({ type: 'codeBlock', content: [t('x\n{code}\ny')] });
   assertRoundTrip(fallback);
+});
+
+test('CC-401: inline code cannot spell a macro tag with the `{{` that opens it', () => {
+  const cases: [string, string, string][] = [
+    ['use `quote` here', 'use {{&#113;uote}} here', 'use quote here'],
+    ['`color`', '{{&#99;olor}}', 'color'],
+    ['x `QUOTE` y', 'x {{&#81;UOTE}} y', 'x QUOTE y'],
+    ['`color:red}`', '{{&#99;olor:red\\}}}', 'color:red}'],
+    // Nothing after `{{` that closes into a tag: written as is.
+    ['`b`', '{{b}}', 'b'],
+    ['`quote x`', '{{quote x}}', 'quote x'],
+  ];
+  for (const [markdown, expected, text] of cases) {
+    const wiki = wikiFromMarkdown(markdown);
+    assert.equal(wiki, expected, markdown);
+    assert.equal(wikiToText(wiki), text, markdown);
+  }
+});
+
+test('CC-402: a named entity of any length is written as text', () => {
+  const text = 'a &rightarrow; b &CounterClockwiseContourIntegral; c';
+  const wiki = wikiFromText(text);
+  assert.equal(wiki, 'a &#38;rightarrow; b &#38;CounterClockwiseContourIntegral; c');
+  assert.equal(wikiToText(wiki), text);
+});
+
+test('CC-398: a code body inside a quote cannot close the quote', () => {
+  const quoted = (text: string, language?: string): AdfNode =>
+    doc({
+      type: 'blockquote',
+      content: [
+        {
+          type: 'codeBlock',
+          ...(language === undefined ? {} : { attrs: { language } }),
+          content: [t(text)],
+        },
+      ],
+    });
+  assert.equal(
+    wikiFromAdf(quoted('a {quote} b', 'js')),
+    '{quote}\n{code:js}\na {\u200Bquote} b\n{code}\n{quote}',
+  );
+  assert.equal(
+    wikiFromAdf(quoted('{QUOTE}{code}')),
+    '{quote}\n{noformat}\n{\u200BQUOTE}{code}\n{noformat}\n{quote}',
+  );
+  // A nested quote is still the same quote: its code is guarded too.
+  assert.equal(
+    wikiFromAdf(
+      doc({
+        type: 'blockquote',
+        content: [
+          {
+            type: 'blockquote',
+            content: [{ type: 'codeBlock', content: [t('{quote}')] }],
+          },
+        ],
+      }),
+    ),
+    '{quote}\n{code}\n{\u200Bquote}\n{code}\n{quote}',
+  );
+  // Outside a quote the body stays verbatim.
+  assert.equal(
+    wikiFromAdf(doc({ type: 'codeBlock', content: [t('{quote}')] })),
+    '{code}\n{quote}\n{code}',
+  );
 });
 
 test('CC-285: lists nest by repeated markers; the documented conventions hold', () => {

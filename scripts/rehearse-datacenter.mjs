@@ -4,28 +4,32 @@
  * Data Center twin of the fake Jira.
  *
  * `scripts/rehearse-live.mjs` rehearses the Cloud gate; this is its Data Center
- * counterpart for the Data Center adapter (Phase 13, D106–D116). It
+ * counterpart for the Data Center adapter (Phase 13, D106–D117). It
  * spawns the built server (`build/index.js`) with
  *
  *   JIRA_DEPLOYMENT=datacenter  JIRA_DATACENTER_PREVIEW=true
  *   JIRA_AUTH_MODE=pat          JIRA_PAT=<the fake's token>
+ *   JIRA_MEDIA_DIR=<an empty directory in the workdir>
  *
  * pointed at `scripts/fake-jira.mjs --deployment datacenter`, and over real
  * stdio MCP:
  *
  *   1. lists the tools and requires exactly `DATACENTER_TOOLS` — every tool
  *      Data Center has no route for must be absent;
- *   2. calls each of the twenty-six served reads and requires `ok: true`
+ *   2. calls each of the twenty-seven served reads and requires `ok: true`
  *      (search is paged twice, through the `dc1:` cursor; the user search,
  *      the role read and the create metadata are each called a second time,
  *      as `also`, so the assignable search, the role map and the create
  *      screen are hit too), plus the one refusal
- *      the adapter promises (`format: "markdown"` → `validation`);
+ *      the adapter promises (`format: "markdown"` → `validation`); the
+ *      attachment download (D117) must land the fake's exact bytes in the
+ *      media directory and nowhere else;
  *   3. requires that no result carries an email address, an avatar URL or an
  *      `accountId` — the fake sends Data Center's `emailAddress` and
  *      `avatarUrls` on every user, so this proves the server strips them;
- *   4. audits the wire: every request under the context path on `/rest/api/2`
- *      or `/rest/agile/1.0`, a PAT Bearer on each, nothing Cloud-only, nothing
+ *   4. audits the wire: every request under the context path on `/rest/api/2`,
+ *      `/rest/agile/1.0` or the attachment servlet (`/secure/attachment/`),
+ *      a PAT Bearer on each, nothing Cloud-only, nothing
  *      unmatched, and every Data Center route the fake serves actually hit;
  *   5. restarts the server with a wrong PAT and requires `kind: auth`.
  *
@@ -41,7 +45,8 @@
  * JIRA_ALLOWED_HOSTS; the child alone gets the shared DNS preload
  * (`REHEARSAL_DNS_PRELOAD` from fake-jira.mjs) through NODE_OPTIONS; the fake's
  * certificate is trusted through NODE_EXTRA_CA_CERTS. The SSRF blocklist and the
- * host policy are untouched. Read-only, loopback-only, offline: the D109 writes
+ * host policy are untouched. Read-only against Jira (the download writes one
+ * file into the workdir's media directory), loopback-only, offline: the D109 writes
  * are listed but not called — their request specs are pinned in-process by
  * src/tools/datacenter-write.test.ts.
  *
@@ -53,7 +58,7 @@
  */
 
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -84,6 +89,8 @@ const ISSUE = `${PROJECT}-1`;
 const BOARD_ID = 1;
 const SPRINT_ID = 101;
 const FILTER_ID = '10000';
+/** The fake's seeded attachment on the sample issue. */
+const ATTACHMENT_ID = '60001';
 
 /**
  * One call per served tool, in the order a model would plausibly make them.
@@ -129,6 +136,9 @@ export const DATACENTER_PLAN = Object.freeze([
   { tool: 'jira_count', args: { jql: `project = ${PROJECT}` } },
   { tool: 'jira_get_changelog', args: { issue: ISSUE } },
   { tool: 'jira_list_attachments', args: { issue: ISSUE } },
+  // D117 (stage 13.8): the attachment download — metadata on v2, bytes from
+  // the attachment servlet, written into the child's JIRA_MEDIA_DIR.
+  { tool: 'jira_download_attachment', args: { attachmentId: ATTACHMENT_ID } },
   // D115 (stage 13.7a): the favourites list and one filter.
   { tool: 'jira_list_filters', args: {} },
   { tool: 'jira_get_filter', args: { filterId: FILTER_ID } },
@@ -207,11 +217,18 @@ export function leakFindings(label, value) {
  */
 export function wireFindings(requests, contextPath, routes = DATACENTER_ROUTES) {
   const findings = [];
-  const roots = [`${contextPath}/rest/api/2/`, `${contextPath}/rest/agile/1.0/`];
+  const roots = [
+    `${contextPath}/rest/api/2/`,
+    `${contextPath}/rest/agile/1.0/`,
+    // D117: the attachment servlet, and only its attachment path.
+    `${contextPath}/secure/attachment/`,
+  ];
   for (const request of requests) {
     const line = `${request.method} ${request.path}`;
     if (!roots.some((root) => request.path.startsWith(root))) {
-      findings.push(`${line}: outside ${contextPath}/rest/api/2 and /rest/agile/1.0`);
+      findings.push(
+        `${line}: outside ${contextPath}/rest/api/2, /rest/agile/1.0 and /secure/attachment`,
+      );
     }
     if (request.cloudOnly !== undefined) {
       findings.push(`${line}: Cloud-only — ${request.cloudOnly}`);
@@ -236,6 +253,45 @@ export function wireFindings(requests, contextPath, routes = DATACENTER_ROUTES) 
   const hit = new Set(requests.map((request) => request.route));
   for (const route of routes) {
     if (!hit.has(route)) findings.push(`${route}: never called`);
+  }
+  return findings;
+}
+
+/**
+ * What is wrong with one attachment download (D117): the file must be the
+ * fake's exact bytes, and it must sit directly inside the media directory.
+ * `actual` is what the file at `data.path` holds, or `undefined` when it could
+ * not be read; `mediaDir` and the directory of `data.path` are compared as the
+ * caller resolved them (through realpath).
+ *
+ * @param {{path?: unknown, name?: unknown, bytes?: unknown}} data
+ * @param {{mediaDir: string, fileDir: string | undefined,
+ *   expected: Uint8Array, actual: Uint8Array | undefined}} disk
+ * @returns {string[]} one line per finding, empty when clean
+ */
+export function downloadFindings(data, disk) {
+  const findings = [];
+  if (typeof data.path !== 'string' || typeof data.name !== 'string') {
+    return ['jira_download_attachment: no path or name came back'];
+  }
+  if (disk.fileDir !== disk.mediaDir) {
+    findings.push(
+      `jira_download_attachment: the file landed in ${String(disk.fileDir)}, not the media directory ${disk.mediaDir}`,
+    );
+  }
+  if (disk.actual === undefined) {
+    findings.push(`jira_download_attachment: ${data.path} could not be read back`);
+    return findings;
+  }
+  if (Buffer.compare(Buffer.from(disk.actual), Buffer.from(disk.expected)) !== 0) {
+    findings.push(
+      `jira_download_attachment: the file holds ${String(disk.actual.byteLength)} bytes that are not the attachment's ${String(disk.expected.byteLength)}`,
+    );
+  }
+  if (data.bytes !== disk.expected.byteLength) {
+    findings.push(
+      `jira_download_attachment: reported ${JSON.stringify(data.bytes)} bytes, expected ${String(disk.expected.byteLength)}`,
+    );
   }
   return findings;
 }
@@ -284,7 +340,7 @@ async function withTimeout(promise, ms, label) {
  * developer's JIRA_EMAIL / JIRA_API_TOKEN / .env can never leak in and turn
  * this into a Cloud run, and HOME points at an empty directory.
  */
-export function dataCenterChildEnv({ home, site, pat, certFile, preloadUrl }) {
+export function dataCenterChildEnv({ home, site, pat, certFile, preloadUrl, mediaDir }) {
   return {
     PATH: process.env['PATH'] ?? '',
     HOME: home,
@@ -297,6 +353,7 @@ export function dataCenterChildEnv({ home, site, pat, certFile, preloadUrl }) {
     JIRA_PAT: pat,
     JIRA_ALLOWED_HOSTS: API_HOST,
     JIRA_LOG_LEVEL: 'warn',
+    ...(mediaDir === undefined ? {} : { JIRA_MEDIA_DIR: mediaDir }),
     NODE_EXTRA_CA_CERTS: certFile,
     NODE_OPTIONS: `--import ${preloadUrl}`,
   };
@@ -397,6 +454,9 @@ export async function runDataCenterRehearsal(options = {}) {
 
   const findings = [];
   const calls = [];
+  // The download (D117) writes here and nowhere else.
+  const mediaDir = join(workdir, 'media');
+  await mkdir(mediaDir);
   const envFor = async (pat) => {
     const home = await mkdtemp(join(workdir, 'home-'));
     return dataCenterChildEnv({
@@ -405,6 +465,7 @@ export async function runDataCenterRehearsal(options = {}) {
       pat,
       certFile: fake.certFile,
       preloadUrl,
+      mediaDir,
     });
   };
 
@@ -433,6 +494,32 @@ export async function runDataCenterRehearsal(options = {}) {
           continue;
         }
         findings.push(...stepFindings(step.tool, envelope.data));
+
+        if (step.tool === 'jira_download_attachment') {
+          const data = envelope.data;
+          const path = typeof data.path === 'string' ? data.path : undefined;
+          const real = (target) => {
+            try {
+              return realpathSync(target);
+            } catch {
+              return undefined;
+            }
+          };
+          let actual;
+          try {
+            actual = path === undefined ? undefined : await readFile(path);
+          } catch {
+            actual = undefined;
+          }
+          findings.push(
+            ...downloadFindings(data, {
+              mediaDir: real(mediaDir) ?? mediaDir,
+              fileDir: path === undefined ? undefined : real(dirname(path)),
+              expected: fake.state.attachments.get(ATTACHMENT_ID).bytes,
+              actual,
+            }),
+          );
+        }
 
         for (const [index, args] of (step.also ?? []).entries()) {
           const label = `${step.tool} (also #${String(index + 1)})`;

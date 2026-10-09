@@ -203,7 +203,8 @@ minimum set is recorded.
       (CC-100), and the negative case matters as much: a 500 with no `error`
       field is not terminal.
     - *Clock, not sleep*: expiry and the refresh-skew window are asserted with
-      the injected `Clock`, so "refreshes two minutes early" is a deterministic
+      the injected `Clock`, so "refreshes two minutes early" (or at half the lifetime of a
+      shorter token, CC-381) is a deterministic
       assertion rather than a wall-clock race. The single-flight property
       (CC-98) is tested by resolving N calls against one scripted response and
       counting requests, which is a counting assertion, not a timing one.
@@ -319,12 +320,14 @@ recorder's suite uses (D75). A green rehearsal is a statement about this code,
 never about Jira's.
 
 **Rehearsing Data Center.** `scripts/fake-jira.mjs --deployment datacenter` is
-the fake's Data Center twin: it serves only the twenty-three routes the Data Center
-adapter calls for its twenty-six reads (`DATACENTER_ROUTES`; the count,
+the fake's Data Center twin: it serves only the twenty-seven routes the Data Center
+adapter calls for its twenty-seven reads (`DATACENTER_ROUTES`; the count,
 changelog and attachment list of D114 reuse the search and issue routes; the
-filters of D115 add `/filter/favourite` and `/filter/{id}`, and the create
-metadata of D116 its two paged routes), on `/rest/api/2` and
-`/rest/agile/1.0` under a context path (`/jira`), behind a PAT `Bearer` — no
+filters of D115 add `/filter/favourite` and `/filter/{id}`, the create
+metadata of D116 its two paged routes, and the download of D117
+`/rest/api/2/attachment/{id}` and the `/secure/attachment/{id}/{filename}`
+servlet, which answers 404 unless the filename matches exactly), on
+`/rest/api/2`, `/rest/agile/1.0` and `/secure` under a context path (`/jira`), behind a PAT `Bearer` — no
 header, HTTP Basic or a wrong token each get Data Center's 401 with the reason
 recorded. Users are `name`/`key`/`displayName` **with** `emailAddress` and
 `avatarUrls` and without `accountId`, so a result can be checked for what the
@@ -334,11 +337,12 @@ violation; `/rest/api/3`, `/search/jql`, `/filter/search` (D115), any `accountId
 outside the context path answer 404 and are flagged; a user search sent
 Cloud's `query` instead of `username` is a 400 and a violation (CC-312); the
 legacy `GET /issue/createmeta?expand=`, removed in Jira 9.0, is a 404 and a
-violation (CC-366). Cloud mode is unchanged.
+violation (CC-366); Cloud's `/attachment/content/{id}` is a 404 and a
+violation (CC-379). Cloud mode is unchanged.
 `scripts/rehearse-datacenter.mjs` (after `npm run build`) starts the built
 server with `JIRA_DEPLOYMENT=datacenter`, `JIRA_DATACENTER_PREVIEW=true`,
 `JIRA_AUTH_MODE=pat` and `JIRA_PAT` against it over real stdio MCP, and
-requires: `tools/list` equal to `DATACENTER_TOOLS`; every one of the twenty-six
+requires: `tools/list` equal to `DATACENTER_TOOLS`; every one of the twenty-seven
 reads `ok` (search paged twice through its `dc1:` cursor, without overlap;
 `jira_search_users` also run as an assignable search and
 `jira_list_project_roles` also as the role list, D110; `jira_count` exact,
@@ -347,14 +351,17 @@ with named authors and no URL, D114 — CC-349; the favourite filters with a
 named owner and `scope.source: "favourites"`, the single filter with no share
 internals, D115 — CC-359; `jira_get_create_meta` run as
 the type list and again as a complete create screen with `summary` required
-and no `defaultValue`, D116 — CC-367);
+and no `defaultValue`, D116 — CC-367; `jira_download_attachment` of the
+seeded attachment into the rehearsal's own `JIRA_MEDIA_DIR`, the file inside
+that directory and byte-identical to the fake's, D117 — CC-379);
 `format: "markdown"` refused as `validation`; a flattened description and
 embedded comment page (CC-298); no
 email address, avatar URL or `accountId` anywhere in any result; every request
 under the context path, with a PAT `Bearer`, nothing Cloud-only or unmatched,
 and every Data Center route hit; and, restarted with a wrong PAT,
 `kind: auth`. The seven D109 writes are listed but never called — the
-rehearsal stays read-only, and `src/tools/datacenter-write.test.ts` pins
+rehearsal stays read-only on the host (the download writes only into its
+temporary media dir, and `jira_upload_attachment` is not served), and `src/tools/datacenter-write.test.ts` pins
 their routes and wiki bodies (CC-302…CC-306). It reaches loopback exactly as the Cloud rehearsal does — the
 allowlisted rehearsal host, the one shared DNS preload
 (`REHEARSAL_DNS_PRELOAD`, injected into the child only) and the fake's CA —

@@ -3,7 +3,7 @@
 // rehearsal (`scripts/rehearse-datacenter.mjs`).
 //
 // The rehearsal itself — the built server over real stdio MCP against the fake,
-// every one of the twenty-six Data Center reads — is a slow, whole-system check
+// every one of the twenty-seven Data Center reads — is a slow, whole-system check
 // that, like the Cloud rehearsal, stays OUTSIDE `npm run check` (TESTING.md
 // "Rehearsing the live gate"). What is pinned here is what the rehearsal's
 // verdict rests on:
@@ -99,6 +99,15 @@ interface RehearsalModule {
   readonly dataCenterChildEnv: (
     options: Record<string, string>,
   ) => Record<string, string>;
+  readonly downloadFindings: (
+    data: Record<string, unknown>,
+    disk: {
+      mediaDir: string;
+      fileDir: string | undefined;
+      expected: Uint8Array;
+      actual: Uint8Array | undefined;
+    },
+  ) => string[];
 }
 
 const scriptUrl = (name: string): string =>
@@ -146,6 +155,18 @@ interface Reply {
   readonly status: number;
   readonly headers: Record<string, string | string[] | undefined>;
   readonly json: unknown;
+  /** The raw body — what a byte route (the attachment servlet) is read by. */
+  readonly text: string;
+}
+
+/** JSON when the body is JSON; a byte route's body is not. */
+function parseMaybe(text: string): unknown {
+  if (text === '') return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 /** One request to a fake over loopback TLS, the rehearsal host named via SNI. */
@@ -179,7 +200,8 @@ function send(
           resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
-            json: text === '' ? undefined : (JSON.parse(text) as unknown),
+            json: parseMaybe(text),
+            text,
           });
         });
       },
@@ -1052,4 +1074,124 @@ test('[CC-367] the step checks catch an empty type list, a partial or summary-le
     /kept its defaultValue/,
   );
   assert.match(check({ step: 'wat' }).join('\n'), /unexpected step/);
+});
+
+// ---------------------------------------------------------------------------
+// CC-379 — the attachment download (D117, stage 13.8)
+// ---------------------------------------------------------------------------
+
+test(
+  '[CC-379] the Data Center fake serves attachment metadata on v2 and the bytes from the servlet, by exact filename',
+  { skip: noTls },
+  async () => {
+    const meta = await send(dc, 'GET', '/jira/rest/api/2/attachment/60001', bearer());
+    assert.equal(meta.status, 200);
+    const row = record(meta.json);
+    assert.equal(row['filename'], 'rehearsal-sample.txt');
+    assert.equal(record(row['author'])['name'], 'rehearsal');
+    assert.ok(!('accountId' in record(row['author'])));
+    assert.match(
+      String(row['content']),
+      /\/jira\/secure\/attachment\/60001\/rehearsal-sample\.txt$/,
+    );
+    assert.equal(last(dc).route, 'GET /rest/api/2/attachment/{id}');
+
+    const bytes = await send(
+      dc,
+      'GET',
+      '/jira/secure/attachment/60001/rehearsal-sample.txt',
+      bearer(),
+    );
+    assert.equal(bytes.status, 200);
+    assert.match(bytes.text, /^Gate C rehearsal attachment\./);
+    assert.equal(last(dc).route, 'GET /secure/attachment/{id}/{filename}');
+    assert.equal(last(dc).violation, undefined);
+
+    // The servlet answers the id AND the name it holds, nothing looser.
+    for (const path of [
+      '/jira/secure/attachment/60001/other.txt',
+      '/jira/secure/attachment/99999/rehearsal-sample.txt',
+    ]) {
+      assert.equal((await send(dc, 'GET', path, bearer())).status, 404, path);
+    }
+    assert.equal(
+      (await send(dc, 'GET', '/jira/rest/api/2/attachment/99999', bearer())).status,
+      404,
+    );
+
+    for (const route of [
+      'GET /rest/api/2/attachment/{id}',
+      'GET /secure/attachment/{id}/{filename}',
+    ]) {
+      assert.ok(fakeJira.DATACENTER_ROUTES.includes(route), route);
+    }
+  },
+);
+
+test(
+  '[CC-379] the Cloud content route is a 404 on the Data Center fake, recorded as a violation the wire audit names',
+  { skip: noTls },
+  async () => {
+    for (const path of [
+      '/jira/rest/api/2/attachment/content/60001',
+      '/jira/rest/api/3/attachment/content/60001?redirect=false',
+    ]) {
+      const reply = await send(dc, 'GET', path, bearer());
+      assert.equal(reply.status, 404, path);
+      assert.equal(last(dc).violation, 'cloud_attachment_content_on_datacenter', path);
+      const findings = rehearsal.wireFindings([{ ...last(dc) }], '/jira', []);
+      assert.ok(
+        findings.some((line) => line.includes('cloud_attachment_content_on_datacenter')),
+        findings.join('\n'),
+      );
+    }
+  },
+);
+
+test('[CC-379] the rehearsal downloads once into a JIRA_MEDIA_DIR the child is given', () => {
+  const steps = rehearsal.DATACENTER_PLAN.filter(
+    (entry) => entry.tool === 'jira_download_attachment',
+  );
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0]?.args?.['attachmentId'], '60001');
+  assert.ok(!rehearsal.DATACENTER_PLAN.some((e) => e.tool === 'jira_upload_attachment'));
+
+  const base = {
+    home: '/h',
+    site: 'https://jira.rehearsal.test:1/jira',
+    pat: 'p',
+    certFile: '/c.pem',
+    preloadUrl: 'file:///p.mjs',
+  };
+  assert.equal(
+    rehearsal.dataCenterChildEnv({ ...base, mediaDir: '/m' })['JIRA_MEDIA_DIR'],
+    '/m',
+  );
+  assert.ok(!('JIRA_MEDIA_DIR' in rehearsal.dataCenterChildEnv(base)));
+});
+
+test('[CC-379] the download check names a file outside the media dir, wrong bytes, a wrong count, and no path', () => {
+  const expected = new Uint8Array([1, 2, 3]);
+  const data = { path: '/m/a.txt', name: 'a.txt', bytes: 3 };
+  const disk = { mediaDir: '/m', fileDir: '/m', expected, actual: expected };
+  assert.deepEqual(rehearsal.downloadFindings(data, disk), []);
+
+  const cases: readonly [
+    Record<string, unknown>,
+    typeof disk | Record<string, unknown>,
+    RegExp,
+  ][] = [
+    [data, { ...disk, fileDir: '/elsewhere' }, /not the media directory/],
+    [data, { ...disk, actual: new Uint8Array([1, 2, 4]) }, /not the attachment/],
+    [data, { ...disk, actual: undefined }, /could not be read back/],
+    [{ ...data, bytes: 4 }, disk, /reported 4 bytes, expected 3/],
+    [{ name: 'a.txt' }, disk, /no path or name/],
+  ];
+  for (const [result, where, pattern] of cases) {
+    const findings = rehearsal.downloadFindings(result, where as typeof disk);
+    assert.ok(
+      findings.some((line) => pattern.test(line)),
+      `${pattern.source} not found in:\n${findings.join('\n')}`,
+    );
+  }
 });

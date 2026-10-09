@@ -30,7 +30,8 @@ Files are loaded with Node's `process.loadEnvFile()` — no dotenv dependency
 the MCP protocol).
 
 Files written by the CLI (`doctor --save`, and the token store `login` writes)
-are created atomically with mode `0600`, guarded by a cross-process env lock.
+are created atomically with mode `0600`, guarded by a cross-process env lock;
+after the rename the parent directory is fsynced, best effort (CC-383).
 
 ## Core credentials (v1)
 
@@ -77,10 +78,10 @@ Jira site a call is about, whether or not the credentials came from a token.
 ## Jira Data Center (Phase 13 — unverified preview)
 
 The Data Center adapter is being built in stages (D106, D107,
-IMPLEMENTATION-PLAN.md Phase 13). Stages 13.3–13.7 serve a subset of the
-tools — 26 reads (user search and project roles since D110; the count, changelog and attachment list since D114; the saved filters since D115; the create metadata, on Data Center 8.4 or later, since D116), and since D109,
+IMPLEMENTATION-PLAN.md Phase 13). Stages 13.3–13.8 serve a subset of the
+tools — 27 reads (user search and project roles since D110; the count, changelog and attachment list since D114; the saved filters since D115; the create metadata, on Data Center 8.4 or later, since D116; the attachment download, into `JIRA_MEDIA_DIR`, since D117), and since D109,
 D111 and D113 twenty writes behind the usual `JIRA_WRITE_MODE`
-gate — 46 in all, with `resolveMentions: true` since D112 (`jira_capabilities` lists them; the rest are excluded as
+gate — 47 in all, with `resolveMentions: true` since D112 (`jira_capabilities` lists them; the rest are excluded as
 `deployment_unsupported`), built from Atlassian's Data Center documentation and
 **never run against a Data Center instance**. It therefore fails closed:
 selecting `datacenter` is a startup error (`deployment_unavailable`) unless
@@ -126,7 +127,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_RETRY_ATTEMPTS` | `3` | Max retry attempts (policy in JIRA-API.md). Integer in 0–10; `0` disables retries. |
 | `JIRA_MAX_RESULT_CHARS` | `25000` | Truncation budget for tool results, measured on the serialized `structuredContent`. The text channel of an untrusted result can be longer: it adds the taint banner, and each fence bracket inside tenant text becomes a six-character `\uXXXX` escape. Integer in 500–10000000. |
 | `JIRA_MAX_PAGES` | `20` | Loop guard for `fetchAll`/`searchPages`. Integer in 1–1000. |
-| `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). A leading `~` is expanded and a relative path is resolved against the cwd, as for `JIRA_ENV_FILE` (CC-184). |
+| `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). On the Data Center preview it applies to the download only (D117); the upload is not served there. A leading `~` is expanded and a relative path is resolved against the cwd, as for `JIRA_ENV_FILE` (CC-184). |
 
 The ranges above are inclusive, and a value is plain decimal digits: `3e4`,
 `0x10` or `4.0` — or anything outside the range — is an `invalid_number`

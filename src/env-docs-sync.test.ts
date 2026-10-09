@@ -76,7 +76,10 @@ const PROFILE_FAMILY = 'JIRA_PROFILE_<NAME>_*';
  */
 const NOT_ENV_VARS = new Map<string, string>([
   ['JIRA_ACCEPT_MODES', 'core/types.ts: the response decoding modes (json / binary).'],
-  ['JIRA_API_ROOTS', 'core/types.ts: the API root vocabulary (v3 / agile).'],
+  [
+    'JIRA_API_ROOTS',
+    'core/types.ts: the API root vocabulary (v3 / agile / v2 / secure).',
+  ],
   ['JIRA_ERROR_KINDS', 'core/types.ts: the error-kind catalog of TOOLS.md.'],
   ['JIRA_ROOT_PATHS', 'core/http-util.ts: the path prefix each API root lives under.'],
 ]);

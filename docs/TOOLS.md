@@ -329,8 +329,8 @@ title generalized a second time and reads "Deletes and bulk changes
 | `jira_delete_component` | `DELETE /rest/api/3/component/{id}` | Input: `componentId`, `moveIssuesTo?` — another component id Jira reassigns every affected issue to; absent means the `components` entries are simply removed. Needs Administer Projects. `before` carries name, a description excerpt, lead, project and `issueCount` from a second GET on `relatedIssueCounts` — the number of issues Jira will rewrite — plus the `moveIssuesTo` target itself, because the target is a query parameter and `planned` shows method/path/body only (CC-121, CC-125). To rename or retire a component reversibly, `jira_update_component` edits it in place. |
 | `jira_delete_version` | `POST /rest/api/3/version/{id}/removeAndSwap` | Input: `versionId`, `moveFixIssuesTo?`, `moveAffectedIssuesTo?`. The bare `DELETE /version/{id}` is deprecated upstream and is never called (CC-122). An absent swap target means that occurrence type is **cleared** from every issue, not that the call fails; `customFieldReplacementList` is out of scope, so custom version-picker fields are always **cleared** of the version — `issueCountWithCustomFieldsShowingVersion` in the plan says how many issues that touches. Needs Administer Projects. `before` carries the version's flags, all three related-issue counts (`issuesFixedCount`, `issuesAffectedCount`, `issueCountWithCustomFieldsShowingVersion`) and both swap targets (CC-123, CC-125). Archiving via `jira_update_version` is the reversible alternative. |
 | `jira_delete_sprint` | `DELETE /rest/agile/1.0/sprint/{sprintId}` | Input: `sprintId`. Open issues in the sprint move to the backlog. No client-side state guard: the DELETE is sent whatever the sprint's state, and a Jira refusal is re-aimed with remediation like the other sprint writes (CC-124). Needs the board's manage-sprints permission. `before` carries name, `state`, dates, origin board and a goal excerpt — the auditable record of what was destroyed. To end a sprint rather than erase it, `jira_close_sprint` is the standard-tier alternative. |
-| `jira_bulk_delete_issues` | `POST /rest/api/3/bulk/issues/delete` | Input: `issues` (1–1000 ids or keys — the wire cap, enforced in the schema so an over-cap request never leaves the process, CC-128), `notifyUsers?` (maps to `sendBulkNotification`; absent stays absent, so Jira's own default — true — applies, CC-131). Deletes up to 1000 issues **including subtasks of selected parents**, which count against the cap. Asynchronous: Jira answers 201 with a `taskId` — ENQUEUED, not done — and the result says so, naming `jira_get_bulk_status` (CC-127). Needs the global Bulk Change permission plus Browse and Delete issues per project. `before` carries the request's own blast radius — `issueCount`, the first 20 ids and a truncation marker — with no per-issue pre-fetch; `invalidOrInaccessibleIssueCount` on the queue read is the server's verdict (CC-129). |
-| `jira_bulk_edit_issues` | `POST /rest/api/3/bulk/issues/fields` | The edit path in the wire — there is no `/bulk/issues/edit` (CC-130). Input: `issues` (1–1000), `notifyUsers?`, and four edit families of the wire's 23: `labels` + `labelsAction` (`ADD`/`REMOVE`/`REPLACE`/`REMOVE_ALL`), `priorityId` (id only — resolve names via the priority listing first), `assigneeAccountId` (null clears), `fixVersionIds` + `fixVersionsAction` (same enum). Values and their action come together, `REMOVE_ALL` takes no values, and at least one family must be present — violations are refused with nothing sent (CC-133); `selectedActions` is derived from the present inputs in the api layer, never caller-supplied (CC-130). Asynchronous like the bulk delete: 201 → `taskId`, poll with `jira_get_bulk_status` (CC-127). Needs global Bulk Change plus Browse and Edit issues per project. `before` carries the blast radius plus the semantic edits echoed (CC-129). |
+| `jira_bulk_delete_issues` | `POST /rest/api/3/bulk/issues/delete` | Input: `issues` (1–1000 distinct ids or keys — the wire cap, enforced in the schema so an over-cap request never leaves the process, CC-128; exact repeats are dropped first and do not count, CC-243, so the advertised array carries no `maxItems` and the property description states the cap on distinct entries, CC-396), `notifyUsers?` (maps to `sendBulkNotification`; absent stays absent, so Jira's own default — true — applies, CC-131). Deletes up to 1000 issues **including subtasks of selected parents**, which count against the cap. Asynchronous: Jira answers 201 with a `taskId` — ENQUEUED, not done — and the result says so, naming `jira_get_bulk_status` (CC-127). Needs the global Bulk Change permission plus Browse and Delete issues per project. `before` carries the request's own blast radius — `issueCount`, the first 20 ids and a truncation marker — with no per-issue pre-fetch; `invalidOrInaccessibleIssueCount` on the queue read is the server's verdict (CC-129). |
+| `jira_bulk_edit_issues` | `POST /rest/api/3/bulk/issues/fields` | The edit path in the wire — there is no `/bulk/issues/edit` (CC-130). Input: `issues` (1–1000 distinct, as for bulk delete), `notifyUsers?`, and four edit families of the wire's 23: `labels` + `labelsAction` (`ADD`/`REMOVE`/`REPLACE`/`REMOVE_ALL`), `priorityId` (id only — resolve names via the priority listing first), `assigneeAccountId` (null clears), `fixVersionIds` + `fixVersionsAction` (same enum). Values and their action come together, `REMOVE_ALL` takes no values, and at least one family must be present — violations are refused with nothing sent (CC-133); `selectedActions` is derived from the present inputs in the api layer, never caller-supplied (CC-130). Asynchronous like the bulk delete: 201 → `taskId`, poll with `jira_get_bulk_status` (CC-127). Needs global Bulk Change plus Browse and Edit issues per project. `before` carries the blast radius plus the semantic edits echoed (CC-129). |
 
 **The tier.** These tools need `JIRA_ALLOW_IRREVERSIBLE=true` (CONFIGURATION.md)
 **in addition to** the usual plan → apply: a blanket `JIRA_WRITE_MODE=apply`
@@ -473,7 +473,7 @@ that can lose content or end something for good (D50).
 
 ## Jira Data Center (preview)
 
-Under `JIRA_DEPLOYMENT=datacenter` (an unverified preview — reads since D107, a first set of writes since D109, the user writes since D111, mention resolution since D112, the admin and agile writes since D113, the count, changelog and attachment list since D114, the saved filters since D115; 26 reads and 20 writes, 46 tools, since D116) the
+Under `JIRA_DEPLOYMENT=datacenter` (an unverified preview — reads since D107, a first set of writes since D109, the user writes since D111, mention resolution since D112, the admin and agile writes since D113, the count, changelog and attachment list since D114, the saved filters since D115, the create metadata since D116; 27 reads and 20 writes, 47 tools, since D117) the
 server serves a subset of this catalog; `jira_capabilities` lists it and names
 the rest in `excludedTools` with reason `deployment_unsupported`. Three things
 read differently there, and the tool descriptions above describe Cloud:
@@ -506,8 +506,16 @@ read differently there, and the tool descriptions above describe Cloud:
   the history cannot be read through this server, and it must not be presented
   as complete (CC-342…CC-344).
 - **`jira_list_attachments`** (D114) is the Cloud metadata list with the author
-  in the user projection above. `jira_download_attachment` and
-  `jira_upload_attachment` are not served (CC-345…CC-347).
+  in the user projection above (CC-345, CC-346).
+- **`jira_download_attachment`** (D117) reads the metadata from
+  `/rest/api/2/attachment/{id}` and the bytes from the attachment servlet
+  `/secure/attachment/{id}/{filename}` under the context path, into
+  `JIRA_MEDIA_DIR` as on Cloud. The `content` URL Jira returns is never
+  followed, and a redirect from the servlet (a login page, an object-storage
+  host) is refused as `config` rather than followed. The result has the Cloud
+  shape, the author in the user projection above (CC-370…CC-378).
+  `jira_upload_attachment` is not served: no tool removes an attachment, so an
+  upload could not be undone by a served write (CC-347, CC-377).
 - **`jira_list_filters`** and **`jira_get_filter`** (D115) avoid
   `/filter/search`, which many Data Center releases lack. `jira_get_filter`
   reads `/rest/api/2/filter/{id}`. `jira_list_filters` reads
@@ -523,7 +531,7 @@ read differently there, and the tool descriptions above describe Cloud:
   host the tool answers `unsupported` naming the 8.4 floor; a 404 that names
   a missing project or issue type stays `not_found`. Field defaults are not
   returned, and a user-typed allowed value carries only its username
-  (CC-360…CC-365).
+  (CC-360…CC-365, CC-380).
 - **Writes** (D109): `jira_create_issue`, `jira_update_issue`,
   `jira_transition_issue`, `jira_add_comment`, `jira_update_comment`,
   `jira_add_worklog` and `jira_link_issues`, behind the same `JIRA_WRITE_MODE`

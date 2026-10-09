@@ -4,7 +4,8 @@
 // (stage 13.5b, D111), mention resolution (stage 13.6a, D112), the
 // reversible admin and agile writes (stage 13.6b, D113), the count,
 // changelog and attachment reads (stage 13.6c, D114), the saved filter
-// reads (stage 13.7a, D115) and the create metadata (stage 13.7b, D116).
+// reads (stage 13.7a, D115), the create metadata (stage 13.7b, D116) and
+// the attachment download (stage 13.8, D117).
 //
 // UNVERIFIED. Every route and shape below comes from Atlassian's Data Center
 // REST documentation; none has been exercised against a Data Center instance
@@ -40,8 +41,13 @@
 //     block `expand=changelog` embeds in an issue read
 //     (`listChangelogDataCenter`, which says `incomplete` when that block does
 //     not cover the whole history). The attachment list is the Cloud route on
-//     v2 with a Data Center author (`listAttachmentsDataCenter`); downloads
-//     and uploads are not served.
+//     v2 with a Data Center author (`listAttachmentsDataCenter`).
+//   * The attachment download (D117) reads the metadata on v2, then the bytes
+//     from the attachment servlet, `/secure/attachment/{id}/{filename}`, at a
+//     URL built under the configured context path — the record's `content`
+//     URL is never followed, and the `secure` root never follows a redirect
+//     (`downloadAttachmentDataCenter`). The upload stays unserved: no served
+//     tool removes an attachment, so an upload could not be undone (D109).
 //   * `/filter/search` is not relied on either (D115): the filter list is the
 //     caller's favourites (`GET /filter/favourite`, `searchFiltersDataCenter`),
 //     with `filterName` and paging applied client-side, `accountId` refused,
@@ -109,7 +115,10 @@ import type {
   JiraResponse,
 } from '../core/types.js';
 import { renderAdfDocs, type AdfNode, type MentionTarget } from './adf.js';
-import { listAttachmentsDataCenter } from './attachments.js';
+import {
+  downloadAttachmentDataCenter,
+  listAttachmentsDataCenter,
+} from './attachments.js';
 import { getFilterDataCenter, searchFiltersDataCenter } from './filters.js';
 import {
   addComment,
@@ -220,6 +229,9 @@ export const DATACENTER_TOOLS: ReadonlySet<string> = new Set([
   'jira_get_filter',
   // D116 (stage 13.7b): the create metadata, over the paged 8.4+ routes only.
   'jira_get_create_meta',
+  // D117 (stage 13.8): the attachment download — a read that writes only into
+  // the local JIRA_MEDIA_DIR. jira_upload_attachment stays unserved.
+  'jira_download_attachment',
   ...DATACENTER_WRITE_TOOLS_LIST,
 ]);
 
@@ -377,6 +389,8 @@ const served: Partial<JiraApi> = {
   approximateCount: countIssuesDataCenter,
   listChangelog: listChangelogDataCenter,
   listAttachments: listAttachmentsDataCenter,
+  // D117: metadata on v2, bytes from the attachment servlet; no upload.
+  downloadAttachment: downloadAttachmentDataCenter,
   // D115: the filter twins put their requests on the v2 root themselves.
   searchFilters: searchFiltersDataCenter,
   getFilter: getFilterDataCenter,

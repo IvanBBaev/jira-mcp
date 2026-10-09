@@ -295,6 +295,14 @@ Size: this server caps ONE transfer at `MAX_ATTACHMENT_BYTES` (50 MiB,
 environment override. Jira Cloud's own default per-file limit is 10 MB and is
 site-configurable, so the tenant limit — a 413 — can still be the binding one.
 
+Text bodies (JSON successes, error bodies, OAuth replies) are capped too, at
+`MAX_TEXT_BODY_BYTES` (equal to `MAX_ATTACHMENT_BYTES`, compiled in, no
+environment override) and enforced while streaming: an over-cap success is
+`validation` asking for less per request and is never buffered or parsed; an
+over-cap 2xx to an unsafe write is `ambiguous_write` saying it was applied and
+is not retried; an over-cap error body is dropped and the status alone decides
+the kind (CC-384).
+
 Retries: a download is a plain GET and follows §Rate limiting and retries
 unchanged. An upload is an unsafe write: an ambiguous failure surfaces as
 `ambiguous_write` and is NEVER replayed automatically — a replay is how an
@@ -547,12 +555,13 @@ excludes every other tool (CC-263).
 | `POST /search/approximate-count` | none — `POST /rest/api/2/search` with `maxResults: 0` answers an exact `total` | served (D114) as `jira_count` over the classic search, `approximate: false`, no `approximate` hint (CC-340, CC-341) |
 | `GET /issue/{key}`, `/comment`, `/worklog`, `/transitions` | same paths under `/rest/api/2` | served, same function on the v2 root, DC user dialect |
 | `GET /issue/{key}/changelog` | none — `GET /rest/api/2/issue/{key}?expand=changelog&fields=` embeds it | served (D114), paged here inside the embedded history; `incomplete` when it holds fewer than its `total` (CC-342…CC-344) |
-| `GET /issue/{key}?fields=attachment` | same path under `/rest/api/2`, DC author | served (D114), URLs dropped, DC user dialect (CC-345, CC-346); download and upload not served |
+| `GET /issue/{key}?fields=attachment` | same path under `/rest/api/2`, DC author | served (D114), URLs dropped, DC user dialect (CC-345, CC-346); upload not served (no tool removes an attachment, D117, CC-347) |
+| `GET /attachment/{id}`, then `GET /attachment/content/{id}?redirect=false` (v3) | `GET /rest/api/2/attachment/{id}` for the metadata; no REST content route — the bytes come from the servlet `GET {contextPath}/secure/attachment/{id}/{filename}` | served (D117), twin: frozen `secure` root, filename as one encoded segment, the `content` URL never followed, any redirect refused as `config`, size cap before and after the transfer, a body that is not the file (size mismatch, HTML for a non-HTML attachment) refused as `unexpected_shape` (CC-370…CC-378, CC-399) |
 | `GET /project/search` | `GET /rest/api/2/project` — one bare array | served, twin, filters applied here (CC-268) |
 | `GET /project/{key}` | same path | served, DC `lead` |
 | `GET /field`, `GET /issueLinkType` | same paths | served |
 | `GET /statuses/search` | `GET /rest/api/2/status` — array, category as an object | served, twin (CC-268) |
-| `GET /issue/createmeta/{p}/issuetypes[/{id}]` | same paths under `/rest/api/2` from Data Center 8.4, rows in `values` with `isLast`; the legacy `?expand=` route is gone in 9.0 | served (D116), twin reading `values`, never the legacy route; a bare 404 is `unsupported` naming 8.4 (CC-360…CC-365) |
+| `GET /issue/createmeta/{p}/issuetypes[/{id}]` | same paths under `/rest/api/2` from Data Center 8.4, rows in `values` with `isLast`; the legacy `?expand=` route is gone in 9.0 | served (D116), twin reading `values`, never the legacy route; a bare 404, or Jersey's `null for uri` 404, is `unsupported` naming 8.4 (CC-360…CC-365, CC-380) |
 | `GET /filter/search`, `GET /filter/{id}` | `/filter/search` absent on many releases; `GET /rest/api/2/filter/favourite` (a bare array of the caller's favourites) and `GET /rest/api/2/filter/{id}` are long-standing | served (D115) without `/filter/search`: the list reads the favourites only and says so in `scope`, `filterName` and paging applied here, `accountId` refused, DC owner, no share permissions (CC-350…CC-357) |
 | `/user/search`, `/user/assignable/search` | `username=` instead of `query=` | served (D110), DC user dialect; `includeEmail: true` refused (CC-307…CC-310) |
 | `/issue/{key}/watchers` | same path, DC users | served, DC user dialect (D108, CC-275) |

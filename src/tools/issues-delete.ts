@@ -638,8 +638,12 @@ const bulkIssuesArg = z
   // (CC-243). Key-vs-id and case aliases are left alone — only Jira knows them.
   .transform((issues) => [...new Set(issues)])
   .pipe(z.array(z.string()).max(1000))
+  // The advertised schema carries no maxItems (it describes the INPUT side of
+  // the pipe, before the dedupe), so the prose states the cap the way the
+  // schema enforces it: on distinct entries (CC-396).
   .describe(
-    'Issue keys (PROJ-123) or numeric issue ids — at most 1000, and subtasks of ' +
+    'Issue keys (PROJ-123) or numeric issue ids — at most 1000 distinct entries ' +
+      '(exact repeats are dropped first and do not count), and subtasks of ' +
       'selected parents count toward the same limit.',
   );
 

@@ -286,12 +286,25 @@ headless server.
   writer uses. Doctor reports the mode; a loose mode is a finding, because the
   refresh token in this file is the durable credential — see THREAT-MODEL.md.
 - Every token read out of it is registered with the redactor before use.
+- A damaged entry (a missing or wrongly typed field) fails only its own
+  profile, as `config` naming the profile and the field, with `login` or
+  `logout` for that profile as the remedy. Other profiles keep working, a
+  `login` for another profile preserves the damaged entry byte for byte, a
+  `login` for the damaged profile replaces it, and `logout --all` removes it
+  too (CC-382). A file-level fault — unreadable, not JSON, an unknown
+  `version`, no `tokens` object — still blocks the whole store.
+- The atomic write fsyncs the temp file, renames it into place, then fsyncs the
+  parent directory so the rename itself survives a power loss. The directory
+  fsync is best effort: a platform or filesystem that refuses it (EINVAL,
+  EPERM, Windows) does not fail the write (CC-383).
 
 ### Refresh and rotation
 
 Refresh is **proactive**. The resolver refreshes when the access token is inside
 a skew window before its expiry (`TOKEN_REFRESH_SKEW_MS`, two minutes), rather
-than waiting for a 401. A 401 from Jira never triggers an automatic
+than waiting for a 401. The window is capped at half the token's reported
+lifetime (`expires_in`), so a token issued for less than the skew is used for
+half its life instead of being refreshed on every call (CC-381). A 401 from Jira never triggers an automatic
 refresh-and-replay of a write; only a replayable request is retried at all, and
 a token POST is never replayed under any circumstance (D94) — a replayed refresh
 is indistinguishable from a stolen-token replay, and burning a rotating refresh

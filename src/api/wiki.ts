@@ -237,8 +237,9 @@ function pushText(out: string[], text: string): void {
 
 /** Inline `{quote}` and `{color}` tags inside a line are markup, not text. */
 function stripBlockMacros(line: string): string {
-  // An escaped `\{` is text: `\{quote}` must not lose its tag.
-  return line.replace(/(?<!\\)\{(?:quote|color(?::[^}]*)?)\}/gi, '');
+  // An escaped `\{` is text: `\{quote}` must not lose its tag. Nor is the
+  // second `{` of `{{` monospace a tag: `{{quote}}` is the word (CC-401).
+  return line.replace(/(?<![\\{])\{(?:quote|color(?::[^}]*)?)\}/gi, '');
 }
 
 /**

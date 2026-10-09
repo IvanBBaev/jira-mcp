@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {
+import fs, {
   chmodSync,
   existsSync,
   mkdirSync,
@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 
@@ -75,6 +76,92 @@ function options(overrides: Partial<EnvLockOptions> = {}): EnvLockOptions {
 }
 
 describe('writeFileAtomic', () => {
+  /**
+   * Swap `fs` functions for the duration of `body`. `syncBuiltinESMExports`
+   * pushes the change into the named ESM bindings env-lock.ts imported.
+   */
+  function withFsSpies(
+    spies: {
+      readonly openSync?: typeof fs.openSync;
+      readonly fsyncSync?: typeof fs.fsyncSync;
+      readonly renameSync?: typeof fs.renameSync;
+    },
+    body: () => void,
+  ): void {
+    const saved = {
+      openSync: fs.openSync,
+      fsyncSync: fs.fsyncSync,
+      renameSync: fs.renameSync,
+    };
+    Object.assign(fs, spies);
+    syncBuiltinESMExports();
+    try {
+      body();
+    } finally {
+      Object.assign(fs, saved);
+      syncBuiltinESMExports();
+    }
+  }
+
+  it('[CC-383] fsyncs the parent directory after the rename, best effort', () => {
+    const target = join(dir, 'durable', '.env');
+    const events: string[] = [];
+    const fdPaths = new Map<number, string>();
+    const realOpen = fs.openSync;
+    const realFsync = fs.fsyncSync;
+    const realRename = fs.renameSync;
+    withFsSpies(
+      {
+        openSync: ((path: fs.PathLike, ...rest: never[]) => {
+          const fd = (realOpen as (...a: unknown[]) => number)(path, ...rest);
+          fdPaths.set(fd, String(path));
+          return fd;
+        }) as typeof fs.openSync,
+        fsyncSync: (fd: number) => {
+          const path = fdPaths.get(fd) ?? '?';
+          events.push(path === join(dir, 'durable') ? 'fsync:dir' : 'fsync:file');
+          realFsync(fd);
+        },
+        renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+          events.push('rename');
+          realRename(from, to);
+        },
+      },
+      () => {
+        writeFileAtomic(target, 'a=1');
+      },
+    );
+    assert.equal(readFileSync(target, 'utf8'), 'a=1');
+    // Data before visibility, then the directory entry the rename changed.
+    assert.deepEqual(
+      events,
+      POSIX
+        ? ['fsync:file', 'rename', 'fsync:dir']
+        : events.filter((e) => e !== 'fsync:dir'),
+    );
+
+    // A directory fsync the platform refuses does not fail a completed write.
+    withFsSpies(
+      {
+        openSync: ((path: fs.PathLike, ...rest: never[]) => {
+          const fd = (realOpen as (...a: unknown[]) => number)(path, ...rest);
+          fdPaths.set(fd, String(path));
+          return fd;
+        }) as typeof fs.openSync,
+        fsyncSync: (fd: number) => {
+          if (fdPaths.get(fd) === join(dir, 'durable')) {
+            throw Object.assign(new Error('EINVAL'), { code: 'EINVAL' });
+          }
+          realFsync(fd);
+        },
+      },
+      () => {
+        writeFileAtomic(target, 'b=2');
+      },
+    );
+    assert.equal(readFileSync(target, 'utf8'), 'b=2');
+  });
+
   it('writes the file with mode 0600', () => {
     const target = join(dir, '.env');
     writeFileAtomic(target, 'JIRA_X=1\n');

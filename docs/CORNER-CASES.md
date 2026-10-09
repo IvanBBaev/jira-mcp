@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-367`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-402`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -1776,7 +1776,12 @@ The IDs between CC-334 and CC-340 are unused; the gap is deliberate.
   13.7a): `jira_list_filters` and `jira_get_filter` are served without
   `/filter/search` (CC-350…CC-357). Amended by D116 (stage 13.7b):
   `jira_get_create_meta` is served over the paged 8.4+ routes
-  (CC-360…CC-365); only the download and the upload stay unserved.*
+  (CC-360…CC-365); only the download and the upload stay unserved.
+  Amended by D117 (stage 13.8): `jira_download_attachment` is served over
+  `/rest/api/2/attachment/{id}` and the `/secure/attachment` servlet
+  (CC-370…CC-379); only `jira_upload_attachment` stays unserved, because no
+  tool in the catalog removes an attachment, so an upload could not be undone
+  by a served write (D109).*
 - **CC-348** The fake's Data Center twin answers a `maxResults: 0` search with
   a positive `total` and no issues, embeds a changelog with a named DC author
   for `expand=changelog&fields=`, and returns attachment rows with a named DC
@@ -1863,3 +1868,130 @@ The last two IDs of the reserved block (the eighth and ninth after CC-360) are l
   create screen; its step checks name an empty type list, a screen flagged
   partial, an empty screen, a screen without `summary` required, a field that
   kept its `defaultValue`, and an unknown step.
+
+## Appended with the Data Center attachment download (2026-10-01, D117 stage 13.8)
+
+- **CC-370** `jira_download_attachment` on Data Center sends exactly two
+  requests: `GET /rest/api/2/attachment/{id}` on the `v2` root, then
+  `GET /secure/attachment/{id}/{filename}` on the `secure` root, as binary
+  with no query. The bytes land in `JIRA_MEDIA_DIR` and the result has the
+  Cloud shape, with the author in the Data Center projection (no email).
+- **CC-371** The filename travels as exactly one `encodeURIComponent` segment
+  (`../../etc/passwd`, `?`, `#`, `%` and `\` included) and is written to disk
+  through `safeMediaName`, inside the media dir. An empty, dot-only or
+  ill-formed-Unicode filename is `unexpected_shape` after the metadata request
+  and before any byte request.
+- **CC-372** A metadata `size` over the cap is `validation` with no byte
+  request; bytes over the cap are refused even when the metadata
+  under-reported the size, and nothing is written.
+- **CC-373** A 404 on the metadata or the servlet is `not_found` and a 403 is
+  `permission`, as on Cloud.
+- **CC-374** The `content` URL in the metadata is never fetched, whether it
+  names a foreign host, another path on the Jira host or the servlet itself;
+  the byte route is always built from the id and the filename.
+- **CC-375** Data Center never calls `/rest/api/3` or
+  `/attachment/content/{id}`; the Cloud download is unchanged
+  (`/attachment/content/{id}?redirect=false` on v3).
+- **CC-376** With no media dir (no store, or a blank directory) the download is
+  `config` naming `JIRA_MEDIA_DIR`, with no request sent.
+- **CC-377** `DATACENTER_TOOLS` holds `jira_download_attachment` and not
+  `jira_upload_attachment`; `DATACENTER_API.uploadAttachment` throws
+  `unsupported`, and the Data Center download is not the Cloud function.
+- **CC-378** `core/http.ts` composes the `secure` root under the context path
+  (`https://host/jira/secure/attachment/…`), refuses any redirect on it
+  (a login page or an object-storage host alike) as `config` after one
+  request, and refuses a dot segment as `validation` before any request.
+- **CC-379** The fake's Data Center twin serves the metadata and the servlet
+  (both in `DATACENTER_ROUTES`), answers the servlet 404 unless the filename
+  matches exactly, and answers `/rest/api/[23]/attachment/content/{id}` 404
+  with the violation `cloud_attachment_content_on_datacenter`, which the wire
+  audit names. The rehearsal downloads the seeded attachment into its own
+  media dir, never uploads, and its checks name a file outside the media dir,
+  a missing file and bytes that differ.
+
+## Fifteenth defect hunt (2026-10-01, the Data Center preview, stages 13.3b–13.7)
+
+- **CC-380** A pre-8.4 Data Center host answers a paged create-metadata route
+  it does not have with the REST framework's own 404 body
+  (`{"message":"null for uri: …","status-code":404}`), not an empty one. That
+  `null for uri` text is not a Jira message: the 404 is `unsupported` naming
+  Jira Data Center 8.4 or later, exactly as a bare 404 is (CC-362), never
+  `not_found` asking to check the project key. Exactly one request is sent.
+
+## Hardening wave (2026-10-02, deferred items)
+
+- **CC-381** The OAuth refresh skew is capped at half the token's reported
+  lifetime: a token whose `expires_in` is shorter than `TOKEN_REFRESH_SKEW_MS`
+  is refreshed once and then reused, not refreshed on every call. A stored
+  entry's lifetime is `expiresAt - obtainedAt`; with no usable lifetime the
+  full skew applies.
+- **CC-382** A damaged token-store entry fails only its own profile, as
+  `config` naming the store, the profile and the field, with `login`/`logout`
+  for that profile as the remedy. Other profiles read normally, `read()` lists
+  the damaged keys, a `put` for another profile keeps the damaged raw entry, a
+  `put` for the damaged profile replaces it, `remove` and `logout --all`
+  remove it. File-level damage still blocks the whole store.
+- **CC-383** `writeFileAtomic` fsyncs the parent directory after the rename
+  (file fsync, rename, directory fsync, in that order); a directory that
+  cannot be opened or fsynced (EINVAL and the like) does not fail the write.
+- **CC-384** Text response bodies are read through a streaming cap,
+  `MAX_TEXT_BODY_BYTES`: an over-cap JSON success is cancelled mid-stream and
+  is `validation` (never parsed); an over-cap 2xx to an unsafe write is
+  `ambiguous_write` saying it was applied and is not retried; an over-cap
+  error body is dropped and the status still decides the kind.
+
+## Hardening wave, tools (2026-10-02, deferred items)
+
+Six items deferred by earlier defect hunts were re-checked against the code.
+Two had already been fixed (`jira_list_statuses` refuses a non-numeric
+`projectId`, CC-213; a task item keeps its children in document order,
+CC-232); the two cases below are what remained to state or pin.
+
+- **CC-396** The bulk delete and bulk edit `issues` property says the 1000 cap
+  applies to distinct entries, and that exact repeats are dropped first and do
+  not count. The advertised array has no `maxItems` (the dedupe runs before the
+  cap, CC-243), while the prose had still said "at most 1000", which a list of
+  1000 keys plus a repeat contradicts.
+- **CC-397** A continuation call — the caller's own `nextPageToken` accepted —
+  whose next, Jira-issued cursor expires mid-sweep restarts once from page one
+  and reports `restarted`, so `pagination_restarted` tells the model to
+  de-duplicate by issue id. Only a caller token refused on the first request
+  fails fast (CC-01); this path had no test pinning it.
+
+## Owner-decision sweep (2026-10-08, D118)
+
+- **CC-398** Inside a `{quote}`, a code block whose body holds `{quote}` (any
+  case) is written with a zero-width space after the `{`, as CC-284 does for
+  `{code}`/`{noformat}`. Whether Jira's renderer lets the code macro shield the
+  outer quote's closer has never been seen on a host; without the space a
+  quoted snippet of wiki markup could end the quote early and spill the rest of
+  the body out of it. Outside a quote the body stays verbatim.
+
+## Sixteenth defect hunt (2026-10-09)
+
+- **CC-399** The Data Center download refuses a 2xx from the
+  `/secure/attachment` servlet that is not the file: a body whose length
+  differs from the size the metadata stated, or an HTML body
+  (`content-type: text/html`) for an attachment that is not itself HTML. Both
+  are what a login page or an intercepting proxy answers with, and the servlet
+  had been saving them under the attachment's name. The refusal is
+  `unexpected_shape` and nothing is written; a size the metadata does not state
+  is not compared. The size cap (CC-372) is checked first.
+- **CC-400** On the OAuth path, a 2xx whose body is over
+  `MAX_TEXT_BODY_BYTES` is refused instead of being handed on as an empty
+  success. A token POST then fails as `auth` that says to run `login` again and
+  never resends the request — the endpoint said yes, so a rotating refresh
+  token has most likely been spent — rather than as a misleading
+  `unexpected_shape` from the empty body. A GET fails as `validation`. Non-2xx
+  bodies are still dropped to a snippet: the status decides those (CC-384).
+- **CC-401** Inline code whose text is a macro name — `quote`, `color`,
+  `code`, `noformat`, `panel`, `anchor`, followed by its end, `:` or `\}` — is
+  written with that first letter as a numeric reference (`{{&#113;uote}}`):
+  the second `{` of `{{` is the one bare `{` the writer emits, and with the
+  text after it would spell the tag. The reader no longer strips a
+  `{quote}`/`{color}` tag whose `{` follows another `{`, so a real Data Center
+  description holding `{{quote}}` reads back as `quote` instead of nothing.
+- **CC-402** The writer's check for an `&…;` that Jira would read as a
+  character reference looks 40 characters ahead, not 10, so a named entity
+  longer than eight letters (`&rightarrow;`, the 31-letter
+  `&CounterClockwiseContourIntegral;`) is written as text like the short ones.

@@ -9,9 +9,10 @@
 // Two independent properties:
 //
 // 1. **Atomicity.** {@link writeFileAtomic} writes a sibling temp file, fsyncs
-//    it, then `rename()`s it over the target. `rename` within one filesystem is
-//    atomic, so a reader either sees the whole old file or the whole new one —
-//    never a half-written token. A plain `writeFileSync` truncates first, and a
+//    it, then `rename()`s it over the target and (best effort) fsyncs the
+//    parent directory so the rename survives a power loss. `rename` within one
+//    filesystem is atomic, so a reader either sees the whole old file or the
+//    whole new one — never a half-written token. A plain `writeFileSync` truncates first, and a
 //    crash there leaves an empty env file, i.e. credentials silently gone.
 //    Permissions are set on the file descriptor BEFORE the rename, so the
 //    secret is never briefly world-readable (umask cannot widen 0600 either
@@ -272,6 +273,35 @@ export function writeFileAtomic(
       // reason — the temp file is there unless something else removed it.
     }
     throw cause;
+  }
+  syncDirectory(dir);
+}
+
+/**
+ * Persist the rename itself: fsync the parent directory (CC-383).
+ *
+ * The data fsync above makes the new file's bytes durable, but the directory
+ * entry that `rename` changed lives in the directory, and on ext4/XFS a power
+ * loss before that is flushed can bring back the OLD file — for the token store
+ * that is a refresh token Atlassian has already rotated away, i.e. a forced
+ * re-login. Best effort by design: the rename has already happened and is
+ * visible, so a platform that cannot open or fsync a directory (Windows answers
+ * EISDIR/EPERM, some filesystems EINVAL) must not turn a completed write into a
+ * reported failure.
+ */
+function syncDirectory(dir: string): void {
+  let fd: number;
+  try {
+    fd = openSync(dir, 'r');
+  } catch {
+    return;
+  }
+  try {
+    fsyncSync(fd);
+  } catch {
+    // See above: durability of the entry is best effort, the write succeeded.
+  } finally {
+    closeSync(fd);
   }
 }
 

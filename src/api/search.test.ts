@@ -416,6 +416,36 @@ test('CC-01: a caller-supplied token that expired fails fast with remediation', 
   assert.equal(bodyOf(jira.calls[0])['nextPageToken'], 'stale-token');
 });
 
+test('[CC-397] a continuation call whose Jira-issued cursor expires mid-sweep restarts at page one and says so', async () => {
+  // The caller's own token worked; the cursor Jira handed back for the NEXT
+  // page then went stale. That is the documented mid-loop case (JIRA-API.md
+  // §nextPageToken), not the caller-token refusal: one restart from page one,
+  // reported as `restarted` so the tool ring emits pagination_restarted and
+  // the model de-duplicates rows it already read on earlier calls.
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk({ issues: [issue('10005', 'ABC-5')], nextPageToken: 'tok-6' })) // synthetic
+    .enqueue(jiraErr(expiredTokenError()))
+    .enqueue(jiraOk({ issues: [issue('10001', 'ABC-1')], isLast: true })); // synthetic
+
+  const result = await searchIssues({
+    jira: jira.fn,
+    jql: JQL,
+    nextPageToken: 'tok-5',
+    maxPages: 4,
+  });
+
+  assert.equal(result.restarted, true);
+  assert.deepEqual(keys(result.issues), ['ABC-1']);
+  assert.equal(jira.calls.length, 3);
+  assert.equal(bodyOf(jira.calls[0])['nextPageToken'], 'tok-5');
+  assert.equal(bodyOf(jira.calls[1])['nextPageToken'], 'tok-6');
+  assert.equal(
+    bodyOf(jira.calls[2])['nextPageToken'],
+    undefined,
+    'the restart is page one',
+  );
+});
+
 test('CC-01: the expiry wording on a FIRST page, with no cursor sent, is not a restart', async () => {
   // No token was on the wire, so whatever Jira is complaining about, a restart
   // would replay the identical request. The error goes up untouched.

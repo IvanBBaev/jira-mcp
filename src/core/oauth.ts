@@ -659,9 +659,32 @@ export function requireRefreshToken(tokens: OAuthTokens): string {
   return tokens.refreshToken;
 }
 
-/** True while the token is inside {@link TOKEN_REFRESH_SKEW_MS} of expiry. */
-export function isExpired(tokens: OAuthTokens, now: number): boolean {
-  return now + TOKEN_REFRESH_SKEW_MS >= tokens.expiresAt;
+/**
+ * The refresh-ahead margin for a token that lived `lifetimeMs`.
+ *
+ * {@link TOKEN_REFRESH_SKEW_MS}, capped at half the reported lifetime. A token
+ * whose `expires_in` is at or below the full skew would otherwise count as
+ * expired the moment it arrived, and every call would refresh it again — a
+ * refresh loop that rotates the refresh token on each tool call (CC-381). An
+ * unknown or non-positive lifetime keeps the full skew.
+ */
+export function refreshSkewMs(lifetimeMs?: number): number {
+  if (lifetimeMs === undefined || !Number.isFinite(lifetimeMs) || lifetimeMs <= 0) {
+    return TOKEN_REFRESH_SKEW_MS;
+  }
+  return Math.min(TOKEN_REFRESH_SKEW_MS, Math.ceil(lifetimeMs / 2));
+}
+
+/**
+ * True while the token is inside its refresh-ahead margin of expiry: the
+ * {@link TOKEN_REFRESH_SKEW_MS}, or half of `lifetimeMs` when that is shorter.
+ */
+export function isExpired(
+  tokens: OAuthTokens,
+  now: number,
+  lifetimeMs?: number,
+): boolean {
+  return now + refreshSkewMs(lifetimeMs) >= tokens.expiresAt;
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +706,13 @@ export interface StoredTokens {
 export interface TokenStoreFile {
   readonly version: typeof TOKEN_STORE_VERSION;
   readonly tokens: Readonly<Record<string, StoredTokens>>;
+  /**
+   * Profiles whose entry is on disk but damaged (CC-382). They are not in
+   * `tokens`: a damaged entry fails only its own profile, so `get` of one of
+   * these throws its diagnosis while every other profile still loads, and
+   * `remove` (hence `logout`) can still delete it. Absent when there are none.
+   */
+  readonly damaged?: readonly string[];
 }
 
 const EMPTY_STORE: TokenStoreFile = Object.freeze({
@@ -741,8 +771,15 @@ function storeError(path: string, why: string, cause?: unknown): never {
 
 function parseStoredTokens(value: unknown, profile: string, path: string): StoredTokens {
   const label = JSON.stringify(safeLabel(profile, 40));
-  const damaged = (why: string): never =>
-    storeError(path, `has a damaged entry for profile ${label}: ${why}`);
+  // Only this profile is affected (CC-382), so the fix is a fresh login for it,
+  // not deleting a file that also holds every other profile's grant.
+  const damaged = (why: string): never => {
+    throw createJiraError({
+      kind: 'config',
+      reason: `The OAuth token store ${path} has a damaged entry for profile ${label}: ${why}.`,
+      remediation: `Run \`jira-mcp-ai login --profile ${safeLabel(profile, 40)}\` again to replace that entry (other profiles in the store are unaffected), or \`jira-mcp-ai logout --profile ${safeLabel(profile, 40)}\` to remove it.`,
+    });
+  };
 
   if (!isRecord(value)) return damaged('it is not an object');
 
@@ -817,14 +854,31 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     clock,
   };
 
-  const readNow = (): TokenStoreFile => {
+  /**
+   * The parsed file plus, per damaged profile, its raw on-disk value and the
+   * error that diagnoses it. A whole-file problem (unreadable, not JSON, wrong
+   * version, no `tokens`) still throws: there is nothing per-profile to keep.
+   */
+  interface Snapshot {
+    readonly file: TokenStoreFile;
+    readonly damagedRaw: Readonly<Record<string, unknown>>;
+    readonly damagedErrors: ReadonlyMap<string, unknown>;
+  }
+
+  const EMPTY_SNAPSHOT: Snapshot = {
+    file: EMPTY_STORE,
+    damagedRaw: Object.freeze(Object.create(null) as Record<string, unknown>),
+    damagedErrors: new Map(),
+  };
+
+  const snapshot = (): Snapshot => {
     let raw: string;
     try {
       raw = readFileSync(path, 'utf8');
     } catch (error) {
       // No file is not an error: it is the state before the first login, and
       // the resolver turns it into a message naming `login` (CC-102).
-      if (isErrnoCode(error, 'ENOENT')) return EMPTY_STORE;
+      if (isErrnoCode(error, 'ENOENT')) return EMPTY_SNAPSHOT;
       storeError(path, 'could not be read', error);
     }
 
@@ -856,13 +910,39 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     // as absent or as its own record, never as an Object.prototype member
     // (CC-170).
     const entries = Object.create(null) as Record<string, StoredTokens>;
+    const damagedRaw = Object.create(null) as Record<string, unknown>;
+    const damagedErrors = new Map<string, unknown>();
     for (const [key, value] of Object.entries(tokens)) {
-      entries[key] = parseStoredTokens(value, key, path);
+      // One damaged profile fails only itself (CC-382): it is kept verbatim so
+      // a write for another profile does not silently drop it, and its error
+      // is raised when — and only when — that profile is asked for.
+      try {
+        entries[key] = parseStoredTokens(value, key, path);
+      } catch (error) {
+        damagedRaw[key] = value;
+        damagedErrors.set(key, error);
+      }
     }
-    return { version: TOKEN_STORE_VERSION, tokens: entries };
+    const damaged = [...damagedErrors.keys()];
+    return {
+      file: {
+        version: TOKEN_STORE_VERSION,
+        tokens: entries,
+        ...(damaged.length === 0 ? {} : { damaged }),
+      },
+      damagedRaw,
+      damagedErrors,
+    };
   };
 
-  const write = (file: TokenStoreFile): void => {
+  const readNow = (): TokenStoreFile => snapshot().file;
+
+  /** Rewrite the store: the good entries, then the damaged ones verbatim. */
+  const write = (
+    tokens: Readonly<Record<string, StoredTokens>>,
+    damagedRaw: Readonly<Record<string, unknown>>,
+  ): void => {
+    const file = { version: TOKEN_STORE_VERSION, tokens: { ...damagedRaw, ...tokens } };
     writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`, {
       mode: SECRET_FILE_MODE,
     });
@@ -871,30 +951,36 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
   const locked: LockedTokenStore = {
     read: readNow,
     get: (profile) => {
-      const { tokens } = readNow();
+      const { file, damagedErrors } = snapshot();
       const key = profileKey(profile);
-      return Object.hasOwn(tokens, key) ? tokens[key] : undefined;
+      if (damagedErrors.has(key)) throw damagedErrors.get(key);
+      return Object.hasOwn(file.tokens, key) ? file.tokens[key] : undefined;
     },
     put: (profile, tokens) => {
-      const file = readNow();
-      write({
-        version: TOKEN_STORE_VERSION,
-        tokens: { ...file.tokens, [profileKey(profile)]: tokens },
-      });
+      const { file, damagedRaw } = snapshot();
+      const key = profileKey(profile);
+      // A put over a damaged entry is the repair (`login` for that profile).
+      const keep = Object.fromEntries(
+        Object.entries(damagedRaw).filter(([name]) => name !== key),
+      );
+      write({ ...file.tokens, [key]: tokens }, keep);
     },
     remove: (profile) => {
-      const file = readNow();
+      const { file, damagedRaw } = snapshot();
       // An exact stored key first: `read` hands back keys as they are on disk,
       // and a hand-edited `"Work"` normalizes to a key that is not there, so
       // `logout --all` could never delete it (CC-211).
+      const present = (name: string): boolean =>
+        Object.hasOwn(file.tokens, name) || Object.hasOwn(damagedRaw, name);
       const key =
-        profile !== undefined && Object.hasOwn(file.tokens, profile)
-          ? profile
-          : profileKey(profile);
-      if (!Object.hasOwn(file.tokens, key)) return false;
+        profile !== undefined && present(profile) ? profile : profileKey(profile);
+      if (!present(key)) return false;
       const rest = { ...file.tokens };
       delete rest[key];
-      write({ version: TOKEN_STORE_VERSION, tokens: rest });
+      const keep = Object.fromEntries(
+        Object.entries(damagedRaw).filter(([name]) => name !== key),
+      );
+      write(rest, keep);
       return true;
     },
   };
@@ -1196,9 +1282,10 @@ export interface OAuthResolverDeps {
 }
 
 function storedIsFresh(stored: StoredTokens, now: number): boolean {
-  const { accessToken, expiresAt, scopes } = stored;
+  const { accessToken, expiresAt, scopes, obtainedAt } = stored;
   if (accessToken === undefined || expiresAt === undefined) return false;
-  return !isExpired({ accessToken, expiresAt, scopes }, now);
+  // The lifetime the server reported when this token was minted (CC-381).
+  return !isExpired({ accessToken, expiresAt, scopes }, now, expiresAt - obtainedAt);
 }
 
 /** No store, or no entry in it, is a config error naming `login` — not a 401. */

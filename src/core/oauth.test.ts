@@ -818,6 +818,16 @@ describe('isExpired', () => {
     assert.equal(isExpired(tokens, 1_000_000 - TOKEN_REFRESH_SKEW_MS), true);
     assert.equal(isExpired(tokens, 1_000_000), true);
   });
+
+  it('[CC-381] caps the skew at half the lifetime of a short-lived token', () => {
+    // A 60 s token: the full two-minute skew would make it born expired.
+    assert.equal(isExpired(tokens, 1_000_000 - 60_000, 60_000), false);
+    assert.equal(isExpired(tokens, 1_000_000 - 30_001, 60_000), false);
+    assert.equal(isExpired(tokens, 1_000_000 - 30_000, 60_000), true);
+    // A long or unknown lifetime keeps the full skew.
+    assert.equal(isExpired(tokens, 1_000_000 - TOKEN_REFRESH_SKEW_MS, 3600_000), true);
+    assert.equal(isExpired(tokens, 1_000_000 - TOKEN_REFRESH_SKEW_MS, 0), true);
+  });
 });
 
 describe('tokenErrorCode / isTerminalTokenError', () => {
@@ -1018,10 +1028,58 @@ describe('createTokenStore', () => {
       writeFileSync(s.path, JSON.stringify({ version: 1, tokens: { default: entry } }), {
         mode: 0o600,
       });
-      const error = await rejects(() => s.read());
+      const error = await rejects(() => s.get());
       assert.equal(error.kind, 'config');
       assert.match(error.message, pattern);
     }
+  });
+
+  it('[CC-382] one damaged profile fails only itself, not the whole store', async () => {
+    const s = store('one-damaged.json');
+    const broken = { ...storedTokens(), cloudId: '' };
+    writeFileSync(
+      s.path,
+      JSON.stringify({
+        version: 1,
+        tokens: { work: storedTokens({ refreshToken: 'work-refresh' }), broken },
+      }),
+      { mode: 0o600 },
+    );
+
+    // The healthy profile still loads, and the listing names the damaged one.
+    assert.equal((await s.get('work'))?.refreshToken, 'work-refresh');
+    const file = await s.read();
+    assert.deepEqual(Object.keys(file.tokens), ['work']);
+    assert.deepEqual(file.damaged, ['broken']);
+
+    // Asking for the damaged one gets its own diagnosis and a per-profile fix.
+    const error = await rejects(() => s.get('broken'));
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /damaged entry for profile "broken": cloudId/);
+    assert.match(error.remediation ?? '', /login --profile broken/);
+    assert.match(error.remediation ?? '', /other profiles in the store are unaffected/);
+
+    // A write for another profile keeps the damaged entry verbatim.
+    await s.put('home', storedTokens({ refreshToken: 'home-refresh' }));
+    const onDisk = JSON.parse(readFileSync(s.path, 'utf8')) as {
+      tokens: Record<string, unknown>;
+    };
+    assert.deepEqual(onDisk.tokens['broken'], broken);
+    assert.equal((await s.get('home'))?.refreshToken, 'home-refresh');
+
+    // A fresh login for it is the repair; logout can remove one as well.
+    await s.put('broken', storedTokens({ refreshToken: 'fixed' }));
+    assert.equal((await s.get('broken'))?.refreshToken, 'fixed');
+    assert.equal((await s.read()).damaged, undefined);
+    writeFileSync(
+      s.path,
+      JSON.stringify({ version: 1, tokens: { work: storedTokens(), broken: 'nope' } }),
+      { mode: 0o600 },
+    );
+    assert.equal(await s.remove('broken'), true);
+    const after = await s.read();
+    assert.deepEqual(Object.keys(after.tokens), ['work']);
+    assert.equal(after.damaged, undefined);
   });
 
   it('serializes concurrent writers in one process instead of racing the lock', async () => {
@@ -1217,7 +1275,11 @@ describe('createOAuthCredentialResolver', () => {
 
   it('refreshes inside the skew window, before the token is actually dead', async () => {
     const h = harness({
-      seed: storedTokens({ expiresAt: 1_000_000 + TOKEN_REFRESH_SKEW_MS - 1 }),
+      // An hour-long token minted an hour ago: the full skew applies (CC-381).
+      seed: storedTokens({
+        expiresAt: 1_000_000 + TOKEN_REFRESH_SKEW_MS - 1,
+        obtainedAt: 1_000_000 + TOKEN_REFRESH_SKEW_MS - 1 - 3600_000,
+      }),
       replies: [
         ok({ access_token: 'access-2', refresh_token: 'refresh-2', expires_in: 3600 }),
       ],
@@ -1236,6 +1298,21 @@ describe('createOAuthCredentialResolver', () => {
       h.logger.eventsOf('oauth_token_refreshed')[0]?.fields?.['rotated'],
       true,
     );
+  });
+
+  it('[CC-381] a token whose expires_in is inside the skew is refreshed once, not on every call', async () => {
+    const h = harness({
+      seed: storedTokens({ expiresAt: 0 }),
+      replies: [
+        ok({ access_token: 'access-2', refresh_token: 'refresh-2', expires_in: 60 }),
+        ok({ access_token: 'access-3', refresh_token: 'refresh-3', expires_in: 60 }),
+      ],
+    });
+    assert.equal((await bearer(h)).accessToken, 'access-2');
+    assert.equal((await bearer(h)).accessToken, 'access-2');
+    assert.equal((await bearer(h)).accessToken, 'access-2');
+    assert.equal(h.auth.calls(), 1);
+    assert.equal(h.onDisk()?.refreshToken, 'refresh-2');
   });
 
   it('[CC-138] bounds the lock-held refresh POST inside the lock staleness horizon', async () => {

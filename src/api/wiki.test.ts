@@ -119,3 +119,10 @@ test('CC-273: never throws on arbitrary input, markup-dense or not', () => {
     { numRuns: 600 },
   );
 });
+
+test('CC-401: the `{` of `{{` monospace does not open a quote or color tag', () => {
+  assert.equal(wikiToText('use {{quote}} here'), 'use quote here');
+  assert.equal(wikiToText('{{color}} and {{COLOR:red}}'), 'color and COLOR:red');
+  // A real tag after the monospace still goes.
+  assert.equal(wikiToText('{{x}}{color:red}y{color}'), 'xy');
+});

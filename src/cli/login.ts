@@ -1061,7 +1061,9 @@ export async function runLogout(options: LoginOptions = {}): Promise<number> {
       // to a wholesale overwrite.
       const file = await store.read();
       const keys: string[] = [];
-      for (const key of Object.keys(file.tokens)) {
+      // Damaged entries too: `--all` must leave no refresh token behind, and a
+      // damaged entry may still hold one (CC-382).
+      for (const key of [...Object.keys(file.tokens), ...(file.damaged ?? [])]) {
         // Only what actually went: a key that was not removed must not be
         // reported as gone while its refresh token stays on disk (CC-211).
         if (await store.remove(key)) keys.push(key);

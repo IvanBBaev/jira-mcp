@@ -679,8 +679,13 @@ const CASES: readonly Case[] = [
 test('CC-265: the case table covers every read the adapter serves but capabilities', () => {
   const covered = new Set(CASES.map((c) => c.tool.name));
   // The writes have their own table in datacenter-write.test.ts (D109).
+  // The download needs a media directory and moves bytes off the REST API;
+  // it has its own file, datacenter-download.test.ts (D117, CC-370…CC-377).
   const served = [...DATACENTER_TOOLS].filter(
-    (name) => name !== 'jira_capabilities' && !DATACENTER_WRITE_TOOLS.has(name),
+    (name) =>
+      name !== 'jira_capabilities' &&
+      name !== 'jira_download_attachment' &&
+      !DATACENTER_WRITE_TOOLS.has(name),
   );
   assert.deepEqual([...covered].sort(), served.sort());
 });
@@ -1130,7 +1135,7 @@ test('CC-275: a watcher list withheld on Data Center stays withheld, not empty',
 test('CC-263: an unserved port member throws unsupported rather than calling Cloud', () => {
   const jira = createFakeJiraRequest();
   for (const call of [
-    () => DATACENTER_API.downloadAttachment({ jira: jira.fn } as never),
+    () => DATACENTER_API.uploadAttachment({ jira: jira.fn } as never),
     () => DATACENTER_API.deleteVersion({ jira: jira.fn } as never),
     () => DATACENTER_API.closeSprint({ jira: jira.fn } as never),
   ]) {
@@ -1584,13 +1589,22 @@ test('[CC-346] jira_list_attachments on Cloud is untouched — v3, no root, the 
   });
 });
 
-test('[CC-347] jira_download_attachment and jira_upload_attachment stay unserved on Data Center', () => {
-  // Filters left this list with D115 (stage 13.7a, CC-350…CC-359) and
-  // jira_get_create_meta with D116 (stage 13.7b, CC-360…CC-365).
-  for (const name of ['jira_download_attachment', 'jira_upload_attachment']) {
-    assert.equal(DATACENTER_TOOLS.has(name), false, name);
-  }
-  for (const name of ['jira_count', 'jira_get_changelog', 'jira_list_attachments']) {
+test('[CC-347] jira_upload_attachment stays unserved on Data Center (amended by D117: the download is served)', () => {
+  // Filters left this list with D115 (stage 13.7a, CC-350…CC-359),
+  // jira_get_create_meta with D116 (stage 13.7b, CC-360…CC-365) and
+  // jira_download_attachment with D117 (stage 13.8, CC-370…CC-377). The upload
+  // stays: no served tool can remove an attachment it would create (D109).
+  assert.equal(DATACENTER_TOOLS.has('jira_upload_attachment'), false);
+  assert.throws(
+    () => DATACENTER_API.uploadAttachment({ jira: createFakeJiraRequest().fn } as never),
+    (error: unknown) => (error as { kind?: string }).kind === 'unsupported',
+  );
+  for (const name of [
+    'jira_count',
+    'jira_get_changelog',
+    'jira_list_attachments',
+    'jira_download_attachment',
+  ]) {
     assert.equal(DATACENTER_TOOLS.has(name), true, name);
   }
 });
@@ -1952,6 +1966,45 @@ test('[CC-363] a 404 carrying Jira messages stays not_found with the 8.4 hint; o
   assert.equal(refused.ok, false);
   assert.equal(refused.error?.kind, 'permission');
   assert.doesNotMatch(String(refused.error?.remediation), /8\.4/);
+});
+
+test('[CC-380] a pre-8.4 host\'s Jersey "null for uri" 404 on the paged create metadata is unsupported, not not_found', async () => {
+  // A host without the 8.4 route answers the unmatched path from the REST
+  // framework, not from Jira: `{"message":"null for uri: …","status-code":404}`.
+  // That `message` says nothing about the project or the issue type.
+  for (const [args, template, uri] of [
+    [
+      { project: 'ABC' },
+      '/issue/createmeta/{projectIdOrKey}/issuetypes',
+      'https://jira.corp.example/rest/api/2/issue/createmeta/ABC/issuetypes',
+    ],
+    [
+      { project: 'ABC', issueTypeId: '10001' },
+      '/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
+      'https://jira.corp.example/rest/api/2/issue/createmeta/ABC/issuetypes/10001',
+    ],
+  ] as const) {
+    const jira = createFakeJiraRequest().on(
+      /^GET \/rest\/api\/2\/issue\/createmeta\/ABC\/issuetypes/,
+      jiraErr(
+        errorFromResponse({
+          status: 404,
+          method: 'GET',
+          pathTemplate: template,
+          body: { message: `null for uri: ${uri}`, 'status-code': 404 },
+        }),
+      ),
+    );
+    const result = await run(getCreateMetaTool, args, ctxOf(jira));
+    assert.equal(result.ok, false, template);
+    assert.equal(result.error?.kind, 'unsupported', template);
+    assert.match(
+      `${String(result.error?.message)} ${String(result.error?.remediation)}`,
+      /Jira Data Center 8\.4 or later/,
+      template,
+    );
+    assert.equal(jira.calls.length, 1, template);
+  }
 });
 
 test('[CC-364] a Data Center create-metadata page without a `values` array is unexpected_shape, never an empty list', async () => {

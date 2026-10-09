@@ -723,11 +723,15 @@ export async function listStatusesDataCenter(
  */
 const DC_CREATE_META_FLOOR = 'Jira Data Center 8.4';
 
+/** Jersey's message for a path no resource matches, e.g. `null for uri: https://…`. */
+const JERSEY_NO_ROUTE = /^null for uri\b/i;
+
 /**
  * Re-aim a 404 from a Data Center create-metadata route (D116).
  *
  * A host older than 8.4 has no such route, and answers an unknown REST path
- * with no Jira error messages of its own; that is `unsupported`, because no
+ * with no Jira error messages of its own (an empty or HTML body, or Jersey's
+ * `{"message":"null for uri: …"}` — CC-380); that is `unsupported`, because no
  * project key will ever fix it. A 404 that carries Jira's own messages ("No
  * project could be found...") is a missing project or issue type and keeps
  * `not_found`, with the version floor named as the other possibility. Every
@@ -737,7 +741,10 @@ const DC_CREATE_META_FLOOR = 'Jira Data Center 8.4';
 function asDataCenterCreateMetaError(error: unknown, step: string): unknown {
   if (!(error instanceof JiraError) || error.httpStatus !== 404) return error;
   if (error.kind !== 'not_found') return error;
-  const said = error.jiraMessages ?? [];
+  // The REST framework's own answer to an unmatched path ("null for uri: …",
+  // CC-380) is not a Jira message: it means the route is missing, exactly as
+  // an empty body does.
+  const said = (error.jiraMessages ?? []).filter((text) => !JERSEY_NO_ROUTE.test(text));
   if (said.length === 0) {
     return createJiraError({
       kind: 'unsupported',

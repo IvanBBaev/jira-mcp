@@ -155,6 +155,12 @@ const ENTITY_LIKE_RE = /^&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/i;
 /** The parenthesised emoticons (`(y)`, `(!)`, `(on)`, `(*r)`, …). */
 const PAREN_EMOTICON_RE = /^\((?:[ynix/!+?*-]|\*[rgby]|on|off|flag|flagoff)\)/i;
 
+/**
+ * A macro name that, after the second `{` of `{{`, would close into a tag:
+ * `{name}` (the inner text ends there) or `{name:…}` / `{name\}`.
+ */
+const MACRO_NAME_RE = /^(?:quote|color|code|noformat|panel|anchor)(?:$|:|\\\})/i;
+
 /** A line-leading block tag: `h1.` … `h6.` and `bq.`. */
 const BLOCK_TAG_RE = /^(?:h[1-6]|bq)\./i;
 
@@ -350,7 +356,9 @@ function encodeLine(line: Line, cell: boolean): string[] {
     else if (ALWAYS_REFERENCED.has(ch)) written = referenceOf(ch);
     else if (k === firstText && (ch === '#' || BLOCK_TAG_RE.test(ahead())))
       written = referenceOf(ch);
-    else if (ch === '&' && ENTITY_LIKE_RE.test(ahead())) written = referenceOf(ch);
+    // Wider than `ahead()`: the longest HTML5 entity name is 31 letters (CC-402).
+    else if (ch === '&' && ENTITY_LIKE_RE.test(chars.slice(k, k + 40).join('')))
+      written = referenceOf(ch);
     else if (ch === '(' && PAREN_EMOTICON_RE.test(ahead())) written = referenceOf(ch);
     else if (prev === ':' && /^[()PpDd]$/.test(ch)) written = referenceOf(ch);
     // `;)` is an emoticon, and so is the `;` that ends a reference before `)`.
@@ -445,7 +453,12 @@ function wrapRun(
   const wrapped =
     mark === 'link'
       ? `[${inner}|${encodeUrl(key)}]`
-      : `${MARK_DELIMITERS[mark][0]}${inner}${MARK_DELIMITERS[mark][1]}`;
+      : mark === 'code'
+        ? // The second `{` of `{{` is the one bare `{` the writer emits, and a
+          // letter after it would spell a macro tag — `{{quote}}` holds
+          // `{quote}`. Referencing its first letter breaks the tag (CC-401).
+          `{{${MACRO_NAME_RE.test(inner) ? inner.replace(/^./, referenceOf) : inner}}}`
+        : `${MARK_DELIMITERS[mark][0]}${inner}${MARK_DELIMITERS[mark][1]}`;
   return (
     renderRange(line, enc, from, start, level + 1) +
     wrapped +
@@ -501,9 +514,13 @@ function codeLanguage(node: AdfNode): string {
 /**
  * `{code}` unless the body would close it early; then `{noformat}`; a body
  * that holds both closers gets a zero-width space after each `{` of a closer.
+ * Inside a `{quote}` the body's own `{quote}` gets the same space: whether
+ * Jira's renderer lets a code macro shield the outer quote's closer has never
+ * been seen on a host, so the writer does not rely on it (CC-398).
  */
 function renderCodeBlock(node: AdfNode, ctx: Ctx): string {
-  const body = codeBody(node, ctx);
+  const raw = codeBody(node, ctx);
+  const body = ctx.quoted ? raw.replace(/\{(quote)\}/gi, `{${ZWSP}$1}`) : raw;
   const language = codeLanguage(node);
   const hasCode = /\{code\}/i.test(body);
   if (!hasCode) return `{code${language === '' ? '' : `:${language}`}}\n${body}\n{code}`;

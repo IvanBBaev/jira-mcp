@@ -71,6 +71,7 @@ import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_RETRY_ATTEMPTS,
   MAX_ATTACHMENT_BYTES,
+  MAX_TEXT_BODY_BYTES,
   RETRY_AFTER_JITTER,
   assertHostAllowed,
   backoffMs,
@@ -496,10 +497,57 @@ function requireFetch(fail: (init: FailInit) => JiraError): typeof globalThis.fe
  */
 async function readTextOrEmpty(guard: AttemptGuard, response: Response): Promise<string> {
   try {
-    return await guard.guard(response.text());
+    const read = await readTextCapped(guard, response);
+    // Over the cap: the snippet is not worth the allocation (CC-384).
+    return read.kind === 'text' ? read.text : '';
   } catch {
     return '';
   }
+}
+
+/** A text body, or how many bytes had arrived when it crossed the cap. */
+type CappedText =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'over'; readonly bytes: number };
+
+/**
+ * Read a text body under {@link MAX_TEXT_BODY_BYTES}, counting as it arrives and
+ * cancelling the transfer at the chunk that crosses the cap (CC-384). Every read
+ * is raced against the attempt guard, like the attachment reader.
+ *
+ * A response with no stream (bodiless, or a fetch stub that has none) has
+ * nothing to meter and is read whole.
+ */
+async function readTextCapped(
+  guard: AttemptGuard,
+  response: Response,
+): Promise<CappedText> {
+  const body = response.body;
+  if (body === null) return { kind: 'text', text: await guard.guard(response.text()) };
+
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const chunk = await guard.guard(reader.read());
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > MAX_TEXT_BODY_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return { kind: 'over', bytes: total };
+      }
+      parts.push(decoder.decode(chunk.value, { stream: true }));
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  parts.push(decoder.decode());
+  return { kind: 'text', text: parts.join('') };
 }
 
 /**
@@ -948,7 +996,15 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       });
       // Only a binary GET may be redirected anywhere; for everything else a 3xx
       // stays what it has always been — a refusal, raised by the main loop.
-      if (!wantsBinary || method !== 'GET' || !isRedirectStatus(first.status)) {
+      // The Data Center attachment servlet (`secure`, D117) never takes the
+      // hop: there a redirect is the login page, not a signed media URL, and
+      // following it anonymously would write an HTML page as the file.
+      if (
+        !wantsBinary ||
+        method !== 'GET' ||
+        root === 'secure' ||
+        !isRedirectStatus(first.status)
+      ) {
         return first;
       }
 
@@ -1006,7 +1062,30 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         // owns that.
         return { status, headers, text: '', bytes: await readCapped(guard, response) };
       }
-      return { status, headers, text: await guard.guard(response.text()) };
+      const read = await readTextCapped(guard, response);
+      if (read.kind === 'text') return { status, headers, text: read.text };
+      // Over MAX_TEXT_BODY_BYTES (CC-384). A write Jira said yes to was
+      // applied; only its reply is refused, so it is reported the CC-205 way.
+      if (!replayable) {
+        logger.emit('ambiguous_write', { method, pathTemplate: route });
+        throw fail({
+          kind: 'ambiguous_write',
+          message: `${method} ${route} was applied (Jira answered ${String(status)}), but its response body is over the ${String(MAX_TEXT_BODY_BYTES)}-byte response limit, so the result it carried was not read. It was NOT retried.`,
+          httpStatus: status,
+          retryable: false,
+          remediation:
+            'Do not send it again. Read the issue back (or search for it) to get what the reply would have carried, such as a created key.',
+        });
+      }
+      throw fail({
+        // The same kind the attachment cap uses: no retry can change it.
+        kind: 'validation',
+        message: `The response to ${method} ${route} is over the ${String(MAX_TEXT_BODY_BYTES)}-byte response limit (at least ${String(read.bytes)} bytes); it was not read.`,
+        httpStatus: status,
+        retryable: false,
+        remediation:
+          'Ask for less in one request: fewer fields, a smaller maxResults, no expand. The limit is compiled in and has no environment override.',
+      });
     };
 
     const ambiguousWrite = (reason: string, cause?: unknown): never => {
@@ -1420,6 +1499,20 @@ export function createAuthRequest(options: AuthRequestOptions): AuthRequestFn {
   return async function authRequest(spec: AuthRequestSpec): Promise<AuthResponse> {
     const method = spec.method;
 
+    const oauthBodyTooLarge = (verb: string, path: string, status: number): JiraError =>
+      fail({
+        kind: verb === 'POST' ? 'auth' : 'validation',
+        message: `Atlassian answered ${verb} ${path} with ${String(status)}, but the response body is over the ${String(MAX_TEXT_BODY_BYTES)}-byte response limit, so it was not read.`,
+        httpStatus: status,
+        retryable: false,
+        remediation:
+          verb === 'POST'
+            ? // The endpoint said yes, so a rotating refresh token has most
+              // likely been spent; resending the old one would fail anyway.
+              'A token request is never sent twice, because a rotating refresh token cannot survive a replay. Run `jira-mcp-ai login` again.'
+            : 'An OAuth response this large is not one Atlassian sends; check for a proxy rewriting the response, then retry.',
+      });
+
     let target: URL;
     try {
       target = new URL(spec.url);
@@ -1492,13 +1585,21 @@ export function createAuthRequest(options: AuthRequestOptions): AuthRequestFn {
           durationMs: clock.now() - attemptStartedAt,
           attempt,
         });
+        // A non-2xx body only names the failure, so losing it costs a snippet.
+        // A 2xx body IS the result, and an over-cap one must not be handed on
+        // as an empty success (CC-400).
+        let text: string;
+        if (isSuccessStatus(response.status)) {
+          const read = await readTextCapped(guard, response);
+          if (read.kind === 'over')
+            throw oauthBodyTooLarge(method, route, response.status);
+          text = read.text;
+        } else {
+          text = await readTextOrEmpty(guard, response);
+        }
         outcome = {
           kind: 'result',
-          result: {
-            status: response.status,
-            headers: headersOf(response),
-            text: await readTextOrEmpty(guard, response),
-          },
+          result: { status: response.status, headers: headersOf(response), text },
         };
       } catch (error) {
         if (error instanceof JiraError) throw error;

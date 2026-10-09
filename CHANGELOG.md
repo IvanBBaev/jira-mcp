@@ -120,6 +120,25 @@ env var names — not internal refactors.
   (irreversible)". Its id is unchanged, so `JIRA_PACKAGES_DENY=issues-delete`
   still removes the whole irreversible surface — now eight tools rather than
   three.
+- `@modelcontextprotocol/sdk` resolves to 1.32.1 (was 1.30.0), which clears
+  the SDK's OAuth-client advisory GHSA-6qxp-vccf-f47h and pulls patched
+  `proxy-addr`, `ip-address` and `fast-uri` transitively. This server
+  uses none of the affected code paths (its HTTP transport is bare `node:http`,
+  its OAuth client its own), but `npm audit --omit=dev` is now clean.
+
+### Fixed
+
+- An OAuth token or resources response over the response size limit is
+  refused instead of being read as an empty success; a token refresh then
+  says to run `jira-mcp-ai login` again rather than failing as an unexpected
+  shape.
+- Data Center preview: `jira_download_attachment` no longer saves a login or
+  proxy page as the attachment — a body whose size differs from the stated
+  one, or an HTML page for a non-HTML file, is refused and nothing is written.
+- Data Center preview: inline code that spells a macro name (`` `quote` ``,
+  `` `code` ``…) is written so it cannot open a wiki tag, the reader keeps
+  `{{quote}}` as text, and long named entities (`&rightarrow;`) are escaped
+  like short ones.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

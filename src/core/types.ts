@@ -626,9 +626,11 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
 
 /**
  * The Jira API roots. v1 speaks `v3` and `agile`; `v2` exists for the Data
- * Center adapter (D106) and no Cloud api function uses it.
+ * Center adapter (D106) and no Cloud api function uses it. `secure` is the one
+ * non-REST root (D117): the Data Center attachment servlet, read only by the
+ * Data Center download, and never followed through a redirect.
  */
-export const JIRA_API_ROOTS = ['v3', 'agile', 'v2'] as const;
+export const JIRA_API_ROOTS = ['v3', 'agile', 'v2', 'secure'] as const;
 
 /**
  * Which Jira API a request targets: `v3` is the platform REST API (ADF bodies,
@@ -647,6 +649,11 @@ export type JiraApiRoot = (typeof JIRA_API_ROOTS)[number];
  * and `agile` are used — `/rest/api/3/search` (without `/jql`) was removed
  * server-side on 2025-08-01. `v2` is Data Center's platform root (D106): Data
  * Center has no `/rest/api/3`, and its v2 speaks wiki markup, not ADF.
+ * `secure` is Data Center's attachment servlet (D117): the bytes of an
+ * attachment live at `/secure/attachment/{id}/{filename}` under the context
+ * path, outside the REST API. It is a frozen entry, not a free-form prefix —
+ * the request still goes through `buildRequestUrl`'s path checks — and
+ * `core/http.ts` never follows a redirect from it.
  *
  * Produced by: this module (frozen data).
  * Consumed by: `core/http.ts` (WP-10) and the fake request client.
@@ -655,6 +662,7 @@ export const JIRA_ROOT_PATHS: Readonly<Record<JiraApiRoot, string>> = Object.fre
   v3: '/rest/api/3',
   agile: '/rest/agile/1.0',
   v2: '/rest/api/2',
+  secure: '/secure',
 });
 
 /** A single query-string value; arrays are joined by the caller (Jira uses CSV). */

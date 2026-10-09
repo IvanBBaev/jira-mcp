@@ -1184,6 +1184,25 @@ test('logout --all empties a store holding several profiles', async (t) => {
   assert.match(r.stdout(), /Removed 2 profiles \(default, sandbox\)/);
 });
 
+test('[CC-382] logout --all also removes a damaged profile entry', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await run(r.options), EXIT_OK);
+  const file = r.storeFile() as { version: number; tokens: Record<string, unknown> };
+  writeFileSync(
+    r.storePath,
+    JSON.stringify({ ...file, tokens: { ...file.tokens, broken: { cloudId: '' } } }),
+    { mode: 0o600 },
+  );
+
+  const code = await runLogout({ ...r.options, argv: ['--all'] });
+
+  assert.equal(code, EXIT_OK);
+  assert.deepEqual(r.storeFile()?.['tokens'], {});
+  assert.match(r.stdout(), /Removed 2 profiles \(default, broken\)/);
+});
+
 test('[CC-211] logout --all deletes a hand-edited key that is not in normalized form', async (t) => {
   const r = await rig();
   t.after(() => r.cleanup());

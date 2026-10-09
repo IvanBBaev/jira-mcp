@@ -20,7 +20,7 @@ import type { FakeLogger } from './fakes/fakeLogger.js';
 import { createFakeRedactor } from './fakes/fakeRedactor.js';
 import { withFetch } from '../testing/with-fetch.js';
 import type { FetchMock } from '../testing/with-fetch.js';
-import { MAX_ATTACHMENT_BYTES } from './http-util.js';
+import { MAX_ATTACHMENT_BYTES, MAX_TEXT_BODY_BYTES } from './http-util.js';
 import { createAuthRequest, createJiraRequest } from './http.js';
 import type {
   AuthRequestFn,
@@ -1504,6 +1504,76 @@ test('CC-93: a media 303 to a Location that is not a URL is refused, not guessed
   });
 });
 
+/** A Data Center site under a context path, as the preview is configured (D106). */
+const DC_HOST_OPTIONS: Partial<JiraHttpOptions> = {
+  credentials: {
+    ...CREDENTIALS,
+    host: { origin: 'https://jira.corp.example', pathPrefix: '/jira' },
+  },
+  allowedHosts: ['jira.corp.example'],
+};
+
+const GET_SECURE: JiraRequestSpec = {
+  method: 'GET',
+  root: 'secure',
+  path: '/attachment/60001/my%20report%3F.txt',
+  pathTemplate: '/attachment/{id}/{filename}',
+  accept: 'binary',
+};
+
+test('[CC-378] the secure root reaches the wire under the context path, filename encoding intact', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ bytes: new Uint8Array([1, 2]) });
+    const { request, clock } = harness(DC_HOST_OPTIONS);
+
+    const res = await settle(clock, request<Uint8Array>(GET_SECURE));
+
+    assert.deepEqual([...res.data], [1, 2]);
+    assert.equal(
+      mock.lastRequest()?.url,
+      'https://jira.corp.example/jira/secure/attachment/60001/my%20report%3F.txt',
+    );
+  });
+});
+
+test('[CC-378] a redirect from the secure root is refused, never followed — not even the media hop', async () => {
+  for (const location of [
+    'https://jira.corp.example/jira/login.jsp?os_destination=%2Fsecure%2Fattachment%2F60001',
+    'https://media.atlassian.com/file/abc?token=signed',
+  ]) {
+    for (const status of [302, 303]) {
+      await withFetch(async (mock: FetchMock) => {
+        mock.enqueue({ status, headers: { location } });
+        const { request, clock } = harness(DC_HOST_OPTIONS);
+
+        const err = await rejects(clock, request(GET_SECURE));
+
+        assert.equal(err.kind, 'config', `${String(status)} ${location}`);
+        assert.equal(err.httpStatus, status);
+        assert.equal(
+          mock.requests.length,
+          1,
+          'the redirect must not produce a second request',
+        );
+      });
+    }
+  }
+});
+
+test('[CC-378] the secure root is still path-checked: a dot segment never reaches the wire', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    const { request, clock } = harness(DC_HOST_OPTIONS);
+
+    const err = await rejects(
+      clock,
+      request({ ...GET_SECURE, path: '/attachment/60001/../../admin' }),
+    );
+
+    assert.equal(err.kind, 'validation');
+    assert.equal(mock.requests.length, 0);
+  });
+});
+
 test('a 3xx with no Location at all is refused as a same-host redirect', async () => {
   await withFetch(async (mock: FetchMock) => {
     mock.enqueue({ status: 302 });
@@ -1585,6 +1655,99 @@ test('CC-54: a download over the cap is aborted mid-stream, not buffered and rej
   // The source can still hand out a chunk or two while the cancellation
   // propagates; what matters is that it never reached its end.
   assert.ok(sent < chunks, 'the reader must stop near the cap, not drain the body');
+});
+
+/**
+ * A JSON-looking body that streams 1 MiB chunks until it is ten chunks past
+ * {@link MAX_TEXT_BODY_BYTES}, recording how far a reader got and whether it
+ * cancelled.
+ */
+function oversizedJsonBody(): {
+  readonly stream: ReadableStream<Uint8Array>;
+  readonly chunks: number;
+  sent(): number;
+  cancelled(): boolean;
+} {
+  const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+  const chunks = Math.ceil(MAX_TEXT_BODY_BYTES / chunk.byteLength) + 10;
+  let sent = 0;
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= chunks) {
+        controller.close();
+        return;
+      }
+      sent += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { stream, chunks, sent: () => sent, cancelled: () => cancelled };
+}
+
+test('[CC-384] a JSON success body over the cap is refused mid-stream, not buffered and parsed', async () => {
+  const body = oversizedJsonBody();
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(body.stream, { status: 200 })),
+    async (calls) => {
+      const { request, clock } = harness();
+      const failure = await rejects(clock, request(GET_ISSUE));
+      assert.equal(calls.length, 1, 'an over-cap body is not retried');
+      return failure;
+    },
+  );
+
+  assert.equal(err.kind, 'validation');
+  assert.equal(err.retryable, false);
+  assert.match(
+    err.message,
+    new RegExp(`${String(MAX_TEXT_BODY_BYTES)}-byte response limit`),
+  );
+  assert.match(err.remediation ?? '', /maxResults/);
+  assert.equal(body.cancelled(), true, 'the transfer must be cancelled, not drained');
+  assert.ok(body.sent() < body.chunks, 'the reader must stop near the cap');
+});
+
+test('[CC-384] an unsafe write whose 2xx body is over the cap says it was applied', async () => {
+  const body = oversizedJsonBody();
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(body.stream, { status: 201 })),
+    async (calls) => {
+      const { request, clock, logger } = harness();
+      const failure = await rejects(
+        clock,
+        request({ method: 'POST', path: '/issue', body: { summary: 'x' } }),
+      );
+      assert.equal(calls.length, 1, 'a write is never replayed');
+      assert.equal(logger.has('ambiguous_write'), true);
+      return failure;
+    },
+  );
+
+  assert.equal(err.kind, 'ambiguous_write');
+  assert.equal(err.httpStatus, 201);
+  assert.match(err.message, /was applied \(Jira answered 201\)/);
+  assert.match(err.remediation ?? '', /Do not send it again/);
+  assert.equal(body.cancelled(), true);
+});
+
+test('[CC-384] an error body over the cap is dropped, and the status still decides', async () => {
+  const body = oversizedJsonBody();
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(body.stream, { status: 404 })),
+    async () => {
+      const { request, clock } = harness();
+      return await rejects(clock, request(GET_ISSUE));
+    },
+  );
+
+  assert.equal(err.kind, 'not_found');
+  assert.equal(err.httpStatus, 404);
+  assert.equal(body.cancelled(), true, 'an error body is metered too');
+  assert.ok(body.sent() < body.chunks);
 });
 
 test('a download that stalls mid-transfer times out and the stream is cancelled', async () => {
@@ -2132,6 +2295,33 @@ const REFRESH_SPEC = {
   url: TOKEN_URL,
   json: { grant_type: 'refresh_token', refresh_token: REFRESH_TOKEN },
 } as const;
+
+test('[CC-400] an over-cap 2xx on the OAuth path is refused, never handed on as an empty success', async () => {
+  for (const [spec, kind, remediation] of [
+    [REFRESH_SPEC, 'auth', /never sent twice.*login` again/],
+    [{ method: 'GET', url: RESOURCES_URL } as const, 'validation', /proxy/],
+  ] as const) {
+    const body = oversizedJsonBody();
+    const err = await withRawFetch(
+      () => Promise.resolve(new Response(body.stream, { status: 200 })),
+      async (calls) => {
+        const { authRequest, clock } = authHarness();
+        const failure = await rejects(clock, authRequest(spec));
+        assert.equal(calls.length, 1, 'an over-cap body is not retried');
+        return failure;
+      },
+    );
+
+    assert.equal(err.kind, kind);
+    assert.equal(err.retryable, false);
+    assert.match(
+      err.message,
+      new RegExp(`${String(MAX_TEXT_BODY_BYTES)}-byte response limit`),
+    );
+    assert.match(err.remediation ?? '', remediation);
+    assert.equal(body.cancelled(), true, 'the transfer must be cancelled, not drained');
+  }
+});
 
 test('a token POST is sent as JSON and neither body ever reaches the log', async () => {
   await withFetch(async (mock: FetchMock) => {

@@ -880,7 +880,7 @@ Center mode reachable by a user.
       against Data Center-shaped responses (CC-265). Deliberate mutations:
       dropping the dialect from `getIssue` fails 2 tests (an email address
       reached the result), disabling the v2 rewrite fails 8.
-- [ ] 13.3b — what 13.3 did not do, stated rather than dropped. **Done:**
+- [x] 13.3b — what 13.3 did not do, stated rather than dropped. **Done:**
       wiki markup flattened to text by `api/wiki.ts` (CC-271…CC-274; a
       mutation that switches the flattening off fails CC-274), and
       `jira_list_watchers`, `jira_list_components`, `jira_list_versions`
@@ -899,13 +899,15 @@ Center mode reachable by a user.
       route 3. The comment and worklog pages embedded in a default
       `jira_get_issue` (`fields.comment`, `fields.worklog`), which the
       rehearsal found unflattened, are flattened since 13.4b and the rehearsal
-      checks the embedded comments too (CC-298). **Still open:** create
-      metadata (`jira_get_create_meta`), whose route depends on the Data
-      Center release, is not served and needs a version verdict from a real
-      host (D114). Users and roles are served since 13.5a (D110); the count,
-      changelog and attachment list since 13.6c (D114); the filters
-      (`jira_list_filters`, `jira_get_filter`) since 13.7a (D115), without
-      `/filter/search`.
+      checks the embedded comments too (CC-298). Users and roles are served
+      since 13.5a (D110); the count, changelog and attachment list since
+      13.6c (D114); the filters (`jira_list_filters`, `jira_get_filter`)
+      since 13.7a (D115), without `/filter/search`; and create metadata
+      (`jira_get_create_meta`) since 13.7b (D116), over the paged 8.4+ routes
+      only — a pre-8.4 host answers `unsupported` rather than a guessed
+      legacy route. Nothing of 13.3b is open any more; what remains on Data
+      Center (upload, the deletes, `jira_close_sprint`, bulk) waits for a
+      real host (ROADMAP.md §v2).
 - [x] 13.4a — an ADF → wiki-markup writer, `api/wiki-writer.ts`:
       `wikiFromAdf` over the node and mark subset that `adfFromMarkdown` and
       `toAdf` emit, with `wikiFromMarkdown` / `wikiFromText` on top. It is
@@ -1211,10 +1213,76 @@ Center mode reachable by a user.
       `values` and `isLast` beside them (Atlassian's documented shape, never
       seen on a host); that a pre-8.4 host answers the unknown path with a
       404 carrying no Jira error message (a proxy or a release that sends
-      one would read as `not_found`, still with the 8.4 hint); that a missing
+      one would read as `not_found`, still with the 8.4 hint; Jersey's own
+      `null for uri: …` body is not counted as one — fifteenth defect hunt,
+      CC-380); that a missing
       project or issue type is a 404 with Jira's messages; and that the
       field rows carry `fieldId`, `schema`, `operations` and
       `allowedValues` as Cloud's do.
+- [x] 13.8 — DC attachment download (D117): `jira_download_attachment` is
+      served on the Data Center preview — 27 reads and 20 writes, 47 tools in
+      all; `jira_upload_attachment` stays unserved, because no tool in the
+      catalog removes an attachment and D109 serves a write only when a
+      served write can undo it. The download reads the metadata from
+      `GET /rest/api/2/attachment/{id}` (Data Center author, URLs dropped,
+      the size cap checked first) and the bytes from the attachment servlet
+      `GET {contextPath}/secure/attachment/{id}/{filename}` through a new
+      frozen `secure` request root (`JIRA_ROOT_PATHS.secure`), composed by
+      `core/http.ts` like every root — host policy, context path and the
+      dot-segment refusal unchanged. `core/http.ts` never follows a redirect
+      from the `secure` root; it is refused as `config`. The filename goes on
+      the wire as one `encodeURIComponent` segment (an empty, dot-only or
+      ill-formed-Unicode name is `unexpected_shape`) and to disk through
+      `safeMediaName`; the `content` URL is never fetched; bytes over the cap
+      are refused even when the metadata under-reported the size; a missing
+      `JIRA_MEDIA_DIR` is `config` before any request. The Cloud download is
+      unchanged. The fake gains the metadata route and the servlet (27 in
+      `DATACENTER_ROUTES`; the servlet 404s unless the filename matches
+      exactly, seeded attachment 60001 `rehearsal-sample.txt`), and answers
+      `/rest/api/[23]/attachment/content/{id}` 404 with the violation
+      `cloud_attachment_content_on_datacenter`. The rehearsal gives the
+      child its own `JIRA_MEDIA_DIR`, downloads the seeded attachment and
+      checks the file is inside that directory and byte-identical — 31 calls.
+      The manifest, the README and every Cloud request and result are
+      unchanged. Pinned by CC-370…CC-379 and the amended CC-347
+      (`src/tools/datacenter-download.test.ts`, `src/tools/datacenter.test.ts`,
+      `src/core/http.test.ts`, `src/testing/rehearse-datacenter.test.ts`).
+      Deliberate mutations (change, build, run the tests, revert), each
+      failing the named tests:
+      - mapping the `secure` root to `/rest/secure` fails CC-370…CC-375 and
+        CC-378;
+      - dropping the no-redirect rule for the `secure` root fails CC-378;
+      - accepting a dot-only filename fails CC-371;
+      - `encodeURI` in place of `encodeURIComponent` fails CC-371;
+      - dropping the ill-formed-Unicode guard fails CC-371;
+      - dropping the size check before the transfer fails CC-372;
+      - dropping the bytes cap in the shared writer fails CC-372 and the
+        Cloud "metadata lied" test;
+      - checking the media dir after the metadata request fails CC-376;
+      - dropping `root: 'v2'` from the metadata request fails CC-370…CC-375;
+      - fetching the bytes on the v2 root fails CC-370…CC-375;
+      - fetching the bytes from the `content` URL fails CC-371 and CC-374;
+      - writing the raw filename to disk fails CC-371, CC-55 and the Cloud
+        sanitizing test;
+      - dropping Cloud's `redirect=false` fails CC-375 and the Cloud
+        download test;
+      - dropping the download from the served map fails CC-370…CC-374 and
+        CC-376;
+      - dropping it from `DATACENTER_TOOLS` fails CC-297, CC-347 and CC-377;
+      - not recording the fake's content-route violation fails CC-379;
+      - dropping the fake's exact-filename check fails CC-379;
+      - dropping the rehearsal's byte comparison, its media-dir env or its
+        file-location check fails CC-379 (each separately);
+      - dropping the servlet root from the wire audit fails CC-296.
+
+      **UNVERIFIED:** that the servlet serves the bytes to a PAT `Bearer`;
+      that it needs the exact filename and accepts it percent-encoded as one
+      segment; how Data Center answers a 403 or 404 there (an HTML page or a
+      redirect to the login page — the redirect is refused as `config`, a
+      page would arrive as an error status); that
+      `/rest/api/2/attachment/{id}` has the Cloud-like shape with a name/key
+      author; and whether newer releases redirect the servlet to object
+      storage, which this server refuses rather than follows.
 
 Exit (whole phase): a Data Center deployment serves the tools its adapter
 declares, refuses the rest by exclusion, and is labelled UNVERIFIED in every

@@ -63,6 +63,22 @@ export const RETRY_AFTER_JITTER = 0.2;
  */
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
+/**
+ * Hard cap on a TEXT (JSON) response body, in bytes — success bodies, error
+ * bodies and OAuth token-endpoint replies alike (CC-384).
+ *
+ * Without it one misbehaving or hostile upstream (a proxy, a captive portal, a
+ * pathological `expand`) could make the server buffer, decode and `JSON.parse`
+ * an unbounded body inside the MCP client's process. The number is the
+ * attachment cap on purpose: 50 MiB is already the largest body this process
+ * agrees to hold in memory, and it is far above any legitimate JSON page — a
+ * search page is at most 100 issues, a changelog page 100 entries, and every
+ * tool result is cut to `JIRA_MAX_RESULT_CHARS` before the model sees it — so
+ * no real call is refused, while a runaway body is stopped at the byte that
+ * crosses the line. Compiled in, no environment override, like its sibling.
+ */
+export const MAX_TEXT_BODY_BYTES = MAX_ATTACHMENT_BYTES;
+
 /* ------------------------------------------------------------------------- *
  * Host policy
  * ------------------------------------------------------------------------- */
