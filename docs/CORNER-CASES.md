@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-422`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-423`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2100,3 +2100,7 @@ CC-232); the two cases below are what remained to state or pin.
 - **CC-422** The Windows device-name guard runs after truncation too. An
   extensionless name whose cut ends on spaces (`nul` + 200 spaces + `x`)
   truncated to a bare `nul`, past the guard that had run before the cut.
+- **CC-423** A `JIRA_MEDIA_DIR` at the file-system root (`/`, `C:\`) holds the
+  files under it. The containment check appended a separator to a root that
+  already ended in one, and no path starts with `//`, so every read and
+  write was refused as "outside the media directory".

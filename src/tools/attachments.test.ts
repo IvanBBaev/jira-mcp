@@ -36,7 +36,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { test } from 'node:test';
 
 import { MAX_MEDIA_NAME_CHARS, UPLOAD_FIELD_NAME } from '../api/attachments.js';
@@ -460,6 +460,14 @@ test('the store refuses a name that resolves out of the directory', async () => 
     // /etc/hosts — which certainly exists on this host — is never opened.
     assert.equal((await caught(() => store.read('/etc/hosts'))).kind, 'not_found');
   });
+});
+
+test('[CC-423] a media directory at the file-system root reads files under it', async () => {
+  const store = createNodeMediaStore(sep);
+  // A missing file, not a name "outside the media directory".
+  const error = await caught(() => store.read('jira-mcp-cc423-missing.txt'));
+  assert.equal(error.kind, 'not_found');
+  assert.equal((await caught(() => store.read('../x.txt'))).kind, 'not_found');
 });
 
 test('CC-69: the store refuses a symlink whose target leaves the directory', async () => {

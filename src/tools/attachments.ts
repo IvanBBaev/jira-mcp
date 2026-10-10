@@ -85,13 +85,22 @@ const MAX_EXTENSION_CHARS = 12;
  * not take the server down at startup, since every other package works without
  * one. The first download or upload reports the problem as `kind: 'config'`.
  */
+/**
+ * `target` is `root` or under it. A root that already ends in the separator
+ * (`/`, `C:\\`) is not given a second one, which no path starts with (CC-423).
+ */
+function isInside(target: string, root: string): boolean {
+  if (target === root) return true;
+  return target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+}
+
 export function createNodeMediaStore(dir: string): MediaStore {
   const root = resolve(dir);
 
   /** Join, then verify — the joined path must stay under {@link root}. */
   const pathOf = (name: string): string => {
     const target = resolve(join(root, name));
-    if (target !== root && !target.startsWith(`${root}${sep}`)) {
+    if (!isInside(target, root)) {
       throw createJiraError({
         kind: 'validation',
         reason: `"${name}" resolves outside the media directory.`,
@@ -228,7 +237,7 @@ async function assertLinkStaysInside(
   name: string,
 ): Promise<void> {
   const [target, realRoot] = await Promise.all([realpath(path), realpath(root)]);
-  if (target !== realRoot && !target.startsWith(`${realRoot}${sep}`)) {
+  if (!isInside(target, realRoot)) {
     throw createJiraError({
       kind: 'validation',
       reason: `"${name}" is a symbolic link pointing outside the media directory.`,
