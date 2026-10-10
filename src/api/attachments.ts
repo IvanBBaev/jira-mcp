@@ -274,7 +274,9 @@ export function safeMediaName(raw: string): string {
     // a bug, never a filename.
     if (code < 0x20 || code === 0x7f) continue;
     if (FORBIDDEN_NAME_CHARS.has(ch)) continue;
-    cleaned += ch;
+    // A lone surrogate is written to disk as U+FFFD, so it is named that way
+    // here too: the reported name is the name on disk (CC-421).
+    cleaned += code >= 0xd800 && code <= 0xdfff ? '\ufffd' : ch;
   }
 
   // Leading dots and whitespace go together, until neither is left (CC-229):

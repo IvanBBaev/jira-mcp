@@ -174,6 +174,21 @@ test('[CC-186] truncating an extensionless name never leaves a trailing dot or s
   assert.equal(safe, 'n'.repeat(118));
 });
 
+test('[CC-421] a lone surrogate in a downloaded name becomes the character written to disk', () => {
+  const cases: readonly (readonly [string, string])[] = [
+    ['report\ud800.txt', 'report\ufffd.txt'],
+    ['\udc00x', '\ufffdx'],
+    ['a\ud83d', 'a\ufffd'],
+    // A whole pair is kept.
+    ['a\ud83d\ude00.txt', 'a\ud83d\ude00.txt'],
+  ];
+  for (const [raw, expected] of cases) {
+    const safe = safeMediaName(raw);
+    assert.equal(safe, expected, `safeMediaName(${JSON.stringify(raw)})`);
+    assert.equal(requireLocalName(safe), safe, `round trip of ${JSON.stringify(raw)}`);
+  }
+});
+
 test('[CC-229] a downloaded name is one the upload side accepts unchanged', () => {
   // Leading dots and spaces interleave; trailing whitespace other than a space.
   const cases: readonly (readonly [string, string])[] = [

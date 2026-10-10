@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-420`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-421`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2090,3 +2090,10 @@ CC-232); the two cases below are what remained to state or pin.
 - **CC-420** A table row splits on `|` past a `[` that no `]` follows, and
   past an escaped `\[` or `\|`. A stray bracket (`|[WIP task|done|`) used to
   hold the rest of the row in one cell, as if a link were open.
+
+## Twentieth defect hunt (2026-10-10)
+
+- **CC-421** A lone UTF-16 surrogate in a Jira-supplied filename becomes
+  U+FFFD in the saved name, as the file system writes it. The download
+  reported the lone surrogate with `renamed: false` while the file on disk
+  held U+FFFD, and an upload of the reported name sent a different one.
