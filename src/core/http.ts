@@ -1147,7 +1147,15 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
       if (outcome.kind === 'failure') {
         const failure = outcome.failure;
-        if (failure.reason === 'aborted') {
+        // Jira already said yes; only the reply is lost. Calling it ambiguous
+        // invites a resend, and a resend of a create is a duplicate (CC-205) —
+        // whether the body then timed out, failed, or the caller cancelled it
+        // (CC-416).
+        const landed =
+          !replayable && answeredStatus !== undefined && isSuccessStatus(answeredStatus)
+            ? answeredStatus
+            : undefined;
+        if (failure.reason === 'aborted' && landed === undefined) {
           // The caller cancelled; the outcome of an unsafe write is still
           // unknown, but this is not a failure we retry or dress up.
           throw fail({
@@ -1161,7 +1169,8 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
           });
         }
 
-        noteFailure();
+        // A caller's cancel says nothing about the host's health.
+        if (failure.reason !== 'aborted') noteFailure();
         const canRetry = replayable && attempt <= maxRetries;
         if (canRetry) {
           const delayMs = backoffMs(attempt, rng);
@@ -1176,18 +1185,18 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
           await waitFor(delayMs);
           continue;
         }
-        if (
-          !replayable &&
-          answeredStatus !== undefined &&
-          isSuccessStatus(answeredStatus)
-        ) {
-          // Jira already said yes; only the reply is lost. Calling it ambiguous
-          // invites a resend, and a resend of a create is a duplicate (CC-205).
+        if (landed !== undefined) {
           logger.emit('ambiguous_write', { method, pathTemplate: route });
+          const lost =
+            failure.reason === 'timeout'
+              ? 'timed out'
+              : failure.reason === 'aborted'
+                ? 'was cancelled by the caller'
+                : 'failed in transit';
           throw fail({
             kind: 'ambiguous_write',
-            message: `${method} ${route} was applied (Jira answered ${String(answeredStatus)}), but its response body ${failure.reason === 'timeout' ? 'timed out' : 'failed in transit'}, so the result it carried is unknown. It was NOT retried.`,
-            httpStatus: answeredStatus,
+            message: `${method} ${route} was applied (Jira answered ${String(landed)}), but its response body ${lost}, so the result it carried is unknown. It was NOT retried.`,
+            httpStatus: landed,
             retryable: false,
             remediation:
               'Do not send it again. Read the issue back (or search for it) to get what the reply would have carried, such as a created key.',

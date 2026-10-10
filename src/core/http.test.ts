@@ -893,6 +893,34 @@ test('[CC-205] an unsafe write whose 2xx body stalls says it was applied and is 
   assert.match(err.remediation ?? '', /Do not send it again/);
 });
 
+test('[CC-416] a caller cancel after a 2xx on an unsafe write says it was applied', async () => {
+  const controller = new AbortController();
+  const err = await withRawFetch(
+    () => Promise.resolve(new Response(stallingBody(), { status: 201 })),
+    async (calls) => {
+      const { request, clock, logger } = harness({ requestTimeoutMs: 30_000 });
+      const promise = request({
+        method: 'POST',
+        path: '/issue',
+        body: { summary: 'x' },
+        signal: controller.signal,
+      });
+      for (let i = 0; i < 10 && !logger.has('http_response'); i += 1) await tick();
+      assert.equal(logger.has('http_response'), true, 'the 2xx headers arrived');
+      controller.abort();
+
+      const failure = await rejects(clock, promise);
+      assert.equal(calls.length, 1, 'a write is never replayed on an unknown outcome');
+      return failure;
+    },
+  );
+
+  assert.equal(err.kind, 'ambiguous_write');
+  assert.equal(err.httpStatus, 201);
+  assert.match(err.message, /was applied \(Jira answered 201\).*cancelled by the caller/);
+  assert.match(err.remediation ?? '', /Do not send it again/);
+});
+
 test('the host slot is held until the body settles, not until the headers arrive', async () => {
   const gate = gatedBody();
   let call = 0;

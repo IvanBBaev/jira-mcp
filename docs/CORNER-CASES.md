@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-415`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-416`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2070,3 +2070,7 @@ CC-232); the two cases below are what remained to state or pin.
   `2025-02-29`) is an `invalid_date`, as in CC-182. `Date.parse` rolled it
   over into a real date, so the expiry warning counted from the wrong day and
   `doctor --save` stored the value.
+- **CC-416** A caller cancel that lands after the 2xx headers of an unsafe
+  write is the CC-205 `ambiguous_write`: applied, do not send it again. It
+  used to be the plain cancellation, whose "may or may not have been
+  applied" invited a resend of a create that had already landed.

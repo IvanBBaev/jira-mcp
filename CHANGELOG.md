@@ -171,6 +171,8 @@ env var names — not internal refactors.
   as literal backticks.
 - `JIRA_TOKEN_EXPIRES` refuses a date that is not on the calendar instead of
   rolling it over into the next month.
+- A write cancelled by the caller after Jira answered 2xx now says it was
+  applied and must not be sent again.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
