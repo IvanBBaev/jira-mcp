@@ -528,7 +528,43 @@ function renderTableRow(node: AdfNode, state: FlattenState): string {
 
 function flattenChildren(node: AdfNode, state: FlattenState): string {
   if (!Array.isArray(node.content)) return '';
-  return node.content.map((child) => flatten(child, state)).join('');
+  const content = state.markdown ? mergeCodeRuns(node.content) : node.content;
+  return content.map((child) => flatten(child, state)).join('');
+}
+
+/** A text node carrying a `code` mark, with its marks as one comparable key. */
+function codeMarksKey(value: unknown): string | undefined {
+  if (!isRecord(value) || value.type !== 'text' || typeof value.text !== 'string') {
+    return undefined;
+  }
+  const marks: unknown[] = Array.isArray(value.marks) ? value.marks : [];
+  const code = marks.some((mark) => isRecord(mark) && mark.type === 'code');
+  return code ? JSON.stringify(marks) : undefined;
+}
+
+/**
+ * Join adjacent code-marked text nodes whose marks are identical. Two spans
+ * side by side fuse in markdown — `` `a` `` then `` `b` `` reads back as the
+ * single span `` a``b `` (CC-412) — and no markup can keep them apart, so they
+ * are emitted as the one span they look like.
+ */
+function mergeCodeRuns(content: readonly unknown[]): unknown[] {
+  const out: unknown[] = [];
+  let lastKey: string | undefined;
+  for (const child of content) {
+    const key = codeMarksKey(child);
+    const last = out.at(-1);
+    if (key !== undefined && key === lastKey && isRecord(last) && isRecord(child)) {
+      out[out.length - 1] = {
+        ...last,
+        text: `${String(last.text)}${String(child.text)}`,
+      };
+    } else {
+      out.push(child);
+      lastKey = key;
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

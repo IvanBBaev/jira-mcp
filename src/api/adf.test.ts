@@ -2077,3 +2077,31 @@ test('[CC-232] a task item that opens with a nested list keeps an empty box line
   };
   assert.equal(adfToText(tasks), '[x]\n  [ ] sub');
 });
+
+test('[CC-412] markdown: adjacent code spans with the same marks keep their text', () => {
+  const code = (text: string): AdfNode => ({
+    type: 'text',
+    text,
+    marks: [{ type: 'code' }],
+  });
+  for (const [left, right] of [
+    ['a', 'b'],
+    ['a`', 'b'],
+    ['a', '`b'],
+    ['a ', ' b'],
+  ] as const) {
+    const md = adfToMarkdown(doc(para2(code(left), code(right))));
+    assert.deepEqual(adfFromMarkdown(md), doc(para2(code(left + right))), md);
+  }
+  // Different marks are different spans, and stay two.
+  const linked: AdfNode = {
+    type: 'text',
+    text: 'b',
+    marks: [{ type: 'code' }, { type: 'link', attrs: { href: 'https://a.test/' } }],
+  };
+  const mixed = doc(para2(code('a'), linked));
+  const md = adfToMarkdown(mixed);
+  assert.deepEqual(adfFromMarkdown(md), mixed, md);
+  // The text path is untouched.
+  assert.equal(adfToText(doc(para2(code('a'), code('b')))), 'ab');
+});

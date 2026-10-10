@@ -163,6 +163,8 @@ env var names — not internal refactors.
 - The `truncated` hint on a cut `jira_search` page no longer points at a
   `startAt` the tool does not take; it says to repeat the call with a smaller
   `maxResults`.
+- Markdown: two adjacent code spans no longer read back as one span with a
+  stray pair of backticks in the middle.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-411`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-412`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2050,3 +2050,8 @@ CC-232); the two cases below are what remained to state or pin.
   `maxResults` = rows received, or narrows `fields`. The hint said only
   "resume at `startAt` + rows received" (CC-251), which `jira_search`
   rejects as an unknown input.
+- **CC-412** Adjacent code-marked text nodes with identical marks render as
+  one code span. Two spans side by side fuse in markdown — `` `a` `` then
+  `` `b` `` read back as the one span `` a``b `` — so the text changed on
+  the round trip. The text path is unchanged; nodes whose marks differ stay
+  separate.
