@@ -661,7 +661,8 @@ export async function uploadAttachment(
       {
         field: UPLOAD_FIELD_NAME,
         filename: name,
-        contentType: options.contentType ?? DEFAULT_ATTACHMENT_MIME,
+        // A blank type is no type: it went out as an empty header (CC-424).
+        contentType: options.contentType?.trim() || DEFAULT_ATTACHMENT_MIME,
         bytes: file.bytes,
       },
     ],

@@ -187,6 +187,8 @@ env var names — not internal refactors.
   such as `nul`.
 - `JIRA_MEDIA_DIR=/` (or a drive root) no longer refuses every file as
   outside the media directory.
+- An upload with a blank `contentType` sends `application/octet-stream`
+  instead of an empty part header.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

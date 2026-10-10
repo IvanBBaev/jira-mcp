@@ -706,6 +706,27 @@ test('uploadAttachment defaults the part content type to octet-stream', async ()
   );
 });
 
+test('[CC-424] a blank content type falls back to octet-stream', async () => {
+  for (const contentType of ['', '   ', '\t']) {
+    const jira = createFakeJiraRequest().enqueue(jiraOk([attachmentRow()]));
+    const store = createFakeStore().put('report.pdf', new Uint8Array([1]));
+
+    await uploadAttachment({
+      jira: jira.fn,
+      issueKey: 'ABC-1',
+      name: 'report.pdf',
+      store,
+      contentType,
+    });
+
+    assert.equal(
+      at(lastSpec(jira).multipart ?? [], 0).contentType,
+      DEFAULT_ATTACHMENT_MIME,
+      JSON.stringify(contentType),
+    );
+  }
+});
+
 test('uploadAttachment without a media directory refuses and names the setting', async () => {
   const jira = createFakeJiraRequest();
 
