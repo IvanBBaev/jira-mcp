@@ -321,6 +321,25 @@ describe('loadSettings — auth mode and the OAuth block', () => {
     }
   });
 
+  it('[CC-408] a password is masked however many slashes follow the scheme', () => {
+    for (const key of ['JIRA_OAUTH_AUTH_ORIGIN', 'JIRA_OAUTH_GATEWAY_ORIGIN']) {
+      for (const value of [
+        'https:svc:hunter2@auth.localhost.test',
+        'https:/svc:hunter2@auth.localhost.test',
+        'https:\\\\svc:hunter2@auth.localhost.test',
+        'HTTPS:svc:hunter2@auth.localhost.test',
+        'ftp://svc:hunter2@auth.localhost.test',
+        'svc:hunter2@auth.localhost.test',
+      ]) {
+        const { report } = load({ ...VALID, [key]: value });
+        assert.deepEqual(codes(report), ['invalid_origin'], value);
+        const message = String(report.errors[0]?.message);
+        assert.doesNotMatch(message, /hunter2|svc/, `${key} ${value}`);
+        assert.match(message, /\*\*\*@auth\.localhost\.test/, value);
+      }
+    }
+  });
+
   it('refuses a JIRA_OAUTH_CLOUD_ID that cannot go in a path (a pasted site URL)', () => {
     const { report } = load({
       ...VALID_OAUTH,

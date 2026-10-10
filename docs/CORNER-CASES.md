@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-407`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-408`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2022,3 +2022,12 @@ CC-232); the two cases below are what remained to state or pin.
   `JIRA_HTTP_TOKEN` a client sends as UTF-8 compares equal to its UTF-8
   encoding. It used to be re-encoded as UTF-8 a second time and was refused
   with 401 on every request.
+
+## Eighteenth defect hunt (2026-10-10)
+
+- **CC-408** An `invalid_origin` finding for `JIRA_OAUTH_AUTH_ORIGIN` or
+  `JIRA_OAUTH_GATEWAY_ORIGIN` masks the userinfo however the value is
+  spelt: `https:svc:pw@h`, `https:/svc:pw@h`, `https:\\svc:pw@h`, an
+  upper-case scheme, another scheme, or none. The mask used to start at `//`
+  and echoed every other form whole, password included. Only an http(s)
+  scheme is kept in the echo.

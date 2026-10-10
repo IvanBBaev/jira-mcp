@@ -390,8 +390,11 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
         // The value is echoed with any userinfo masked: a password pasted into
         // the origin must not reach the report (CC-140). The mask runs to the
         // LAST `@` before any query or fragment, because a password may itself
-        // hold an `@` or a `/` (CC-185).
-        message: `${key} must be an https origin with no path, query, fragment or credentials (e.g. ${def}); got ${JSON.stringify(raw.replace(/\/\/[^?#]*@/, '//***@'))}. Using the documented default ${def}.`,
+        // hold an `@` or a `/` (CC-185). It is anchored at the start rather than
+        // at `//`: `https:u:pw@h`, `https:/u:pw@h` and `https:\\u:pw@h` are just
+        // as bad an origin, and only an http(s) scheme is kept in the echo
+        // (CC-408).
+        message: `${key} must be an https origin with no path, query, fragment or credentials (e.g. ${def}); got ${JSON.stringify(raw.replace(/^((?:https?:)?[\\/]*)[^?#]*@/i, '$1***@'))}. Using the documented default ${def}.`,
         field: key,
       });
       return def;
