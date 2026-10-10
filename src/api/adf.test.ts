@@ -2119,3 +2119,31 @@ test('[CC-413] markdown: an href ending in a backslash keeps its link', () => {
     assert.deepEqual(adfFromMarkdown(md), linked, md);
   }
 });
+
+test('[CC-414] markdown: a list item that opens with a code block keeps it', () => {
+  const codeBlock = (text: string, language?: string): AdfNode => ({
+    type: 'codeBlock',
+    ...(language === undefined ? {} : { attrs: { language } }),
+    content: [{ type: 'text', text }],
+  });
+  const item = (...content: AdfNode[]): AdfNode => ({ type: 'listItem', content });
+  for (const original of [
+    doc({ type: 'bulletList', content: [item(codeBlock('x = 1\ny = 2', 'js'))] }),
+    doc({
+      type: 'orderedList',
+      attrs: { order: 10 },
+      content: [item(codeBlock('x'), para('after'))],
+    }),
+    doc({
+      type: 'bulletList',
+      content: [
+        item(para('a'), { type: 'bulletList', content: [item(codeBlock('z'))] }),
+        item(para('b')),
+      ],
+    }),
+  ]) {
+    const md = adfToMarkdown(original);
+    assert.doesNotMatch(md, /^\s*(?:-|\d+\.) `/m, md);
+    assert.deepEqual(adfFromMarkdown(md), original, md);
+  }
+});

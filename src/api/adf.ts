@@ -466,6 +466,13 @@ function renderListItem(item: unknown, marker: string, state: FlattenState): str
     if (body === '') return;
     const lines = body.split('\n');
     if (afterList && state.markdown) lines.unshift('');
+    // The reader opens no fence on a marker line, so an item whose first block
+    // is code put the fence there and came back as literal backticks (CC-414).
+    // The marker takes a line of its own and the fence follows as continuation.
+    if (!started && state.markdown && FENCE.test(lines[0] ?? '')) {
+      out += `${indent}${marker}\n`;
+      started = true;
+    }
     for (const line of lines) {
       out += started ? `${continuation}${line}\n` : `${indent}${marker} ${line}\n`;
       started = true;
@@ -1444,7 +1451,17 @@ function parseMarkdown(text: string, sink?: MentionSink): AdfDoc {
     const block = codeBlockNode(fence.language, fence.body.join('\n'));
     if (fence.owner === undefined) content.push(block);
     else {
-      fence.owner.children.push(block);
+      // A bare marker line followed by a fence is an item whose first block is
+      // the code (CC-414): the marker's empty paragraph gives way to it.
+      const { children, inline } = fence.owner;
+      if (
+        children.length === 1 &&
+        inline.length === 0 &&
+        children[0]?.content === inline
+      ) {
+        children.pop();
+      }
+      children.push(block);
       gap = 'block';
     }
     fence = undefined;
