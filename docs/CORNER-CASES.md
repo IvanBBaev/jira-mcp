@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-403`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-404`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2002,3 +2002,9 @@ CC-232); the two cases below are what remained to state or pin.
   (after trim, first-seen order kept, case not folded — labels are
   case-sensitive), as the issue list does (CC-243). The plan's `edits` then
   echoes the values apply sends instead of a repeat Jira would collapse.
+- **CC-404** The shape backstop masks a credential parameter whose name
+  carries a `_`/`-` separated prefix (`auth_token`, `x-api-token`,
+  `db_password`), the `api_key`/`apiKey`, `id_token`, `oauth_token` and
+  `session_token` families, and one that follows a `#` (OAuth's implicit flow
+  returns `#access_token=`). `jql`, `key`, `id` and `token_type` stay
+  workspace data.

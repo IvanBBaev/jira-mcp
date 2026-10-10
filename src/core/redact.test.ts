@@ -244,6 +244,36 @@ describe('stripCredentialShapes', () => {
     );
   });
 
+  it('[CC-404] masks prefixed credential parameters and ones in a URL fragment', () => {
+    for (const [text, kept] of [
+      ['https://x/cb?id_token=eyJhbGciOiJIUzI1NiJ9.e30.sig', 'https://x/cb?id_token='],
+      [
+        'https://x/cb#access_token=eyJhbGciOiJIUzI1NiJ9.e30.sig',
+        'https://x/cb#access_token=',
+      ],
+      ['auth_token=SuperSecret99', 'auth_token='],
+      ['x-api-token=SuperSecret99', 'x-api-token='],
+      ['?api_key=SuperSecret99&jql=x', '?api_key='],
+      ['?apiKey=SuperSecret99', '?apiKey='],
+      ['oauth_token=SuperSecret99', 'oauth_token='],
+      ['sessionToken=SuperSecret99', 'sessionToken='],
+      ['db_password=SuperSecret99', 'db_password='],
+    ] as const) {
+      const output = stripCredentialShapes(text);
+      assert.ok(!output.includes('SuperSecret99') && !output.includes('e30.sig'), text);
+      assert.ok(output.startsWith(`${kept}${DEFAULT_PLACEHOLDER}`), output);
+    }
+    assert.ok(stripCredentialShapes('?api_key=a&jql=x').endsWith('&jql=x'));
+    // Workspace parameters and prose are not credentials.
+    for (const text of [
+      '?jql=project%3DPROJ&key=PROJ-1&id=10001&monkey=1',
+      'token_type=bearer',
+      'see #12 and token budget=5',
+    ]) {
+      assert.equal(stripCredentialShapes(text), text);
+    }
+  });
+
   it('leaves ordinary text alone', () => {
     const text = 'GET /rest/api/3/issue/{key} → 200 in 143 ms';
     assert.equal(stripCredentialShapes(text), text);

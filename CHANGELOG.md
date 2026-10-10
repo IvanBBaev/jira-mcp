@@ -143,6 +143,9 @@ env var names — not internal refactors.
   like short ones.
 - `jira_bulk_edit_issues` drops repeated `labels` and `fixVersionIds` before
   planning, so the plan shows the values apply sends.
+- The redactor's shape pass now masks prefixed credential parameters
+  (`auth_token=`, `x-api-token=`, `api_key=`, `id_token=`) and ones in a URL
+  fragment (`#access_token=`), which it used to pass through.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

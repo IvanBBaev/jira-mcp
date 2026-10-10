@@ -79,10 +79,12 @@ const AUTH_SCHEME_RE = /\b(basic|bearer)(\s+)([A-Za-z0-9\-._~+/=]{8,})/gi;
  * parameters are deliberately absent: they are workspace data, not secrets.
  * A backslash ends the value too: the redactor also runs over serialized JSON,
  * where swallowing the `\` of an escaped quote left a line that no longer
- * parsed (CC-197).
+ * parsed (CC-197). A name may carry a `_`/`-` separated prefix (`auth_token`,
+ * `x-api-token`, `db_password`), and a `#` fragment starts a parameter too —
+ * OAuth's implicit flow puts `access_token` there (CC-404).
  */
 const SENSITIVE_PARAM_RE =
-  /(^|[?&;\s])(os_authtype|os_username|os_password|api[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|pwd|token|secret|jwt|jsessionid)(=)([^&\s"'#\\]*)/gi;
+  /(^|[?&;#\s])((?:[a-z0-9]+[_-])*(?:os_authtype|os_username|os_password|api[_-]?token|api[_-]?key|(?:access|refresh|id|auth|oauth|session)[_-]?token|client[_-]?secret|password|passwd|pwd|token|secret|jwt|jsessionid))(=)([^&\s"'#\\]*)/gi;
 
 /**
  * Define `key` as an own data property. Plain assignment of `__proto__` sets
