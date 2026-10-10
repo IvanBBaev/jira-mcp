@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-416`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-417`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2074,3 +2074,9 @@ CC-232); the two cases below are what remained to state or pin.
   write is the CC-205 `ambiguous_write`: applied, do not send it again. It
   used to be the plain cancellation, whose "may or may not have been
   applied" invited a resend of a create that had already landed.
+- **CC-417** A caller cancel of an unsafe write that never reached Jira — the
+  signal was already aborted, the request was still queued for a host slot,
+  or it was waiting out a 429 — says the write was not applied. It used to
+  say "may or may not have been applied", which sent the caller to verify
+  state that nothing had touched. A cancel during the fetch keeps that
+  wording (CC-94).

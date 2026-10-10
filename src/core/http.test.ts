@@ -2059,6 +2059,54 @@ test('[CC-175] a caller abort during a retry backoff is reported as a cancellati
   });
 });
 
+test('[CC-417] a cancelled unsafe write that never reached Jira says it was not applied', async () => {
+  const POST_ISSUE = { method: 'POST', path: '/issue', body: { summary: 'x' } } as const;
+  const notApplied = (err: JiraError): void => {
+    assert.equal(err.kind, 'transport');
+    assert.match(err.remediation ?? '', /was not applied/);
+    assert.doesNotMatch(err.remediation ?? '', /may or may not/);
+  };
+
+  // Already aborted: no fetch at all.
+  await withFetch(async (mock: FetchMock) => {
+    const { request, clock } = harness();
+    notApplied(
+      await rejects(clock, request({ ...POST_ISSUE, signal: AbortSignal.abort() })),
+    );
+    assert.equal(mock.requests.length, 0);
+  });
+
+  // Cancelled during the wait after a 429, which applied nothing.
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 429, headers: { 'retry-after': '5' } });
+    const controller = new AbortController();
+    const { request, clock } = harness();
+    const promise = request({ ...POST_ISSUE, signal: controller.signal });
+    for (let i = 0; i < 40; i += 1) await tick();
+    assert.equal(mock.requests.length, 1);
+    controller.abort();
+    notApplied(await rejects(clock, promise));
+    assert.equal(mock.requests.length, 1);
+  });
+
+  // Cancelled while queued for a connection slot.
+  const restore = installHangingFetch();
+  try {
+    const { request, clock } = harness({ hostConcurrency: 1, callBudgetMs: 60_000 });
+    request(GET_ISSUE).catch(() => {
+      /* abandoned on purpose */
+    });
+    await tick();
+    const controller = new AbortController();
+    const queued = request({ ...POST_ISSUE, signal: controller.signal });
+    await tick();
+    controller.abort();
+    notApplied(await rejects(clock, queued, 1));
+  } finally {
+    restore();
+  }
+});
+
 test('CC-94: aborting an unsafe write warns that the change may already have landed', async () => {
   const restore = installHangingFetch();
   try {

@@ -173,6 +173,8 @@ env var names — not internal refactors.
   rolling it over into the next month.
 - A write cancelled by the caller after Jira answered 2xx now says it was
   applied and must not be sent again.
+- A write cancelled before it reached Jira (already cancelled, queued, or
+  waiting out a 429) now says it was not applied.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

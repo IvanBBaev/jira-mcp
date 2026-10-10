@@ -241,6 +241,17 @@ function isSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
+/** A cancelled unsafe write whose outcome is unknown: bytes may have landed. */
+const WRITE_OUTCOME_UNKNOWN =
+  'The write may or may not have been applied — verify the current state before sending it again.';
+
+/**
+ * A cancelled unsafe write that never reached Jira, or that Jira refused with
+ * a 429: nothing to verify (CC-417).
+ */
+const WRITE_NOT_APPLIED =
+  'The write was not applied. Send it again if it is still needed.';
+
 function abortError(): Error {
   const err = new Error('The operation was aborted');
   err.name = 'AbortError';
@@ -852,9 +863,10 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
           kind: 'transport',
           message: `${method} ${route} was cancelled by the caller while waiting to retry.`,
           retryable: false,
+          // An unsafe write waits here only after a 429, which applied nothing.
           remediation: replayable
             ? 'Call again if the result is still needed.'
-            : 'The write may or may not have been applied — verify the current state before sending it again.',
+            : WRITE_NOT_APPLIED,
           cause: error,
         });
       }
@@ -900,7 +912,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
             retryable: false,
             remediation: replayable
               ? 'Call again if the result is still needed.'
-              : 'The write may or may not have been applied — verify the current state before sending it again.',
+              : WRITE_NOT_APPLIED,
             cause: error,
           });
         }
@@ -914,6 +926,9 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       }
     };
 
+    // Set when the caller's cancel stopped an attempt before its fetch began.
+    let cancelledUnsent = false;
+
     /**
      * One network hop. `fetch` is read off `globalThis` HERE, not at module
      * load, and the timeout comes from the attempt guard — both are the seams
@@ -924,7 +939,10 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       target: HopTarget,
     ): Promise<Response> => {
       const fetchFn = requireFetch(fail);
-      if (spec.signal?.aborted) throw abortError();
+      if (spec.signal?.aborted) {
+        cancelledUnsent = true;
+        throw abortError();
+      }
 
       return await guard.guard(
         fetchFn(target.url, {
@@ -1039,6 +1057,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
       attemptStartedAt: number,
     ): Promise<AttemptResult> => {
       answeredStatus = undefined;
+      cancelledUnsent = false;
       const response = await sendAttempt(guard, attempt, attemptStartedAt);
       const status = response.status;
       answeredStatus = status;
@@ -1164,7 +1183,9 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
             retryable: false,
             remediation: replayable
               ? 'Call again if the result is still needed.'
-              : 'The write may or may not have been applied — verify the current state before sending it again.',
+              : cancelledUnsent
+                ? WRITE_NOT_APPLIED
+                : WRITE_OUTCOME_UNKNOWN,
             cause: failure.cause,
           });
         }
