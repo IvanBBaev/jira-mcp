@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-414`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-415`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2063,3 +2063,10 @@ CC-232); the two cases below are what remained to state or pin.
   line the reader opened no fence, so the code came back as literal
   backticks; the reader now drops the bare marker's empty paragraph when a
   fence follows it.
+
+## Nineteenth defect hunt (2026-10-10)
+
+- **CC-415** A `JIRA_TOKEN_EXPIRES` that is not on the calendar (`2026-02-30`,
+  `2025-02-29`) is an `invalid_date`, as in CC-182. `Date.parse` rolled it
+  over into a real date, so the expiry warning counted from the wrong day and
+  `doctor --save` stored the value.

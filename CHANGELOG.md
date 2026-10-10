@@ -169,6 +169,8 @@ env var names — not internal refactors.
   plain text.
 - Markdown: a list item that starts with a code block no longer reads back
   as literal backticks.
+- `JIRA_TOKEN_EXPIRES` refuses a date that is not on the calendar instead of
+  rolling it over into the next month.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

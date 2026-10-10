@@ -801,6 +801,23 @@ describe('loadSettings — token expiry', () => {
     }
   });
 
+  it('[CC-415] an expiry that is not on the calendar is invalid, not rolled over', () => {
+    for (const bad of ['2026-02-30', '2026-04-31', '2025-02-29', '2026-02-31T10:00Z']) {
+      const { report } = load(
+        { ...VALID, JIRA_TOKEN_EXPIRES: bad },
+        { clock: createFakeClock(now) },
+      );
+      assert.deepEqual(codes(report), ['invalid_date'], bad);
+    }
+    for (const good of ['2028-02-29', '2027-04-30T23:59Z', '2027-12-31']) {
+      const { report } = load(
+        { ...VALID, JIRA_TOKEN_EXPIRES: good },
+        { clock: createFakeClock(now) },
+      );
+      assert.equal(codes(report).includes('invalid_date'), false, good);
+    }
+  });
+
   it('skips the horizon check when no clock is injected', () => {
     const { report } = load({ ...VALID, JIRA_TOKEN_EXPIRES: '2020-01-01' });
     assert.deepEqual(report.findings, []);

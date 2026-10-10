@@ -156,7 +156,27 @@ const MIN_OAUTH_REDIRECT_PORT = 1024;
  * `doctor --save` refuses what the next start would refuse (CC-190).
  */
 export function isIsoDate(value: string): boolean {
-  return ISO_DATE_RE.test(value) && !Number.isNaN(Date.parse(value));
+  return (
+    ISO_DATE_RE.test(value) && !Number.isNaN(Date.parse(value)) && isOnCalendar(value)
+  );
+}
+
+/**
+ * `Date.parse` rolls 2026-02-30 over to 2026-03-02 rather than refusing it, so
+ * the shape and a parse do not prove the day exists (CC-415, as CC-182).
+ */
+function isOnCalendar(value: string): boolean {
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
 }
 const MAX_PORT = 65535;
 
