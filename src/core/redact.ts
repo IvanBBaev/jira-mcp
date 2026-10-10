@@ -55,10 +55,13 @@ export const MAX_DEPTH = 128;
 /**
  * `Authorization: Basic …` / `"authorization": "Bearer …"` / `Cookie: …`
  * echoes. The header name and the auth scheme survive — knowing that a request
- * carried Basic auth is diagnostic, the credential after it never is.
+ * carried Basic auth is diagnostic, the credential after it never is. Any
+ * scheme word counts, not only the three this server sends: a proxy page
+ * quoting `Negotiate <ticket>` or `Token <key>` took the scheme for the value,
+ * found no credential in it and left the ticket behind (CC-405).
  */
 const AUTH_HEADER_RE =
-  /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)((?:basic|bearer|digest)\s+)?([^\s"',;]+)/gi;
+  /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)(?:([A-Za-z][\w-]*)(\s+))?([^\s"',;]+)/gi;
 
 /**
  * `Cookie: a=1; b=2` — every pair is a session credential, so the whole value
@@ -165,11 +168,19 @@ export function stripCredentialShapes(
         name: string,
         separator: string,
         scheme: string | undefined,
+        gap: string | undefined,
         value: string,
-      ) =>
-        looksLikeCredential(value)
-          ? `${name}${separator}${scheme ?? ''}${placeholder}`
-          : match,
+      ) => {
+        if (looksLikeCredential(value)) {
+          return `${name}${separator}${scheme ?? ''}${gap ?? ''}${placeholder}`;
+        }
+        // No scheme after all: the first word is the credential and the
+        // second is prose (`Authorization: abc123 was rejected`).
+        if (scheme !== undefined && looksLikeCredential(scheme)) {
+          return `${name}${separator}${placeholder}${gap ?? ''}${value}`;
+        }
+        return match;
+      },
     )
     .replace(
       COOKIE_HEADER_RE,

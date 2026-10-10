@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-404`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-405`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2008,3 +2008,8 @@ CC-232); the two cases below are what remained to state or pin.
   `session_token` families, and one that follows a `#` (OAuth's implicit flow
   returns `#access_token=`). `jql`, `key`, `id` and `token_type` stay
   workspace data.
+- **CC-405** An `Authorization`/`Proxy-Authorization` echo with any scheme
+  word (`Negotiate`, `Token`, `NTLM`…), not only Basic/Bearer/Digest, keeps the
+  scheme and masks the credential after it. When the second word is prose,
+  the first is checked as a scheme-less credential instead, so
+  `Authorization: abc123 was rejected` still loses `abc123`.

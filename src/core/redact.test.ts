@@ -274,6 +274,30 @@ describe('stripCredentialShapes', () => {
     }
   });
 
+  it('[CC-405] masks the credential after any Authorization scheme', () => {
+    assert.equal(
+      stripCredentialShapes('Authorization: Negotiate YIIGhgYJKoZIhvcSAQICAQBuggZ1'),
+      `Authorization: Negotiate ${DEFAULT_PLACEHOLDER}`,
+    );
+    assert.equal(
+      stripCredentialShapes('proxy-authorization: Token abc123def456, retry'),
+      `proxy-authorization: Token ${DEFAULT_PLACEHOLDER}, retry`,
+    );
+    // A scheme-less credential followed by prose still loses the credential.
+    assert.equal(
+      stripCredentialShapes('Authorization: abc123def456 was rejected'),
+      `Authorization: ${DEFAULT_PLACEHOLDER} was rejected`,
+    );
+    assert.equal(
+      stripCredentialShapes('Authorization: abc123def456'),
+      `Authorization: ${DEFAULT_PLACEHOLDER}`,
+    );
+    assert.equal(
+      stripCredentialShapes('Authorization: pending manager approval'),
+      'Authorization: pending manager approval',
+    );
+  });
+
   it('leaves ordinary text alone', () => {
     const text = 'GET /rest/api/3/issue/{key} → 200 in 143 ms';
     assert.equal(stripCredentialShapes(text), text);
