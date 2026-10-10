@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-410`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-411`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2045,3 +2045,8 @@ CC-232); the two cases below are what remained to state or pin.
   handed the trailing block to the sublist's last item; under `10.` the two
   columns coincided and the markdown itself was ambiguous. Past the list
   cap (`MAX_LIST_INDENT_DEPTH`) no column is kept.
+- **CC-411** The `truncated` hint tells a token-paged listing how to go on:
+  `jira_search` takes no `startAt`, so with no `startAt` it retries with
+  `maxResults` = rows received, or narrows `fields`. The hint said only
+  "resume at `startAt` + rows received" (CC-251), which `jira_search`
+  rejects as an unknown input.

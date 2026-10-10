@@ -58,7 +58,7 @@ are shaped/truncated rather than raw Jira JSON.
 | Code | Emitted when | Tells the model to |
 |---|---|---|
 | `plan` | write tool ran in plan mode | re-invoke with `apply: true` + `plan_id` |
-| `truncated` | result exceeded `JIRA_MAX_RESULT_CHARS` | narrow `fields`/`maxResults` — **do NOT** page on with a `nextPageToken` or `nextStartAt` from a truncated page (both describe the uncut page, so following them skips the dropped rows); resume a `startAt` listing at `startAt` + rows received, or narrow `fields`/`maxResults` |
+| `truncated` | result exceeded `JIRA_MAX_RESULT_CHARS` | narrow `fields`/`maxResults` — **do NOT** page on with a `nextPageToken` or `nextStartAt` from a truncated page (both describe the uncut page, so following them skips the dropped rows); resume a `startAt` listing at `startAt` + rows received; a `nextPageToken` listing (`jira_search`) has no `startAt`, so retry with `maxResults` = rows received, or narrow `fields` |
 | `clamped` | `maxResults` above the tool cap | ask for ≤ 100 |
 | `fields_defaulted` | caller sent no `fields` | request fields explicitly next time (CC-03) |
 | `approximate` | `jira_count` | treat the number as an estimate |

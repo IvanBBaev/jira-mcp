@@ -336,7 +336,7 @@ test('the ellipsized leaf can be an array element, not only an object field', ()
   // the leaf the ladder cuts is addressed by index rather than by key. Nothing
   // else in this suite reaches the array setter: every other over-budget leaf
   // sits inside an object. // synthetic
-  const out = truncateResult(ok({ rows: ['A'.repeat(4_000)] }), 400);
+  const out = truncateResult(ok({ rows: ['A'.repeat(4_000)] }), 500);
   const parsed = parse(out.json);
   const marker = parsed['_truncation'] as Record<string, unknown>;
 
@@ -349,7 +349,7 @@ test('the ellipsized leaf can be an array element, not only an object field', ()
   assert.ok(typeof kept === 'string', 'the element is still a string');
   assert.ok(kept.endsWith(ELLIPSIS), 'the elision is visible in the value');
   assert.equal(marker['dropped'], 4_000 - (kept.length - 1));
-  assert.ok(out.json.length <= 400);
+  assert.ok(out.json.length <= 500);
 });
 
 test('a result whose data IS the string keeps a prefix instead of nothing', () => {
@@ -489,6 +489,16 @@ test('[CC-251] the truncated hint forbids following nextStartAt as well as nextP
   assert.match(message, /nextStartAt/);
   assert.match(message, /Resume at startAt \+ rows received/);
   assert.match(message, /maxResults/);
+});
+
+test('[CC-411] the truncated hint gives a token-paged listing a way on that it accepts', () => {
+  const out = truncateResult(ok(page(40)), 1_500);
+  const hints = parse(out.json)['hints'] as { code: string; message: string }[];
+  const message = hints.find((hint) => hint.code === 'truncated')?.message ?? '';
+
+  // jira_search takes no startAt, so "resume at startAt" alone sent the model
+  // into a schema rejection.
+  assert.match(message, /with no startAt, retry with maxResults = rows received/);
 });
 
 test('a non-finite budget means no budget; a negative one is the floor', () => {

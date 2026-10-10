@@ -53,7 +53,8 @@ import type { Hint, ToolResult, TruncationMarker } from './types.js';
 export const TRUNCATED_HINT_MESSAGE =
   'Cut to fit the budget (see _truncation). Do NOT follow nextPageToken or ' +
   'nextStartAt from this page: they skip the dropped rows. Resume at startAt + ' +
-  'rows received, or narrow fields/maxResults.';
+  'rows received; with no startAt, retry with maxResults = rows received, or ' +
+  'narrow fields.';
 
 /** TOOLS.md hint catalog — `untrusted_content`. */
 export const UNTRUSTED_HINT_MESSAGE =
