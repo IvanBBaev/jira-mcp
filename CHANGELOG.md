@@ -125,6 +125,8 @@ env var names — not internal refactors.
   `proxy-addr`, `ip-address` and `fast-uri` transitively. This server
   uses none of the affected code paths (its HTTP transport is bare `node:http`,
   its OAuth client its own), but `npm audit --omit=dev` is now clean.
+- The `zod` floor is now 4.6.5 (was 4.4.3); tool schemas and their published
+  JSON Schema are unchanged.
 
 ### Fixed
 
