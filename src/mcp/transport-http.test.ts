@@ -505,6 +505,34 @@ test('CC-114: a request without a valid bearer token is refused with 401', async
   });
 });
 
+test('CC-407: a non-ASCII bearer token sent as UTF-8 opens a session', async () => {
+  const token = 'pässwörd-2026-ключ';
+  const harness = await makeHarness({ httpToken: token });
+  await withHandle(harness, async () => {
+    const url = mcpUrl(harness.port);
+    // A latin1 string is written byte for byte: this puts UTF-8 on the wire,
+    // as curl or any byte-oriented client does.
+    const utf8OnWire = (value: string): string =>
+      Buffer.from(value, 'utf8').toString('latin1');
+
+    const ok = await send(
+      'POST',
+      url,
+      initializeBody(),
+      baseHeaders({ authorization: utf8OnWire(`Bearer ${token}`) }),
+    );
+    assert.equal(ok.status, 200, ok.body);
+
+    const wrong = await send(
+      'POST',
+      url,
+      initializeBody(),
+      baseHeaders({ authorization: utf8OnWire(`Bearer ${token.replace('ä', 'a')}`) }),
+    );
+    assert.equal(wrong.status, 401);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // CC-139 — POST body cap
 // ---------------------------------------------------------------------------

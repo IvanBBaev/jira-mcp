@@ -150,6 +150,8 @@ env var names — not internal refactors.
   masked; only Basic, Bearer and Digest were recognised before.
 - A configured secret is now redacted when it appears percent-encoded with
   lowercase hex or form-encoded, not only in the uppercase-hex spelling.
+- HTTP transport: a `JIRA_HTTP_TOKEN` with non-ASCII characters now
+  authenticates; every request carrying it was refused with 401.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

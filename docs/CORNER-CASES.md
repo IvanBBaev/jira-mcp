@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-406`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-407`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2017,3 +2017,8 @@ CC-232); the two cases below are what remained to state or pin.
   spelling, not only `encodeURIComponent`'s: lowercase hex (`%2b%2f`) and
   form encoding (`+` for a space, `%28%29` for parentheses), each in either
   hex case.
+- **CC-407** The HTTP transport reads the presented bearer token as the
+  latin1 string Node makes of the header bytes, so a non-ASCII
+  `JIRA_HTTP_TOKEN` a client sends as UTF-8 compares equal to its UTF-8
+  encoding. It used to be re-encoded as UTF-8 a second time and was refused
+  with 401 on every request.

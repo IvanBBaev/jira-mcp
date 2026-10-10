@@ -205,7 +205,10 @@ function bearerMatches(header: string | undefined, expected: Buffer): boolean {
   ) {
     return false;
   }
-  const presented = Buffer.from(header.slice(BEARER_PREFIX.length), 'utf8');
+  // Node hands header values over as latin1, one char per wire byte; reading
+  // them back the same way restores the bytes a client sent, so a non-ASCII
+  // token sent as UTF-8 matches its UTF-8 encoding below (CC-407).
+  const presented = Buffer.from(header.slice(BEARER_PREFIX.length), 'latin1');
   if (presented.length !== expected.length) return false;
   return timingSafeEqual(presented, expected);
 }
