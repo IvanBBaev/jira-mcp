@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-402`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-403`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -1995,3 +1995,10 @@ CC-232); the two cases below are what remained to state or pin.
   character reference looks 40 characters ahead, not 10, so a named entity
   longer than eight letters (`&rightarrow;`, the 31-letter
   `&CounterClockwiseContourIntegral;`) is written as text like the short ones.
+
+## Seventeenth defect hunt (2026-10-10)
+
+- **CC-403** Bulk-edit `labels` and `fixVersionIds` drop exact duplicates
+  (after trim, first-seen order kept, case not folded — labels are
+  case-sensitive), as the issue list does (CC-243). The plan's `edits` then
+  echoes the values apply sends instead of a repeat Jira would collapse.

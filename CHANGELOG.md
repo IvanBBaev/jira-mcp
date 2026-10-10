@@ -141,6 +141,8 @@ env var names — not internal refactors.
   `` `code` ``…) is written so it cannot open a wiki tag, the reader keeps
   `{{quote}}` as text, and long named entities (`&rightarrow;`) are escaped
   like short ones.
+- `jira_bulk_edit_issues` drops repeated `labels` and `fixVersionIds` before
+  planning, so the plan shows the values apply sends.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

@@ -1517,6 +1517,33 @@ test('[CC-242] bulk edit ids are trimmed in validation, so the plan echoes what 
   }
 });
 
+test('[CC-403] bulk edit drops repeated labels and fix versions, so the plan echoes what apply sends', async () => {
+  const parsed = bulkEditIssuesTool.input.safeParse({
+    issues: [KEY],
+    labels: ['b', 'a', 'b', 'A'],
+    labelsAction: 'ADD',
+    fixVersionIds: ['10601', ' 10600', '10601', '10600 '],
+    fixVersionsAction: 'REPLACE',
+  });
+  assert.equal(parsed.success, true);
+  // First-seen order; case is NOT folded (Jira labels are case-sensitive).
+  assert.deepEqual(parsed.data?.labels, ['b', 'a', 'A']);
+  assert.deepEqual(parsed.data?.fixVersionIds, ['10601', '10600']);
+
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+  const plan = await gate.execute(
+    callOf(bulkEditIssuesTool, parsed.data, {}, createFakeJiraRequest().fn),
+  );
+  assert.deepEqual((beforeOf(plan) as { edits: unknown }).edits, {
+    labels: { action: 'ADD', values: ['b', 'a', 'A'] },
+    fixVersions: { action: 'REPLACE', versionIds: ['10601', '10600'] },
+  });
+});
+
 test('[CC-243] duplicate bulk targets are dropped before the count and the 1000 cap', async () => {
   const parsed = bulkDeleteIssuesTool.input.safeParse({
     issues: ['PROJ-2', ' PROJ-1', 'PROJ-2', 'PROJ-1 ', 'proj-1'],

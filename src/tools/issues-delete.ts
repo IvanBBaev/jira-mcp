@@ -622,6 +622,11 @@ const numericIdArg = z.union([
     .transform(Number),
 ]);
 
+/** Exact duplicates dropped, first-seen order kept. */
+function distinct(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
 /**
  * The bulk target list. The 1000 cap is Jira's documented request limit,
  * enforced HERE so an over-long list dies in validation and never leaves the
@@ -636,7 +641,7 @@ const bulkIssuesArg = z
   // Exact duplicates dropped, first-seen order kept, BEFORE the cap: a repeat
   // neither inflates an irreversible plan's issueCount nor eats into the 1000
   // (CC-243). Key-vs-id and case aliases are left alone — only Jira knows them.
-  .transform((issues) => [...new Set(issues)])
+  .transform(distinct)
   .pipe(z.array(z.string()).max(1000))
   // The advertised schema carries no maxItems (it describes the INPUT side of
   // the pipe, before the dedupe), so the prose states the cap the way the
@@ -1063,7 +1068,10 @@ function refineBulkEditFamily(
 
 const bulkEditIssuesInput = writeToolInput({
   issues: bulkIssuesArg,
+  // Exact repeats dropped, first-seen order kept, as the issue list does
+  // (CC-243): the plan then echoes the values apply sends (CC-403).
   labels: labelsArg
+    .transform(distinct)
     .optional()
     .describe('Label values for labelsAction. REMOVE_ALL takes an empty list.'),
   labelsAction: bulkEditActionArg
@@ -1092,6 +1100,7 @@ const bulkEditIssuesInput = writeToolInput({
     ),
   fixVersionIds: z
     .array(z.string().trim().min(1))
+    .transform(distinct)
     .optional()
     .describe(
       'Numeric version ids (from jira_list_versions) for fixVersionsAction. ' +
