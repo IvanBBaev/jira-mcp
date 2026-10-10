@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-424`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-425`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2107,3 +2107,6 @@ CC-232); the two cases below are what remained to state or pin.
 - **CC-424** A blank upload `contentType` (`'   '`) falls back to
   `application/octet-stream`. It passed the schema's `min(1)`, and `??` kept
   it, so the part went out with an empty `Content-Type` header.
+- **CC-425** The permissive env-file warning prints the mode in four octal
+  digits (`0004`, `0644`). A `0` was prefixed to the bare octal, so mode
+  `0o004` read as `04`.

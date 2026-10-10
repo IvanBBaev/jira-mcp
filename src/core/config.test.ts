@@ -226,6 +226,18 @@ describe('loadEnvFile resolution', () => {
     assert.match(String(result.problems[0]?.message), /chmod 600/);
   });
 
+  it('[CC-425] names the permissive mode in four octal digits', () => {
+    for (const [mode, shown] of [
+      [0o004, '0004'],
+      [0o044, '0044'],
+      [0o644, '0644'],
+    ] as const) {
+      const { host } = fakeHost({ '/work/project/.env': mode });
+      const result = loadEnvFile({ ...base, env: {}, host });
+      assert.match(String(result.problems[0]?.message), new RegExp(`has mode ${shown};`));
+    }
+  });
+
   it('skips the permission warning on win32', () => {
     const { host } = fakeHost({ '/work/project/.env': 0o644 });
     const result = loadEnvFile({ ...base, platform: 'win32', env: {}, host });

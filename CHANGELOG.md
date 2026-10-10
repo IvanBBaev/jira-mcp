@@ -189,6 +189,8 @@ env var names — not internal refactors.
   outside the media directory.
 - An upload with a blank `contentType` sends `application/octet-stream`
   instead of an empty part header.
+- The permissive env-file warning prints the file mode in full (`0004`, not
+  `04`).
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

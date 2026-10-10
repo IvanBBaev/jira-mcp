@@ -275,7 +275,7 @@ export function loadEnvFile(options: EnvFileOptions = {}): EnvFileResult {
       problems.push({
         severity: 'warning',
         code: 'env_file_permissive',
-        message: `Env file ${candidate.path} has mode 0${mode.toString(8)}; it holds the API token. Run: chmod 600 ${candidate.path}`,
+        message: `Env file ${candidate.path} has mode ${mode.toString(8).padStart(4, '0')}; it holds the API token. Run: chmod 600 ${candidate.path}`,
         field: 'JIRA_ENV_FILE',
       });
     }
