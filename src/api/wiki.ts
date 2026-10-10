@@ -218,9 +218,17 @@ function splitCells(row: string): string[] {
   const cells: string[] = [];
   let depth = 0;
   let cell = '';
+  const lastClose = row.lastIndexOf(']');
   for (let i = 0; i < row.length; i += 1) {
     const ch = row[i] ?? '';
-    if (ch === '[') depth += 1;
+    // An escaped character is text, and a `[` with no `]` after it opens no
+    // link (CC-420).
+    if (ch === '\\' && i + 1 < row.length) {
+      cell += ch + (row[i + 1] ?? '');
+      i += 1;
+      continue;
+    }
+    if (ch === '[' && i < lastClose) depth += 1;
     else if (ch === ']' && depth > 0) depth -= 1;
     if (ch === '|' && depth === 0) {
       cells.push(cell);

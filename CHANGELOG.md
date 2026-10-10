@@ -179,6 +179,8 @@ env var names — not internal refactors.
   longer opens a panel macro.
 - Data Center: text after a closing `{code}`/`{noformat}` tag on the same
   line is kept instead of dropped.
+- Data Center: a stray or escaped `[` in a table cell no longer merges the
+  cells after it.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

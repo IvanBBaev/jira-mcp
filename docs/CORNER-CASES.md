@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-419`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-420`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2087,3 +2087,6 @@ CC-232); the two cases below are what remained to state or pin.
 - **CC-419** Text after a closing `{code}` or `{noformat}` tag on the same
   line (`{noformat}ls{noformat} is the command`) is read as a line of its
   own below the fence, as Jira renders it. The reader dropped it.
+- **CC-420** A table row splits on `|` past a `[` that no `]` follows, and
+  past an escaped `\[` or `\|`. A stray bracket (`|[WIP task|done|`) used to
+  hold the rest of the row in one cell, as if a link were open.

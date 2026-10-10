@@ -109,6 +109,14 @@ test('[CC-419] text after a closing code tag is kept as a line of its own', () =
   assert.equal(wikiToText('{code}\nx\n{code}   \ny'), '```\nx\n```\ny');
 });
 
+test('[CC-420] a stray or escaped bracket in a table cell does not swallow the cells after it', () => {
+  assert.equal(wikiToText('|[WIP task|done|'), '[WIP task | done');
+  assert.equal(wikiToText('|\\[|x|'), '[ | x');
+  assert.equal(wikiToText('|\\[a|b\\]|c|'), '[a | b] | c');
+  // A real link still keeps its own `|`.
+  assert.equal(wikiToText('|[Docs|https://example.com]|ok|'), 'Docs | ok');
+});
+
 test('CC-273: a line past the inline cap passes verbatim instead of being scanned', () => {
   const long = `*${'a'.repeat(MAX_INLINE_LINE_CHARS)}*`;
   assert.equal(wikiToText(long), long);
