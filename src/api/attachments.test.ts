@@ -189,6 +189,13 @@ test('[CC-421] a lone surrogate in a downloaded name becomes the character writt
   }
 });
 
+test('[CC-422] truncation never leaves a Windows device name', () => {
+  for (const device of ['nul', 'CON', 'com1', 'Lpt9']) {
+    const raw = `${device}${' '.repeat(200)}x`;
+    assert.equal(safeMediaName(raw), `_${device}`, JSON.stringify(raw));
+  }
+});
+
 test('[CC-229] a downloaded name is one the upload side accepts unchanged', () => {
   // Leading dots and spaces interleave; trailing whitespace other than a space.
   const cases: readonly (readonly [string, string])[] = [

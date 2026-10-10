@@ -183,6 +183,8 @@ env var names — not internal refactors.
   cells after it.
 - A downloaded attachment whose Jira filename holds a lone surrogate reports
   the name actually written to disk, and `renamed: true`.
+- A long downloaded filename no longer truncates to a Windows device name
+  such as `nul`.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

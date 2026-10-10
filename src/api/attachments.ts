@@ -284,8 +284,10 @@ export function safeMediaName(raw: string): string {
   // side refuses, and ` .. a` into ` a`, which it trims into a different name.
   const trimmed = stripTrailing(cleaned.replace(/^[\s.]+/, ''));
   const base = trimmed === '' ? FALLBACK_MEDIA_NAME : trimmed;
-  const guarded = RESERVED_NAME.test(base) ? `_${base}` : base;
-  return truncateName(guarded);
+  // Guarded after the cut as well: an extensionless cut can end on a device
+  // name (`nul` + spaces + `x` truncates to `nul`) (CC-422).
+  const cut = truncateName(RESERVED_NAME.test(base) ? `_${base}` : base);
+  return RESERVED_NAME.test(cut) ? truncateName(`_${cut}`) : cut;
 }
 
 /**
