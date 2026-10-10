@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-425`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-426`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2110,3 +2110,7 @@ CC-232); the two cases below are what remained to state or pin.
 - **CC-425** The permissive env-file warning prints the mode in four octal
   digits (`0004`, `0644`). A `0` was prefixed to the bare octal, so mode
   `0o004` read as `04`.
+- **CC-426** An upload's plan_id is bound to the bytes the plan showed, not
+  only to the arguments. The arguments name a file, so a file replaced
+  between plan and apply was uploaded under the approved plan_id. The apply
+  now refuses with `write_gated`, spends the id, and sends nothing.

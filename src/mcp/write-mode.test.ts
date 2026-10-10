@@ -796,6 +796,76 @@ test('the plan of a multipart upload redacts the filename and skips an absent co
   );
 });
 
+test('[CC-426] an upload whose file changed after the plan is refused and sends nothing', async () => {
+  // The arguments of an upload name a file, not its bytes: a plan_id bound to
+  // the arguments alone authorized whatever sat on disk at apply time.
+  let content = new Uint8Array([1, 2, 3, 4, 5]);
+  let swallow = false;
+  const uploadTool = defineTool({
+    name: 'jira_test_write_upload',
+    title: 'Test upload',
+    description: 'Uploads a file.',
+    package: 'attachments',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    writeTier: 'standard',
+    input: writeToolInput({ issue: z.string() }),
+    async handler(args, ctx) {
+      try {
+        await ctx.jira({
+          method: 'POST',
+          path: `/issue/${args.issue}/attachments`,
+          pathTemplate: '/issue/{key}/attachments',
+          multipart: [{ field: 'file', filename: 'report.txt', bytes: content }],
+        });
+      } catch (error) {
+        if (!swallow) throw error;
+      }
+      return ok({ uploaded: true });
+    },
+  });
+  const fake = createFakeJiraRequest();
+  fake.on('POST /rest/api/3/issue/ABC-1/attachments', jiraOk([]), 5);
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const args = { issue: 'ABC-1' };
+  const planAndApply = async (): Promise<ToolResult<unknown>> => {
+    const planId = planIdOf(await gate.execute(callOf(uploadTool, args, {}, fake.fn)));
+    content = new Uint8Array(4096).fill(88);
+    return gate.execute(
+      callOf(uploadTool, args, { apply: true, plan_id: planId }, fake.fn),
+    );
+  };
+
+  const drifted = await planAndApply();
+  assert.equal(drifted.error?.kind, 'write_gated');
+  assert.ok(drifted.error?.message.includes('The file changed'));
+  assert.deepEqual(fake.routes(), [], 'nothing reached Jira');
+
+  // A handler that swallows the rejection cannot turn it into a success.
+  swallow = true;
+  content = new Uint8Array([1, 2, 3, 4, 5]);
+  const swallowed = await planAndApply();
+  assert.equal(swallowed.error?.kind, 'write_gated');
+  assert.deepEqual(fake.routes(), []);
+  assert.equal(gate.outstandingPlans, 0, 'both plan ids are spent');
+
+  // The unchanged file still uploads, once.
+  const planId = planIdOf(await gate.execute(callOf(uploadTool, args, {}, fake.fn)));
+  const applied = await gate.execute(
+    callOf(uploadTool, args, { apply: true, plan_id: planId }, fake.fn),
+  );
+  assert.equal(applied.ok, true);
+  assert.deepEqual(fake.routes(), ['POST /rest/api/3/issue/ABC-1/attachments']);
+});
+
 test('a handler that swallows the capture still yields a plan, not a fake success', async () => {
   const fake = createFakeJiraRequest();
   const gate = createWriteGate({

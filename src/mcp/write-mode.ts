@@ -230,10 +230,24 @@ export function planFingerprint(
 export interface PlanBinding {
   readonly tool: string;
   readonly fingerprint: string;
+  /**
+   * Digest of the multipart payload the plan showed, when it showed one. The
+   * arguments of an upload name a file, not its bytes, so the fingerprint alone
+   * would let a file replaced between plan and apply ride an approved plan_id
+   * (CC-426). Checked by the gate on apply, not by `consume`: the bytes are only
+   * known once the handler has read the file again.
+   */
+  readonly payload?: string;
 }
 
 /** Outcome of an apply's id check; `ok` is the only one that lets a write run. */
 export type PlanConsumeOutcome = 'ok' | 'unknown' | 'mismatch';
+
+/** A consumed plan: the outcome, and on `ok` what the plan was issued with. */
+export interface PlanClaim {
+  readonly outcome: PlanConsumeOutcome;
+  readonly issued?: PlanBinding;
+}
 
 /**
  * In-memory, single-use plan ids (D14). No TTL: the lifetime IS the process, and
@@ -244,6 +258,8 @@ export interface PlanStore {
   issue(binding: PlanBinding): string;
   /** Check and consume `planId`; the id is spent whatever the answer is. */
   consume(planId: string, binding: PlanBinding): PlanConsumeOutcome;
+  /** `consume`, plus the binding the id was issued with when the answer is `ok`. */
+  claim(planId: string, binding: PlanBinding): PlanClaim;
   /** Outstanding plans — a leak check for the tests. */
   readonly size: number;
 }
@@ -280,13 +296,19 @@ export function createPlanStore(
     },
 
     consume(planId: string, binding: PlanBinding): PlanConsumeOutcome {
+      return this.claim(planId, binding).outcome;
+    },
+
+    claim(planId: string, binding: PlanBinding): PlanClaim {
       const found = plans.get(planId);
-      if (found === undefined) return 'unknown';
+      if (found === undefined) return { outcome: 'unknown' };
       // Single-use is unconditional: a mismatched apply burns the id too, so a
       // caller cannot probe arguments against a live plan.
       plans.delete(planId);
-      if (found.tool !== binding.tool) return 'mismatch';
-      return found.fingerprint === binding.fingerprint ? 'ok' : 'mismatch';
+      if (found.tool !== binding.tool || found.fingerprint !== binding.fingerprint) {
+        return { outcome: 'mismatch' };
+      }
+      return { outcome: 'ok', issued: found };
     },
   };
 }
@@ -378,6 +400,8 @@ interface PlannedUpload extends PlannedRequest {
 interface PlanCapture {
   readonly jira: JiraRequestFn;
   readonly planned: PlannedUpload | undefined;
+  /** `payloadDigest` of the captured mutation's multipart, if it had one. */
+  readonly payload: string | undefined;
   /** Filled by `noteBeforeState` while the handler runs. */
   readonly before: BeforeSlot;
 }
@@ -425,11 +449,73 @@ function plannedMultipart(
   }));
 }
 
+/**
+ * A digest of everything a multipart request would upload, or `undefined` when
+ * it uploads nothing. Every field is length-prefixed so no two different part
+ * lists can serialize to the same stream.
+ */
+function payloadDigest(
+  parts: readonly JiraMultipartFile[] | undefined,
+): string | undefined {
+  if (parts === undefined || parts.length === 0) return undefined;
+  const hash = createHash('sha256');
+  const text = (value: string): void => {
+    const bytes = Buffer.from(value, 'utf8');
+    hash.update(`${bytes.byteLength}:`).update(bytes);
+  };
+  for (const part of parts) {
+    text(part.field);
+    text(part.filename);
+    text(part.contentType ?? '');
+    hash.update(`${part.bytes.byteLength}:`).update(part.bytes);
+  }
+  return hash.digest('hex');
+}
+
+/** Rejects the first mutation of a guarded apply; never leaves this module. */
+class PayloadDrifted extends Error {
+  constructor() {
+    super('upload payload changed since the plan');
+    this.name = 'PayloadDrifted';
+  }
+}
+
+/**
+ * The apply-side twin of the capture: a seam that lets the handler's FIRST
+ * mutation through only if it uploads exactly the payload the plan showed. On a
+ * drift nothing is sent, every later mutation is refused too, and `drifted`
+ * tells the gate to replace whatever envelope the handler made of the rejection.
+ */
+function createPayloadGuard(
+  inner: JiraRequestFn,
+  expected: string,
+): { readonly jira: JiraRequestFn; readonly drifted: boolean } {
+  let checked = false;
+  let drifted = false;
+  const jira: JiraRequestFn = <T = unknown>(
+    req: JiraRequestSpec,
+  ): Promise<JiraResponse<T>> => {
+    if (isReadRequest(req)) return inner<T>(req);
+    if (!checked) {
+      checked = true;
+      drifted = payloadDigest(req.multipart) !== expected;
+    }
+    return drifted ? Promise.reject(new PayloadDrifted()) : inner<T>(req);
+  };
+  return {
+    jira,
+    get drifted(): boolean {
+      return drifted;
+    },
+  };
+}
+
 function createPlanCapture(
   inner: JiraRequestFn,
   redact: ((value: unknown) => unknown) | undefined,
 ): PlanCapture {
   let planned: PlannedUpload | undefined;
+  let payload: string | undefined;
   const before: BeforeSlot = { noted: false, value: undefined };
 
   const jira: JiraRequestFn = <T = unknown>(
@@ -441,6 +527,7 @@ function createPlanCapture(
     if (planned === undefined) {
       const query = plannedQuery(req.query, redact);
       const multipart = plannedMultipart(req.multipart, redact);
+      payload = payloadDigest(req.multipart);
       planned = {
         method: req.method,
         path: req.path,
@@ -463,6 +550,9 @@ function createPlanCapture(
     before,
     get planned(): PlannedUpload | undefined {
       return planned;
+    },
+    get payload(): string | undefined {
+      return payload;
     },
   };
 }
@@ -506,7 +596,7 @@ export interface WriteGate {
 }
 
 /** Every reason the gate refuses an apply. `ok` is not one of them. */
-export type GateRefusal = 'missing' | 'irreversible' | PlanConsumeOutcome;
+export type GateRefusal = 'missing' | 'irreversible' | 'payload' | PlanConsumeOutcome;
 
 function refusal(reason: GateRefusal): string {
   switch (reason) {
@@ -520,6 +610,12 @@ function refusal(reason: GateRefusal): string {
         'This tool is in the irreversible tier: it destroys data that Jira cannot ' +
         `give back, and this server was started without ${IRREVERSIBLE_ENV_VAR}=true. ` +
         'The plan_id was NOT consumed. Nothing was sent to Jira.'
+      );
+    case 'payload':
+      return (
+        'The file changed between the plan and this apply, so the plan_id no ' +
+        'longer describes what would be uploaded. The plan_id is spent. Nothing ' +
+        'was sent to Jira.'
       );
     case 'unknown':
       return (
@@ -581,9 +677,11 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       return handlerResult ?? writeGatedResult('missing');
     }
 
+    const digest = capture.payload;
     const planId = store.issue({
       tool: call.tool.name,
       fingerprint: planFingerprint(call.tool.name, call.args, call.control.profile),
+      ...(digest === undefined ? {} : { payload: digest }),
     });
     const base: PlanPayload = { executed: false, planned, plan_id: planId };
     const noted = capture.before.noted;
@@ -637,13 +735,23 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       const planId = call.control.plan_id;
       if (planId === undefined || planId === '') return writeGatedResult('missing');
 
-      const outcome = store.consume(planId, {
+      const { outcome, issued } = store.claim(planId, {
         tool: call.tool.name,
         fingerprint: planFingerprint(call.tool.name, call.args, call.control.profile),
       });
       if (outcome !== 'ok') return writeGatedResult(outcome);
 
-      return call.invoke(call.jira);
+      const expected = issued?.payload;
+      if (expected === undefined) return call.invoke(call.jira);
+      const guard = createPayloadGuard(call.jira, expected);
+      let result: ToolResult<unknown>;
+      try {
+        result = await call.invoke(guard.jira);
+      } catch (error) {
+        if (!(error instanceof PayloadDrifted)) throw error;
+        return writeGatedResult('payload');
+      }
+      return guard.drifted ? writeGatedResult('payload') : result;
     },
   };
 }
