@@ -177,6 +177,8 @@ env var names — not internal refactors.
   waiting out a 429) now says it was not applied.
 - Data Center: inline code reading `info`, `note`, `tip` or `warning` no
   longer opens a panel macro.
+- Data Center: text after a closing `{code}`/`{noformat}` tag on the same
+  line is kept instead of dropped.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

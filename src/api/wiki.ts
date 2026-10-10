@@ -86,11 +86,14 @@ export function wikiToText(input: unknown): string {
       const body: string[] = [];
       const close = `{${tag}}`;
       let rest = code[3] ?? '';
+      // Text after the closing tag, read as a line of its own (CC-419).
+      let tail = '';
       // An unclosed block still renders what it had; nothing is dropped.
       for (;;) {
         const at = rest.indexOf(close);
         if (at >= 0) {
           body.push(rest.slice(0, at));
+          tail = rest.slice(at + close.length);
           break;
         }
         body.push(rest);
@@ -103,6 +106,10 @@ export function wikiToText(input: unknown): string {
       listCounters.length = 0;
       listKinds.length = 0;
       out.push('```' + language, ...body, '```');
+      if (tail.trim() !== '') {
+        lines[i] = tail.trimStart();
+        i -= 1;
+      }
       continue;
     }
 

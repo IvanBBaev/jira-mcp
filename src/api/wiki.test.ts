@@ -92,6 +92,23 @@ test('CC-273: an unclosed code block keeps its content', () => {
   assert.equal(wikiToText('{code}\nline 1\n*line 2*'), '```\nline 1\n*line 2*\n```');
 });
 
+test('[CC-419] text after a closing code tag is kept as a line of its own', () => {
+  assert.equal(
+    wikiToText('{noformat}ls -la{noformat} is the command'),
+    '```\nls -la\n```\nis the command',
+  );
+  assert.equal(
+    wikiToText('{code}\nx\n{code} and *then* more'),
+    '```\nx\n```\nand then more',
+  );
+  assert.equal(
+    wikiToText('{code}a{code}{noformat}b{noformat}'),
+    '```\na\n```\n```\nb\n```',
+  );
+  // Only blanks after the tag: nothing more.
+  assert.equal(wikiToText('{code}\nx\n{code}   \ny'), '```\nx\n```\ny');
+});
+
 test('CC-273: a line past the inline cap passes verbatim instead of being scanned', () => {
   const long = `*${'a'.repeat(MAX_INLINE_LINE_CHARS)}*`;
   assert.equal(wikiToText(long), long);
