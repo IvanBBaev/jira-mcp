@@ -564,6 +564,40 @@ test('login refuses an oauth mode with no client secret, because PKCE does not r
   assert.equal(r.authorizeUrl(), undefined);
 });
 
+test('[CC-409] login names a misspelt JIRA_AUTH_MODE instead of calling it "basic"', async (t) => {
+  const r = await rig({ env: { JIRA_AUTH_MODE: 'oath' } });
+  t.after(() => r.cleanup());
+
+  const code = await run(r.options);
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /Invalid configuration/);
+  assert.match(r.stderr(), /JIRA_AUTH_MODE/);
+  assert.match(r.stderr(), /"oath"/);
+  assert.doesNotMatch(r.stderr(), /JIRA_AUTH_MODE is "basic"/);
+  assert.equal(r.authorizeUrl(), undefined);
+});
+
+test('[CC-409] login refuses a malformed callback port instead of listening on the default', async (t) => {
+  const r = await rig({ env: { JIRA_OAUTH_REDIRECT_PORT: '8250x' } });
+  t.after(() => r.cleanup());
+
+  const code = await run(r.options);
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /Invalid configuration/);
+  assert.match(r.stderr(), /JIRA_OAUTH_REDIRECT_PORT/);
+  assert.match(r.stderr(), /docs\/CONFIGURATION\.md/);
+  assert.equal(r.authorizeUrl(), undefined);
+});
+
+test('[CC-409] login with no JIRA_SITE still runs, since the grant names the site', async (t) => {
+  const r = await rig({ env: { JIRA_SITE: undefined } });
+  t.after(() => r.cleanup());
+
+  assert.equal(await run(r.options), EXIT_OK);
+});
+
 test('login refuses to run without a TTY, since nobody can complete the browser flow', async (t) => {
   const r = await rig({ extra: { isTTY: false } });
   t.after(() => r.cleanup());
@@ -1168,6 +1202,24 @@ test('logout removes the profile and says the grant is still live upstream', asy
   // must not be left believing otherwise.
   assert.match(r.stdout(), /removed local credentials only/);
   assert.match(r.stdout(), /connected apps/);
+});
+
+test('[CC-409] logout under a malformed configuration removes nothing', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  assert.equal(await run(r.options), EXIT_OK);
+  const before = r.storeFile();
+
+  const code = await runLogout({
+    ...r.options,
+    env: { ...r.options.env, JIRA_OAUTH_REDIRECT_PORT: '8250x' },
+  });
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /Invalid configuration/);
+  assert.match(r.stderr(), /JIRA_OAUTH_REDIRECT_PORT/);
+  assert.deepEqual(r.storeFile(), before);
 });
 
 test('logout --all empties a store holding several profiles', async (t) => {

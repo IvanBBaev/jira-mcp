@@ -53,7 +53,12 @@ import {
   type TokenStore,
 } from '../core/oauth.js';
 import { createRedactor } from '../core/redact.js';
-import { loadSettings } from '../core/settings.js';
+import {
+  buildReport,
+  formatStartupReport,
+  loadSettings,
+  type StartupReport,
+} from '../core/settings.js';
 import type { Clock, Logger, Redactor, Settings } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +71,34 @@ export const EXIT_OK = 0;
 export const EXIT_FLOW_FAILED = 1;
 /** A usage error, or a configuration that cannot support the flow at all. */
 export const EXIT_CONFIG = 2;
+
+/** What to do about an error-severity settings finding. */
+const CONFIG_REMEDIATION =
+  'Fix the JIRA_* variables listed above (names and defaults: docs/CONFIGURATION.md), then run this again. `jira-mcp-ai doctor` prints the same report.';
+
+/**
+ * Error findings about a value the OAuth commands never read, or check
+ * themselves with a sharper message: the site comes from the grant, the
+ * client id and secret are named below, and the HTTP token is the server's.
+ */
+const NOT_NEEDED_HERE: ReadonlySet<string> = new Set([
+  'site_missing',
+  'missing_credential',
+  'http_token_missing',
+]);
+
+/**
+ * The error findings these commands must not run past, or `undefined`.
+ * Settings never throws: a malformed value is an error finding with the
+ * default substituted, and acting on that default would authorize against a
+ * host or port, or remove tokens from a profile, the operator never chose —
+ * or blame a variable they never wrote (`JIRA_AUTH_MODE=oath` read as
+ * "basic"). The server and doctor refuse it the same way (CC-409).
+ */
+function blockingFindings(report: StartupReport): StartupReport | undefined {
+  const errors = report.errors.filter((finding) => !NOT_NEEDED_HERE.has(finding.code));
+  return errors.length === 0 ? undefined : buildReport(errors);
+}
 
 // ---------------------------------------------------------------------------
 // Loopback constants
@@ -721,6 +754,15 @@ export async function run(options: LoginOptions = {}): Promise<number> {
 
   // --- configuration that cannot work, refused before anything is started ---
 
+  const blocking = blockingFindings(loaded.report);
+  if (blocking !== undefined) {
+    return fail(
+      `Invalid configuration:\n${formatStartupReport(blocking)}`,
+      CONFIG_REMEDIATION,
+      EXIT_CONFIG,
+    );
+  }
+
   if (settings.authMode !== 'oauth') {
     return fail(
       `login is the OAuth flow, but JIRA_AUTH_MODE is ${quote(settings.authMode)}.`,
@@ -1049,6 +1091,13 @@ export async function runLogout(options: LoginOptions = {}): Promise<number> {
     clock,
   });
   for (const secret of loaded.secrets) redactor.addSecret(secret);
+  const blocking = blockingFindings(loaded.report);
+  if (blocking !== undefined) {
+    err(
+      `Invalid configuration:\n${formatStartupReport(blocking)}\n${CONFIG_REMEDIATION}\n`,
+    );
+    return EXIT_CONFIG;
+  }
   const settings = loaded.settings;
   const store =
     options.store ?? createTokenStore({ path: settings.oauth.tokenFile, clock });

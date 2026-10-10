@@ -154,6 +154,9 @@ env var names — not internal refactors.
   authenticates; every request carrying it was refused with 401.
 - A malformed OAuth origin setting no longer echoes a password in its error
   when the value is written without `//` (`https:user:pw@host`).
+- `jira-mcp-ai login` and `logout` refuse a malformed setting with the same
+  report the server prints, instead of running on its default (a mistyped
+  `JIRA_OAUTH_REDIRECT_PORT` listened on the default port).
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

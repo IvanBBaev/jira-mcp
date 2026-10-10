@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-408`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-409`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2031,3 +2031,10 @@ CC-232); the two cases below are what remained to state or pin.
   upper-case scheme, another scheme, or none. The mask used to start at `//`
   and echoed every other form whole, password included. Only an http(s)
   scheme is kept in the echo.
+- **CC-409** `jira-mcp-ai login` and `logout` refuse an error-severity
+  settings finding, with the report, exit 2, before any socket or store
+  write, as the server and `doctor` do. They used to run on the substituted
+  default: a malformed `JIRA_OAUTH_REDIRECT_PORT` listened on the default
+  port, and `JIRA_AUTH_MODE=oath` was reported as "basic". A missing
+  `JIRA_SITE` (the grant names the site), client id or secret (named by
+  their own message) or HTTP token (the server's) does not block.
