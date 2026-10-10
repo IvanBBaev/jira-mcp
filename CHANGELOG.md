@@ -148,6 +148,8 @@ env var names — not internal refactors.
   fragment (`#access_token=`), which it used to pass through.
 - An `Authorization: Negotiate …` or `Authorization: Token …` echo is now
   masked; only Basic, Bearer and Digest were recognised before.
+- A configured secret is now redacted when it appears percent-encoded with
+  lowercase hex or form-encoded, not only in the uppercase-hex spelling.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

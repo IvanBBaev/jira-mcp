@@ -206,16 +206,28 @@ export function stripCredentialShapes(
 /**
  * Every literal form a secret can take on the way to a sink: raw, JSON-escaped
  * (what `JSON.stringify` writes into a log line) and percent-encoded (what a
- * query string carries). Duplicates are dropped, so an ASCII-only token costs
+ * query string carries) — with upper- and lowercase hex, and form-encoded
+ * (`+` for a space, `!'()~` escaped), since other encoders than ours write
+ * those (CC-406). Duplicates are dropped, so an ASCII-only token costs
  * exactly one comparison.
  */
 function literalVariants(secret: string): string[] {
-  const variants = [secret];
-  const jsonBody = JSON.stringify(secret).slice(1, -1);
-  if (jsonBody !== secret) variants.push(jsonBody);
   const encoded = encodeURIComponent(secret);
-  if (encoded !== secret && !variants.includes(encoded)) variants.push(encoded);
-  return variants;
+  const formEncoded = new URLSearchParams([['', secret]]).toString().slice(1);
+  const candidates = [
+    secret,
+    JSON.stringify(secret).slice(1, -1),
+    encoded,
+    lowerHex(encoded),
+    formEncoded,
+    lowerHex(formEncoded),
+  ];
+  return [...new Set(candidates)];
+}
+
+/** `%2B` → `%2b`: the hex digits of a percent escape are case-insensitive. */
+function lowerHex(encoded: string): string {
+  return encoded.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase());
 }
 
 function isPlainObject(value: object): boolean {

@@ -44,6 +44,21 @@ describe('createRedactor — registered secrets', () => {
     assert.ok(output.includes(DEFAULT_PLACEHOLDER));
   });
 
+  it('[CC-406] masks a secret percent-encoded with lowercase hex or as a form', () => {
+    const secret = 'ATATT3xFfGF0abc+def/ghi=JKL (x)';
+    const redactor = createRedactor({ secrets: [secret] });
+    for (const spelled of [
+      'ATATT3xFfGF0abc%2bdef%2fghi%3dJKL%20(x)',
+      'ATATT3xFfGF0abc%2Bdef%2Fghi%3DJKL+%28x%29',
+      'ATATT3xFfGF0abc%2bdef%2fghi%3dJKL+%28x%29',
+    ]) {
+      assert.equal(
+        redactor.redactString(`?t=${spelled}&a=1`),
+        `?t=${DEFAULT_PLACEHOLDER}&a=1`,
+      );
+    }
+  });
+
   it('masks a registered secret inside a serialized JSON blob', () => {
     const redactor = createRedactor({ secrets: [TOKEN] });
     const blob = JSON.stringify({ auth: { headers: { token: TOKEN } }, ok: false });

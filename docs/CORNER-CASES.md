@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-405`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-406`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2013,3 +2013,7 @@ CC-232); the two cases below are what remained to state or pin.
   scheme and masks the credential after it. When the second word is prose,
   the first is checked as a scheme-less credential instead, so
   `Authorization: abc123 was rejected` still loses `abc123`.
+- **CC-406** A registered secret is masked in every common percent-encoded
+  spelling, not only `encodeURIComponent`'s: lowercase hex (`%2b%2f`) and
+  form encoding (`+` for a space, `%28%29` for parentheses), each in either
+  hex case.
