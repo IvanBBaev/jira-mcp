@@ -165,6 +165,8 @@ env var names — not internal refactors.
   `maxResults`.
 - Markdown: two adjacent code spans no longer read back as one span with a
   stray pair of backticks in the middle.
+- Markdown: a link whose address ends in a backslash no longer reads back as
+  plain text.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

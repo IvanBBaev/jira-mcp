@@ -2105,3 +2105,17 @@ test('[CC-412] markdown: adjacent code spans with the same marks keep their text
   // The text path is untouched.
   assert.equal(adfToText(doc(para2(code('a'), code('b')))), 'ab');
 });
+
+test('[CC-413] markdown: an href ending in a backslash keeps its link', () => {
+  for (const href of [
+    'https://a.test/x\\',
+    'https://a.test/x\\\\',
+    'https://a.test/x\\y',
+  ]) {
+    const linked = doc(
+      para2({ type: 'text', text: 'x', marks: [{ type: 'link', attrs: { href } }] }),
+    );
+    const md = adfToMarkdown(linked);
+    assert.deepEqual(adfFromMarkdown(md), linked, md);
+  }
+});

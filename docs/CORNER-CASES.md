@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-412`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-413`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2055,3 +2055,6 @@ CC-232); the two cases below are what remained to state or pin.
   `` `b` `` read back as the one span `` a``b `` — so the text changed on
   the round trip. The text path is unchanged; nodes whose marks differ stay
   separate.
+- **CC-413** A link whose href ends in a backslash takes the angle-bracket
+  form. In the bare form the backslash escaped the closing `)`, and the
+  whole link came back as literal text.

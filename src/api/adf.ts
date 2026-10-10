@@ -220,8 +220,9 @@ function markdownHref(href: string): string | undefined {
   // Spaces and parentheses need the angle-bracket form; `<`/`>` cannot appear
   // inside it, and a URL containing them was already malformed. So does a
   // backtick: the bare form's closer scan steps over code spans, and one opened
-  // in the href would swallow the `)` (CC-226).
-  return /[\s()<>`]/.test(clean) ? `<${clean.replace(/[<>]/g, '')}>` : clean;
+  // in the href would swallow the `)` (CC-226). So does a trailing backslash,
+  // which escaped the closing `)` and lost the link (CC-413).
+  return /[\s()<>`]|\\$/.test(clean) ? `<${clean.replace(/[<>]/g, '')}>` : clean;
 }
 
 /**
