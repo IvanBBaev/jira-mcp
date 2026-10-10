@@ -380,6 +380,26 @@ test('CC-401: inline code cannot spell a macro tag with the `{{` that opens it',
   }
 });
 
+test('[CC-418] inline code cannot spell a panel macro tag either', () => {
+  const cases: [string, string, string][] = [
+    [
+      'Use `note` then `note`',
+      'Use {{&#110;ote}} then {{&#110;ote}}',
+      'Use note then note',
+    ],
+    ['`info`', '{{&#105;nfo}}', 'info'],
+    ['`warning` and `Tip`', '{{&#119;arning}} and {{&#84;ip}}', 'warning and Tip'],
+    ['`tip:title=x}`', '{{&#116;ip:title=x\\}}}', 'tip:title=x}'],
+    // A longer word is no tag.
+    ['`notes`', '{{notes}}', 'notes'],
+  ];
+  for (const [markdown, expected, text] of cases) {
+    const wiki = wikiFromMarkdown(markdown);
+    assert.equal(wiki, expected, markdown);
+    assert.equal(wikiToText(wiki), text, markdown);
+  }
+});
+
 test('CC-402: a named entity of any length is written as text', () => {
   const text = 'a &rightarrow; b &CounterClockwiseContourIntegral; c';
   const wiki = wikiFromText(text);

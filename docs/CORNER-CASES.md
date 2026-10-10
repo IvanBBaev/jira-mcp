@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-417`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-418`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2080,3 +2080,7 @@ CC-232); the two cases below are what remained to state or pin.
   say "may or may not have been applied", which sent the caller to verify
   state that nothing had touched. A cancel during the fetch keeps that
   wording (CC-94).
+- **CC-418** The CC-401 guard covers the panel macros too: inline code
+  reading `info`, `note`, `tip` or `warning` (to its end, `:` or `\}`) is
+  written with its first letter as a numeric reference. `{{note}}` was
+  written as is, and Jira rendered `{` and then opened a note panel.

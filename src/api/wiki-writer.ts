@@ -159,7 +159,8 @@ const PAREN_EMOTICON_RE = /^\((?:[ynix/!+?*-]|\*[rgby]|on|off|flag|flagoff)\)/i;
  * A macro name that, after the second `{` of `{{`, would close into a tag:
  * `{name}` (the inner text ends there) or `{name:…}` / `{name\}`.
  */
-const MACRO_NAME_RE = /^(?:quote|color|code|noformat|panel|anchor)(?:$|:|\\\})/i;
+const MACRO_NAME_RE =
+  /^(?:quote|color|code|noformat|panel|anchor|info|note|tip|warning)(?:$|:|\\\})/i;
 
 /** A line-leading block tag: `h1.` … `h6.` and `bq.`. */
 const BLOCK_TAG_RE = /^(?:h[1-6]|bq)\./i;

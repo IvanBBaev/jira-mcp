@@ -175,6 +175,8 @@ env var names — not internal refactors.
   applied and must not be sent again.
 - A write cancelled before it reached Jira (already cancelled, queued, or
   waiting out a 429) now says it was not applied.
+- Data Center: inline code reading `info`, `note`, `tip` or `warning` no
+  longer opens a panel macro.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
