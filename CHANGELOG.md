@@ -157,6 +157,9 @@ env var names — not internal refactors.
 - `jira-mcp-ai login` and `logout` refuse a malformed setting with the same
   report the server prints, instead of running on its default (a mistyped
   `JIRA_OAUTH_REDIRECT_PORT` listened on the default port).
+- Markdown: a paragraph or code block after a nested list inside a numbered
+  item stays in the numbered item when the markdown is read back; it used to
+  move into the nested list.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

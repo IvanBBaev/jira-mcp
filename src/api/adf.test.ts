@@ -1874,6 +1874,36 @@ test('[CC-223] a paragraph after a nested list stays after it, on both paths', (
   assert.deepEqual(adfFromMarkdown(md), tree, md);
 });
 
+test('[CC-410] a block after a nested list stays in an ordered item, whatever its marker width', () => {
+  const after: AdfNode[] = [
+    para('two'),
+    { type: 'codeBlock', content: [{ type: 'text', text: 'x' }] },
+  ];
+  for (const order of [1, 10]) {
+    for (const block of after) {
+      for (const nested of ['bulletList', 'orderedList']) {
+        const list: AdfNode = {
+          type: 'orderedList',
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                para('one'),
+                { type: nested, content: [{ type: 'listItem', content: [para('sub')] }] },
+                block,
+              ],
+            },
+          ],
+        };
+        if (order !== 1) list.attrs = { order };
+        const tree = doc(list);
+        const md = adfToMarkdown(tree);
+        assert.deepEqual(adfFromMarkdown(md), tree, md);
+      }
+    }
+  }
+});
+
 test('[CC-224] an unknown node is escaped on the markdown path like a known one', () => {
   const withText = para2({ type: 'weird', text: '[x](javascript:alert(1))' });
   assert.equal(adfToMarkdown(withText), '\\[x\\](javascript:alert(1))');

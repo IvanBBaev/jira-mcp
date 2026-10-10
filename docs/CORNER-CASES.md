@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-409`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-410`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2038,3 +2038,10 @@ CC-232); the two cases below are what remained to state or pin.
   port, and `JIRA_AUTH_MODE=oath` was reported as "basic". A missing
   `JIRA_SITE` (the grant names the site), client id or secret (named by
   their own message) or HTTP token (the server's) does not block.
+- **CC-410** A list nested in an ordered item starts at the item's text
+  column, not at the bare indent unit, so a paragraph or code block after the
+  nested list stays in the ordered item on the way back. Under `1.` the
+  sublist sat two columns in while the item's text sat three, and the reader
+  handed the trailing block to the sublist's last item; under `10.` the two
+  columns coincided and the markdown itself was ambiguous. Past the list
+  cap (`MAX_LIST_INDENT_DEPTH`) no column is kept.

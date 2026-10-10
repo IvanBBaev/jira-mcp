@@ -122,6 +122,11 @@ interface FlattenState {
   readonly markdown: boolean;
   /** Inside a table cell, which renders as one line with no block markup. */
   readonly cell?: boolean;
+  /**
+   * Columns added to the list indent by enclosing ordered markers wider than
+   * the indent unit, so a sublist starts at its parent item's text (CC-410).
+   */
+  readonly listPad?: number;
 }
 
 function deeper(state: FlattenState): FlattenState {
@@ -434,8 +439,21 @@ function renderListItem(item: unknown, marker: string, state: FlattenState): str
   const children: unknown[] =
     isRecord(item) && Array.isArray(item.content) ? item.content : [item];
 
-  const indent = listIndent(state.listDepth);
+  const indent = listIndent(state.listDepth) + ' '.repeat(state.listPad ?? 0);
   const continuation = indent + ' '.repeat(marker.length + 1);
+  // A sublist under `1.` sat at two columns while the item's text sat at
+  // three, so the reader handed a block after the sublist to the sublist's
+  // last item — and under `10.` the two columns coincide and no reader can
+  // tell them apart (CC-410). Past the indent cap there is no column to keep.
+  const sublistState: FlattenState =
+    state.listDepth <= MAX_LIST_INDENT_DEPTH
+      ? {
+          ...deeper(state),
+          listPad:
+            (state.listPad ?? 0) +
+            Math.max(0, marker.length + 1 - LIST_INDENT_UNIT.length),
+        }
+      : deeper(state);
   let out = '';
   let lead = '';
   let started = false;
@@ -460,7 +478,7 @@ function renderListItem(item: unknown, marker: string, state: FlattenState): str
       emitLead();
       if (!started) out += `${indent}${marker}\n`;
       started = true;
-      out += flatten(child, deeper(state));
+      out += flatten(child, sublistState);
       afterList = true;
     } else {
       lead += flatten(child, deeper(state));
