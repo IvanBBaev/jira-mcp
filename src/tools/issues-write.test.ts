@@ -539,6 +539,31 @@ test('CC-21: an unresolvable name lists the valid transitions and sends nothing'
   assert.match(result.hints?.[0]?.message ?? '', /jira_get_transitions/);
 });
 
+test('[CC-428] a shared transition name is refused with the transition hint', async () => {
+  const fake = createFakeJiraRequest().on(
+    GET_TRANSITIONS_ROUTE,
+    jiraOk({
+      transitions: [
+        { id: '41', name: 'Close', to: { name: "Won't Do" } },
+        { id: '51', name: 'Close', to: { name: 'Closed' } },
+      ],
+    }),
+  );
+
+  const result = await transitionIssueTool.handler(
+    { issue: KEY, transition: 'Close' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(
+    result.error?.message ?? '',
+    /41 \(Close -> Won't Do\), 51 \(Close -> Closed\)/,
+  );
+  assert.deepEqual(fake.routes(), [GET_TRANSITIONS_ROUTE]);
+  assert.deepEqual(hintCodes(result), ['discovery']);
+});
+
 test('CC-21: a stale transition id comes back with the re-fetch remediation', async () => {
   const fake = createFakeJiraRequest()
     .on(GET_TRANSITIONS_ROUTE, jiraOk(TRANSITIONS_BODY))

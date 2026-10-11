@@ -672,9 +672,31 @@ export function resolveTransitionId(
   const byId = transitions.find((entry) => entry.id === want);
   if (byId !== undefined) return byId.id;
 
+  // An exact-case name beats a case-folded one, and two candidates refuse
+  // rather than move the issue to whichever Jira listed first (CC-428): a
+  // global "Close" and a local "Close" lead to different statuses.
+  const named = (match: (name: string) => boolean): IssueTransition[] =>
+    transitions.filter((entry) => entry.name !== undefined && match(entry.name));
   const folded = want.toLowerCase();
-  const byName = transitions.find((entry) => entry.name?.toLowerCase() === folded);
-  if (byName !== undefined) return byName.id;
+  const exact = named((name) => name === want);
+  const candidates =
+    exact.length > 0 ? exact : named((name) => name.toLowerCase() === folded);
+  const [only] = candidates;
+  if (candidates.length === 1 && only !== undefined) return only.id;
+  if (candidates.length > 1) {
+    const choices = candidates
+      .map(
+        (entry) => `${entry.id} (${entry.name ?? 'unnamed'} -> ${entry.to?.name ?? '?'})`,
+      )
+      .join(', ');
+    throw createJiraError({
+      kind: 'validation',
+      reason: `${AMBIGUOUS_TRANSITION} ${JSON.stringify(want)}: ${choices}.`,
+      remediation:
+        'Pass the id of the transition you mean; each one leads to the status ' +
+        'shown after the arrow. Nothing was sent to Jira.',
+    });
+  }
 
   const catalog = transitions
     .map((entry) => `${entry.id} (${entry.name ?? 'unnamed'})`)
@@ -1192,6 +1214,8 @@ export async function updateIssue(
  * (CC-177).
  */
 export const NO_TRANSITION_MATCHES = 'No transition matches';
+/** Reason prefix of the refusal for a name that several transitions share. */
+export const AMBIGUOUS_TRANSITION = 'More than one transition is named';
 
 export async function transitionIssue(
   options: TransitionIssueOptions,

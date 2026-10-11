@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-427`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-428`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2123,3 +2123,8 @@ CC-232); the two cases below are what remained to state or pin.
   `data.issues`, which cannot drop its only item, so the result went to rung
   3 (every comment body cut short) or to the floor (`data` deleted). Rung 2
   now keeps the first item and retries on the largest list inside it.
+- **CC-428** A transition name that two available transitions share (a
+  global "Close" to Won't Do and a local "Close" to Closed) is refused, with
+  every candidate and its target status, instead of moving the issue to
+  whichever one Jira listed first. An exact-case name beats a case-folded
+  one, so `REOPEN` no longer resolves to an earlier `Reopen`.

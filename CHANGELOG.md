@@ -195,6 +195,8 @@ env var names — not internal refactors.
   uploading content the plan never showed.
 - An oversized search result with a single issue trims that issue's comments or
   worklogs instead of shortening every string or dropping `data`.
+- `jira_transition_issue` refuses a transition name that several transitions
+  share, listing each one's target status, instead of picking the first.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

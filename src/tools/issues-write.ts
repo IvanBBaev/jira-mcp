@@ -35,6 +35,7 @@
 
 import { type AdfNode, type MentionTarget } from '../api/adf.js';
 import {
+  AMBIGUOUS_TRANSITION,
   NO_TRANSITION_MATCHES,
   WORKLOG_STARTED_PATTERN,
   resolveTransitionId,
@@ -127,8 +128,11 @@ function fieldErrorHints(error: JiraError): readonly Hint[] {
  */
 function transitionErrorHints(error: JiraError): readonly Hint[] {
   if (error.kind !== 'validation') return [];
+  const reason = error.reason ?? '';
   const aboutTransitions =
-    error.httpStatus === 400 || (error.reason ?? '').startsWith(NO_TRANSITION_MATCHES);
+    error.httpStatus === 400 ||
+    reason.startsWith(NO_TRANSITION_MATCHES) ||
+    reason.startsWith(AMBIGUOUS_TRANSITION);
   return aboutTransitions ? [TRANSITION_DISCOVERY_HINT] : [];
 }
 

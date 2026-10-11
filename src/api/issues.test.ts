@@ -27,6 +27,7 @@ import {
 } from '../core/fakes/index.js';
 import { JiraError, type JiraRequestSpec } from '../core/types.js';
 import {
+  AMBIGUOUS_TRANSITION,
   DEFAULT_COMMENT_ORDER_BY,
   ISSUE_ASSIGNEE_PATH_TEMPLATE,
   MAX_PAGE_SIZE,
@@ -689,6 +690,31 @@ test('CC-21: resolveTransitionId matches by id or name and names the alternative
       return true;
     },
   );
+});
+
+test('[CC-428] a transition name two transitions share is refused, not guessed', () => {
+  const transitions = [
+    { id: '41', name: 'Close', to: { name: "Won't Do" } },
+    { id: '51', name: 'Close', to: { name: 'Closed' } },
+    { id: '7', name: 'Reopen', to: { name: 'Open' } },
+    { id: '9', name: 'REOPEN', to: { name: 'Reopened' } },
+  ];
+
+  assert.throws(
+    () => resolveTransitionId(transitions, 'close'),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'validation');
+      assert.ok(error.reason?.startsWith(AMBIGUOUS_TRANSITION));
+      assert.match(error.message, /41 \(Close -> Won't Do\), 51 \(Close -> Closed\)/);
+      return true;
+    },
+  );
+  // The exact spelling picks one of two names that only differ in case.
+  assert.equal(resolveTransitionId(transitions, 'REOPEN'), '9');
+  assert.equal(resolveTransitionId(transitions, 'Reopen'), '7');
+  assert.throws(() => resolveTransitionId(transitions, 'reopen'), JiraError);
+  assert.equal(resolveTransitionId(transitions, '51'), '51');
 });
 
 test('CC-21: resolveTransitionId says "unnamed" and "none" rather than printing holes', () => {
