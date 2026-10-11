@@ -247,7 +247,8 @@ Cloud identifies users **only by `accountId`** — no usernames, no user keys.
   — CC-112), reads ONE page, filters to active non-app accounts (CC-113), and
   demands a unique winner: a single case-insensitive exact displayName match
   beats partials, anything else refuses listing up to 5 candidates (CC-107,
-  CC-106). Every accountId in an emitted `mention` node comes from that live
+  CC-106). A name whose only exact matches are inactive or app accounts
+  refuses rather than settling for a lone partial match (CC-429). Every accountId in an emitted `mention` node comes from that live
   response in the same call — never from input text.
 - `GET /rest/api/3/myself` verifies credentials and returns the caller identity —
   the doctor probe and `jira_get_myself` use it.

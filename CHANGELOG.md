@@ -130,6 +130,9 @@ env var names — not internal refactors.
 
 ### Fixed
 
+- `resolveMentions`: a name whose only exact match is an inactive account or
+  an app is refused instead of resolving to a different person whose name
+  merely starts the same way.
 - An OAuth token or resources response over the response size limit is
   refused instead of being read as an empty success; a token refresh then
   says to run `jira-mcp-ai login` again rather than failing as an unexpected

@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-428`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-429`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2128,3 +2128,12 @@ CC-232); the two cases below are what remained to state or pin.
   every candidate and its target status, instead of moving the issue to
   whichever one Jira listed first. An exact-case name beats a case-folded
   one, so `REOPEN` no longer resolves to an earlier `Reopen`.
+
+## Owner-decision sweep (2026-10-11, D119)
+
+- **CC-429** A mention name whose only case-insensitive exact matches are
+  excluded accounts — inactive, or `accountType: "app"` (CC-113) — is refused
+  instead of resolving to a lone active partial match: `@[User One]` no longer
+  becomes "User Onederful" because the real User One left. The refusal names
+  the cause and points at `jira_search_users`. An active exact match among
+  excluded ones still wins, as before.

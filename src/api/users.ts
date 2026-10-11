@@ -790,6 +790,21 @@ async function resolveOneMention<U extends ShapedUser>(
     return directory.target(firstExact, name);
   }
 
+  // CC-429 — the name exactly matched only an excluded account (a leaver or a
+  // bot). Settling for a partial match then would mention someone the caller
+  // did not name: "User One" is not "User Onederful".
+  if (
+    firstExact === undefined &&
+    page.users.some((user) => user.displayName?.toLowerCase() === fold)
+  ) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `The mention @[${name}] names exactly only an inactive account or an app, which cannot be mentioned; a partial match is not taken in its place.`,
+      remediation:
+        'Look the person up with jira_search_users and mention their exact display name, or leave the name as plain text.',
+    });
+  }
+
   // A lone partial match resolves — unless the page is full: `partial` means
   // the directory holds matches this call never saw, and resolving from a
   // truncated view would be a guess (CC-107).

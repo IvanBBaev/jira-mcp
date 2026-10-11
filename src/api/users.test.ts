@@ -756,16 +756,37 @@ test('CC-113: app and inactive rows are excluded before the exact tiebreak', asy
         accountType: 'app',
       }),
       user('5b10a2844c20165700ede21g', 'User One', { active: false }),
-      user('5b10ac8d82e05b22cc7d4ef5', 'User Onederful'),
-    ]), // synthetic — the two EXACT name matches are a bot and a leaver
+      user('5b10ac8d82e05b22cc7d4ef5', 'User One'),
+      user('5b10ac8d82e05b22cc7d4ef6', 'User Onederful'),
+    ]), // synthetic — three EXACT name matches, only one an active human
   );
 
   const resolved = await resolveMentionNames({ jira: jira.fn, names: ['User One'] });
 
   assert.deepEqual(resolved.get('User One'), {
     id: '5b10ac8d82e05b22cc7d4ef5',
-    text: '@User Onederful',
+    text: '@User One',
   });
+});
+
+test('CC-429: an exact name held only by a bot or a leaver never falls to a partial match', async () => {
+  for (const excluded of [{ accountType: 'app' }, { active: false }] as const) {
+    const jira = createFakeJiraRequest().enqueue(
+      jiraOk([
+        user('5b10a2844c20165700ede21g', 'user one', excluded),
+        user('5b10ac8d82e05b22cc7d4ef5', 'User Onederful'),
+      ]), // synthetic — the EXACT match is excluded, the partial is active
+    );
+
+    await assert.rejects(
+      resolveMentionNames({ jira: jira.fn, names: ['User One'] }),
+      isMentionRefusal(
+        /@\[User One\]/,
+        /inactive account or an app/,
+        /partial match is not taken/,
+      ),
+    );
+  }
 });
 
 test('a full page with no exact match is ambiguous even with one candidate', async () => {
