@@ -430,6 +430,36 @@ test('[CC-249] search results still trim data.issues, the array holding everythi
   assert.equal(marker['of'], 30);
 });
 
+test('[CC-427] an issue list too large for one issue trims inside the issue it keeps', () => {
+  // `jira_search` with `maxResults: 1` and comments requested: the bulk sits one
+  // level below `data.issues`, which cannot drop its only (or first) item.
+  for (const count of [1, 2]) {
+    const issues = Array.from({ length: count }, () => issueDetail(300));
+    const out = truncateResult(ok({ issues }), 25_000);
+
+    assert.ok(out.json.length <= 25_000);
+    const parsed = parse(out.json);
+    const marker = parsed['_truncation'] as Record<string, unknown>;
+    assert.equal(marker['reason'], 'budget');
+    assert.equal(marker['field'], 'data.issues[0].fields.comment.comments');
+    assert.equal(marker['of'], 300);
+
+    const kept = (parsed['data'] as Record<string, unknown>)['issues'] as Record<
+      string,
+      unknown
+    >[];
+    assert.equal(kept.length, 1);
+    const comments = (
+      (kept[0]?.['fields'] as Record<string, unknown>)['comment'] as Record<
+        string,
+        unknown
+      >
+    )['comments'] as { body: string }[];
+    assert.ok(comments.length > 10, `kept ${String(comments.length)} comments`);
+    assert.equal(comments[0]?.body, 'c'.repeat(300), 'whole rows, not capped strings');
+  }
+});
+
 test('[CC-249] a small array is not the collection when the bulk is elsewhere', () => {
   // The bulk is 300 string-valued fields; the only arrays are the short
   // `fieldsRequested` and `expand`. Trimming either would misreport the request.

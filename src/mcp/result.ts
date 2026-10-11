@@ -240,8 +240,14 @@ function asItems(value: unknown): readonly unknown[] {
  * information the caller relies on — cutting `fieldsRequested` would silently
  * misreport which fields were asked for (CC-249). Such a result goes to rung 3,
  * which shortens strings instead of dropping rows.
+ *
+ * `tried` names arrays rung 2 already cut down to one item, so the search can
+ * descend past them to the list inside that item (CC-427).
  */
-function collectionOf(envelope: JsonRecord): Collection | undefined {
+function collectionOf(
+  envelope: JsonRecord,
+  tried: ReadonlySet<string> = new Set(),
+): Collection | undefined {
   const data = envelope['data'];
   let best: Collection | undefined;
   let bestSize = -1;
@@ -253,7 +259,8 @@ function collectionOf(envelope: JsonRecord): Collection | undefined {
   ): void => {
     if (Array.isArray(value)) {
       const items = asItems(value);
-      if (items.length > 0) {
+      // A tried array is still walked: the next collection may sit inside it.
+      if (items.length > 0 && !tried.has(at)) {
         const size = serialize(items).length;
         // Strictly larger: on a tie the enclosing array, visited first, stays.
         if (size > bestSize) {
@@ -407,23 +414,34 @@ export function truncateResult(
   // overflow when the hint lands.
   addTruncatedHint(envelope);
 
-  const collection = collectionOf(envelope);
-  const original = collection === undefined ? [] : [...collection.items];
-  const total = original.length;
+  const outermost = collectionOf(envelope);
+  const total = outermost === undefined ? 0 : outermost.items.length;
 
-  // 2 — drop whole items from the tail (CC-25).
-  if (collection !== undefined && total > 1) {
+  // 2 — drop whole items from the tail (CC-25). When not even one item of the
+  //     collection fits, keep that one and try again on the largest list left
+  //     inside it (CC-427): `{issues: [issue]}` hides its bulk one level down,
+  //     in the issue's comments or worklogs, and stopping at the wrapper sent a
+  //     result that could keep whole rows to rung 3 or to the floor.
+  const tried = new Set<string>();
+  for (
+    let collection = outermost;
+    collection !== undefined;
+    collection = collectionOf(envelope, tried)
+  ) {
+    const found = collection;
+    const original = [...found.items];
+    const count = original.length;
     const applyKeep = (keep: number): void => {
-      collection.set(original.slice(0, keep));
+      found.set(original.slice(0, keep));
       setMarker(envelope, {
-        dropped: total - keep,
-        of: total,
+        dropped: count - keep,
+        of: count,
         reason: 'budget',
-        field: collection.path,
+        field: found.path,
       });
     };
     let low = 1;
-    let high = total - 1;
+    let high = count - 1;
     let bestKeep = -1;
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
@@ -439,6 +457,10 @@ export function truncateResult(
       applyKeep(bestKeep);
       return done();
     }
+    // 3 keeps one item of every collection it passed through; the dropped
+    // siblings are reported by the hint.
+    found.set(original.slice(0, 1));
+    tried.add(found.path);
   }
 
   // 3 — a single item is already over budget: keep one and cap EVERY string
@@ -448,9 +470,6 @@ export function truncateResult(
   //     and fell to the floor with its data deleted. The dropped siblings are
   //     reported by the hint; the marker names the longest field, which is the
   //     actionable half.
-  if (collection !== undefined && total > 0) {
-    collection.set(original.slice(0, 1));
-  }
   const leaves = stringLeaves(envelope['data'], 'data', (next) => {
     envelope['data'] = next;
   });

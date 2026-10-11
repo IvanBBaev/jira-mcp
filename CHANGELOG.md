@@ -193,6 +193,8 @@ env var names — not internal refactors.
   `04`).
 - An upload whose file changed between plan and apply is refused instead of
   uploading content the plan never showed.
+- An oversized search result with a single issue trims that issue's comments or
+  worklogs instead of shortening every string or dropping `data`.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

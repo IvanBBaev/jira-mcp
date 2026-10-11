@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-426`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-427`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -2114,3 +2114,12 @@ CC-232); the two cases below are what remained to state or pin.
   only to the arguments. The arguments name a file, so a file replaced
   between plan and apply was uploaded under the approved plan_id. The apply
   now refuses with `write_gated`, spends the id, and sends nothing.
+
+## Twenty-first defect hunt (2026-10-11)
+
+- **CC-427** A result whose bulk sits inside the one item truncation keeps
+  (`jira_search` with `maxResults: 1` and comments or worklogs requested)
+  drops rows from that inner list. Rung 2 tried only the enclosing
+  `data.issues`, which cannot drop its only item, so the result went to rung
+  3 (every comment body cut short) or to the floor (`data` deleted). Rung 2
+  now keeps the first item and retries on the largest list inside it.
