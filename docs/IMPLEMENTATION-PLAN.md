@@ -9,6 +9,60 @@
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
 > phases below remain the milestone truth; the overlay is scheduling only.
 
+<!-- release-progress:begin -->
+## Release progress (Opus 5.5 hours)
+
+> Maintained by the `relase-opus-5-5-persentage` skill. Unit: wall-clock hours
+> of one autonomous Opus 5.5 session at this project's gate standard.
+> Numbers are computed by the skill's script from the table below.
+
+| | |
+|---|---|
+| Release target | `1.0.0` — the version published after Gate C closes on Cloud (D87, RELEASING.md §6) (current version `0.9.4`) |
+| Progress | **88.4 %** — 153 h of 173 h earned |
+| Remaining | **20 h** Opus 5.5 (0 h workable now, 20 h blocked) |
+| Blocked by | test-account permissions (project admin, delete, bulk changes); a live `--write` run of Gate C; npm trusted publisher + token revoke (D86); leaked API token rotation; `live` Actions secrets |
+| Calibration | Phase 13.1–13.3 landed in ~1.5 h of commits (2026-09-26 13:51→15:14); defect hunts 17–20 ran ~1 h each (2026-10-10 18:43→22:43); phases 9–12 took one session of 4–5 h each |
+| Updated | 2026-10-13 at `6484ffb` |
+
+Out of target: verifying the Data Center preview against a real DC host
+(Phase 13 exit, D104/D106). It stays a labelled UNVERIFIED preview and does not
+block `1.0.0`.
+
+| ID | Item | Source | Status | Est h |
+|---|---|---|---|---|
+| D01 | Phases 0–0.5: scaffold and spec revision | Phase 0, Phase 0.5 | `done` | 8 |
+| D02 | Phases 1–3: core, MCP layer, ADF, full read surface | Phases 1–3 | `done` | 16 |
+| D03 | Phase 4: writes behind the plan/apply gate | Phase 4 | `done` | 8 |
+| D04 | Phase 5: hardening and release engineering | Phase 5 | `done` | 8 |
+| D05 | Phase 6: v1.5 graduation (D38) | Phase 6 | `done` | 6 |
+| D06 | Phase 7: v2 subset (D45) | Phase 7 | `done` | 6 |
+| D07 | Waves 8–13: hardening, Gate C kit, doctor, dependency majors | After Phase 7 | `done` | 18 |
+| D08 | First publish, `0.9.0` | RELEASING.md §5 | `done` | 2 |
+| D09 | Gate C read half live (C1–C41 read claims) | RELEASING.md §6 | `done` | 4 |
+| D10 | Gate C write half, first live run, and `0.9.4` | RELEASING.md §6 | `done` | 4 |
+| D11 | Phase 8: OAuth 2.0 (3LO) | Phase 8 | `done` | 8 |
+| D12 | Phase 9: markdown mention resolution (D100) | Phase 9 | `done` | 4 |
+| D13 | Phase 10: loopback Streamable HTTP transport (D101) | Phase 10 | `done` | 4 |
+| D14 | Phase 11: component, version and sprint deletes (D102) | Phase 11 | `done` | 4 |
+| D15 | Phase 12: bulk operations (D103) | Phase 12 | `done` | 5 |
+| D16 | Review fix pass over phases 9–12 | WORKLOG 2026-09-07/08 | `done` | 4 |
+| D17 | Coverage sweep, defect hunts 1–21, owner sweeps D118/D119 (CC-134…CC-429) | CORNER-CASES.md | `done` | 28 |
+| D18 | Phase 13.1–13.8: Data Center preview, 47 tools (D106–D117) | Phase 13 | `done` | 16 |
+| R01 | Register the npm trusted publisher, delete `NPM_TOKEN`, revoke the token (D86) | RELEASING.md §5 | `blocked-owner` | 0.5 |
+| R02 | Rotate the API token pasted in chat; delete stranded `SAN-1204`/`SAN-1205` | CLAUDE.md status | `blocked-owner` | 0.5 |
+| R03 | Grant the test account project admin, delete and "Make bulk changes" on the sandbox | RELEASING.md §6 | `blocked-owner` | 0.5 |
+| R04 | Gate C `--write` run over the 18 unproven tools, incl. `jira_link_issues` direction | RELEASING.md §6, README status | `blocked-external` | 4 |
+| R05 | Fix what that run finds (each past live run found 3–4 defects) | Risks table | `blocked-external` | 6 |
+| R06 | Record the minimum fixture set against the live site | Phase 1, Phase 3 open items | `blocked-external` | 3 |
+| R07 | `live` environment `JIRA_*` secrets; weekly live suite green | Phase 5 open item | `blocked-owner` | 1 |
+| R08 | Flip docs to 1.0.0: README status, live counts, CHANGELOG, RELEASING, site | D87 | `blocked-external` | 3 |
+| R09 | Publish `1.0.0`: tag, publish workflow, registry and provenance checks | RELEASING.md §4–§5 | `blocked-owner` | 1.5 |
+
+### History
+- 2026-10-13 `6484ffb` — 88.4 %, 20 h left (first run; baseline)
+<!-- release-progress:end -->
+
 ## Standing decisions
 
 The ledger is **DECISIONS.md** (accepted `D-nn` rows, owner decisions `O-nn`,
