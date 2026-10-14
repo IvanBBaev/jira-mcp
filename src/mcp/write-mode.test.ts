@@ -341,6 +341,17 @@ test('planFingerprint ignores key order but tracks tool, args and profile', () =
   );
 });
 
+test('[CC-553] the fingerprint spells the profile the way credentials resolve it', () => {
+  assert.equal(
+    planFingerprint('jira_x', { a: 1 }, ' EU '),
+    planFingerprint('jira_x', { a: 1 }, 'eu'),
+  );
+  assert.notEqual(
+    planFingerprint('jira_x', { a: 1 }, 'eu'),
+    planFingerprint('jira_x', { a: 1 }, 'us'),
+  );
+});
+
 test('[CC-145] an own __proto__ key is fingerprinted like any other key', () => {
   const planned = JSON.parse(
     '{"fields":{"customfield_1":{"__proto__":{"value":"A"}}}}',

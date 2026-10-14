@@ -2745,3 +2745,8 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   list and apply the caller's order, so an apply with identical arguments was
   refused as drifted and burned its `plan_id`. No shipped handler does this
   today; the gate no longer depends on that.
+- **CC-553** The plan fingerprint trims and lowercases `profile`, as
+  `credentials.ts` does when it picks the tenant. A plan made with
+  `profile: "EU"` and applied with `"eu"` targets the same site, yet was refused
+  as drifted and burned its `plan_id`. Omitting the profile at plan and naming
+  the active one at apply still counts as a change — that stays fail-safe.

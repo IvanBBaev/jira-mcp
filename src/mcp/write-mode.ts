@@ -230,7 +230,8 @@ export function planFingerprint(
   const canonical =
     JSON.stringify({
       tool: toolName,
-      profile: profile ?? null,
+      // Spelled as credentials.ts resolves it, so "EU" and "eu" bind the same tenant (CC-553).
+      profile: profile?.trim().toLowerCase() ?? null,
       args: canonicalize(args),
     }) ?? 'null';
   return createHash('sha256').update(canonical, 'utf8').digest('hex');
