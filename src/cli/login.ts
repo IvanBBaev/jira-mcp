@@ -820,14 +820,22 @@ export async function run(options: LoginOptions = {}): Promise<number> {
   const pkce = createPkcePair(random);
   const state = randomUrlToken(random, STATE_BYTES);
   const redirectUri = redirectUriFor(oauth.redirectPort);
-  const authorizeUrl = buildAuthorizeUrl({
-    authOrigin: oauth.authOrigin,
-    clientId,
-    scopes: oauth.scopes,
-    redirectUri,
-    state,
-    challenge: pkce.challenge,
-  });
+  let authorizeUrl: string;
+  try {
+    authorizeUrl = buildAuthorizeUrl({
+      authOrigin: oauth.authOrigin,
+      clientId,
+      scopes: oauth.scopes,
+      redirectUri,
+      state,
+      challenge: pkce.challenge,
+    });
+  } catch (error) {
+    // A scope the URL cannot carry is configuration, refused like the checks
+    // above: one `--json` object and exit 2, not an escaped throw (CC-470).
+    const wrapped = toJiraError(error, { redactor });
+    return fail(wrapped.message, wrapped.remediation ?? CONFIG_REMEDIATION, EXIT_CONFIG);
+  }
 
   let loopback: Loopback | undefined;
   // Which leg is in flight, so a failure can name the likeliest cause instead of

@@ -2150,8 +2150,13 @@ CC-232); the two cases below are what remained to state or pin.
   `accountId: "  "` listed every owner's filters. A padded value is trimmed at
   the schema too, so the echo names what was matched.
 
-## Twenty-third defect hunt (2026-10-14)
+## Twenty-third defect hunt — CLI and Data Center (2026-10-14)
 
+- **CC-470** `login` with a `JIRA_OAUTH_SCOPES` entry the authorize URL cannot
+  carry (`read:jira-work offline_access`, space- rather than comma-separated,
+  CC-169) is refused as configuration: one `--json` object, exit 2, nothing
+  launched. The URL used to be built outside the flow's error handling, so the
+  refusal escaped `run()` as a bare throw and `--json` printed nothing.
 - **CC-490** On Data Center, `jira_list_components` and `jira_list_versions`
   honour `startAt` and `maxResults`. Both read one complete array and used to
   return every matching row from offset 0 as `exhausted`, so `startAt: 3`

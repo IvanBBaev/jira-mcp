@@ -777,6 +777,25 @@ test('[CC-207] login --json --no-browser prints the URL on stderr and keeps stdo
   assertNoSecrets(r);
 });
 
+test('[CC-470] login --json refuses a scope with whitespace as one JSON object and exit 2', async (t) => {
+  const r = await rig({ env: { JIRA_OAUTH_SCOPES: 'read:jira-work offline_access' } });
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['--json'] });
+
+  assert.equal(code, EXIT_CONFIG);
+  const report = JSON.parse(r.stdout()) as LoginReport;
+  assert.equal(report.ok, false);
+  assert.match(report.error ?? '', /whitespace/);
+  assert.match(report.remediation ?? '', /commas/);
+  assert.equal(
+    r.authorizeUrl(),
+    undefined,
+    'nothing may be launched for a URL that cannot be built',
+  );
+  assert.equal(r.stderr(), '');
+});
+
 // ---------------------------------------------------------------------------
 // The loopback listener
 // ---------------------------------------------------------------------------
