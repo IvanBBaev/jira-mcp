@@ -85,6 +85,7 @@ describe('writeFileAtomic', () => {
       readonly openSync?: typeof fs.openSync;
       readonly fsyncSync?: typeof fs.fsyncSync;
       readonly renameSync?: typeof fs.renameSync;
+      readonly writeSync?: typeof fs.writeSync;
     },
     body: () => void,
   ): void {
@@ -92,6 +93,7 @@ describe('writeFileAtomic', () => {
       openSync: fs.openSync,
       fsyncSync: fs.fsyncSync,
       renameSync: fs.renameSync,
+      writeSync: fs.writeSync,
     };
     Object.assign(fs, spies);
     syncBuiltinESMExports();
@@ -160,6 +162,34 @@ describe('writeFileAtomic', () => {
       },
     );
     assert.equal(readFileSync(target, 'utf8'), 'b=2');
+  });
+
+  it('CC-473: a short write is continued rather than renamed over the target', () => {
+    const target = join(dir, '.env');
+    const realWrite = fs.writeSync;
+    const contents = 'JIRA_OAUTH_REFRESH=é'.repeat(64);
+    withFsSpies(
+      {
+        // A nearly full volume: every call lands at most one byte.
+        writeSync: ((
+          fd: number,
+          data: string | NodeJS.ArrayBufferView,
+          ...rest: never[]
+        ) => {
+          const bytes =
+            typeof data === 'string'
+              ? Buffer.from(data, 'utf8')
+              : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+          const offset =
+            typeof data === 'string' ? 0 : ((rest[0] as number | undefined) ?? 0);
+          return realWrite(fd, bytes, offset, Math.min(1, bytes.length - offset));
+        }) as typeof fs.writeSync,
+      },
+      () => {
+        writeFileAtomic(target, contents);
+      },
+    );
+    assert.equal(readFileSync(target, 'utf8'), contents);
   });
 
   it('writes the file with mode 0600', () => {

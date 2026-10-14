@@ -83,7 +83,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
-  writeSync,
+  writeFileSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -243,7 +243,11 @@ export function writeFileAtomic(
     // Explicit chmod: the open mode is masked by the process umask, and a
     // credentials file must be 0600 regardless of how the shell was configured.
     fchmodSync(fd, mode);
-    writeSync(fd, contents);
+    // `writeFileSync` on a descriptor loops until every byte is written; a
+    // single `writeSync` may return short on a nearly full volume, and the
+    // truncated file would then be fsynced and renamed over the original —
+    // losing a refresh token that was just rotated (CC-473).
+    writeFileSync(fd, contents);
     // Durability before visibility: rename may otherwise be persisted while the
     // data is still only in the page cache, leaving a zero-length file.
     fsyncSync(fd);

@@ -2167,6 +2167,12 @@ CC-232); the two cases below are what remained to state or pin.
   authorize URL has no space, so it reached cmd unquoted and cmd split it at
   the first `&`: the browser got a URL without `client_id`, `state` or the PKCE
   challenge, and the remaining query pieces ran as commands.
+- **CC-473** The atomic write behind `.env` saves and the OAuth token store
+  writes the temp file with `writeFileSync(fd, …)`, which loops until every
+  byte is down. A single `writeSync` may return short on a nearly full volume,
+  and its count was ignored: the truncated file was fsynced and renamed over
+  the original, losing a just-rotated refresh token. The test spies `writeSync`
+  to write one byte per call and checks the file reads back whole.
 - **CC-490** On Data Center, `jira_list_components` and `jira_list_versions`
   honour `startAt` and `maxResults`. Both read one complete array and used to
   return every matching row from offset 0 as `exhausted`, so `startAt: 3`
