@@ -87,21 +87,28 @@ export const IRREVERSIBLE_REMEDIATION =
   'JIRA_WRITE_MODE=apply), then repeat plan then apply. Planning keeps working ' +
   'without it: re-run without apply to see what would be destroyed.';
 
-/** The `plan` hint's message: the exact re-invocation, per TOOLS.md. */
+/**
+ * The `plan` hint's message: the exact re-invocation, per TOOLS.md. Under
+ * JIRA_WRITE_MODE=plan no re-invocation can apply, and the plan_id dies with
+ * the restart that would allow it, so the hint names the operator step instead
+ * of a call that would only plan again (CC-550).
+ */
 export function planHintMessage(
   toolName: string,
   planId: string,
+  planMode: boolean,
   ignoredApply: boolean,
   applyDisabled = false,
 ): string {
-  const base =
-    `${PLAN_NOTICE_LINE} Nothing was sent to Jira. Review \`data.planned\`, then ` +
-    `re-invoke \`${toolName}\` with the IDENTICAL arguments plus \`apply: true\` and ` +
-    `\`plan_id: "${planId}"\`. The id is single-use and dies with this server process.`;
-  const withMode = ignoredApply
-    ? `${base} \`apply: true\` was ignored because the server runs with ` +
-      'JIRA_WRITE_MODE=plan.'
-    : base;
+  const head = `${PLAN_NOTICE_LINE} Nothing was sent to Jira. Review \`data.planned\`, then `;
+  const withMode = planMode
+    ? `${head}note that this server runs with JIRA_WRITE_MODE=plan, so no ` +
+      'call can apply it: an operator has to restart the server with ' +
+      `JIRA_WRITE_MODE=apply, and because \`plan_id: "${planId}"\` dies with this ` +
+      `process, \`${toolName}\` must then be planned again and applied with the new id.` +
+      (ignoredApply ? ' `apply: true` was ignored.' : '')
+    : `${head}re-invoke \`${toolName}\` with the IDENTICAL arguments plus \`apply: true\` and ` +
+      `\`plan_id: "${planId}"\`. The id is single-use and dies with this server process.`;
   // The irreversible warning rides inside the `plan` hint: HINT_CODES is a
   // closed vocabulary (TOOLS.md), so a new code would be a spec change first.
   return applyDisabled
@@ -731,6 +738,7 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
           message: planHintMessage(
             call.tool.name,
             planId,
+            deps.writeMode === 'plan',
             deps.writeMode === 'plan' && call.control.apply === true,
             call.tool.writeTier === 'irreversible' && !deps.allowIrreversible,
           ),

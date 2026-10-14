@@ -926,6 +926,45 @@ test('apply: true in plan mode is ignored, and the hint says so', async () => {
   assert.ok((result.hints ?? [])[0]?.message.includes('JIRA_WRITE_MODE=plan'));
 });
 
+test('[CC-550] the plan-mode hint names the operator restart, not a re-invocation that only plans again', async () => {
+  const fake = createFakeJiraRequest();
+  const planGate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const planned = await planGate.execute(
+    callOf(writeTool, { summary: 'Ship it' }, {}, fake.fn),
+  );
+  const planHint = (planned.hints ?? [])[0]?.message ?? '';
+  assert.ok(planHint.includes('JIRA_WRITE_MODE=apply'), planHint);
+  assert.ok(!planHint.includes('`apply: true` and'), planHint);
+
+  // Following that advice anyway only mints another plan, which is why it must not be given.
+  const again = await planGate.execute(
+    callOf(
+      writeTool,
+      { summary: 'Ship it' },
+      { apply: true, plan_id: planIdOf(planned) },
+      fake.fn,
+    ),
+  );
+  assert.equal(isPlanResult(again), true);
+  assert.deepEqual(fake.calls, []);
+
+  const applyGate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const applyPlan = await applyGate.execute(
+    callOf(writeTool, { summary: 'Ship it' }, {}, fake.fn),
+  );
+  const applyHint = (applyPlan.hints ?? [])[0]?.message ?? '';
+  assert.ok(applyHint.includes('`apply: true` and'), applyHint);
+  assert.ok(!applyHint.includes('JIRA_WRITE_MODE'), applyHint);
+});
+
 // ---------------------------------------------------------------------------
 // The gate — apply mode
 // ---------------------------------------------------------------------------

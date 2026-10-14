@@ -2729,3 +2729,13 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   (canonicalized to the same JSON); a non-finite `maxOutstanding` (only
   injectable in tests); no import-time assertion that an irreversible tool is
   `destructiveHint` (all eight comply).
+
+## Forty-fifth defect hunt — write gate, registry and ADF (2026-10-14)
+
+- **CC-550** Under `JIRA_WRITE_MODE=plan` (the default) the `plan` hint no
+  longer tells the model to re-invoke with `apply: true` and the `plan_id`.
+  That call can never apply in plan mode — it only minted another plan with
+  the same advice, an endless loop with nothing sent. The hint now says that an
+  operator has to restart the server with `JIRA_WRITE_MODE=apply`, and that the
+  tool must then be planned again, because the `plan_id` dies with the process.
+  Under `apply` the hint still names the exact re-invocation.

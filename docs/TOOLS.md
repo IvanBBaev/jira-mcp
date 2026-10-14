@@ -119,7 +119,9 @@ In `plan` mode (default) a write tool returns `ok: true` with:
 - `data.executed: false` and `data.planned: { method, path, body }` — the exact
   redacted request that **would** have been sent (CC-20);
 - text content whose first line is literally `NOT performed — plan mode.`;
-- `hints: [{ code: "plan" }]` with remediation naming the exact re-invocation;
+- `hints: [{ code: "plan" }]` with remediation naming the exact re-invocation —
+  under `JIRA_WRITE_MODE=plan`, where no call can apply, it names the operator
+  restart and a fresh plan instead (CC-550);
 - `data.plan_id` — an Rng-issued opaque id (`plan_` + 24 hex). The server
   additionally stores a fingerprint hash of tool name + normalized arguments
   under that id, so an apply whose arguments drifted from the plan is refused
