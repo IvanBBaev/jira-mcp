@@ -427,10 +427,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   const email = str('JIRA_EMAIL');
   const apiToken = str('JIRA_API_TOKEN');
   const tokenExpires = str('JIRA_TOKEN_EXPIRES');
-  const configuredHosts = (str('JIRA_ALLOWED_HOSTS') ?? '')
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const configuredHosts = splitAllowedHosts(str('JIRA_ALLOWED_HOSTS') ?? '');
 
   // --- Auth mode and the OAuth block (D91) ---------------------------------
   // Parsed unconditionally, in BOTH modes: `Settings.oauth` is always a complete
@@ -1079,4 +1076,33 @@ export function assertStartupOk(report: StartupReport): void {
     remediation:
       'Fix the JIRA_* variables listed above (names and defaults: https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md), then restart. `jira-mcp-ai doctor` prints the same report without starting the server.',
   });
+}
+
+/**
+ * Splits `JIRA_ALLOWED_HOSTS` on commas, except inside a slash-delimited regex
+ * entry: `/^jira\d{1,3}\.example\.com$/` is one entry, not two broken halves
+ * reported as invalid host names (CC-484). An entry that opens with `/` and
+ * never closes is kept whole, for the host check to refuse by its own text.
+ */
+export function splitAllowedHosts(raw: string): string[] {
+  const entries: string[] = [];
+  let open: string | undefined;
+  for (const part of raw.split(',')) {
+    if (open !== undefined) {
+      open = `${open},${part}`;
+      if (part.trimEnd().endsWith('/')) {
+        entries.push(open);
+        open = undefined;
+      }
+      continue;
+    }
+    const trimmed = part.trim();
+    if (trimmed.startsWith('/') && (trimmed.length === 1 || !trimmed.endsWith('/'))) {
+      open = part;
+    } else {
+      entries.push(part);
+    }
+  }
+  if (open !== undefined) entries.push(open);
+  return entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 }

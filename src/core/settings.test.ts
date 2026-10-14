@@ -197,6 +197,28 @@ describe('loadSettings — host and allowlist', () => {
     assert.equal(anchored.report.ok, true);
   });
 
+  it('[CC-484] a comma inside a regex entry does not split the entry', () => {
+    const { report, host, settings } = load({
+      ...VALID,
+      JIRA_SITE: 'jira12.example.com',
+      JIRA_ALLOWED_HOSTS:
+        'other.example.com, /^jira\\d{1,3}\\.example\\.com$/ ,x.example.com',
+    });
+    assert.equal(report.ok, true);
+    assert.equal(host?.origin, 'https://jira12.example.com');
+    assert.deepEqual(settings.allowedHosts, [
+      'other.example.com',
+      '/^jira\\d{1,3}\\.example\\.com$/',
+      'x.example.com',
+    ]);
+
+    // An unclosed regex stays one entry and is refused by its own text.
+    const unclosed = load({ ...VALID, JIRA_ALLOWED_HOSTS: '/^jira\\d{1,3}' });
+    const error = unclosed.report.errors.find((e) => e.field === 'JIRA_ALLOWED_HOSTS');
+    assert.equal(error?.code, 'allowlist_invalid_pattern');
+    assert.ok(String(error?.message).includes(JSON.stringify('/^jira\\d{1,3}')));
+  });
+
   it('does not accept a look-alike host (evil-atlassian.net)', () => {
     const { report } = load({ ...VALID, JIRA_SITE: 'evil-atlassian.net' });
     assert.equal(report.ok, false);

@@ -2219,3 +2219,10 @@ CC-232); the two cases below are what remained to state or pin.
   entry with a top-level alternation such as `/^jira\.a\.com|jira\.b\.com$/`
   used to anchor only its outer branches per request, so the media-host check
   admitted `jira.a.com.attacker.net` and `evil-jira.b.com`.
+- **CC-484** A comma inside a slash-delimited regex entry of
+  `JIRA_ALLOWED_HOSTS` no longer splits it: `/^jira\d{1,3}\.example\.com$/`
+  is one entry. The list used to be split on every comma, so a quantifier
+  turned one valid regex into two halves, each refused at startup as "not a
+  valid host name" — fail-closed, but naming text the operator never wrote.
+  An entry that opens with `/` and never closes stays whole and is refused by
+  its own text.
