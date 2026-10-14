@@ -23,7 +23,7 @@
 | Remaining | **20 h** Opus 5.5 (0 h workable now, 20 h blocked) |
 | Blocked by | test-account permissions (project admin, delete, bulk changes); a live `--write` run of Gate C; npm trusted publisher + token revoke (D86); leaked API token rotation; `live` Actions secrets |
 | Calibration | Phase 13.1–13.3 landed in ~1.5 h of commits (2026-09-26 13:51→15:14); defect hunts 17–20 ran ~1 h each (2026-10-10 18:43→22:43); phases 9–12 took one session of 4–5 h each |
-| Updated | 2026-10-13 at `6484ffb` |
+| Updated | 2026-10-14 at `22ee78f` |
 
 Out of target: verifying the Data Center preview against a real DC host
 (Phase 13 exit, D104/D106). It stays a labelled UNVERIFIED preview and does not
@@ -47,7 +47,7 @@ block `1.0.0`.
 | D14 | Phase 11: component, version and sprint deletes (D102) | Phase 11 | `done` | 4 |
 | D15 | Phase 12: bulk operations (D103) | Phase 12 | `done` | 5 |
 | D16 | Review fix pass over phases 9–12 | WORKLOG 2026-09-07/08 | `done` | 4 |
-| D17 | Coverage sweep, defect hunts 1–21, owner sweeps D118/D119 (CC-134…CC-429) | CORNER-CASES.md | `done` | 28 |
+| D17 | Coverage sweep, defect hunts 1–22, owner sweeps D118/D119 (CC-134…CC-430) | CORNER-CASES.md | `done` | 28 |
 | D18 | Phase 13.1–13.8: Data Center preview, 47 tools (D106–D117) | Phase 13 | `done` | 16 |
 | R01 | Register the npm trusted publisher, delete `NPM_TOKEN`, revoke the token (D86) | RELEASING.md §5 | `blocked-owner` | 0.5 |
 | R02 | Rotate the API token pasted in chat; delete stranded `SAN-1204`/`SAN-1205` | CLAUDE.md status | `blocked-owner` | 0.5 |
@@ -61,6 +61,7 @@ block `1.0.0`.
 
 ### History
 - 2026-10-13 `6484ffb` — 88.4 %, 20 h left (first run; baseline)
+- 2026-10-14 `22ee78f` — 88.4 %, 20 h left (±0 pp; 22nd hunt and CC-430 fold into D17, already `done`; no status, estimate or scope change — every remaining row is still owner/external-blocked)
 <!-- release-progress:end -->
 
 ## Standing decisions
