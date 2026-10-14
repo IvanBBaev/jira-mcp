@@ -2195,3 +2195,12 @@ CC-232); the two cases below are what remained to state or pin.
   but the result echoed the padded value — `{issue: " PROJ-1 "}` came back as
   `" PROJ-1 "` — while `jira_link_issues` echoed it trimmed. A blank key is
   still refused, now at the schema.
+
+## Twenty-third defect hunt — core network/auth (2026-10-14)
+
+- **CC-480** A `JIRA_SITE` with a mistyped scheme — `https:/mycompany.atlassian.net`,
+  `https:\mycompany…`, `http:/…` — is refused as `site_malformed`. It is not
+  `name://`, so it used to be prefixed into `https://https:/mycompany…`: the
+  host became `https`, the dot-less name was completed to
+  `https.atlassian.net`, the real host was demoted to a path stripped with
+  only a warning, and the credentials went to somebody else's Cloud site.

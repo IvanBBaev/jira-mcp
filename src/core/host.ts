@@ -262,6 +262,21 @@ export function resolveHost(
   // A scheme is `name://`: a bare `host:port` also matches `name:`, and would be
   // read as a URL with the scheme `host:` (CC-143).
   const hasScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(site);
+  // A mistyped scheme (`https:/host`, `https:\host`) is not `name://`, so it
+  // would be prefixed into `https://https:/host`: host `https`, completed to
+  // somebody else's Cloud site, the real host demoted to a stripped path
+  // (CC-480). A port never starts with a slash, so this is never a host:port.
+  if (!hasScheme && /^[A-Za-z][A-Za-z0-9+.-]*:[/\\]/.test(site)) {
+    problems.push(
+      problem(
+        'error',
+        'site_malformed',
+        `${siteVariable} ${JSON.stringify(site)} has a malformed scheme; write it as "https://" followed by the host, or drop the scheme.`,
+        siteVariable,
+      ),
+    );
+    return { problems };
+  }
   let url: URL;
   try {
     url = new URL(hasScheme ? site : `https://${site}`);

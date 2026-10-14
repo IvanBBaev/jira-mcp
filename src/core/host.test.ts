@@ -114,6 +114,20 @@ describe('resolveHost', () => {
     assert.deepEqual(codes(cloud.problems), ['site_port']);
   });
 
+  it('[CC-480] a mistyped scheme is refused, never completed to a Cloud site named after it', () => {
+    for (const site of [
+      'https:/mycompany.atlassian.net',
+      'https:\\mycompany.atlassian.net',
+      'https:\\\\mycompany.atlassian.net',
+      'http:/mycompany.atlassian.net',
+    ]) {
+      const result = resolveHost(site);
+      assert.equal(result.host, undefined, site);
+      assert.deepEqual(codes(result.problems), ['site_malformed'], site);
+      assert.match(String(result.problems[0]?.message), /malformed scheme/, site);
+    }
+  });
+
   it('keeps a port on an explicitly allowlisted host', () => {
     const result = resolveHost('https://jira.example.com:8443', ['jira.example.com']);
     assert.equal(result.host?.origin, 'https://jira.example.com:8443');
