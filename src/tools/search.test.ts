@@ -465,6 +465,23 @@ test('CC-01: a caller-supplied expired cursor fails fast, no silent restart', as
   assert.equal(String(result.error?.remediation).includes(JQL_REMEDIATION), false);
 });
 
+test('CC-500: a whitespace-only cursor is refused, not dropped into a page-1 restart', () => {
+  // The api layer trims a blank token to "no token", so the call would re-read
+  // page one and hand back rows the model has already seen as the next page.
+  assert.equal(
+    searchTool.input.safeParse({ jql: JQL, nextPageToken: '   ' }).success,
+    false,
+  );
+  assert.equal(
+    searchTool.input.safeParse({ jql: JQL, nextPageToken: '\t\n' }).success,
+    false,
+  );
+  assert.equal(
+    searchTool.input.safeParse({ jql: JQL, nextPageToken: 'cursor-1' }).success,
+    true,
+  );
+});
+
 test('CC-01: a restarted search surfaces pagination_restarted', () => {
   // Unreachable through the handler while it reads a single page (a restart
   // needs a cursor to go stale MID-sweep), so the mapping is asserted on the

@@ -2232,3 +2232,11 @@ CC-232); the two cases below are what remained to state or pin.
   full `….atlassian.net` host. It used to surface as a `host_not_allowed` or
   `host_blocked` about an address nobody had typed. A dotted quad written as
   such is not reinterpreted and keeps the allowlist rules.
+
+## Search and attachments hunt (2026-10-14, CC-500…)
+
+- **CC-500** A whitespace-only `nextPageToken` on `jira_search` is refused at
+  the schema. It used to pass `.min(1)`, and the api layer then trimmed it to
+  "no cursor", so the call silently restarted at page 1 and returned rows the
+  model had already seen as if they were the next page — the restart CC-01
+  forbids for a caller-supplied cursor.

@@ -308,6 +308,9 @@ const searchInput = toolInput({
     ),
   nextPageToken: z
     .string()
+    // Trimmed so a blank cursor is refused here instead of reaching the api
+    // layer, which would drop it and silently restart at page 1 (CC-500).
+    .trim()
     .min(1)
     .optional()
     .describe(
