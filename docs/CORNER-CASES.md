@@ -2252,3 +2252,9 @@ CC-232); the two cases below are what remained to state or pin.
   type, link-count and size checks and the read now share one descriptor
   opened with `O_NOFOLLOW`, closing the window in which a name checked as a
   regular file could be swapped for a symlink before `readFile` followed it.
+- **CC-503** `contentType` on `jira_upload_attachment` must be a
+  `type/subtype[; params]` mime type in printable ASCII. `Blob` turns any other
+  type into `""`, and undici then sends `application/octet-stream`, so
+  `contentType: "image/pngé"` was shown in the plan and recorded as
+  octet-stream on apply. A blank value is now refused at the schema too; the
+  CC-424 fallback in the api layer stays as the second lock.

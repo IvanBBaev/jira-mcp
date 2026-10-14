@@ -556,6 +556,15 @@ function downloadAttachmentTool(
 // 5. `jira_upload_attachment`
 // ---------------------------------------------------------------------------
 
+// `type/subtype[; params]` in printable ASCII. `Blob` turns any other type
+// into "" and undici then sends `application/octet-stream`, so the plan showed
+// one content type and Jira recorded another (CC-503). Surrounding whitespace
+// is allowed because the api layer trims it.
+const MIME_TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const MIME_TYPE = new RegExp(
+  `^\\s*${MIME_TOKEN}/${MIME_TOKEN}(?:\\s*;[\\x20-\\x7e]*)?\\s*$`,
+);
+
 const uploadAttachmentInput = writeToolInput({
   issue: issueArg,
   name: z
@@ -569,7 +578,7 @@ const uploadAttachmentInput = writeToolInput({
     ),
   contentType: z
     .string()
-    .min(1)
+    .regex(MIME_TYPE, 'contentType must be a mime type such as "text/plain", in ASCII.')
     .optional()
     .describe(
       `Mime type recorded on the attachment. Defaults to ${DEFAULT_ATTACHMENT_MIME}.`,

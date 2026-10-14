@@ -1496,7 +1496,7 @@
               },
               "contentType": {
                 "type": "string",
-                "minLength": 1
+                "pattern": "^\\s*[!#$%&'*+.^_`|~0-9A-Za-z-]+\\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:\\s*;[\\x20-\\x7e]*)?\\s*$"
               },
               "apply": {
                 "type": "boolean"

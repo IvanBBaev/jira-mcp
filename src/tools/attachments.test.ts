@@ -745,6 +745,31 @@ test('every attachments input schema is strict and rejects unknown keys', () => 
   );
 });
 
+test('CC-503: an upload contentType must be an ASCII mime type', () => {
+  const upload = toolOf(attachmentsPackage, 'jira_upload_attachment');
+  const parses = (contentType: string): boolean =>
+    upload.input.safeParse({ issue: 'ABC-1', name: 'notes.txt', contentType }).success;
+
+  // `Blob` would turn each of these into "" and undici would send
+  // application/octet-stream instead of what the plan showed.
+  for (const refused of [
+    'image/pngé',
+    'text/plain\r\nX-Evil: 1',
+    'not a mime',
+    '   ',
+    '',
+  ]) {
+    assert.equal(parses(refused), false, JSON.stringify(refused));
+  }
+  for (const accepted of [
+    'text/plain',
+    'text/plain; charset=utf-8',
+    ' application/vnd.ms-excel ',
+  ]) {
+    assert.equal(parses(accepted), true, JSON.stringify(accepted));
+  }
+});
+
 test('the listing is a plain read and the upload is a standard write', () => {
   assert.deepEqual(listAttachmentsTool.annotations, {
     readOnlyHint: true,
