@@ -96,6 +96,14 @@ test('a blank allowlist entry matches nothing, and an empty host is blocked', ()
   assert.equal(isBlockedHost('[]'), true);
 });
 
+test('[CC-483] an alternation in an allowlist regex is anchored as a whole, as at startup', () => {
+  const entry = '/^jira\\.a\\.com|jira\\.b\\.com$/';
+  assert.equal(checkHost('jira.a.com', [entry]), 'allowlisted');
+  assert.equal(checkHost('jira.b.com', [entry]), 'allowlisted');
+  assert.equal(checkHost('jira.a.com.attacker.net', [entry]), 'not_allowed');
+  assert.equal(checkHost('evil-jira.b.com', [entry]), 'not_allowed');
+});
+
 test('an allowlist regex must be anchored, and matches only the whole host', () => {
   assert.equal(
     checkHost('jira.example.com', ['/^jira\\.example\\.com$/']),

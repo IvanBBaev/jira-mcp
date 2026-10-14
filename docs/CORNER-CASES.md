@@ -2214,3 +2214,8 @@ CC-232); the two cases below are what remained to state or pin.
   `unexpected_shape`: the change may have landed, so the error says it is
   unknown whether Jira applied it, was not retried, and to read the issue
   back before sending it again. A read keeps `unexpected_shape`.
+- **CC-483** A regex entry in `JIRA_ALLOWED_HOSTS` is anchored as a whole at
+  request time too, `^(?:…)$`, as `core/host.ts` already does at startup. An
+  entry with a top-level alternation such as `/^jira\.a\.com|jira\.b\.com$/`
+  used to anchor only its outer branches per request, so the media-host check
+  admitted `jira.a.com.attacker.net` and `evil-jira.b.com`.

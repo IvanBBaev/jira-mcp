@@ -227,7 +227,9 @@ function compileHostPattern(entry: string): RegExp {
     });
   }
   try {
-    return new RegExp(source, 'i');
+    // Wrapped, as `core/host.ts` compiles it: `^a|b$` is anchored only at its
+    // ends, and `/^a\.x\.com|b\.com$/` would match `a.x.com.attacker.net` (CC-483).
+    return new RegExp(`^(?:${source})$`, 'i');
   } catch (cause) {
     throw new JiraError({
       kind: 'config',
