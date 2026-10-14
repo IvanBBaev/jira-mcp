@@ -607,3 +607,24 @@ describe('stripCredentialShapes — URL userinfo', () => {
     assert.equal(stripCredentialShapes(text), text);
   });
 });
+
+describe('stripCredentialShapes — percent-encoded parameters', () => {
+  it('[CC-566] masks a credential parameter nested in an encoded redirect', () => {
+    assert.equal(
+      stripCredentialShapes(
+        'GET /login?os_destination=%2Fx%3Ftoken%3Dabc123def%26page%3D2 302',
+      ),
+      `GET /login?os_destination=%2Fx%3Ftoken%3D${DEFAULT_PLACEHOLDER}%26page%3D2 302`,
+    );
+    assert.equal(
+      stripCredentialShapes('returnUrl=https%3A%2F%2Fapp%2Fcb%23access_token%3DeyJabc'),
+      `returnUrl=https%3A%2F%2Fapp%2Fcb%23access_token%3D${DEFAULT_PLACEHOLDER}`,
+    );
+  });
+
+  it('[CC-566] leaves an encoded JQL clause and an encoded non-credential parameter', () => {
+    const text = 'GET /search/jql?jql=project%3DPROJ%26x%3D1 and r=%2Fx%3Fpage%3D2';
+
+    assert.equal(stripCredentialShapes(text), text);
+  });
+});

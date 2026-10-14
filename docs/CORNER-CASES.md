@@ -2785,3 +2785,8 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   of 16+ characters with a digit or an inner case change goes, while
   `ssh://git@github.com`, a plain service-account name and an `@` in a query
   stay.
+- **CC-566** A credential parameter percent-encoded inside another parameter's
+  value is masked — a login redirect's `os_destination=%2Fx%3Ftoken%3D…` or
+  a `returnUrl` carrying `%23access_token%3D…`. The raw pass saw one harmless
+  parameter. Only an encoded `?`, `&` or `#` starts a nested parameter, so an
+  encoded JQL clause (`jql=project%3DPROJ`) stays.

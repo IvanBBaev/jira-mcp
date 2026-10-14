@@ -105,6 +105,17 @@ const SENSITIVE_PARAM_RE = new RegExp(
 );
 
 /**
+ * The same parameters nested percent-encoded in another parameter's value —
+ * `os_destination=%2Fx%3Ftoken%3Dabc`, a login redirect's `returnUrl`. The raw
+ * pass saw one `os_destination` parameter and kept the token (CC-566). Only an
+ * encoded `?`/`&`/`#` starts one, so `jql=project%3DPROJ` stays.
+ */
+const ENCODED_PARAM_RE = new RegExp(
+  `(%3F|%26|%23)(${SENSITIVE_NAME})(%3D)((?:(?!%26|%23)[^&\\s"'#\\\\])*)`,
+  'gi',
+);
+
+/**
  * An object key that names a credential the way a parameter would
  * (`password`, `x-api-key`, `refresh_token`). The free-text pass only sees
  * `name=value`, so `{ password: "…" }` in a result or a plan preview kept
@@ -229,6 +240,11 @@ export function stripCredentialShapes(
     )
     .replace(
       SENSITIVE_PARAM_RE,
+      (_match, prefix: string, name: string, eq: string) =>
+        `${prefix}${name}${eq}${placeholder}`,
+    )
+    .replace(
+      ENCODED_PARAM_RE,
       (_match, prefix: string, name: string, eq: string) =>
         `${prefix}${name}${eq}${placeholder}`,
     );
