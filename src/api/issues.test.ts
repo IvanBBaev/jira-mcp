@@ -992,6 +992,26 @@ test('[CC-162] a raw fields.labels conflicts with labelsAdd/labelsRemove like na
   assert.equal(fake.calls.length, 0);
 });
 
+test('[CC-492] a label named in both labelsAdd and labelsRemove is refused, not sent as a silent remove', async () => {
+  const fake = createFakeJiraRequest();
+  await assert.rejects(
+    updateIssue({
+      jira: fake.fn,
+      issue: KEY,
+      labelsAdd: ['keep', ' both '],
+      labelsRemove: ['both', 'drop'],
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'validation');
+      assert.match(error.message, /"both"/);
+      assert.doesNotMatch(error.message, /"keep"|"drop"/);
+      return true;
+    },
+  );
+  assert.equal(fake.calls.length, 0);
+});
+
 test('transitionIssue posts the transition with screen fields and a comment', async () => {
   const fake = createFakeJiraRequest().on(
     `POST /rest/api/3/issue/${KEY}/transitions`,

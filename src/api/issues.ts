@@ -1003,9 +1003,23 @@ export function updateIssueRequest(input: UpdateIssueInput): JiraRequestSpec {
       input.dueDate === null ? null : requireText(input.dueDate, 'dueDate');
   }
 
+  // A label both added and removed is two intents on one value: Jira applies
+  // the ops in order, so the remove silently wins (CC-492).
+  const labelsAdd = normalizeLabels(input.labelsAdd ?? []);
+  const labelsRemove = normalizeLabels(input.labelsRemove ?? []);
+  const contradicted = [
+    ...new Set(labelsAdd.filter((label) => labelsRemove.includes(label))),
+  ];
+  if (contradicted.length > 0) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `labelsAdd and labelsRemove both name ${contradicted.map((label) => `"${label}"`).join(', ')}.`,
+      remediation: 'Name each label in labelsAdd or in labelsRemove, not in both.',
+    });
+  }
   const labelOps: Record<string, string>[] = [
-    ...normalizeLabels(input.labelsAdd ?? []).map((label) => ({ add: label })),
-    ...normalizeLabels(input.labelsRemove ?? []).map((label) => ({ remove: label })),
+    ...labelsAdd.map((label) => ({ add: label })),
+    ...labelsRemove.map((label) => ({ remove: label })),
   ];
   if (labelOps.length > 0) update.labels = labelOps;
 

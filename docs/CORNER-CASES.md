@@ -2165,3 +2165,7 @@ CC-232); the two cases below are what remained to state or pin.
   field and the `fields_defaulted` hint stayed silent because the raw array
   was non-empty. Entries are trimmed at the schema, as CC-430 does for the
   list reads.
+- **CC-492** `jira_update_issue` refuses a label named in both `labelsAdd`
+  and `labelsRemove` (after trimming), naming the shared labels. It used to
+  send `[{add:"a"},{remove:"a"}]`; Jira applies the ops in order, so the
+  remove silently won and the plan showed it as an ordinary edit.
