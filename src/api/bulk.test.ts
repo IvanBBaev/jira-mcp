@@ -514,24 +514,37 @@ test('the taskId is validated as one path segment before any request exists', as
 // Shape guards, error hints, and the controls
 // ---------------------------------------------------------------------------
 
+test('CC-521: an accepted bulk submit without a usable taskId is ambiguous, never re-run', async () => {
+  // A 2xx means the task was most likely enqueued; "re-run the call" would
+  // enqueue a second delete or edit of the same issues.
+  const bodies: readonly unknown[] = ['Accepted', {}, { taskId: 7 }, { taskId: '  ' }];
+  for (const body of bodies) {
+    const deleted = createFakeJiraRequest().enqueue(jiraOk(body, { status: 201 })); // synthetic
+    const edited = createFakeJiraRequest().enqueue(jiraOk(body, { status: 201 })); // synthetic
+    for (const error of [
+      asJiraError(
+        await caught(() => submitBulkDelete({ jira: deleted.fn, issues: ['SAN-1'] })),
+      ),
+      asJiraError(
+        await caught(() =>
+          submitBulkEdit({ jira: edited.fn, issues: ['SAN-1'], priorityId: '3' }),
+        ),
+      ),
+    ]) {
+      assert.equal(error.kind, 'ambiguous_write', JSON.stringify(body));
+      assert.equal(error.retryable, false);
+      assert.equal(error.httpStatus, 201);
+      assert.match(error.message, /taskId/);
+      assert.match(error.message, /NOT retried/);
+      assert.match(error.remediation ?? '', /Do not resend/);
+      assert.doesNotMatch(error.message, /Re-run/);
+    }
+    assert.equal(deleted.routes().length, 1);
+    assert.equal(edited.routes().length, 1);
+  }
+});
+
 test('an unexpected response shape fails the house way, never silently', async () => {
-  // A submit that answers a non-object.
-  const textBody = createFakeJiraRequest().enqueue(jiraOk('Accepted', { status: 201 }));
-  const nonObject = asJiraError(
-    await caught(() => submitBulkDelete({ jira: textBody.fn, issues: ['SAN-1'] })),
-  );
-  assert.equal(nonObject.kind, 'unexpected_shape');
-
-  // A 201 without a taskId is a handle to nothing, not a success.
-  const noTask = createFakeJiraRequest().enqueue(jiraOk({}, { status: 201 })); // synthetic
-  const missingTask = asJiraError(
-    await caught(() =>
-      submitBulkEdit({ jira: noTask.fn, issues: ['SAN-1'], priorityId: '3' }),
-    ),
-  );
-  assert.equal(missingTask.kind, 'unexpected_shape');
-  assert.match(missingTask.message, /taskId/);
-
   // A progress record without a status cannot be polled meaningfully.
   const noStatus = createFakeJiraRequest().enqueue(jiraOk({ taskId: '10000' })); // synthetic
   const missingStatus = asJiraError(

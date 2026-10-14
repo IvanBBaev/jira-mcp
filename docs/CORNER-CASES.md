@@ -2270,6 +2270,14 @@ CC-232); the two cases below are what remained to state or pin.
   spring-forward gap moves forward by the gap; a repeated fall-back wall time
   takes the later occurrence.
 
+- **CC-521** A bulk delete or edit submit answered 2xx without a usable
+  `taskId` (an empty body, `{}`, a non-string or blank id) is
+  `ambiguous_write`: the task was most likely enqueued, it was not retried, and
+  the remediation says not to resend before checking. It used to be
+  `unexpected_shape` with "Re-run the call", which would enqueue a second
+  irreversible bulk operation over the same issues — the variant CC-482 left
+  open, since an empty 2xx body never reaches the http layer's JSON check.
+
 ## Twenty-seventh defect hunt — core network/auth follow-ups (2026-10-14)
 
 - **CC-530** A repeated `Retry-After` header, which reaches the client

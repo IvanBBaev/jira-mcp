@@ -298,7 +298,7 @@ export async function submitBulkDelete(
   const response = await bulkCall(BULK_DELETE_HINT, () =>
     options.jira({ ...submitBulkDeleteRequest(options), ...writeControls(options) }),
   );
-  return mapSubmitted(response.data);
+  return mapSubmitted(response.data, response.status);
 }
 
 /**
@@ -415,7 +415,7 @@ export async function submitBulkEdit(
   const response = await bulkCall(BULK_EDIT_HINT, () =>
     options.jira({ ...submitBulkEditRequest(options), ...writeControls(options) }),
   );
-  return mapSubmitted(response.data);
+  return mapSubmitted(response.data, response.status);
 }
 
 // ---------------------------------------------------------------------------
@@ -448,14 +448,27 @@ export async function getBulkStatus(
 
 /**
  * A submit receipt is one field. The wire schema marks `taskId` optional, but
- * a 201 without one is a handle to nothing — this server treats it as the
- * shape mismatch it is rather than returning an unpollable success.
+ * a 201 without one is a handle to nothing, so it is never returned as an
+ * unpollable success. Nor is it a plain shape mismatch: a 2xx means Jira most
+ * likely ENQUEUED the task, and the shape remediation's "re-run the call" would
+ * enqueue a second delete or edit of the same issues. It is reported the
+ * CC-482 way — applied-or-not unknown, not retried, verify before resending
+ * (CC-521).
  */
-function mapSubmitted(data: unknown): BulkSubmitResult {
-  const body = requireRecord(data, 'bulk submit receipt');
-  return {
-    taskId: requireField(readString(body, 'taskId'), 'taskId', 'bulk submit receipt'),
-  };
+function mapSubmitted(data: unknown, status: number): BulkSubmitResult {
+  const body = asRecord(data);
+  const taskId = body === undefined ? undefined : readString(body, 'taskId')?.trim();
+  if (taskId === undefined || taskId === '') {
+    throw createJiraError({
+      kind: 'ambiguous_write',
+      reason: `Jira answered the bulk submit with HTTP ${String(status)} but returned no usable taskId, so the task was most likely enqueued and cannot be polled. It was NOT retried.`,
+      httpStatus: status,
+      retryable: false,
+      remediation:
+        "Do not resend it: check the bulk operation's progress in Jira, or read the issues back, before submitting again.",
+    });
+  }
+  return { taskId };
 }
 
 function mapProgress(body: Record<string, unknown>): BulkStatusResult {
