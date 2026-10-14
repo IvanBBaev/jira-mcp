@@ -58,8 +58,10 @@ import {
   getVersion,
   getVersionRelatedIssueCounts,
   listComponents,
+  listComponentsDataCenter,
   listProjectRoles,
   listVersions,
+  listVersionsDataCenter,
   listWatchers,
   removeVote,
   removeWatcher,
@@ -1572,4 +1574,45 @@ test('the deletes carry the caller signal and deadline onto the wire', async () 
 
   assert.equal(jira.lastRequest()?.signal, controller.signal);
   assert.equal(jira.lastRequest()?.deadlineAt, 5_000);
+});
+
+test('[CC-490] the Data Center component and version lists honour startAt and the page window', async () => {
+  const rows = ['1', '2', '3', '4', '5'].map((id) => ({ id, name: `Row ${id}` }));
+  for (const list of [listComponentsDataCenter, listVersionsDataCenter]) {
+    const jira = createFakeJiraRequest()
+      .enqueue(jiraOk(rows))
+      .enqueue(jiraOk(rows))
+      .enqueue(jiraOk(rows));
+
+    const middle = await list({
+      jira: jira.fn,
+      project: 'ABC',
+      startAt: 3,
+      pageSize: 1,
+      maxPages: 1,
+    });
+    assert.deepEqual(
+      middle.items.map((row) => row.id),
+      ['4'],
+    );
+    assert.equal(middle.partial, true);
+    assert.equal(middle.stopReason, 'max_pages');
+    assert.equal(middle.nextStartAt, 4);
+    assert.equal(middle.total, 5);
+
+    const tail = await list({ jira: jira.fn, project: 'ABC', startAt: 3, pageSize: 2 });
+    assert.deepEqual(
+      tail.items.map((row) => row.id),
+      ['4', '5'],
+    );
+    assert.equal(tail.partial, false);
+    assert.equal(tail.stopReason, 'exhausted');
+    assert.equal(tail.nextStartAt, undefined);
+
+    // The defaults keep a whole list whole: one request, nothing cut.
+    const whole = await list({ jira: jira.fn, project: 'ABC' });
+    assert.equal(whole.items.length, 5);
+    assert.equal(whole.partial, false);
+    assert.equal(jira.calls.length, 3);
+  }
 });

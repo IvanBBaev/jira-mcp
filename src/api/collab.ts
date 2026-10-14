@@ -69,6 +69,7 @@ import {
   type JiraResponse,
 } from '../core/types.js';
 import {
+  DEFAULT_MAX_PAGES,
   budgetOf,
   fetchAll,
   type BudgetGuard,
@@ -653,14 +654,28 @@ export function listVersions(
 // The Data Center twins (D106, stage 13.3b)
 // ---------------------------------------------------------------------------
 
-/** One complete, unpaginated read reported in the classic loop's own terms. */
-function wholeList<T>(items: readonly T[]): ClassicLoopResult<T> {
+/**
+ * One complete, unpaginated read, windowed client-side and reported in the
+ * classic loop's own terms: `startAt` and `pageSize × maxPages` cut the
+ * matched rows the way Cloud's paged route would (CC-490, as CC-352 does for
+ * the favourite filters).
+ */
+function windowedList<T>(
+  matched: readonly T[],
+  options: CollabPagedBase,
+): ClassicLoopResult<T> {
+  const startAt = options.startAt ?? 0;
+  const window =
+    (options.pageSize ?? COLLAB_PAGE_SIZE) * (options.maxPages ?? DEFAULT_MAX_PAGES);
+  const end = startAt + window;
+  const more = end < matched.length;
   return {
-    items,
+    items: matched.slice(startAt, end),
     pages: 1,
-    stopReason: 'exhausted',
-    partial: false,
-    total: items.length,
+    stopReason: more ? 'max_pages' : 'exhausted',
+    partial: more,
+    total: matched.length,
+    ...(more ? { nextStartAt: end } : {}),
   };
 }
 
@@ -702,7 +717,8 @@ async function dataCenterArray(
  *
  * The paginated `/component` route is not relied on for Data Center; the
  * documented `/components` array is, and `query` is applied here over name and
- * description — what Cloud's server-side `query` matches. One complete page.
+ * description — what Cloud's server-side `query` matches. One request, paged
+ * client-side.
  */
 export async function listComponentsDataCenter(
   options: ListComponentsOptions,
@@ -714,10 +730,11 @@ export async function listComponentsDataCenter(
     '/project/{projectIdOrKey}/components',
     'component',
   );
-  return wholeList(
+  return windowedList(
     rows
       .map((row) => mapComponent(row, 'datacenter'))
       .filter((component) => matchesQuery(component, options.query)),
+    options,
   );
 }
 
@@ -732,7 +749,7 @@ function versionStatus(version: ProjectVersion): VersionStatus {
  *
  * The documented array route; `query` (name and description) and `status`
  * (archived wins over released, as Jira's own lifecycle has it) are applied
- * here. One complete page.
+ * here. One request, paged client-side.
  */
 export async function listVersionsDataCenter(
   options: ListVersionsOptions,
@@ -745,7 +762,7 @@ export async function listVersionsDataCenter(
     'version',
   );
   const statuses = options.status;
-  return wholeList(
+  return windowedList(
     rows
       .map((row) => mapVersion(row))
       .filter(
@@ -755,6 +772,7 @@ export async function listVersionsDataCenter(
             statuses.length === 0 ||
             statuses.includes(versionStatus(version))),
       ),
+    options,
   );
 }
 

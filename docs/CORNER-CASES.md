@@ -2149,3 +2149,13 @@ CC-232); the two cases below are what remained to state or pin.
   the result echoed the blank value as if the narrowing held:
   `accountId: "  "` listed every owner's filters. A padded value is trimmed at
   the schema too, so the echo names what was matched.
+
+## Twenty-third defect hunt (2026-10-14)
+
+- **CC-490** On Data Center, `jira_list_components` and `jira_list_versions`
+  honour `startAt` and `maxResults`. Both read one complete array and used to
+  return every matching row from offset 0 as `exhausted`, so `startAt: 3`
+  re-read rows the caller already had and `maxResults: 1` returned the whole
+  catalogue. The matched rows are now windowed client-side with Cloud's paging
+  semantics — `max_pages`, `partial` and `nextStartAt` when rows remain — as
+  CC-352 does for the favourite filters.
