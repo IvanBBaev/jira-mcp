@@ -1535,7 +1535,14 @@ export function startedInstant(
   }
 
   if (suffix === undefined) {
-    const offsetMinutes = utcOffsetMinutesForZone(timeZone, asUtc);
+    // `asUtc` is off from the real instant by the zone's own offset, so the
+    // offset read there can come from the wrong side of a DST change that falls
+    // in between — Sydney's 17:00 on the eve of the switch probed +1100 and
+    // logged the work an hour early. A second reading at the corrected instant
+    // lands on the right side; a wall time inside a spring-forward gap keeps
+    // the pre-change offset, i.e. moves forward by the gap (CC-520).
+    const provisional = utcOffsetMinutesForZone(timeZone, asUtc);
+    const offsetMinutes = utcOffsetMinutesForZone(timeZone, asUtc - provisional * 60_000);
     return { epochMs: asUtc - offsetMinutes * 60_000, offsetMinutes };
   }
 

@@ -1446,6 +1446,29 @@ test('startedInstant picks the zone offset at the instant, not a constant', () =
   );
 });
 
+test('CC-520: an offsetless started near a DST change takes the offset of its own side', () => {
+  const cases: readonly (readonly [string, string, number, string])[] = [
+    // East of UTC, the hours before the switch: still standard time.
+    ['Australia/Sydney', '2026-10-03T17:00:00', 600, '2026-10-03T07:00:00.000Z'],
+    ['Europe/Sofia', '2026-03-29T02:30:00', 120, '2026-03-29T00:30:00.000Z'],
+    // The last hour of summer time before the fall-back.
+    ['Europe/Sofia', '2026-10-25T02:00:00', 180, '2026-10-24T23:00:00.000Z'],
+    // West of UTC, the hours after the switch: already summer time.
+    ['America/New_York', '2026-03-08T04:00:00', -240, '2026-03-08T08:00:00.000Z'],
+    // Inside the spring-forward gap: moved forward by the gap.
+    ['Europe/Sofia', '2026-03-29T03:30:00', 120, '2026-03-29T01:30:00.000Z'],
+    // A repeated fall-back wall time: the later (standard-time) occurrence.
+    ['Europe/Sofia', '2026-10-25T03:30:00', 120, '2026-10-25T01:30:00.000Z'],
+  ];
+  for (const [zone, started, offsetMinutes, iso] of cases) {
+    assert.deepEqual(
+      startedInstant(started, zone, 0),
+      { epochMs: Date.parse(iso), offsetMinutes },
+      `${zone} ${started}`,
+    );
+  }
+});
+
 test('startedInstant refuses an impossible calendar date instead of rolling it over', () => {
   // V8 turns 2026-02-30 into 2026-03-02; logging work on the wrong day silently
   // is worse than an error the caller can fix.

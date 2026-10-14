@@ -2259,6 +2259,17 @@ CC-232); the two cases below are what remained to state or pin.
   octet-stream on apply. A blank value is now refused at the schema too; the
   CC-424 fallback in the api layer stays as the second lock.
 
+## Twenty-sixth defect hunt — agile, bulk and worklogs (2026-10-14)
+
+- **CC-520** An offsetless worklog `started` near a DST change takes the
+  offset of its own side of the change. The wall clock was read as UTC and the
+  zone's offset looked up at that provisional instant, which is off by the
+  offset itself — so in Sydney `2026-10-03T17:00:00` (still +1000) was sent as
+  `+1100` and logged an hour early, and the plan showed the same wrong string.
+  The offset is now re-read at the corrected instant. A wall time inside a
+  spring-forward gap moves forward by the gap; a repeated fall-back wall time
+  takes the later occurrence.
+
 ## Twenty-seventh defect hunt — core network/auth follow-ups (2026-10-14)
 
 - **CC-530** A repeated `Retry-After` header, which reaches the client
