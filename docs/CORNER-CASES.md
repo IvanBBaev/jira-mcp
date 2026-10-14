@@ -2196,7 +2196,7 @@ CC-232); the two cases below are what remained to state or pin.
   `" PROJ-1 "` — while `jira_link_issues` echoed it trimmed. A blank key is
   still refused, now at the schema.
 
-## Twenty-third defect hunt — core network/auth (2026-10-14)
+## Twenty-fourth defect hunt — core network/auth (2026-10-14)
 
 - **CC-480** A `JIRA_SITE` with a mistyped scheme — `https:/mycompany.atlassian.net`,
   `https:\mycompany…`, `http:/…` — is refused as `site_malformed`. It is not
