@@ -352,11 +352,14 @@ export interface DeleteSprintResult {
  *
  * This is the one agile route with no id in its path, which makes it the
  * reliable probe for CC-34: a 403/404 here cannot mean "that board is gone".
+ * A project filter is an id all the same — a 403/404 then may well mean that
+ * project is missing or hidden, so the call keeps its kind instead of
+ * announcing that Jira Software is unavailable (CC-524).
  */
 export async function listBoards(
   options: ListBoardsOptions,
 ): Promise<ClassicLoopResult<AgileBoard>> {
-  return agileCall({ rootProbe: true }, () =>
+  return agileCall({ rootProbe: options.projectKeyOrId === undefined }, () =>
     runClassic<AgileBoard>(
       options,
       (cursor) => ({

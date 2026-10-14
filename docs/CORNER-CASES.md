@@ -2269,7 +2269,6 @@ CC-232); the two cases below are what remained to state or pin.
   The offset is now re-read at the corrected instant. A wall time inside a
   spring-forward gap moves forward by the gap; a repeated fall-back wall time
   takes the later occurrence.
-
 - **CC-521** A bulk delete or edit submit answered 2xx without a usable
   `taskId` (an empty body, `{}`, a non-string or blank id) is
   `ambiguous_write`: the task was most likely enqueued, it was not retried, and
@@ -2277,16 +2276,21 @@ CC-232); the two cases below are what remained to state or pin.
   `unexpected_shape` with "Re-run the call", which would enqueue a second
   irreversible bulk operation over the same issues — the variant CC-482 left
   open, since an empty 2xx body never reaches the http layer's JSON check.
-
 - **CC-522** A whitespace-only `jql` on `jira_get_sprint_issues` is refused at
   the schema, as CC-501 does for search. The api layer trims a blank filter
   away, so a read meant to narrow the sprint silently came back as every
   issue in it. Padded JQL still goes through verbatim.
-
 - **CC-523** `projectKeyOrId` on `jira_list_boards` is trimmed and a blank
   value refused at the schema, as CC-430 does for the other list filters. It
   was sent verbatim: ` ABC` found no such project, and a whitespace-only value
   reached Jira as a filter nobody meant.
+- **CC-524** A 403/404 from `jira_list_boards` with a `projectKeyOrId` keeps
+  its kind and gains the CC-34 "or the Agile API is unavailable" advice, as
+  on any id-bearing agile route. CC-34 treats `/board` as the root probe
+  because it carries no id, but a project filter is one: an unknown or hidden
+  project came back as `unsupported`, "Jira Software is not available to this
+  account on this site", and sent the caller after a licence problem. The
+  unfiltered list is still the root probe.
 
 ## Twenty-seventh defect hunt — core network/auth follow-ups (2026-10-14)
 

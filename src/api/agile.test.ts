@@ -1013,6 +1013,31 @@ test('CC-34: a 404 on the board list is unsupported, not a missing board', async
   assert.ok(error.cause instanceof JiraError, 'the original error stays as the cause');
 });
 
+test('CC-524: a 404 on a project-filtered board list keeps its kind', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/board',
+    jiraErr(
+      new JiraError({
+        kind: 'not_found',
+        message: 'Jira returned 404 for GET /rest/agile/1.0/board.',
+        httpStatus: 404,
+        remediation: 'Check the identifier.',
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => listBoards({ jira: jira.fn, projectKeyOrId: 'NOPE' })),
+  );
+
+  // The project key is an id: the 404 may be about it, not about the root, so
+  // it must not be reported as "Jira Software is not available".
+  assert.equal(error.kind, 'not_found');
+  assert.equal(error.httpStatus, 404);
+  assert.match(error.remediation ?? '', /Check the identifier/);
+  assert.match(error.remediation ?? '', /Agile API/);
+});
+
 test('CC-34: a 403 on an id-bearing route keeps its kind and names the other cause', async () => {
   const jira = createFakeJiraRequest().on(
     'GET /rest/agile/1.0/board/7/sprint',
