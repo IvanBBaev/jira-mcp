@@ -2240,3 +2240,7 @@ CC-232); the two cases below are what remained to state or pin.
   "no cursor", so the call silently restarted at page 1 and returned rows the
   model had already seen as if they were the next page — the restart CC-01
   forbids for a caller-supplied cursor.
+- **CC-501** A whitespace-only `jql` on `jira_search` and `jira_count` is
+  refused at the schema. Data Center ran it as "every issue", so `jira_count`
+  reported the site total as an exact count of a query nobody stated. The JQL
+  is refined, not trimmed — a padded query is still sent verbatim.

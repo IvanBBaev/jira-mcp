@@ -482,6 +482,18 @@ test('CC-500: a whitespace-only cursor is refused, not dropped into a page-1 res
   );
 });
 
+test('CC-501: a whitespace-only JQL is refused, padded JQL still goes verbatim', () => {
+  // Data Center runs a blank JQL as "every issue": jira_count answered the site
+  // total as an exact count, jira_search page one of everything.
+  for (const tool of JQL_TOOLS) {
+    assert.equal(tool.input.safeParse({ jql: '   ' }).success, false, tool.name);
+    assert.equal(tool.input.safeParse({ jql: '\t\n' }).success, false, tool.name);
+    const padded = tool.input.safeParse({ jql: ` ${JQL} ` });
+    assert.equal(padded.success, true, tool.name);
+    assert.equal((padded.data as { jql: string }).jql, ` ${JQL} `, tool.name);
+  }
+});
+
 test('CC-01: a restarted search surfaces pagination_restarted', () => {
   // Unreachable through the handler while it reads a single page (a restart
   // needs a cursor to go stale MID-sweep), so the mapping is asserted on the

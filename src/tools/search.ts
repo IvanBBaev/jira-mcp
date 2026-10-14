@@ -281,10 +281,17 @@ function searchData(api: JiraApi, result: SearchIssuesResult): SearchData {
   };
 }
 
+// A whitespace-only JQL is refused rather than trimmed: the value is sent
+// verbatim, and Data Center runs a blank query as "every issue", so the count
+// came back as the site total of a question nobody asked (CC-501).
+const isNotBlank = (value: string): boolean => value.trim().length > 0;
+const BLANK_JQL = 'JQL must not be blank.';
+
 const searchInput = toolInput({
   jql: z
     .string()
     .min(1)
+    .refine(isNotBlank, BLANK_JQL)
     .describe(
       'JQL to run, sent verbatim. Values containing spaces need double quotes: ' +
         'project = "My Project" AND statusCategory != Done.',
@@ -401,6 +408,7 @@ const countInput = toolInput({
   jql: z
     .string()
     .min(1)
+    .refine(isNotBlank, BLANK_JQL)
     .describe('JQL whose matches are counted. Same quoting rules as jira_search.'),
 });
 
