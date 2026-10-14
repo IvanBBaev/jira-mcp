@@ -641,3 +641,16 @@ test('D85: a redactor that does not return an envelope fails the result closed',
     );
   }
 });
+
+test('[CC-563] a common string cap never leaves half of a surrogate pair', () => {
+  const data = { a: '😀'.repeat(150), b: `x${'😀'.repeat(150)}` };
+  const lone = /[\ud800-\udbff](?![\udc00-\udfff])|\\ud[89ab][0-9a-f]{2}/i;
+  let capped = 0;
+  for (let budget = 400; budget < 1300; budget += 1) {
+    const out = truncateResult(ok(data), budget);
+    if (!out.json.includes('item_too_large')) continue;
+    capped += 1;
+    assert.doesNotMatch(out.json, lone, `budget ${String(budget)}`);
+  }
+  assert.ok(capped > 0, 'rung 3 was reached');
+});

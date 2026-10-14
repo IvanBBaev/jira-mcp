@@ -2765,3 +2765,8 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   `issueTypeId` on the latter, are trimmed at the schema. The path was built
   from the trimmed segment, but the result echoed `" ABC "` — the CC-493
   echo, on the meta reads.
+- **CC-563** The common string cap in the envelope's last truncation rung cuts
+  at a code point, not a UTF-16 unit. One cap rarely lands on a character
+  boundary in every leaf, so an emoji-heavy summary could be cut between the
+  halves of a surrogate pair, and the lone high surrogate serialized as
+  `\ud83d` — JSON that a strict UTF-8 client refuses to decode.

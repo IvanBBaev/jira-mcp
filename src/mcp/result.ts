@@ -345,6 +345,17 @@ function setMarker(envelope: JsonRecord, marker: TruncationMarker): void {
   envelope[TRUNCATION_KEY] = marker;
 }
 
+/**
+ * `text` cut to at most `cap` UTF-16 units without splitting a surrogate pair.
+ * One common cap rarely lands on a character boundary in every leaf, and a lone
+ * high surrogate left at the cut is JSON that a strict UTF-8 client refuses to
+ * decode (CC-563).
+ */
+function cutAtCodePoint(text: string, cap: number): string {
+  const code = text.charCodeAt(cap - 1);
+  return code >= 0xd800 && code <= 0xdbff ? text.slice(0, cap - 1) : text.slice(0, cap);
+}
+
 function addTruncatedHint(envelope: JsonRecord): void {
   const existing = envelope['hints'];
   const hints: unknown[] = Array.isArray(existing) ? [...asItems(existing)] : [];
@@ -483,7 +494,9 @@ export function truncateResult(
     const applyCap = (cap: number): void => {
       for (const leaf of leaves) {
         leaf.set(
-          leaf.value.length > cap ? leaf.value.slice(0, cap) + ELLIPSIS : leaf.value,
+          leaf.value.length > cap
+            ? cutAtCodePoint(leaf.value, cap) + ELLIPSIS
+            : leaf.value,
         );
       }
       setMarker(envelope, {
