@@ -168,6 +168,8 @@ export const listProjectsTool = defineTool<
 const getProjectInput = toolInput({
   project: z
     .string()
+    // Trimmed so the echoed key is the one the path was built from (CC-562).
+    .trim()
     .min(1)
     .describe('Project key (e.g. ABC) or numeric project id. Not the project name.'),
   expand: z
@@ -312,10 +314,13 @@ export const listFieldsTool = defineTool<z.infer<typeof listFieldsInput>, FieldL
 const getCreateMetaInput = toolInput({
   project: z
     .string()
+    // Trimmed so the echoed key is the one the path was built from (CC-562).
+    .trim()
     .min(1)
     .describe('Project key (e.g. ABC) or numeric project id. Not the project name.'),
   issueTypeId: z
     .string()
+    .trim()
     .min(1)
     .optional()
     .describe(

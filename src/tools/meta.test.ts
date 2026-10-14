@@ -768,3 +768,22 @@ test('CC-430: a whitespace-only query is refused, not dropped into a full list',
     assert.deepEqual(padded.data, { query: 'alpha' }, tool.name);
   }
 });
+
+test('CC-562: a padded project or issue type id is echoed as the trimmed value the path used', () => {
+  for (const tool of [getProjectTool, getCreateMetaTool] as const) {
+    assert.equal(tool.input.safeParse({ project: '   ' }).success, false, tool.name);
+    const padded = tool.input.safeParse({ project: ' ABC ' });
+    assert.equal(padded.success, true, tool.name);
+    assert.equal((padded.data as { project: string }).project, 'ABC', tool.name);
+  }
+  const typed = getCreateMetaTool.input.safeParse({
+    project: 'ABC',
+    issueTypeId: ' 10001 ',
+  });
+  assert.equal(typed.success, true);
+  assert.equal((typed.data as { issueTypeId?: string }).issueTypeId, '10001');
+  assert.equal(
+    getCreateMetaTool.input.safeParse({ project: 'ABC', issueTypeId: '  ' }).success,
+    false,
+  );
+});

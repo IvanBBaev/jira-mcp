@@ -2761,3 +2761,7 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   internal callers.
 - **CC-561** `query` on `jira_search_users` is trimmed at the schema. The
   request already sent the trimmed text, but the result echoed the padded one.
+- **CC-562** `project` on `jira_get_project` and `jira_get_create_meta`, and
+  `issueTypeId` on the latter, are trimmed at the schema. The path was built
+  from the trimmed segment, but the result echoed `" ABC "` — the CC-493
+  echo, on the meta reads.
