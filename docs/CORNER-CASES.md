@@ -2283,6 +2283,11 @@ CC-232); the two cases below are what remained to state or pin.
   away, so a read meant to narrow the sprint silently came back as every
   issue in it. Padded JQL still goes through verbatim.
 
+- **CC-523** `projectKeyOrId` on `jira_list_boards` is trimmed and a blank
+  value refused at the schema, as CC-430 does for the other list filters. It
+  was sent verbatim: ` ABC` found no such project, and a whitespace-only value
+  reached Jira as a filter nobody meant.
+
 ## Twenty-seventh defect hunt — core network/auth follow-ups (2026-10-14)
 
 - **CC-530** A repeated `Retry-After` header, which reaches the client

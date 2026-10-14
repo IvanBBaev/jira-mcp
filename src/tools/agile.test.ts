@@ -185,6 +185,21 @@ test('jira_list_boards forwards its filters', async () => {
   assert.equal(fake.lastRequest()?.query?.startAt, 100);
 });
 
+test('CC-523: the board project filter is trimmed, and a blank one refused', async () => {
+  for (const projectKeyOrId of ['', '   ', '\t\n']) {
+    assert.equal(listBoardsTool.input.safeParse({ projectKeyOrId }).success, false);
+  }
+
+  const parsed = listBoardsTool.input.safeParse({ projectKeyOrId: ' ABC ' });
+  const fake = createFakeJiraRequest().on(
+    BOARDS_ROUTE,
+    jiraOk({ maxResults: 50, startAt: 0, isLast: true, values: [] }),
+  );
+  assert.ok(parsed.success);
+  await listBoardsTool.handler(parsed.data, createCtx(fake.fn));
+  assert.equal(fake.lastRequest()?.query?.projectKeyOrId, 'ABC');
+});
+
 // ---------------------------------------------------------------------------
 // `jira_list_sprints`
 // ---------------------------------------------------------------------------

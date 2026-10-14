@@ -161,6 +161,9 @@ const agileIdArg = z.number().int().min(1);
 const listBoardsInput = toolInput({
   projectKeyOrId: z
     .string()
+    // Trimmed so a blank value is refused here and a padded key still matches:
+    // ` ABC` went out verbatim and Jira found no such project (CC-523).
+    .trim()
     .min(1)
     .optional()
     .describe(
