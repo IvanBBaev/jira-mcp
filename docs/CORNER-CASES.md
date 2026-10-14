@@ -2278,6 +2278,11 @@ CC-232); the two cases below are what remained to state or pin.
   irreversible bulk operation over the same issues — the variant CC-482 left
   open, since an empty 2xx body never reaches the http layer's JSON check.
 
+- **CC-522** A whitespace-only `jql` on `jira_get_sprint_issues` is refused at
+  the schema, as CC-501 does for search. The api layer trims a blank filter
+  away, so a read meant to narrow the sprint silently came back as every
+  issue in it. Padded JQL still goes through verbatim.
+
 ## Twenty-seventh defect hunt — core network/auth follow-ups (2026-10-14)
 
 - **CC-530** A repeated `Retry-After` header, which reaches the client

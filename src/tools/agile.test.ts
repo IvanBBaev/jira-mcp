@@ -401,6 +401,23 @@ test('jira_get_sprint_issues forwards extra jql untouched', async () => {
 // `jira_move_to_sprint`
 // ---------------------------------------------------------------------------
 
+test('CC-522: a whitespace-only sprint jql is refused, not dropped into the whole sprint', () => {
+  // The api layer trims a blank filter away, so the narrowed read the caller
+  // asked for would come back as every issue in the sprint.
+  for (const jql of ['   ', '\t\n']) {
+    assert.equal(
+      getSprintIssuesTool.input.safeParse({ sprintId: 42, jql }).success,
+      false,
+    );
+  }
+  const padded = getSprintIssuesTool.input.safeParse({
+    sprintId: 42,
+    jql: ' status != Done ',
+  });
+  assert.equal(padded.success, true);
+  assert.equal((padded.data as { jql: string }).jql, ' status != Done ');
+});
+
 test('D22: an over-cap batch fails validation and nothing is sent', async () => {
   const fake = createFakeJiraRequest();
   const issues = Array.from(

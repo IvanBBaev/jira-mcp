@@ -300,6 +300,10 @@ const getSprintIssuesInput = toolInput({
   jql: z
     .string()
     .min(1)
+    // Refused, as search does (CC-501): the api layer trims a whitespace-only
+    // filter to nothing and drops it, so a read the caller meant to narrow
+    // silently came back as the whole sprint (CC-522).
+    .refine((value) => value.trim().length > 0, 'JQL must not be blank.')
     .optional()
     .describe(
       'Extra JQL, ANDed by Jira with "issue is in this sprint" — e.g. ' +
