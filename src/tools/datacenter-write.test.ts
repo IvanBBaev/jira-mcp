@@ -194,7 +194,11 @@ const CASES: readonly WriteCase[] = [
   {
     tool: updateCommentTool,
     args: { issue: 'ABC-1', commentId: '5', body: RICH },
-    routes: [['PUT /rest/api/2/issue/ABC-1/comment/5', DC_COMMENT]],
+    // CC-510: the stored restriction is read back before the edit.
+    routes: [
+      ['GET /rest/api/2/issue/ABC-1/comment/5', DC_COMMENT],
+      ['PUT /rest/api/2/issue/ABC-1/comment/5', DC_COMMENT],
+    ],
     write: 'PUT /rest/api/2/issue/ABC-1/comment/5',
     at: (body) => body.body,
   },

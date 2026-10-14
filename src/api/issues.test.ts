@@ -1117,10 +1117,9 @@ test('updateComment PUTs the edited body to the comment itself', async () => {
     created: '2026-08-09T12:00:00.000+0000',
     updated: '2026-08-09T12:30:00.000+0000',
   };
-  const fake = createFakeJiraRequest().on(
-    `PUT /rest/api/3/issue/${KEY}/comment/50001`,
-    jiraOk(stored),
-  );
+  const fake = createFakeJiraRequest()
+    .on(`GET /rest/api/3/issue/${KEY}/comment/50001`, jiraOk(stored))
+    .on(`PUT /rest/api/3/issue/${KEY}/comment/50001`, jiraOk(stored));
 
   const comment = await updateComment({
     jira: fake.fn,
@@ -1193,9 +1192,30 @@ test('updateComment reports an unexpected shape when the echo has no id', async 
   );
 
   await assert.rejects(
+    updateComment({
+      jira: fake.fn,
+      issue: KEY,
+      commentId: 50001,
+      body: 'Corrected.',
+      visibility: null,
+    }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+});
+
+test('CC-510: updateComment refuses to edit a comment whose restriction it cannot restate', async () => {
+  // A restriction dropped on the floor would publish the comment. // synthetic
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/comment/50001`,
+    jiraOk({ id: '50001', body: adfDoc('Secret.'), visibility: { identifier: '10002' } }),
+  );
+
+  await assert.rejects(
     updateComment({ jira: fake.fn, issue: KEY, commentId: 50001, body: 'Corrected.' }),
     isJiraErrorOfKind('unexpected_shape'),
   );
+  // The PUT never went out.
+  assert.equal(fake.calls.length, 1);
 });
 
 test('assignIssue sends an accountId, and unassign sends an explicit null', async () => {

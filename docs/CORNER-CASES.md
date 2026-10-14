@@ -2274,3 +2274,14 @@ CC-232); the two cases below are what remained to state or pin.
   kept a dead access token in use until `login`, and `1e308` became
   `expiresAt: Infinity` — written to the token store as `null`, which the next
   read refused as damaged.
+
+## Twenty-eighth defect hunt — comments, collab and transitions (2026-10-14)
+
+- **CC-510** `jira_update_comment` without `visibility` keeps the restriction
+  the comment carries. Jira reads a comment `PUT` that has no `visibility` as
+  "public", so a body-only edit of a role- or group-restricted comment
+  published it — and the tool told the model the restriction was "left as it
+  is". The comment is now read first (a GET, so the plan shows what is kept)
+  and its stored restriction resent; one the server cannot restate (no type,
+  or neither value nor identifier) refuses the edit before the `PUT`.
+  `visibility: null` lifts a restriction on purpose.

@@ -823,10 +823,13 @@ export interface UpdateCommentInput {
    */
   readonly body: string | AdfNode;
   /**
-   * Restrict the edited comment to a project role or a group. Absent means the
-   * visibility Jira has stored is left as it is.
+   * Restrict the edited comment to a project role or a group. `null` lifts any
+   * restriction, so the comment becomes public. Absent keeps the restriction
+   * the comment carries now: Jira treats a `PUT` without `visibility` as
+   * "public", so {@link updateComment} reads the stored one back and resends
+   * it (CC-510).
    */
-  readonly visibility?: JiraVisibility;
+  readonly visibility?: JiraVisibility | null;
 }
 
 export type UpdateCommentOptions = IssueRequestBase & UpdateCommentInput & BudgetGuard;
@@ -1088,7 +1091,9 @@ export function addCommentRequest(input: AddCommentInput): JiraRequestSpec {
  * Jira has no patch form for a comment: the `body` sent here REPLACES the
  * stored one in full, so a caller that wants to append must read the comment
  * first and send the whole new text (CC-31 on a comment). Everything this
- * builder does not send — author, created/updated stamps — Jira keeps.
+ * builder does not send — author, created/updated stamps — Jira keeps, except
+ * `visibility`: an absent one makes the comment public, which is why
+ * {@link updateComment} fills it from the stored comment (CC-510).
  */
 export function updateCommentRequest(input: UpdateCommentInput): JiraRequestSpec {
   const id = commentIdSegment(input.commentId);
@@ -1098,7 +1103,9 @@ export function updateCommentRequest(input: UpdateCommentInput): JiraRequestSpec
     pathTemplate: ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
     body: {
       body: toAdf(input.body),
-      ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
+      ...(input.visibility === undefined || input.visibility === null
+        ? {}
+        : { visibility: input.visibility }),
     },
   };
 }
@@ -1266,10 +1273,45 @@ export async function addComment(options: AddCommentOptions): Promise<IssueComme
 export async function updateComment(
   options: UpdateCommentOptions,
 ): Promise<IssueComment> {
-  const response = await send(options, updateCommentRequest(options));
+  const visibility =
+    options.visibility === undefined
+      ? await storedCommentVisibility(options)
+      : options.visibility;
+  const response = await send(options, updateCommentRequest({ ...options, visibility }));
   const comment = shapeComment(response.data, undefined, options.deployment);
   if (comment === undefined) throw shapeError('the updated comment has no string "id"');
   return comment;
+}
+
+/**
+ * CC-510 — the restriction an edit must carry forward. Jira reads a comment
+ * `PUT` without `visibility` as "make it public", so a body-only edit of a
+ * role- or group-restricted comment would publish it. The comment is read
+ * first (a GET, so it runs in plan mode too and the plan shows what is kept)
+ * and its stored restriction resent; `null` means it had none.
+ */
+async function storedCommentVisibility(
+  options: UpdateCommentOptions,
+): Promise<JiraVisibility | null> {
+  const id = commentIdSegment(options.commentId);
+  const response = await send(options, {
+    method: 'GET',
+    path: issuePath(options.issue, `/comment/${id}`),
+    pathTemplate: ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
+  });
+  const record = asRecord(response.data);
+  if (record === undefined || typeof record.id !== 'string') {
+    throw shapeError('the comment to edit has no string "id"');
+  }
+  if (record.visibility === undefined || record.visibility === null) return null;
+  const stored = shapeVisibility(record.visibility);
+  if (stored?.type === undefined || (stored.value ?? stored.identifier) === undefined) {
+    // A restriction this server cannot restate must not be dropped silently.
+    throw shapeError(
+      'the comment to edit carries a visibility without a type and a value',
+    );
+  }
+  return stored;
 }
 
 /**

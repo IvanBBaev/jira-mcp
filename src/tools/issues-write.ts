@@ -726,11 +726,12 @@ const updateCommentInput = writeToolInput({
       'document. It replaces the stored body outright — there is no append.',
   ),
   visibility: visibilityArg
+    .nullable()
     .optional()
     .describe(
       'Restrict the edited comment to one project role or one group, by name. ' +
-        'A restriction the comment already carries is not read back — pass it ' +
-        'again to keep it.',
+        'Omit it to keep the restriction the comment carries now (it is read ' +
+        'back first); pass null to make the comment public.',
     ),
   format: writeFormatArg,
   resolveMentions: resolveMentionsArg,
@@ -766,7 +767,7 @@ export const updateCommentTool = defineTool({
         issue: args.issue,
         commentId: args.commentId,
         body: asRichText(ctx.api, args.body, args.format, resolution.mentions),
-        visibility: asVisibility(args.visibility),
+        visibility: args.visibility === null ? null : asVisibility(args.visibility),
       });
       return ok(comment, { hints: resolution.hints });
     }),

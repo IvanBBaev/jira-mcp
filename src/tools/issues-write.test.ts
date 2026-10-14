@@ -57,6 +57,7 @@ const POST_TRANSITION_ROUTE = `POST /rest/api/3/issue/${KEY}/transitions`;
 const COMMENT_ROUTE = `POST /rest/api/3/issue/${KEY}/comment`;
 const COMMENT_ID = '10100';
 const EDIT_COMMENT_ROUTE = `PUT /rest/api/3/issue/${KEY}/comment/${COMMENT_ID}`;
+const GET_COMMENT_ROUTE = `GET /rest/api/3/issue/${KEY}/comment/${COMMENT_ID}`;
 const ASSIGNEE_ROUTE = `PUT /rest/api/3/issue/${KEY}/assignee`;
 const WORKLOG_ROUTE = `POST /rest/api/3/issue/${KEY}/worklog`;
 const LINK_ROUTE = 'POST /rest/api/3/issueLink';
@@ -665,10 +666,9 @@ test('CC-39: jira_update_comment PUTs the whole replacement body at the comment 
 });
 
 test('jira_update_comment accepts a raw ADF document unchanged', async () => {
-  const fake = createFakeJiraRequest().on(
-    EDIT_COMMENT_ROUTE,
-    jiraOk(EDITED_COMMENT_BODY),
-  );
+  const fake = createFakeJiraRequest()
+    .on(GET_COMMENT_ROUTE, jiraOk(COMMENT_BODY))
+    .on(EDIT_COMMENT_ROUTE, jiraOk(EDITED_COMMENT_BODY));
 
   await updateCommentTool.handler(
     { issue: KEY, commentId: 10_100, body: adfDoc('Raw ADF.') },
@@ -677,7 +677,61 @@ test('jira_update_comment accepts a raw ADF document unchanged', async () => {
 
   assert.deepEqual(lastBody(fake)['body'], adfDoc('Raw ADF.'));
   // A numeric id renders as the same path segment a string id does.
+  assert.deepEqual(fake.routes(), [GET_COMMENT_ROUTE, EDIT_COMMENT_ROUTE]);
+});
+
+test('CC-510: an edit without visibility keeps the restriction the comment carries', async () => {
+  // Jira reads a PUT without `visibility` as "public", so a body-only edit of a
+  // role-restricted comment would publish it. The stored restriction is read
+  // back and resent. // synthetic
+  const restricted = {
+    ...COMMENT_BODY,
+    visibility: { type: 'role', value: 'Developers', identifier: 'Developers' },
+  };
+  const fake = createFakeJiraRequest()
+    .on(GET_COMMENT_ROUTE, jiraOk(restricted))
+    .on(
+      EDIT_COMMENT_ROUTE,
+      jiraOk({ ...EDITED_COMMENT_BODY, visibility: restricted.visibility }),
+    );
+
+  const result = await updateCommentTool.handler(
+    { issue: KEY, commentId: COMMENT_ID, body: 'Corrected.' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.routes(), [GET_COMMENT_ROUTE, EDIT_COMMENT_ROUTE]);
+  assert.deepEqual(lastBody(fake)['visibility'], restricted.visibility);
+});
+
+test('CC-510: an edit of an unrestricted comment sends no visibility', async () => {
+  const fake = createFakeJiraRequest()
+    .on(GET_COMMENT_ROUTE, jiraOk(COMMENT_BODY))
+    .on(EDIT_COMMENT_ROUTE, jiraOk(EDITED_COMMENT_BODY));
+
+  await updateCommentTool.handler(
+    { issue: KEY, commentId: COMMENT_ID, body: 'Corrected.' },
+    ctxOf(fake),
+  );
+
+  assert.deepEqual(Object.keys(lastBody(fake)), ['body']);
+});
+
+test('CC-510: visibility null lifts the restriction without a read', async () => {
+  const fake = createFakeJiraRequest().on(
+    EDIT_COMMENT_ROUTE,
+    jiraOk(EDITED_COMMENT_BODY),
+  );
+
+  const result = await updateCommentTool.handler(
+    { issue: KEY, commentId: COMMENT_ID, body: 'Corrected.', visibility: null },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
   assert.deepEqual(fake.routes(), [EDIT_COMMENT_ROUTE]);
+  assert.deepEqual(Object.keys(lastBody(fake)), ['body']);
 });
 
 test('[CC-136] a rich-text string over 65,536 characters is refused before planning', () => {
@@ -737,7 +791,9 @@ test('the plan seam sees the real edit — the capture unwind is not swallowed',
   const captured = new Error(
     `PlanCaptured: PUT /rest/api/3/issue/${KEY}/comment/${COMMENT_ID}`,
   );
-  const fake = createFakeJiraRequest().on(EDIT_COMMENT_ROUTE, jiraErr(captured));
+  const fake = createFakeJiraRequest()
+    .on(GET_COMMENT_ROUTE, jiraOk(COMMENT_BODY))
+    .on(EDIT_COMMENT_ROUTE, jiraErr(captured));
 
   await assert.rejects(
     updateCommentTool.handler(
@@ -1425,7 +1481,9 @@ test('resolution reaches the rich-text surface of every tool that has one', asyn
     },
     {
       tool: updateCommentTool,
-      fake: createFakeJiraRequest().on(EDIT_COMMENT_ROUTE, jiraOk(EDITED_COMMENT_BODY)),
+      fake: createFakeJiraRequest()
+        .on(GET_COMMENT_ROUTE, jiraOk(COMMENT_BODY))
+        .on(EDIT_COMMENT_ROUTE, jiraOk(EDITED_COMMENT_BODY)),
       sent: (fake) => lastBody(fake)['body'],
     },
     {
