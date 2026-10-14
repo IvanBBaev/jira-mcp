@@ -2162,6 +2162,11 @@ CC-232); the two cases below are what remained to state or pin.
   `xdg-open` and reports ENOENT only afterwards, so "opened" is a hope: a
   headless box used to get no URL anywhere and wait out the full timeout
   (CC-207 covered only `--no-browser`). stdout stays the one JSON object.
+- **CC-472** `login` on Windows opens the browser through
+  `rundll32 url.dll,FileProtocolHandler` instead of `cmd /c start`. The
+  authorize URL has no space, so it reached cmd unquoted and cmd split it at
+  the first `&`: the browser got a URL without `client_id`, `state` or the PKCE
+  challenge, and the remaining query pieces ran as commands.
 - **CC-490** On Data Center, `jira_list_components` and `jira_list_versions`
   honour `startAt` and `maxResults`. Both read one complete array and used to
   return every matching row from offset 0 as `exhausted`, so `startAt: 3`

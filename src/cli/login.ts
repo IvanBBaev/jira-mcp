@@ -640,16 +640,19 @@ async function startLoopback(args: {
 // The browser
 // ---------------------------------------------------------------------------
 
-/** The platform's "open this URL" command, argv-style. */
-function browserCommand(
+/** The platform's "open this URL" command, argv-style. Exported for tests. */
+export function browserCommand(
   platform: NodeJS.Platform,
   url: string,
 ): { readonly command: string; readonly args: readonly string[] } {
   if (platform === 'darwin') return { command: 'open', args: [url] };
-  // `start` is a cmd builtin, and its FIRST quoted argument is a window title —
-  // hence the empty string, without which a quoted URL becomes the title and
-  // nothing opens.
-  if (platform === 'win32') return { command: 'cmd', args: ['/c', 'start', '', url] };
+  // Not `cmd /c start`: the authorize URL has no space, so it reaches cmd
+  // unquoted and cmd splits it at the first `&` — the browser got the URL up to
+  // `client_id` and the rest ran as commands (CC-472). The protocol handler
+  // takes the URL as data, with no shell in between.
+  if (platform === 'win32') {
+    return { command: 'rundll32', args: ['url.dll,FileProtocolHandler', url] };
+  }
   return { command: 'xdg-open', args: [url] };
 }
 

@@ -46,6 +46,7 @@ import {
 import type { AuthRequestFn, AuthRequestSpec, AuthResponse } from '../core/http.js';
 import { createTokenStore, type TokenStore } from '../core/oauth.js';
 import {
+  browserCommand,
   DEFAULT_TIMEOUT_SECONDS,
   EXIT_CONFIG,
   EXIT_FLOW_FAILED,
@@ -946,6 +947,16 @@ test('[CC-246] a forged callback does not cancel the login the operator then com
   assert.equal(r.auth.calls.length > 0, true);
   assert.doesNotMatch(JSON.stringify(r.auth.calls), /attacker-code/);
   assert.notEqual(r.storeFile(), undefined);
+});
+
+test('[CC-472] the Windows opener hands the URL over without a shell that splits it at &', () => {
+  const url =
+    'https://auth.example/authorize?audience=api.atlassian.com&client_id=abc&state=xyz';
+  const { command, args } = browserCommand('win32', url);
+  assert.notEqual(command.toLowerCase(), 'cmd');
+  assert.equal(args.at(-1), url);
+  assert.deepEqual(browserCommand('darwin', url), { command: 'open', args: [url] });
+  assert.deepEqual(browserCommand('linux', url), { command: 'xdg-open', args: [url] });
 });
 
 test('sameState treats a length mismatch as a mismatch instead of throwing', () => {
