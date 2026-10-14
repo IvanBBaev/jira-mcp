@@ -2226,3 +2226,9 @@ CC-232); the two cases below are what remained to state or pin.
   valid host name" — fail-closed, but naming text the operator never wrote.
   An entry that opens with `/` and never closes stays whole and is refused by
   its own text.
+- **CC-485** A `JIRA_SITE` the URL parser reads as IPv4 — a bare number
+  (`12345` → `0.0.48.57`), a hex or octal form, a short dotted form (`10.1`) —
+  is `site_malformed`, naming the text the operator wrote and suggesting the
+  full `….atlassian.net` host. It used to surface as a `host_not_allowed` or
+  `host_blocked` about an address nobody had typed. A dotted quad written as
+  such is not reinterpreted and keeps the allowlist rules.

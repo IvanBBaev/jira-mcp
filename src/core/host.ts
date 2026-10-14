@@ -345,6 +345,21 @@ export function resolveHost(
   }
 
   let hostname = url.hostname.toLowerCase();
+  // The URL parser reads a bare number, a hex or octal form, or a short dotted
+  // form as IPv4 (`12345` → `0.0.48.57`); every later message would then name
+  // an address the operator never wrote, so refuse with the text they did
+  // write instead (CC-485).
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) && !site.toLowerCase().includes(hostname)) {
+    problems.push(
+      problem(
+        'error',
+        'site_malformed',
+        `${siteVariable} ${JSON.stringify(site)} reads as the IP address ${hostname}, not as a site name. Write the full host (e.g. "${site.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/[/?#:].*$/, '')}.atlassian.net").`,
+        siteVariable,
+      ),
+    );
+    return { problems };
+  }
   if (!HOSTNAME_RE.test(hostname)) {
     problems.push(
       problem(

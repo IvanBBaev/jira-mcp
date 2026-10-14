@@ -128,6 +128,28 @@ describe('resolveHost', () => {
     }
   });
 
+  it('[CC-485] a site name the URL parser reads as IPv4 is refused by the text written', () => {
+    for (const [site, address] of [
+      ['12345', '0.0.48.57'],
+      ['0x7f', '0.0.0.127'],
+      ['https://12345/', '0.0.48.57'],
+      ['10.1', '10.0.0.1'],
+    ] as const) {
+      const result = resolveHost(site, [address]);
+      assert.equal(result.host, undefined, site);
+      assert.deepEqual(codes(result.problems), ['site_malformed'], site);
+      const message = String(result.problems[0]?.message);
+      assert.ok(message.includes(JSON.stringify(site)), site);
+      assert.match(message, /reads as the IP address/, site);
+    }
+    assert.match(
+      String(resolveHost('12345').problems[0]?.message),
+      /"12345\.atlassian\.net"/,
+    );
+    // A dotted quad written as such is not reinterpreted, so this rule leaves it alone.
+    assert.deepEqual(codes(resolveHost('8.8.8.8').problems), ['host_not_allowed']);
+  });
+
   it('keeps a port on an explicitly allowlisted host', () => {
     const result = resolveHost('https://jira.example.com:8443', ['jira.example.com']);
     assert.equal(result.host?.origin, 'https://jira.example.com:8443');
