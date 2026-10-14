@@ -2157,6 +2157,11 @@ CC-232); the two cases below are what remained to state or pin.
   CC-169) is refused as configuration: one `--json` object, exit 2, nothing
   launched. The URL used to be built outside the flow's error handling, so the
   refusal escaped `run()` as a bare throw and `--json` printed nothing.
+- **CC-471** `login --json` prints the authorize URL on stderr whether or not
+  the opener reported success. `spawn` returns normally for a missing
+  `xdg-open` and reports ENOENT only afterwards, so "opened" is a hope: a
+  headless box used to get no URL anywhere and wait out the full timeout
+  (CC-207 covered only `--no-browser`). stdout stays the one JSON object.
 - **CC-490** On Data Center, `jira_list_components` and `jira_list_versions`
   honour `startAt` and `maxResults`. Both read one complete array and used to
   return every matching row from offset 0 as `exhausted`, so `startAt: 3`

@@ -874,10 +874,16 @@ export async function run(options: LoginOptions = {}): Promise<number> {
           ? `A browser was opened. If nothing appeared, visit:\n${authorizeUrl}\n\n`
           : `Open this URL to authorize:\n${authorizeUrl}\n\n`,
       );
-    } else if (!opened) {
+    } else {
       // stdout is the one JSON object, but a URL nobody can see is a login
       // nobody can finish: `--json --no-browser` waited out the timeout (CC-207).
-      err(`Open this URL to authorize:\n${authorizeUrl}\n`);
+      // Printed even when the opener launched: a missing `xdg-open` reports
+      // ENOENT only after `spawn` has returned, so "opened" is a hope (CC-471).
+      err(
+        opened
+          ? `A browser was opened. If nothing appeared, visit:\n${authorizeUrl}\n`
+          : `Open this URL to authorize:\n${authorizeUrl}\n`,
+      );
     }
 
     // The wait, bounded. `clock.sleep` rather than a timer, so the whole flow is

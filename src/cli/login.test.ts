@@ -46,6 +46,7 @@ import {
 import type { AuthRequestFn, AuthRequestSpec, AuthResponse } from '../core/http.js';
 import { createTokenStore, type TokenStore } from '../core/oauth.js';
 import {
+  DEFAULT_TIMEOUT_SECONDS,
   EXIT_CONFIG,
   EXIT_FLOW_FAILED,
   EXIT_OK,
@@ -794,6 +795,37 @@ test('[CC-470] login --json refuses a scope with whitespace as one JSON object a
     'nothing may be launched for a URL that cannot be built',
   );
   assert.equal(r.stderr(), '');
+});
+
+test('[CC-471] login --json prints the URL on stderr even when the opener reported success', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  // The opener "launched" — as `spawn` does for a missing `xdg-open`, whose
+  // ENOENT only arrives later — but no browser ever calls back.
+  const running = run({
+    ...r.options,
+    argv: ['--json'],
+    openBrowser: (): boolean => true,
+  });
+
+  try {
+    await until(() => r.stderr().includes('code_challenge'), 'the authorization URL');
+  } catch (error) {
+    // Let the login time out so a regression fails here instead of hanging.
+    r.clock.advance(DEFAULT_TIMEOUT_SECONDS * 1000);
+    await running;
+    throw error;
+  }
+  const printed = /https:\/\/\S+/.exec(r.stderr())?.[0] ?? '';
+  const state = new URL(printed).searchParams.get('state') ?? '';
+  const answered = await r.callback({ code: AUTH_CODE, state });
+  assert.equal(answered.status, 200);
+
+  assert.equal(await running, EXIT_OK);
+  const report = JSON.parse(r.stdout()) as LoginReport;
+  assert.equal(report.ok, true);
+  assertNoSecrets(r);
 });
 
 // ---------------------------------------------------------------------------
