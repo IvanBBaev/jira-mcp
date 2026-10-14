@@ -2778,3 +2778,10 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   credential-named key (the parameter list, anchored) masks a non-empty string
   whole; a header key scrubs its value as the header line, so the scheme and
   prose under `cookie` survive. `nextPageToken` and `tokenFile` stay.
+- **CC-565** URL userinfo is masked whole. The password stopped at its first
+  `@`, so `https://bob:p@ss@host` kept `ss` in the line, and a token used as
+  the whole userinfo (`https://<token>@host`, no colon) was not masked at all.
+  The password now runs to the last `@` before the host; a colon-less userinfo
+  of 16+ characters with a digit or an inner case change goes, while
+  `ssh://git@github.com`, a plain service-account name and an `@` in a query
+  stay.

@@ -583,3 +583,27 @@ describe('createRedactor — credential-named keys', () => {
     assert.deepEqual(redactor.redact(data), data);
   });
 });
+
+describe('stripCredentialShapes — URL userinfo', () => {
+  it('[CC-565] masks a password with an @ in it and a token used as the user', () => {
+    assert.equal(
+      stripCredentialShapes('clone https://bob:fixture@pass@git.example/x now'),
+      `clone https://bob:${DEFAULT_PLACEHOLDER}@git.example/x now`,
+    );
+    assert.equal(
+      stripCredentialShapes('GET https://ATATT3xFfGF0abc123@acme.atlassian.net/rest'),
+      `GET https://${DEFAULT_PLACEHOLDER}@acme.atlassian.net/rest`,
+    );
+  });
+
+  it('[CC-565] leaves a plain user name, a short user and a query @', () => {
+    const text = [
+      'ssh://git@github.com/x',
+      'https://jira-service-account@host/x',
+      'https://host/browse?mail=a@b.example',
+      'https://host:8443/x?by=me@corp',
+    ].join(' ');
+
+    assert.equal(stripCredentialShapes(text), text);
+  });
+});

@@ -69,8 +69,19 @@ const AUTH_HEADER_RE =
  */
 const COOKIE_HEADER_RE = /\b(cookie|set-cookie)(["']?\s*[:=]\s*["']?)([^\r\n"']+)/gi;
 
-/** `https://user:password@host` — the user survives, the password does not. */
-const URL_USERINFO_RE = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s:/@]*):([^\s/@]+)@/gi;
+/**
+ * `https://user:password@host` — the user survives, the password does not. The
+ * password runs to the last `@` before the host: a raw `@` inside it ended the
+ * match early and left its tail in the line (CC-565).
+ */
+const URL_USERINFO_RE = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s:/@]*):([^\s/?#]+)@/gi;
+
+/**
+ * `https://<token>@host` — a token used as the whole userinfo, no colon. Only a
+ * long word shaped like a credential goes; `ssh://git@github.com` and a plain
+ * user name stay (CC-565).
+ */
+const URL_TOKEN_USERINFO_RE = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s:/@?#]{16,})@/gi;
 
 /** A bare `Basic <blob>` / `Bearer <token>` anywhere, header name or not. */
 const AUTH_SCHEME_RE = /\b(basic|bearer)(\s+)([A-Za-z0-9\-._~+/=]{8,})/gi;
@@ -207,6 +218,9 @@ export function stripCredentialShapes(
     .replace(
       URL_USERINFO_RE,
       (_match, scheme: string, user: string) => `${scheme}${user}:${placeholder}@`,
+    )
+    .replace(URL_TOKEN_USERINFO_RE, (match: string, scheme: string, user: string) =>
+      /\d/.test(user) || /[a-z][A-Z]/.test(user) ? `${scheme}${placeholder}@` : match,
     )
     .replace(
       AUTH_SCHEME_RE,
