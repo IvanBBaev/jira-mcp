@@ -565,13 +565,25 @@ export function parseRetryAfterMs(
   const text = header.trim();
   if (text === '') return undefined;
 
-  const seconds = Number(text);
-  if (Number.isFinite(seconds)) return Math.max(0, Math.round(seconds * 1000));
+  // A repeated header reaches us comma-joined (`5, 5`), and `Date.parse` reads
+  // such a list as a date in 2001 — a wait of zero. Each member is parsed on
+  // its own and the longest wait is honoured; a list that mixes forms, or a
+  // member that is neither form (`0x10`, `1e3`), is unparseable (CC-530).
+  const deltas = text.split(',').map((part) => part.trim());
+  if (deltas.every((part) => DELTA_SECONDS_RE.test(part))) {
+    return Math.max(0, Math.round(Math.max(...deltas.map(Number)) * 1000));
+  }
 
-  const at = Date.parse(text);
-  if (Number.isNaN(at)) return undefined;
-  return Math.max(0, at - nowMs);
+  // Every HTTP-date form opens with a day name, and an IMF-fixdate carries a
+  // comma of its own, so a repeated date splits only before the next day name.
+  const dates = text.split(/,\s*(?=[A-Za-z]{3,9},)/).map((part) => part.trim());
+  const instants = dates.map((part) => (/^[A-Za-z]/.test(part) ? Date.parse(part) : NaN));
+  if (instants.some((at) => Number.isNaN(at))) return undefined;
+  return Math.max(0, Math.max(...instants) - nowMs);
 }
+
+/** Delta-seconds, plus the sign and fraction this parser has always tolerated. */
+const DELTA_SECONDS_RE = /^[+-]?\d+(?:\.\d+)?$/;
 
 /** Clamp a server-supplied wait to `[0, MAX_RETRY_AFTER_MS]` (CC-14). */
 export function capRetryAfterMs(ms: number): number {

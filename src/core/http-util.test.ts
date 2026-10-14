@@ -470,6 +470,25 @@ test('parseRetryAfterMs accepts delta-seconds and HTTP-dates against the injecte
   assert.equal(parseRetryAfterMs('Thu, 01 Jan 2026 00:00:00 GMT', now + 5_000), 0);
 });
 
+test('[CC-530] a repeated Retry-After honours the longest wait, never a date in 2001', () => {
+  // fetch joins a repeated header with ", "; Date.parse read "5, 5" as 2001-05-05.
+  assert.equal(parseRetryAfterMs('5, 5', 0), 5_000);
+  assert.equal(parseRetryAfterMs('1, 30', 0), 30_000);
+
+  const now = Date.parse('2026-01-01T00:00:00Z');
+  assert.equal(
+    parseRetryAfterMs(
+      'Thu, 01 Jan 2026 00:00:10 GMT, Thu, 01 Jan 2026 00:00:45 GMT',
+      now,
+    ),
+    45_000,
+  );
+  // Neither form: unparseable, so the caller falls back to its own backoff.
+  for (const header of ['0x10', '1e3', '5, soon', '5, Thu, 01 Jan 2026 00:00:45 GMT']) {
+    assert.equal(parseRetryAfterMs(header, now), undefined, header);
+  }
+});
+
 test('a hostile Retry-After is capped at 60 s, and jitter is added after the cap', () => {
   // CC-14: "Retry-After: 86400" must not park a tool call for a day.
   assert.equal(capRetryAfterMs(86_400_000), MAX_RETRY_AFTER_MS);

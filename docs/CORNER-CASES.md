@@ -2258,3 +2258,13 @@ CC-232); the two cases below are what remained to state or pin.
   `contentType: "image/pngé"` was shown in the plan and recorded as
   octet-stream on apply. A blank value is now refused at the schema too; the
   CC-424 fallback in the api layer stays as the second lock.
+
+## Twenty-seventh defect hunt — core network/auth follow-ups (2026-10-14)
+
+- **CC-530** A repeated `Retry-After` header, which reaches the client
+  comma-joined (`5, 5`), honours the longest of its waits. `Date.parse` read
+  that list as a date in 2001, so the wait became zero and the call fell back
+  to a 0.5 s backoff, spending the retry budget while Jira was still
+  throttling. A repeated HTTP-date is split before each day name; a value that
+  is neither form (`0x10`, `1e3`, a mixed list) is unparseable and gets the
+  ordinary backoff.
