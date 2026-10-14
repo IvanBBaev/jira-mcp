@@ -105,6 +105,8 @@ const CLAMPED_HINT: Hint = {
 const searchUsersInput = toolInput({
   query: z
     .string()
+    // Trimmed so the echoed query is the one Jira matched (CC-561).
+    .trim()
     .min(1)
     .describe(
       'A display name, part of one, or an email address. Matched server-side by ' +
@@ -113,6 +115,10 @@ const searchUsersInput = toolInput({
     ),
   issue: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the lookup to every
+    // user (CC-560).
+    .trim()
     .min(1)
     .optional()
     .describe(
@@ -121,6 +127,8 @@ const searchUsersInput = toolInput({
     ),
   project: z
     .string()
+    // Trimmed for the same reason as `issue` (CC-560).
+    .trim()
     .min(1)
     .optional()
     .describe(

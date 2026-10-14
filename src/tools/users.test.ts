@@ -365,3 +365,20 @@ test('the users package exports exactly its one tool', () => {
     ['jira_search_users'],
   );
 });
+
+test('CC-560: a whitespace-only issue or project is refused, not widened to every user', () => {
+  for (const key of ['issue', 'project'] as const) {
+    const blank = searchUsersTool.input.safeParse({ query: 'ada', [key]: '   ' });
+    assert.equal(blank.success, false, key);
+    const padded = searchUsersTool.input.safeParse({ query: 'ada', [key]: ' ABC ' });
+    assert.equal(padded.success, true, key);
+    assert.equal(padded.data?.[key], 'ABC', key);
+  }
+});
+
+test('CC-561: a padded query is echoed as the trimmed text Jira matched', () => {
+  const parsed = searchUsersTool.input.safeParse({ query: ' ada ' });
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data?.query, 'ada');
+  assert.equal(searchUsersTool.input.safeParse({ query: '   ' }).success, false);
+});

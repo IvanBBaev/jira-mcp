@@ -2750,3 +2750,14 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   `profile: "EU"` and applied with `"eu"` targets the same site, yet was refused
   as drifted and burned its `plan_id`. Omitting the profile at plan and naming
   the active one at apply still counts as a change — that stays fail-safe.
+
+## Defect hunt — users, meta and the result envelope (2026-10-14)
+
+- **CC-560** A whitespace-only `issue` or `project` on `jira_search_users` is
+  refused at the schema. The api layer trimmed it to "no scope", so a lookup
+  the model meant to narrow to assignable users went to the plain
+  `/user/search` and returned everyone matching the name — the CC-430
+  widening, with only `scope: "query"` to say so. The api fallback stays for
+  internal callers.
+- **CC-561** `query` on `jira_search_users` is trimmed at the schema. The
+  request already sent the trimmed text, but the result echoed the padded one.
