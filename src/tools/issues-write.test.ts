@@ -32,6 +32,7 @@ import {
   jiraOk,
 } from '../core/fakes/index.js';
 import type { JiraRequestSpec } from '../core/types.js';
+import type { z } from '../mcp/define.js';
 import type { AnyToolSpec, Hint, ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   addCommentTool,
@@ -1636,4 +1637,28 @@ test("D16: a /myself answer with no timeZone falls back to the host's zone", asy
     if (previousTz === undefined) delete process.env.TZ;
     else process.env.TZ = previousTz;
   }
+});
+
+test('CC-493: a padded issue key is trimmed at the schema, so the result echoes the key written to', async () => {
+  let checked = 0;
+  for (const tool of ALL_TOOLS) {
+    const shape = (tool.input as { shape?: Record<string, z.ZodType> }).shape;
+    const issue = shape?.['issue'];
+    if (issue === undefined) continue;
+    assert.equal(issue.safeParse(` ${KEY} `).data, KEY, `${tool.name} must trim issue`);
+    assert.equal(
+      issue.safeParse('   ').success,
+      false,
+      `${tool.name} must refuse a blank issue`,
+    );
+    checked += 1;
+  }
+  assert.ok(checked >= 6, `only ${String(checked)} tools checked`);
+
+  const fake = createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT);
+  const args = updateIssueTool.input.parse({ issue: ` ${KEY} `, summary: 'x' });
+  const result = await updateIssueTool.handler(args, ctxOf(fake));
+  assert.equal(result.ok, true);
+  assert.equal(result.data?.issue, KEY);
+  assert.equal(fake.calls.length, 1);
 });

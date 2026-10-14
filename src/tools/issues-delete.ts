@@ -593,7 +593,12 @@ export interface BulkEditSubmitted extends BulkSubmitResult {
 // Shared arguments
 // ---------------------------------------------------------------------------
 
-const issueArg = z.string().min(1).describe('Issue key (PROJ-123) or numeric issue id.');
+const issueArg = z
+  .string()
+  // Trimmed so the result echoes the key the request was sent to (CC-493).
+  .trim()
+  .min(1)
+  .describe('Issue key (PROJ-123) or numeric issue id.');
 
 const commentIdArg = z
   .string()

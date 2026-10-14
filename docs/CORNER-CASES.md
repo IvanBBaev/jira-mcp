@@ -2169,3 +2169,8 @@ CC-232); the two cases below are what remained to state or pin.
   and `labelsRemove` (after trimming), naming the shared labels. It used to
   send `[{add:"a"},{remove:"a"}]`; Jira applies the ops in order, so the
   remove silently won and the plan showed it as an ordinary edit.
+- **CC-493** The `issue` argument of the issue read, write, delete and collab
+  tools is trimmed at the schema. The request already went to the trimmed key,
+  but the result echoed the padded value — `{issue: " PROJ-1 "}` came back as
+  `" PROJ-1 "` — while `jira_link_issues` echoed it trimmed. A blank key is
+  still refused, now at the schema.
