@@ -86,8 +86,25 @@ const AUTH_SCHEME_RE = /\b(basic|bearer)(\s+)([A-Za-z0-9\-._~+/=]{8,})/gi;
  * `x-api-token`, `db_password`), and a `#` fragment starts a parameter too —
  * OAuth's implicit flow puts `access_token` there (CC-404).
  */
-const SENSITIVE_PARAM_RE =
-  /(^|[?&;#\s])((?:[a-z0-9]+[_-])*(?:os_authtype|os_username|os_password|api[_-]?token|api[_-]?key|(?:access|refresh|id|auth|oauth|session)[_-]?token|client[_-]?secret|password|passwd|pwd|token|secret|jwt|jsessionid))(=)([^&\s"'#\\]*)/gi;
+const SENSITIVE_NAME =
+  '(?:[a-z0-9]+[_-])*(?:os_authtype|os_username|os_password|api[_-]?token|api[_-]?key|(?:access|refresh|id|auth|oauth|session)[_-]?token|client[_-]?secret|password|passwd|pwd|token|secret|jwt|jsessionid)';
+const SENSITIVE_PARAM_RE = new RegExp(
+  `(^|[?&;#\\s])(${SENSITIVE_NAME})(=)([^&\\s"'#\\\\]*)`,
+  'gi',
+);
+
+/**
+ * An object key that names a credential the way a parameter would
+ * (`password`, `x-api-key`, `refresh_token`). The free-text pass only sees
+ * `name=value`, so `{ password: "…" }` in a result or a plan preview kept
+ * its value; only the log line was masked, by a second pass over the
+ * serialized JSON (CC-564). `nextPageToken` stays: the name must start the key
+ * or follow a `_`/`-` separator.
+ */
+const SENSITIVE_KEY_RE = new RegExp(`^${SENSITIVE_NAME}$`, 'i');
+
+/** An object key that is an auth or cookie header name (CC-564). */
+const HEADER_KEY_RE = /^(?:authorization|proxy-authorization|cookie|set-cookie)$/i;
 
 /**
  * Define `key` as an own data property. Plain assignment of `__proto__` sets
@@ -349,6 +366,31 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
     return stripCredentialShapes(out, placeholder);
   };
 
+  /**
+   * A header value is scrubbed as the header line it was (`Cookie: sid=…`),
+   * so the scheme survives and prose under a `cookie` key still does; a value
+   * under a credential-named key goes whole. `undefined` means the key says
+   * nothing and the value is walked as usual (CC-564).
+   */
+  const maskHeader = (key: string, text: string): string => {
+    const prefix = `${key}: `;
+    const line = scrub(prefix + text);
+    return line.startsWith(prefix) ? line.slice(prefix.length) : placeholder;
+  };
+  const maskByKey = (key: string, value: unknown): unknown => {
+    if (HEADER_KEY_RE.test(key)) {
+      if (typeof value === 'string') return maskHeader(key, value);
+      if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+        return value.map((item: string) => maskHeader(key, item));
+      }
+      return undefined;
+    }
+    if (SENSITIVE_KEY_RE.test(key) && typeof value === 'string' && value !== '') {
+      return placeholder;
+    }
+    return undefined;
+  };
+
   const walk = (value: unknown, depth: number, seen: Set<object>): unknown => {
     if (value === null || value === undefined) return value;
 
@@ -406,7 +448,7 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
       for (const [key, item] of safeEntries(object)) {
         // The KEY is scrubbed too — a secret used as a property name leaks
         // exactly as loudly as one used as a value.
-        setOwn(out, scrub(key), walk(item, depth + 1, seen));
+        setOwn(out, scrub(key), maskByKey(key, item) ?? walk(item, depth + 1, seen));
       }
       return out;
     } finally {

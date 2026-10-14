@@ -538,3 +538,48 @@ describe('createRedactor — serialized JSON', () => {
     );
   });
 });
+
+describe('createRedactor — credential-named keys', () => {
+  it('[CC-564] masks a value under a header or credential-named key', () => {
+    const redactor = createRedactor();
+
+    const redacted = redactor.redact({
+      Authorization: 'Token abc123def',
+      'proxy-authorization': 'abc123def',
+      'set-cookie': ['sid=abc123def', 'theme=dark1'],
+      Cookie: 'chocolate chip',
+      'x-api-key': 'abc123def',
+      password: 'not-a-real-pass',
+      refresh_token: 'r-abc123def',
+      clientSecret: 'abc123def',
+      nested: { db_password: 'fixture-pass' },
+    });
+
+    assert.deepEqual(redacted, {
+      Authorization: `Token ${DEFAULT_PLACEHOLDER}`,
+      'proxy-authorization': DEFAULT_PLACEHOLDER,
+      'set-cookie': [DEFAULT_PLACEHOLDER, DEFAULT_PLACEHOLDER],
+      Cookie: 'chocolate chip',
+      'x-api-key': DEFAULT_PLACEHOLDER,
+      password: DEFAULT_PLACEHOLDER,
+      refresh_token: DEFAULT_PLACEHOLDER,
+      clientSecret: DEFAULT_PLACEHOLDER,
+      nested: { db_password: DEFAULT_PLACEHOLDER },
+    });
+  });
+
+  it('[CC-564] leaves workspace keys that only contain a credential word', () => {
+    const redactor = createRedactor();
+    const data = {
+      nextPageToken: 'CAEaAggD',
+      tokenFile: '/home/me/.jira-token',
+      token_expiry_warning: 'in 3 days',
+      password: '',
+      secret: false,
+      token: { kind: 'plan' },
+      key: 'PROJ-1',
+    };
+
+    assert.deepEqual(redactor.redact(data), data);
+  });
+});

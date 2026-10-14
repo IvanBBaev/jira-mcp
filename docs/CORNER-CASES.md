@@ -2770,3 +2770,11 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   boundary in every leaf, so an emoji-heavy summary could be cut between the
   halves of a surrogate pair, and the lone high surrogate serialized as
   `\ud83d` — JSON that a strict UTF-8 client refuses to decode.
+- **CC-564** The redactor masks a value by the key it sits under. The shape
+  pass only recognized `name=value` and header lines in free text, so
+  `{ "password": "…" }`, `{ "x-api-key": "…" }` or `{ "Authorization":
+  "Token …" }` in a tool result or a plan preview kept the credential; only a
+  log line was masked, by the second pass over its serialized JSON. A
+  credential-named key (the parameter list, anchored) masks a non-empty string
+  whole; a header key scrubs its value as the header line, so the scheme and
+  prose under `cookie` survive. `nextPageToken` and `tokenFile` stay.
