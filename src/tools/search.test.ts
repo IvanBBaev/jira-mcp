@@ -1086,6 +1086,10 @@ test('jira_list_filters takes no JQL and refuses blank filters', () => {
   assert.equal(listFiltersTool.input.safeParse({ jql: JQL }).success, false);
   assert.equal(listFiltersTool.input.safeParse({ filterName: '' }).success, false);
   assert.equal(listFiltersTool.input.safeParse({ accountId: '' }).success, false);
+  // CC-430: whitespace is blank too — the api layer would drop it and list
+  // every filter on the site, while the echo claimed the narrowing held.
+  assert.equal(listFiltersTool.input.safeParse({ filterName: '   ' }).success, false);
+  assert.equal(listFiltersTool.input.safeParse({ accountId: ' \t' }).success, false);
   assert.equal(listFiltersTool.input.safeParse({ startAt: -1 }).success, false);
   assert.equal(listFiltersTool.input.safeParse({ maxResults: 0 }).success, false);
   assert.equal(listFiltersTool.input.safeParse({ startAt: 0 }).success, true);

@@ -130,6 +130,10 @@ env var names — not internal refactors.
 
 ### Fixed
 
+- `jira_list_filters`, `jira_list_projects`, `jira_list_fields`,
+  `jira_list_components` and `jira_list_versions` refuse a whitespace-only
+  `query`, `filterName` or `accountId` instead of silently listing everything
+  and echoing the blank value as if it had narrowed the result.
 - `resolveMentions`: a name whose only exact match is an inactive account or
   an app is refused instead of resolving to a different person whose name
   merely starts the same way.

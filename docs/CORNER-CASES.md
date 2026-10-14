@@ -4,7 +4,7 @@
 > drift is a bug.
 
 Enumerated behaviours the implementation must get right. Each becomes at least
-one test. IDs (`CC-01`…`CC-429`) are **stable**: test names reference them, so
+one test. IDs (`CC-01`…`CC-430`) are **stable**: test names reference them, so
 they are never renumbered — new cases append, dead cases are struck through
 with a note, and gaps stay gaps.
 
@@ -1802,7 +1802,8 @@ The IDs between CC-334 and CC-340 are unused; the gap is deliberate.
   as `{ name, key, displayName }` — no email, avatar or accountId.
 - **CC-351** `filterName` is applied here on Data Center as a
   case-insensitive substring of the filter name, and echoed in the result as
-  on Cloud; a blank `filterName` filters nothing.
+  on Cloud; a blank `filterName` is refused at the schema, as on Cloud
+  (CC-430).
 - **CC-352** `maxResults` and `startAt` page the favourites here over the one
   response, with Cloud's paging semantics: `total` is the matched count,
   `partial` and `nextStartAt` say more rows remain, `stopReason` is
@@ -2137,3 +2138,14 @@ CC-232); the two cases below are what remained to state or pin.
   becomes "User Onederful" because the real User One left. The refusal names
   the cause and points at `jira_search_users`. An active exact match among
   excluded ones still wins, as before.
+
+## Twenty-second defect hunt (2026-10-14)
+
+- **CC-430** A whitespace-only narrowing argument on a list read — `query` on
+  `jira_list_projects`, `jira_list_fields`, `jira_list_components` and
+  `jira_list_versions`, `filterName` and `accountId` on `jira_list_filters` —
+  is refused at the schema. It used to pass `.min(1)`, and the api layer then
+  trimmed it to "no filter", so the read silently widened to everything while
+  the result echoed the blank value as if the narrowing held:
+  `accountId: "  "` listed every owner's filters. A padded value is trimmed at
+  the schema too, so the echo names what was matched.

@@ -1151,3 +1151,14 @@ test('[CC-195] a digit-string id past the safe integer range is refused, not rou
     true,
   );
 });
+
+test('CC-430: a whitespace-only query is refused, not dropped into a full list', () => {
+  for (const tool of [listComponentsTool, listVersionsTool]) {
+    assert.equal(
+      tool.input.safeParse({ project: 'ABC', query: ' \t ' }).success,
+      false,
+      tool.name,
+    );
+    assert.equal(tool.input.safeParse({ project: 'ABC', query: 'x' }).success, true);
+  }
+});

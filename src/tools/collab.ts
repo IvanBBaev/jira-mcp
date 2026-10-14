@@ -455,6 +455,9 @@ const listComponentsInput = toolInput({
   project: projectArg,
   query: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the read (CC-430).
+    .trim()
     .min(1)
     .optional()
     .describe('Literal substring matched against component name and description.'),
@@ -629,6 +632,9 @@ const listVersionsInput = toolInput({
   project: projectArg,
   query: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the read (CC-430).
+    .trim()
     .min(1)
     .optional()
     .describe('Literal substring matched against version name and description.'),

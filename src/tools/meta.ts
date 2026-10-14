@@ -110,6 +110,9 @@ function metaPaging(loop: ClassicLoopResult<unknown>): PagingInfo {
 const listProjectsInput = toolInput({
   query: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the read (CC-430).
+    .trim()
     .min(1)
     .optional()
     .describe(
@@ -219,6 +222,9 @@ export const getProjectTool = defineTool<
 const listFieldsInput = toolInput({
   query: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the read (CC-430).
+    .trim()
     .min(1)
     .optional()
     .describe(

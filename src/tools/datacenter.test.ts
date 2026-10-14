@@ -1682,9 +1682,8 @@ test('[CC-351] filterName is applied client-side on Data Center, case-insensitiv
   assert.equal(data.filterName, 'OPEN');
   assert.equal(data.paging['total'], 2);
 
-  // A blank name is "no filter", exactly as on Cloud.
-  const blank = await run(listFiltersTool, { filterName: '   ' }, ctxOf(jira));
-  assert.equal((blank.data as FilterListShape).count, 3);
+  // A blank name is refused before any request, exactly as on Cloud (CC-430).
+  assert.equal(listFiltersTool.input.safeParse({ filterName: '   ' }).success, false);
 });
 
 test('[CC-352] maxResults and startAt page the favourites client-side, with Cloud paging semantics', async () => {

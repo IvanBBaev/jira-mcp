@@ -758,3 +758,13 @@ test('[CC-253] an unpaginated list does not promise completeness past the charac
     assert.match(tool.description, /`truncated` hint/, tool.name);
   }
 });
+
+test('CC-430: a whitespace-only query is refused, not dropped into a full list', () => {
+  for (const tool of [listProjectsTool, listFieldsTool]) {
+    assert.equal(tool.input.safeParse({ query: '   ' }).success, false, tool.name);
+    const padded = tool.input.safeParse({ query: ' alpha ' });
+    assert.equal(padded.success, true, tool.name);
+    // The echo then names what was really matched.
+    assert.deepEqual(padded.data, { query: 'alpha' }, tool.name);
+  }
+});

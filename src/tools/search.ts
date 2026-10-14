@@ -498,6 +498,9 @@ export interface FilterListData {
 const listFiltersInput = toolInput({
   filterName: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the read (CC-430).
+    .trim()
     .min(1)
     .optional()
     .describe(
@@ -506,6 +509,9 @@ const listFiltersInput = toolInput({
     ),
   accountId: z
     .string()
+    // Trimmed so a blank value is refused here instead of reaching the api
+    // layer, which would drop it and silently widen the read (CC-430).
+    .trim()
     .min(1)
     .optional()
     .describe(
