@@ -250,6 +250,27 @@ const doubleNoteTool = defineTool({
   },
 });
 
+/** Sorts its argument in place before writing, as a normalising handler might. */
+const sortingTool = defineTool({
+  name: 'jira_test_sorting_write',
+  title: 'Test sorting write',
+  description: 'Sorts the ids in place, then writes them.',
+  package: 'issues-write',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  writeTier: 'standard',
+  input: writeToolInput({ ids: z.array(z.string()) }),
+  async handler(args, ctx) {
+    args.ids.sort();
+    await ctx.jira({ method: 'POST', path: '/thing', body: { ids: args.ids } });
+    return ok({ written: args.ids });
+  },
+});
+
 function callOf(
   tool: AnyToolSpec,
   args: Record<string, unknown>,
@@ -924,6 +945,31 @@ test('apply: true in plan mode is ignored, and the hint says so', async () => {
   assert.equal(isPlanResult(result), true);
   assert.deepEqual(fake.calls, []);
   assert.ok((result.hints ?? [])[0]?.message.includes('JIRA_WRITE_MODE=plan'));
+});
+
+test('[CC-552] a handler that sorts its arguments in place does not void its own plan', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on('POST /rest/api/3/thing', jiraOk({}));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+
+  const planned = await gate.execute(
+    callOf(sortingTool, { ids: ['B', 'A'] }, {}, fake.fn),
+  );
+  assert.equal(isPlanResult(planned), true);
+  const applied = await gate.execute(
+    callOf(
+      sortingTool,
+      { ids: ['B', 'A'] },
+      { apply: true, plan_id: planIdOf(planned) },
+      fake.fn,
+    ),
+  );
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+  assert.equal(fake.calls.length, 1);
 });
 
 test('[CC-550] the plan-mode hint names the operator restart, not a re-invocation that only plans again', async () => {

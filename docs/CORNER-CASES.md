@@ -2739,3 +2739,9 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   operator has to restart the server with `JIRA_WRITE_MODE=apply`, and that the
   tool must then be planned again, because the `plan_id` dies with the process.
   Under `apply` the hint still names the exact re-invocation.
+- **CC-552** The plan fingerprint is taken before the handler runs, as the
+  apply fingerprint always was. A handler that normalised its arguments in
+  place (say, sorting an id list) used to make plan fingerprint the sorted
+  list and apply the caller's order, so an apply with identical arguments was
+  refused as drifted and burned its `plan_id`. No shipped handler does this
+  today; the gate no longer depends on that.

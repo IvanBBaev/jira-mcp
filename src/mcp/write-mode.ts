@@ -698,6 +698,9 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
   const store = deps.store ?? createPlanStore(deps.rng);
 
   const plan = async (call: WriteGateCall): Promise<ToolResult<unknown>> => {
+    // Taken before the handler runs, as apply takes it, so a handler that
+    // normalises its arguments in place cannot make plan and apply disagree (CC-552).
+    const fingerprint = planFingerprint(call.tool.name, call.args, call.control.profile);
     const capture = createPlanCapture(call.jira, deps.redact);
     let handlerResult: ToolResult<unknown> | undefined;
     try {
@@ -716,7 +719,7 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
     const digest = capture.payload;
     const planId = store.issue({
       tool: call.tool.name,
-      fingerprint: planFingerprint(call.tool.name, call.args, call.control.profile),
+      fingerprint,
       ...(digest === undefined ? {} : { payload: digest }),
     });
     const base: PlanPayload = { executed: false, planned, plan_id: planId };
