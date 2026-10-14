@@ -1358,6 +1358,22 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         return { status, headers, data: undefined as T };
       }
       const parsed = parseJson(text);
+      if (!parsed.ok && !replayable) {
+        // A 2xx on an unsafe write may mean Jira applied it and a proxy mangled
+        // the reply, or that a login page answered and nothing landed. Either
+        // way "a proxy is answering" invites a resend, and a resend of a create
+        // is a duplicate — so it is reported the CC-205 way (CC-482).
+        logger.emit('ambiguous_write', { method, pathTemplate: route });
+        throw fail({
+          kind: 'ambiguous_write',
+          message: `${method} ${route} was answered with HTTP ${String(status)}, but the body was not JSON, so it is unknown whether Jira applied the change. It was NOT retried.`,
+          httpStatus: status,
+          detail: text.trim(),
+          retryable: false,
+          remediation:
+            'Read the issue back (or search for it) to find out whether the change landed before sending it again. If a proxy or login page is answering instead of Jira, check JIRA_SITE and any corporate proxy.',
+        });
+      }
       if (!parsed.ok) {
         throw fail({
           kind: 'unexpected_shape',

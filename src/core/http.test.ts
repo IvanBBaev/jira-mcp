@@ -1111,6 +1111,24 @@ test('a 200 with a non-JSON body is unexpected_shape, not a crash', async () => 
   });
 });
 
+test('[CC-482] an unsafe write answered 2xx with a non-JSON body is ambiguous, not a proxy error', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.enqueue({ status: 201, text: '{"id":"10001","key":"PR' });
+    const { request, clock, logger } = harness();
+
+    const err = await rejects(
+      clock,
+      request({ method: 'POST', path: '/issue', body: { summary: 'x' } }),
+    );
+    assert.equal(mock.requests.length, 1, 'a write is never replayed');
+    assert.equal(err.kind, 'ambiguous_write');
+    assert.equal(err.httpStatus, 201);
+    assert.equal(err.retryable, false);
+    assert.match(err.message, /unknown whether Jira applied/);
+    assert.equal(logger.has('ambiguous_write'), true);
+  });
+});
+
 test('a 200 with an empty body yields undefined data', async () => {
   await withFetch(async (mock: FetchMock) => {
     mock.enqueue({ status: 200, text: '' });

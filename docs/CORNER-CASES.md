@@ -2209,3 +2209,8 @@ CC-232); the two cases below are what remained to state or pin.
   fallback says. The resolver used to hand it the host `loadSettings` had
   resolved — the ACTIVE profile's site — so profile B's email and token were
   signed to profile A's tenant, while `doctor` reported `JIRA_SITE`.
+- **CC-482** An unsafe write that Jira answers 2xx with a body that is not
+  JSON (a truncated or proxy-mangled reply) is `ambiguous_write`, not
+  `unexpected_shape`: the change may have landed, so the error says it is
+  unknown whether Jira applied it, was not retried, and to read the issue
+  back before sending it again. A read keeps `unexpected_shape`.
