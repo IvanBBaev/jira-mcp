@@ -140,7 +140,10 @@ const formatArg = z
 const getIssueInput = toolInput({
   issue: issueArg,
   fields: z
-    .array(z.string().min(1))
+    // Entries are trimmed so a blank one is refused here instead of reaching
+    // the api layer, which would drop it, widen the read to every navigable
+    // field and skip the fields_defaulted hint (CC-491).
+    .array(z.string().trim().min(1))
     .optional()
     .describe(
       'Field ids or names to return, verbatim (summary, status, assignee, ' +
@@ -148,7 +151,7 @@ const getIssueInput = toolInput({
         'jira_list_fields.',
     ),
   expand: z
-    .array(z.string().min(1))
+    .array(z.string().trim().min(1))
     .optional()
     .describe(
       'Jira expand sections — "changelog" for the recent change history, ' +
@@ -156,7 +159,7 @@ const getIssueInput = toolInput({
         'data.expanded). Users inside them are projected like fields.',
     ),
   properties: z
-    .array(z.string().min(1))
+    .array(z.string().trim().min(1))
     .optional()
     .describe('Issue property keys to fetch alongside the fields.'),
   raw: z

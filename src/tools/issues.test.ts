@@ -445,6 +445,21 @@ test('jira_get_issue does not hint fields_defaulted when fields were named', asy
   assert.deepEqual(hintCodes(result), ['untrusted_content']);
 });
 
+test('CC-491: a blank fields, expand or properties entry is refused, not dropped into a wider read', () => {
+  for (const key of ['fields', 'expand', 'properties']) {
+    for (const blank of ['', '   ']) {
+      assert.equal(
+        getIssueTool.input.safeParse({ issue: KEY, [key]: ['summary', blank] }).success,
+        false,
+        `${key}: ${JSON.stringify(blank)} must be refused`,
+      );
+    }
+  }
+  const padded = getIssueTool.input.safeParse({ issue: KEY, fields: [' summary '] });
+  assert.equal(padded.success, true);
+  assert.deepEqual((padded.data as { fields: string[] }).fields, ['summary']);
+});
+
 test('jira_get_issue forwards expand and properties verbatim', async () => {
   const fake = createFakeJiraRequest().on(ISSUE_ROUTE, jiraOk(ISSUE_BODY));
 

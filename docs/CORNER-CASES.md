@@ -2159,3 +2159,9 @@ CC-232); the two cases below are what remained to state or pin.
   catalogue. The matched rows are now windowed client-side with Cloud's paging
   semantics — `max_pages`, `partial` and `nextStartAt` when rows remain — as
   CC-352 does for the favourite filters.
+- **CC-491** A blank entry in `jira_get_issue`'s `fields`, `expand` or
+  `properties` is refused at the schema. `fields: [" "]` used to pass
+  `.min(1)`; the api layer dropped it, so the read widened to every navigable
+  field and the `fields_defaulted` hint stayed silent because the raw array
+  was non-empty. Entries are trimmed at the schema, as CC-430 does for the
+  list reads.
