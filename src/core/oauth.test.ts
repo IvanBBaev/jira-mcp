@@ -40,6 +40,7 @@ import {
   ACCESSIBLE_RESOURCES_PATH,
   DEFAULT_PROFILE_KEY,
   LOCKED_REFRESH_TIMEOUT_MS,
+  MAX_TRUSTED_TOKEN_LIFETIME_S,
   OAUTH_AUDIENCE,
   PKCE_VERIFIER_BYTES,
   TERMINAL_TOKEN_ERRORS,
@@ -768,6 +769,27 @@ describe('parseTokenResponse', () => {
       assert.equal(error.kind, 'unexpected_shape');
       assert.match(error.message, /expires_in/);
     }
+  });
+
+  it('[CC-531] caps an expires_in too large to refresh before, so the token stays storable', () => {
+    for (const expires of [1e308, '1e308', 10 * 365 * 86_400]) {
+      const tokens = parseTokenResponse(
+        { access_token: 'at-1', expires_in: expires },
+        5_000,
+      );
+      assert.equal(
+        tokens.expiresAt,
+        5_000 + MAX_TRUSTED_TOKEN_LIFETIME_S * 1000,
+        String(expires),
+      );
+      assert.equal(
+        (JSON.parse(JSON.stringify(tokens)) as { expiresAt: unknown }).expiresAt,
+        tokens.expiresAt,
+      );
+    }
+    // At or below the ceiling the reported value is used exactly.
+    const day = parseTokenResponse({ access_token: 'at-1', expires_in: 86_400 }, 0);
+    assert.equal(day.expiresAt, 86_400_000);
   });
 
   it('accepts a numeric expires_in delivered as a string', () => {

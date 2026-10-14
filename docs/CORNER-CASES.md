@@ -2268,3 +2268,9 @@ CC-232); the two cases below are what remained to state or pin.
   throttling. A repeated HTTP-date is split before each day name; a value that
   is neither form (`0x10`, `1e3`, a mixed list) is unparseable and gets the
   ordinary backoff.
+- **CC-531** An OAuth `expires_in` above 24 hours is capped at 24 hours
+  (`MAX_TRUSTED_TOKEN_LIFETIME_S`); a smaller one is still used exactly as
+  reported. Refresh is proactive only, so a lifetime too large ever to reach
+  kept a dead access token in use until `login`, and `1e308` became
+  `expiresAt: Infinity` — written to the token store as `null`, which the next
+  read refused as damaged.

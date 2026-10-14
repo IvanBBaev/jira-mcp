@@ -355,7 +355,10 @@ repo does not fill documentation gaps with folklore.
 
 - **The access-token lifetime is NOT DOCUMENTED.** No number appears anywhere in
   Atlassian's 3LO pages — the familiar "one hour" is community lore. The
-  reported `expires_in` is read at runtime and never hardcoded.
+  reported `expires_in` is read at runtime and never hardcoded. It is taken at
+  its word up to a 24-hour ceiling (`MAX_TRUSTED_TOKEN_LIFETIME_S`); a larger
+  value is refreshed at 24 hours, because refresh is proactive only and a token
+  past its real expiry would otherwise stay in use (CC-531).
 - **An absolute refresh-token expiry is NOT DOCUMENTED.** Only the rolling
   90-day inactivity window is published; do not assume a hard cap behind it.
 - **`token_type` never appears in any documented response**, although `Bearer` is

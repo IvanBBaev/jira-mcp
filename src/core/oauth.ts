@@ -105,6 +105,17 @@ export const ACCESSIBLE_RESOURCES_PATH = '/oauth/token/accessible-resources';
  */
 export const TOKEN_REFRESH_SKEW_MS = 120_000;
 
+/**
+ * The longest `expires_in` taken at its word: 24 hours.
+ *
+ * A ceiling, not a lifetime — a shorter reported value is used exactly as
+ * reported. Refresh is proactive only (no refresh on 401), so a lifetime too
+ * large to ever reach would leave a dead access token in use until `login`,
+ * and one large enough to overflow (`1e308`) became `expiresAt: Infinity`,
+ * which the store wrote as `null` and then refused to read (CC-531).
+ */
+export const MAX_TRUSTED_TOKEN_LIFETIME_S = 86_400;
+
 /** Store key for a call that names no profile. */
 export const DEFAULT_PROFILE_KEY = 'default';
 
@@ -589,7 +600,7 @@ function parseExpiresIn(value: unknown): number | undefined {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
     return undefined;
   }
-  return seconds;
+  return Math.min(seconds, MAX_TRUSTED_TOKEN_LIFETIME_S);
 }
 
 /**
