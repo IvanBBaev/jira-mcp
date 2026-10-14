@@ -25,6 +25,7 @@
 import assert from 'node:assert/strict';
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   open,
@@ -485,6 +486,36 @@ test('CC-69: the store refuses a symlink whose target leaves the directory', asy
       assert.equal(error.kind, 'validation');
       assert.match(error.message, /symbolic link/i);
     });
+  });
+});
+
+test('CC-502: the store refuses a hard link to a file outside the directory', async () => {
+  await withTempDir(async (dir) => {
+    await withTempDir(async (outside) => {
+      // `lstat` sees a hard link as an ordinary file, so the CC-69 symlink guard
+      // never fires: the bytes of ~/.ssh/id_rsa would go to Jira as notes.txt.
+      const secret = join(outside, 'id_rsa');
+      await writeFile(secret, 'PRIVATE KEY MATERIAL');
+      await link(secret, join(dir, 'notes.txt'));
+
+      const store = createNodeMediaStore(dir);
+      const error = await caught(() => store.read('notes.txt'));
+
+      assert.equal(error.kind, 'validation');
+      assert.match(error.message, /hard link/i);
+      assert.equal(error.message.includes('PRIVATE KEY'), false);
+    });
+  });
+});
+
+test('CC-502: a plain file with a single name still reads', async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(join(dir, 'plain.txt'), 'AB');
+
+    const read = await createNodeMediaStore(dir).read('plain.txt');
+
+    assert.deepEqual([...read.bytes], [65, 66]);
+    assert.equal(read.path, join(dir, 'plain.txt'));
   });
 });
 

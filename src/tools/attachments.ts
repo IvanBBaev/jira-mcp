@@ -20,9 +20,11 @@
 //   2. a download NEVER overwrites: `open(…, 'wx')` fails on collision and the
 //      store picks `name-1.ext`, reporting the name it really used;
 //   3. an upload names a file that must already be in the directory. The model
-//      cannot pass a path, and a symlink in the directory is resolved and
-//      refused if it leaves it, so it cannot make this server read
-//      `~/.ssh/id_rsa` either directly or through a link someone left behind.
+//      cannot pass a path, a symlink in the directory is resolved and refused
+//      if it leaves it, and a hard link is refused outright (CC-502), so it
+//      cannot make this server read `~/.ssh/id_rsa` either directly or through
+//      a link someone left behind. The checks and the read share one
+//      descriptor, opened without following a link.
 //
 // WHY `jira_download_attachment` IS A READ (D-row in the WP-70 handoff). It
 // mutates local disk, which reads like a write — but `readOnlyHint: false` in
@@ -38,7 +40,8 @@
 // is where a filesystem and a media directory legally enter the program.
 // ---------------------------------------------------------------------------
 
-import { lstat, open, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, realpath, rm, stat, type FileHandle } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import {
@@ -182,41 +185,50 @@ export function createNodeMediaStore(dir: string): MediaStore {
 
     async read(name: string): Promise<MediaReadResult> {
       const path = pathOf(name);
-      let size: number;
+      let handle: FileHandle | undefined;
       try {
         // `stat` follows symlinks, so the prefix check on the NAME proves
         // nothing about the bytes: a link sitting in the directory can point
         // at ~/.ssh/id_rsa and still look like a regular file. Look at the
         // link itself first and resolve it only to reject it.
         const link = await lstat(path);
-        if (link.isSymbolicLink()) await assertLinkStaysInside(path, root, name);
-        const info = link.isSymbolicLink() ? await stat(path) : link;
-        if (!info.isFile()) {
+        const target = link.isSymbolicLink()
+          ? await assertLinkStaysInside(path, root, name)
+          : path;
+        // Checked by name BEFORE opening: `open` on a FIFO would wait for a
+        // writer, and `O_NONBLOCK` below is only the second lock on that.
+        assertRegularFile(link.isSymbolicLink() ? await stat(target) : link, name);
+        // From here on everything is read off ONE descriptor, so a name swapped
+        // for a link between the checks above and the read cannot redirect it:
+        // `O_NOFOLLOW` refuses a link in the last component (ELOOP).
+        handle = await open(target, constants.O_RDONLY | NO_FOLLOW | NON_BLOCK);
+        const info = await handle.stat();
+        assertRegularFile(info, name);
+        // A hard link is a regular file whose bytes may live anywhere on the
+        // volume — the same escape as a symlink, invisible to `lstat` (CC-502).
+        if (info.nlink > 1) {
           throw createJiraError({
             kind: 'validation',
-            reason: `"${name}" is not a regular file.`,
+            reason: `"${name}" is a hard link (${String(info.nlink)} names share its contents), so its bytes may come from outside the media directory.`,
             remediation:
-              'Upload a plain file from JIRA_MEDIA_DIR — directories, symlink targets outside it and devices are not attachments.',
+              'Copy the file into JIRA_MEDIA_DIR instead of linking it, then upload the copy.',
           });
         }
-        size = info.size;
-      } catch (error) {
-        throw readFailure(error, root, name);
-      }
-      // Stat BEFORE read: refusing a 4 GiB file must not require loading it.
-      if (size > MAX_ATTACHMENT_BYTES) {
-        throw createJiraError({
-          kind: 'validation',
-          reason: `"${name}" is ${String(size)} bytes, over the ${String(MAX_ATTACHMENT_BYTES)}-byte limit this server transfers.`,
-          remediation:
-            'This limit is compiled in and has no environment override. Attach the file through the Jira UI instead.',
-        });
-      }
-      try {
-        const buffer = await readFile(path);
+        // Stat BEFORE read: refusing a 4 GiB file must not require loading it.
+        if (info.size > MAX_ATTACHMENT_BYTES) {
+          throw createJiraError({
+            kind: 'validation',
+            reason: `"${name}" is ${String(info.size)} bytes, over the ${String(MAX_ATTACHMENT_BYTES)}-byte limit this server transfers.`,
+            remediation:
+              'This limit is compiled in and has no environment override. Attach the file through the Jira UI instead.',
+          });
+        }
+        const buffer = await handle.readFile();
         return { path, bytes: new Uint8Array(buffer) };
       } catch (error) {
         throw readFailure(error, root, name);
+      } finally {
+        await handle?.close();
       }
     },
   };
@@ -235,7 +247,7 @@ async function assertLinkStaysInside(
   path: string,
   root: string,
   name: string,
-): Promise<void> {
+): Promise<string> {
   const [target, realRoot] = await Promise.all([realpath(path), realpath(root)]);
   if (!isInside(target, realRoot)) {
     throw createJiraError({
@@ -243,6 +255,26 @@ async function assertLinkStaysInside(
       reason: `"${name}" is a symbolic link pointing outside the media directory.`,
       remediation:
         'Upload a real file from JIRA_MEDIA_DIR. This server never follows a link out of that directory.',
+    });
+  }
+  return target;
+}
+
+/**
+ * Open flags that do not exist on every platform (Windows has neither); a
+ * missing one contributes no bits rather than `NaN`.
+ */
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
+const NON_BLOCK = constants.O_NONBLOCK ?? 0;
+
+/** Directories, devices and FIFOs are not attachments. */
+function assertRegularFile(info: { isFile(): boolean }, name: string): void {
+  if (!info.isFile()) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `"${name}" is not a regular file.`,
+      remediation:
+        'Upload a plain file from JIRA_MEDIA_DIR — directories, symlink targets outside it and devices are not attachments.',
     });
   }
 }
@@ -334,12 +366,21 @@ function readFailure(error: unknown, root: string, name: string): Error {
       cause: error,
     });
   }
-  // EISDIR is unreachable through `read`'s own path: the `isFile()` check
-  // answers a directory — and a symlink to one — with a validation error before
-  // a byte is read. It is kept for the one case that check cannot close: a name
-  // that was a regular file at `lstat` and is a directory by the time `readFile`
-  // runs. Deleting it would leave that race to the generic fallback below, and
-  // it is the guard above that makes this dead, not the impossibility of EISDIR.
+  // A name that was a regular file at `lstat` and is a symlink by the time
+  // `open` runs: `O_NOFOLLOW` refuses it instead of reading the link's target.
+  if (code === 'ELOOP') {
+    return createJiraError({
+      kind: 'validation',
+      reason: `"${name}" turned into a symbolic link while it was being read.`,
+      remediation:
+        'Upload a real file from JIRA_MEDIA_DIR. This server never follows a link out of that directory.',
+      cause: error,
+    });
+  }
+  // EISDIR is unreachable on POSIX: a directory opens read-only, and the
+  // `isFile()` check on the descriptor refuses it. Windows refuses the `open`
+  // itself, so a name that was a file at `lstat` and a directory by the time it
+  // is opened lands here rather than in the generic fallback below.
   if (code === 'EISDIR') {
     return createJiraError({
       kind: 'validation',

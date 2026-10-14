@@ -2244,3 +2244,11 @@ CC-232); the two cases below are what remained to state or pin.
   refused at the schema. Data Center ran it as "every issue", so `jira_count`
   reported the site total as an exact count of a query nobody stated. The JQL
   is refined, not trimmed — a padded query is still sent verbatim.
+- **CC-502** A hard link in `JIRA_MEDIA_DIR` is refused by
+  `jira_upload_attachment`. `lstat` reports one as an ordinary file, so the
+  CC-69/D65 symlink guard never fired: `ln ~/.ssh/id_rsa $JIRA_MEDIA_DIR/notes.txt`
+  posted the key to Jira. Any file whose link count is above one is refused
+  (its bytes may live outside the directory; copy the file in instead). The
+  type, link-count and size checks and the read now share one descriptor
+  opened with `O_NOFOLLOW`, closing the window in which a name checked as a
+  regular file could be swapped for a symlink before `readFile` followed it.
