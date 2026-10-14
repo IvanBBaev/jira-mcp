@@ -2233,7 +2233,7 @@ CC-232); the two cases below are what remained to state or pin.
   `host_blocked` about an address nobody had typed. A dotted quad written as
   such is not reinterpreted and keeps the allowlist rules.
 
-## Search and attachments hunt (2026-10-14, CC-500…)
+## Twenty-fifth defect hunt — search and attachments (2026-10-14)
 
 - **CC-500** A whitespace-only `nextPageToken` on `jira_search` is refused at
   the schema. It used to pass `.min(1)`, and the api layer then trimmed it to
