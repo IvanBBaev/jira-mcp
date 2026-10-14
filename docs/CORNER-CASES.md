@@ -2204,3 +2204,8 @@ CC-232); the two cases below are what remained to state or pin.
   host became `https`, the dot-less name was completed to
   `https.atlassian.net`, the real host was demoted to a path stripped with
   only a warning, and the credentials went to somebody else's Cloud site.
+- **CC-481** With the profile lock off, a call naming a profile that sets no
+  site of its own goes to the top-level `JIRA_SITE`, as AUTH.md's per-field
+  fallback says. The resolver used to hand it the host `loadSettings` had
+  resolved — the ACTIVE profile's site — so profile B's email and token were
+  signed to profile A's tenant, while `doctor` reported `JIRA_SITE`.

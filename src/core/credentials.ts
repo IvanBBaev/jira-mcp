@@ -126,12 +126,22 @@ export interface CredentialDeps {
   ) => HostResolution;
 }
 
-/** The host a profile talks to: its own `site` when it sets one, else the default. */
+/**
+ * The host a profile talks to. `deps.host` is the ACTIVE profile's resolved
+ * site, so it answers only for the active profile (or no profile). Any other
+ * profile resolves its effective site — its own, else the top-level
+ * `JIRA_SITE` — rather than borrowing the active profile's: with the lock off,
+ * a profile without a site of its own must not sign its calls to another
+ * profile's tenant (CC-481).
+ */
 function profileHost(
   deps: CredentialDeps,
+  profile: ProfileConfig | undefined,
   site: string | undefined,
 ): HostRef | undefined {
-  if (site === undefined || site === '') return deps.host;
+  const active = profileOf(deps.settings, deps.settings.activeProfile);
+  if (profile?.name === active?.name) return deps.host;
+  if (site === undefined || site === '') return undefined;
   return deps.resolveHost(site, deps.settings.allowedHosts).host;
 }
 
@@ -182,7 +192,7 @@ export function buildCredentialResolver(deps: CredentialDeps): BasicCredentialRe
     }
 
     const effective = effectiveCredentials(settings, requested);
-    const host = profileHost(deps, profile?.site);
+    const host = profileHost(deps, profile, effective.site);
     const { email, apiToken } = effective;
 
     if (host === undefined || email === undefined || apiToken === undefined) {

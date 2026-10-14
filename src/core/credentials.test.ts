@@ -189,6 +189,33 @@ describe('buildCredentialResolver', () => {
     assert.equal(resolve('eu').host.origin, 'https://other.atlassian.net');
   });
 
+  it('[CC-481] a profile without a site of its own uses JIRA_SITE, not the active profile’s site', () => {
+    const settings = settingsOf({
+      allowedHosts: ['a.atlassian.net'],
+      activeProfile: 'a',
+      lockProfile: false,
+      profiles: {
+        a: { name: 'a', site: 'a.atlassian.net' },
+        b: { name: 'b', email: 'b@example.com', apiToken: 'b-token' },
+      },
+    });
+    // What loadSettings hands over: the ACTIVE profile's resolved host.
+    const resolve = buildCredentialResolver({
+      settings,
+      host: { origin: 'https://a.atlassian.net', pathPrefix: '' },
+      resolveHost: fakeResolveHost,
+    });
+
+    assert.equal(resolve().host.origin, 'https://a.atlassian.net');
+    assert.equal(resolve('a').host.origin, 'https://a.atlassian.net');
+    const b = resolve('b');
+    assert.equal(
+      b.host.origin,
+      `https://${String(effectiveCredentials(settings, 'b').site)}`,
+    );
+    assert.equal(b.host.origin, 'https://example.atlassian.net');
+  });
+
   it('refuses a profile site the allowlist rejects', () => {
     const settings = settingsOf({
       profiles: { eu: { name: 'eu', site: 'evil.example.com' } },
