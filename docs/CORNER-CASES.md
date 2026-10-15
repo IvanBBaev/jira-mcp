@@ -2318,3 +2318,24 @@ CC-232); the two cases below are what remained to state or pin.
   and its stored restriction resent; one the server cannot restate (no type,
   or neither value nor identifier) refuses the edit before the `PUT`.
   `visibility: null` lifts a restriction on purpose.
+
+## Twenty-ninth defect hunt — markdown converter (2026-10-15)
+
+- **CC-590** An ordered list renders inside nine digits on the markdown path.
+  The reader takes an ordered marker of one to nine digits (`\d{1,9}`, as
+  CommonMark does), so a list whose `attrs.order` was negative, or whose count
+  ran past 999999999, came back as paragraph text instead of a list. The
+  markdown path now clamps the start so every item number fits; the text path
+  is never parsed back and keeps the tenant's numbers.
+- **CC-591** A carriage return in tenant text is a line break, not a way out of
+  the line. The reader folds `\r\n` and a bare `\r` into `\n` before splitting
+  lines, but the renderer split on `\n` only, so a `\r` slipped past every
+  per-line rule — the block-start escape, marks per line, the one-line
+  heading, the item continuation indent: `**a\r- b**` came back as a stray
+  star and a bullet list. The markdown path now folds both before it renders;
+  the text path keeps the tenant's characters.
+- Leads checked and rejected: the loopback HTTP transport (already covered by
+  CC-114/116/117/139/164/209/234/407); a `\r` inside a code block (the fence is
+  longer than any backtick run); a newline inside a status or mention attribute
+  (already escaped). A property fuzz of the markdown fixed point (50 000 runs)
+  and of the ADF subset round trip (20 000 runs) found nothing else.
