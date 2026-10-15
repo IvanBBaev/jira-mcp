@@ -184,8 +184,19 @@ const MARKDOWN_SPECIALS = new Set(['\\', '`', '*', '[', ']']);
 
 function escapeMarkdown(text: string): string {
   let out = '';
-  for (const ch of text) out += MARKDOWN_SPECIALS.has(ch) ? `\\${ch}` : ch;
+  for (const ch of lineBreaks(text)) out += MARKDOWN_SPECIALS.has(ch) ? `\\${ch}` : ch;
   return out;
+}
+
+/**
+ * CC-591: a bare `\r` or a `\r\n` as the reader sees it — a line break. The
+ * reader folds both into `\n` before it splits lines, so one left in tenant
+ * text slipped past every per-line rule the renderer keeps (the block-start
+ * escape, marks per line, the one-line heading, the item continuation indent):
+ * `**a\r- b**` came back as a stray star and a bullet list.
+ */
+function lineBreaks(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
 }
 
 /** An attr string as the current path renders it: escaped only for markdown. */
@@ -634,7 +645,7 @@ function flatten(value: unknown, state: FlattenState): string {
     // --- inline -----------------------------------------------------------
     case 'text': {
       const text = typeof node.text === 'string' ? node.text : '';
-      return state.markdown ? applyMarks(text, node) : text;
+      return state.markdown ? applyMarks(lineBreaks(text), node) : text;
     }
     case 'hardBreak':
       return '\n';

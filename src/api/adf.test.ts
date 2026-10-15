@@ -2171,3 +2171,40 @@ test('[CC-590] markdown: an ordered start the reader cannot spell is pulled into
     '-2. a',
   );
 });
+
+test('[CC-591] markdown: a carriage return in tenant text is a line break, not a way out of the line', () => {
+  const text = (value: string, ...marks: string[]): AdfNode =>
+    marks.length === 0
+      ? { type: 'text', text: value }
+      : { type: 'text', text: value, marks: marks.map((type) => ({ type })) };
+  for (const [source, expected] of [
+    [doc(para2(text('a\r- b', 'strong'))), doc(para2(text('a\n- b', 'strong')))],
+    [doc(para2(text('a\r\n# b'))), doc(para2(text('a\n# b')))],
+    [doc(para2(text('x\ry', 'code'))), doc(para2(text('x\ny', 'code')))],
+    [
+      doc({ type: 'heading', attrs: { level: 1 }, content: [text('a\rb')] }),
+      doc({ type: 'heading', attrs: { level: 1 }, content: [text('a b')] }),
+    ],
+    [
+      doc({
+        type: 'bulletList',
+        content: [{ type: 'listItem', content: [para('a\rb')] }],
+      }),
+      doc({
+        type: 'bulletList',
+        content: [{ type: 'listItem', content: [para('a\nb')] }],
+      }),
+    ],
+    [
+      doc(para2({ type: 'status', attrs: { text: 'x\r- y' } })),
+      doc(para2(text('x\n- y'))),
+    ],
+  ] as const) {
+    const md = adfToMarkdown(source);
+    assert.doesNotMatch(md, /\r/, md);
+    assert.equal(md, adfToMarkdown(expected));
+    assert.equal(adfToMarkdown(adfFromMarkdown(md)), md);
+  }
+  // The text path is not read back and keeps the tenant's bytes.
+  assert.equal(adfToText(doc(para2(text('a\rb')))), 'a\rb');
+});
