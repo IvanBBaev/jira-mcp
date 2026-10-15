@@ -2147,3 +2147,27 @@ test('[CC-414] markdown: a list item that opens with a code block keeps it', () 
     assert.deepEqual(adfFromMarkdown(md), original, md);
   }
 });
+
+test('[CC-590] markdown: an ordered start the reader cannot spell is pulled into nine digits', () => {
+  const items = (...texts: string[]): AdfNode[] =>
+    texts.map((text) => ({ type: 'listItem', content: [para(text)] }));
+  for (const [order, kept] of [
+    [999_999_998, 999_999_997],
+    [5_000_000_000, 999_999_997],
+    [-2, 0],
+  ] as const) {
+    const md = adfToMarkdown(
+      doc({ type: 'orderedList', attrs: { order }, content: items('a', 'b', 'c') }),
+    );
+    assert.deepEqual(
+      adfFromMarkdown(md),
+      doc({ type: 'orderedList', attrs: { order: kept }, content: items('a', 'b', 'c') }),
+      md,
+    );
+  }
+  // The text path is never read back; it keeps the tenant's numbers.
+  assert.equal(
+    adfToText(doc({ type: 'orderedList', attrs: { order: -2 }, content: items('a') })),
+    '-2. a',
+  );
+});

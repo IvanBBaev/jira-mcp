@@ -162,6 +162,9 @@ function listIndent(listDepth: number): string {
 /** Deepest heading markdown can express; ADF levels are clamped into 1..6. */
 const MAX_HEADING_LEVEL = 6;
 
+/** Largest ordered marker the reader accepts: nine digits (`\d{1,9}`). */
+const MAX_ORDERED_MARKER = 999_999_999;
+
 /**
  * Schemes a `link` mark may keep as real `[text](href)` markup. Anything else —
  * `javascript:`, `data:`, a scheme Atlassian adds next year — renders as its
@@ -500,10 +503,20 @@ function renderListItem(item: unknown, marker: string, state: FlattenState): str
 function renderList(node: AdfNode, state: FlattenState): string {
   const ordered = node.type === 'orderedList';
   const rawStart = node.attrs?.order;
-  const start =
-    typeof rawStart === 'number' && Number.isFinite(rawStart) ? Math.trunc(rawStart) : 1;
-
   const items = Array.isArray(node.content) ? node.content : [];
+  let start =
+    typeof rawStart === 'number' && Number.isFinite(rawStart) ? Math.trunc(rawStart) : 1;
+  // CC-590: the reader takes an ordered marker of one to nine digits, as
+  // CommonMark does, so a negative start or a count that runs past 999999999
+  // came back as paragraph text. The markdown path numbers inside that range;
+  // the text path is never parsed back and keeps the tenant's numbers.
+  if (state.markdown && ordered) {
+    start = Math.min(
+      Math.max(start, 0),
+      Math.max(MAX_ORDERED_MARKER - (items.length - 1), 0),
+    );
+  }
+
   const childState: FlattenState = {
     ...state,
     depth: state.depth + 1,
