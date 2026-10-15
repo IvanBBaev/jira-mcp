@@ -14,16 +14,30 @@ env var names — not internal refactors.
 
 ### Added
 
-- **Jira Data Center, as an unverified read-only preview.** Set
+- **Jira Data Center, as an unverified preview.** Set
   `JIRA_DEPLOYMENT=datacenter`, `JIRA_AUTH_MODE=pat` with `JIRA_PAT` (a Data
   Center personal access token), and `JIRA_DATACENTER_PREVIEW=true`. The
-  server then serves 18 read tools — `jira_get_myself`, `jira_search`, the
-  issue, comment, transition and worklog reads, projects, fields, statuses,
-  link types, watchers, components, versions, boards, sprints and sprint
-  issues; `jira_capabilities` lists them and names the rest as unavailable. A
-  context path such as `https://jira.example.com/jira` is kept. Users come
-  back as `name`/`key`; descriptions, comments and worklog comments are
-  flattened from wiki markup to text (`raw: true` returns the markup). **It has never been run against a Data Center
+  server then serves 47 of the 58 tools — 27 reads and 20 writes;
+  `jira_capabilities` lists them and names the rest as unavailable. A
+  context path such as `https://jira.example.com/jira` is kept.
+  - Reads: everything but the bulk-task status — search and count,
+    the issue, comment, transition, changelog and worklog reads, projects,
+    fields, statuses, link types, user search, project roles, watchers,
+    components, versions, boards, sprints and sprint issues, the saved
+    filters (the list is scoped to your favourites), the create metadata (Data
+    Center 8.4 or later), and the attachment list and download.
+  - Writes, behind the usual `JIRA_WRITE_MODE` gate: issue create, update and
+    transition, comment add and edit, worklog add, issue link; assign,
+    watchers and votes; component and version create and update; sprint
+    create and start, and the moves to a sprint or the backlog. The sprint
+    close, every delete, the bulk tools and the attachment upload are not
+    served.
+  - Users come back as `name`/`key`, and the user writes take `username` in
+    place of `accountId`. Rich text is flattened from wiki markup to text on
+    read (`raw: true` returns the markup) and rendered to wiki markup on
+    write; `resolveMentions` writes `[~username]`.
+
+  **It has never been run against a Data Center
   instance** — which is why it needs the preview flag, and why
   `jira-mcp-ai doctor` (which probes a Data Center site with your PAT) is the
   first thing to run. **Nothing changes for a Cloud setup** unless you set
@@ -204,6 +218,67 @@ env var names — not internal refactors.
   worklogs instead of shortening every string or dropping `data`.
 - `jira_transition_issue` refuses a transition name that several transitions
   share, listing each one's target status, instead of picking the first.
+- `jira_update_comment` without `visibility` keeps a role- or group-restricted
+  comment restricted. Jira reads an edit that omits visibility as public, so a
+  body-only edit used to publish the comment; the stored restriction is now
+  resent, an edit that cannot restate it is refused, and `visibility: null`
+  still lifts it on purpose.
+- `jira_upload_attachment` refuses a hard link in `JIRA_MEDIA_DIR` — its
+  bytes may live outside the directory, so a hard-linked private key used to
+  upload like any other file. Copy the file in instead. The checks and the
+  read now share one descriptor opened without following symlinks.
+- `jira_upload_attachment` refuses a `contentType` that is not a printable
+  ASCII `type/subtype` mime type; one with a non-ASCII character used to be
+  shown in the plan and then sent as `application/octet-stream`.
+- `JIRA_ALLOWED_HOSTS`: a regex entry with a top-level alternation is
+  anchored as a whole on every request, as it already was at startup; the
+  attachment host check used to admit hosts such as
+  `jira.a.com.attacker.net`. A comma inside a `/…/` regex entry no longer
+  splits it in two.
+- A write that Jira answers 2xx with a body that is not JSON is reported as
+  an ambiguous write — it may have landed, it was not retried, read the issue
+  back before resending — instead of an unexpected shape.
+- `jira_bulk_delete_issues` and `jira_bulk_edit_issues` report a 2xx submit
+  without a usable `taskId` as an ambiguous write and say not to resend; they
+  used to say "Re-run the call", which would enqueue a second irreversible
+  operation over the same issues.
+- Retries honour the longest wait of a repeated `Retry-After` header (`5, 5`)
+  instead of reading the list as a date and retrying at once.
+- An OAuth token lifetime above 24 hours is capped at 24 hours, so a
+  nonsensical `expires_in` no longer keeps a dead access token in use until the
+  next `login`, or leaves a token store the next read refuses as damaged.
+- With the profile lock off, a call naming a profile that sets no site of its
+  own goes to `JIRA_SITE`, as AUTH.md says; it used to go to the active
+  profile's site, signing one profile's credentials to another tenant.
+- `JIRA_SITE` with a mistyped scheme is refused instead of being completed to
+  a different Cloud site, and one the URL parser would read as an IPv4 address
+  (`12345`, `10.1`) is refused as malformed, naming what you wrote, instead of
+  failing the allowlist on an address you never typed.
+- `jira-mcp-ai login`: on Windows the browser is opened without `cmd`, which
+  cut the authorize URL at the first `&`; `--json` prints the authorize URL
+  even when a browser was reported launched, so a headless machine is not left
+  waiting; and a scope list the authorize URL cannot carry is refused as
+  configuration with a `--json` report instead of a bare crash.
+- The `.env` save and the OAuth token store finish a short write on a nearly
+  full disk instead of renaming a truncated file over the original.
+- `jira_add_worklog`: a `started` time without an offset near a daylight
+  saving change takes the offset of its own side of the change; it was logged
+  an hour off.
+- `jira_search` and `jira_count` refuse a whitespace-only `jql`,
+  `jira_get_sprint_issues` a whitespace-only `jql`, and `jira_list_boards` a
+  blank `projectKeyOrId` (a padded one is trimmed), instead of reading
+  everything in scope. A whitespace-only `jira_search` page token is refused
+  instead of restarting at page 1.
+- `jira_get_issue` refuses a blank entry in `fields`, `expand` or
+  `properties`.
+- `jira_update_issue` refuses a label that is both added and removed in one
+  call.
+- The `issue` argument is trimmed at the schema, so write results echo the key
+  actually written to.
+- `jira_list_boards` with a project filter reports an unknown or hidden
+  project as such, not as "Jira Software is not available".
+- Data Center preview: `jira_list_components` and `jira_list_versions` honour
+  `startAt` and `maxResults` instead of returning the whole list every time.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
