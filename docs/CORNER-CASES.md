@@ -2791,6 +2791,34 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   parameter. Only an encoded `?`, `&` or `#` starts a nested parameter, so an
   encoded JQL clause (`jql=project%3DPROJ`) stays.
 
+## Forty-seventh defect hunt — HTTP transport (2026-10-16)
+
+- **CC-1060** A POST body that starts with a UTF-8 byte order mark is read
+  as the SDK reads it. The transport's own capped body read (CC-139) decoded
+  with `Buffer#toString`, which keeps the BOM, so `JSON.parse` refused a body
+  the SDK's reader — the one CC-139 replaced — accepted, and a client that
+  writes one got a 400 parse error. The read now decodes with a
+  `TextDecoder`, which drops it.
+- **CC-1061** An initialize POST leaves the in-flight count (CC-234) as its
+  session registers, not when its answer is out. While a registered session
+  was still answering its initialize it counted twice — once in the session
+  map, once in flight — so with 31 sessions registered, one of them still
+  answering, the 32nd initialize got a 503 the cap did not call for.
+  Leaving the count is idempotent, so the `finally` still covers an
+  initialize that never registers.
+- Leads checked and rejected: the body is read and parsed before the SDK's
+  415 Content-Type check, so a `text/plain` body of invalid JSON gets a 400
+  instead of a 415 (a refusal either way); a `charset` parameter other than
+  UTF-8 (the SDK decodes UTF-8 regardless); an absolute-form request URL (the
+  path gate sees the pathname); a trailing-dot `Host` or `Origin` (refused,
+  the safe direction); a `null` `Origin` (refused); the sweeper deleting
+  entries while it iterates the session map (safe for a `Map`); a session
+  transport closed twice on DELETE (idempotent); a PUT without a session
+  answered 400 instead of 405 (cosmetic); a hung handler keeping its session
+  past the idle timeout (a busy session is connected, by design); `localhost`
+  resolving to `::1` while the server binds `127.0.0.1` only (clients fall
+  back to IPv4).
+
 ## Forty-eighth defect hunt — startup wiring and tool plumbing (2026-10-16)
 
 - **CC-1020** `jira_capabilities` reports the host every request goes to as
