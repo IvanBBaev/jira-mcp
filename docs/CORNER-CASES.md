@@ -2391,3 +2391,40 @@ CC-232); the two cases below are what remained to state or pin.
   numbers from 1, documented in the writer's tests); a code block inside a
   list item losing its indent (documented); emoticon, entity and escape
   coverage (complete against the reader's rules).
+
+## Thirty-third defect hunt — core settings, env lock and credentials (2026-10-16)
+
+- **CC-760** A profile name is answered only from the profiles defined. The
+  profile lookups indexed the record directly, so `constructor` (and every
+  other `Object.prototype` member) resolved to an inherited value:
+  `JIRA_ACTIVE_PROFILE=constructor` passed without `unknown_profile`, and a
+  call naming that profile passed as configured and was signed with the
+  default credentials. `profileOf` and the loader's active-profile lookup now
+  read own keys only.
+- **CC-761** A profile named `__proto__` is kept, and its API token is
+  registered with the redactor. The profile name pattern admits it, and
+  assigning that key re-parents the record instead of adding a profile, so
+  the profile vanished and its token never reached the redactor. Profiles are
+  now defined on the record, not assigned.
+- **CC-762** An atomic write steps past a temp file name a killed run left
+  behind. The temp name is the pid plus a per-process counter, and both
+  repeat — a container's server is pid 1 on every start — so a run SIGKILLed
+  between `open` and `rename` left `<target>.tmp-1-1`, and every later run's
+  first write failed `EEXIST` until someone deleted it by hand; for the token
+  store, a rotated refresh token was never saved. The writer now tries `-1`,
+  `-2`, … (sixteen names) and leaves the leftover alone, since it may still be
+  a live writer's.
+- **CC-763** `JIRA_ACTIVE_PROFILE` under `JIRA_AUTH_MODE=pat` is a startup
+  error (`profile_unsupported`). The PAT resolver refuses every profile, the
+  active one included, so the server reported itself healthy and then failed
+  every call it made.
+- **CC-764** A `JIRA_TOKEN_EXPIRES` date-time without a zone is read as UTC,
+  like a bare date. `Date.parse` read it in the host's local time, so
+  `2027-01-31T12:00` named a different instant on each machine — the drift
+  CC-142 closed for locale-shaped dates — and the expiry warning could land a
+  day early or late.
+- Leads checked and rejected: `T24:00` in `JIRA_TOKEN_EXPIRES` (ISO 8601's end
+  of day, read as the next midnight); a whitespace-only per-call profile
+  (refused as not configured); the `missing_credential` finding's `field`
+  naming `JIRA_EMAIL` while the message names the profile variable (cosmetic);
+  the env-lock refresh check-then-act window (an acknowledged residual).
