@@ -1712,6 +1712,30 @@ test('[CC-190] [CC-210] --save refuses a site, email or expiry the next start wo
   }
 });
 
+test("CC-961: --save with a blank expiry drops the replaced token's expiry", async () => {
+  const r = rig({
+    texts: {
+      [XDG_ENV_PATH]:
+        'JIRA_API_TOKEN=old\nJIRA_TOKEN_EXPIRES=2026-07-01\nexport JIRA_TOKEN_EXPIRES = 2026-07-02\nOTHER=1\n',
+    },
+  });
+  const answers = ['acme.atlassian.net', 'ops@example.com', TOKEN, ''];
+  let asked = 0;
+
+  const code = await run({
+    ...r.options,
+    argv: ['--save'],
+    prompt: () => Promise.resolve(answers[asked++] ?? ''),
+  });
+
+  assert.equal(code, EXIT_OK, r.stderr());
+  assert.equal(r.written.path, XDG_ENV_PATH);
+  const written = r.written.contents ?? '';
+  assert.doesNotMatch(written, /JIRA_TOKEN_EXPIRES/);
+  assert.match(written, new RegExp(`^JIRA_API_TOKEN=${TOKEN}$`, 'm'));
+  assert.match(written, /^OTHER=1$/m);
+});
+
 test('--save records the expiry date when one is given', async () => {
   const r = rig();
   const answers = ['acme.atlassian.net', 'ops@example.com', TOKEN, '2027-01-31'];

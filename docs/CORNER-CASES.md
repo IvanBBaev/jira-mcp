@@ -2626,3 +2626,8 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   rolled-over `2027-02-30` (as 2027-03-02) or a US-order `01/02/2027` that the
   loader refuses (CC-142, CC-415), so the report printed an `[ ok ]` countdown
   directly above the `[FAIL]` for the same value.
+- **CC-961** `doctor --save` with a blank expiry removes every
+  `JIRA_TOKEN_EXPIRES` assignment in the target file. The answer is optional,
+  so a blank one wrote no key and left the replaced token's date in place: the
+  next `doctor` warned that the token just created had expired, or counted down
+  to a date that belonged to another token.

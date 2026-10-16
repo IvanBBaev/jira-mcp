@@ -1350,8 +1350,11 @@ function isAssignmentFor(line: string, key: string): boolean {
 export function mergeEnvFile(
   existing: string | undefined,
   values: readonly (readonly [string, string])[],
+  remove: readonly string[] = [],
 ): string {
-  const lines = existing === undefined || existing === '' ? [] : existing.split('\n');
+  const lines = (
+    existing === undefined || existing === '' ? [] : existing.split('\n')
+  ).filter((line) => !remove.some((key) => isAssignmentFor(line, key)));
   // A file that ends in a newline splits to a trailing "" — appending after it
   // would open a blank line between the old keys and the new ones.
   while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
@@ -1866,10 +1869,13 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
     ['JIRA_API_TOKEN', apiToken],
     ...(expires === '' ? [] : [['JIRA_TOKEN_EXPIRES', expires] as const]),
   ] as const;
+  // A blank expiry drops the old one: it dated the token just replaced, and
+  // kept beside the new one it warned that a fresh token had expired (CC-961).
+  const removed = expires === '' ? ['JIRA_TOKEN_EXPIRES'] : [];
 
   try {
     // Read and merge under the lock, not before it (CC-239).
-    await fs.writeSecret(target, (existing) => mergeEnvFile(existing, values), {
+    await fs.writeSecret(target, (existing) => mergeEnvFile(existing, values, removed), {
       clock,
       onWarning: (message) => err(`${message}\n`),
     });

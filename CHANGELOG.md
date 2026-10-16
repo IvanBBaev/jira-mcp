@@ -282,6 +282,9 @@ env var names — not internal refactors.
 - `doctor` no longer prints a green token-expiry countdown for a
   `JIRA_TOKEN_EXPIRES` the loader refuses (`2027-02-30`, `01/02/2027`); only
   the failure is shown.
+- `doctor --save` with the expiry left blank removes the previous
+  `JIRA_TOKEN_EXPIRES` instead of keeping it beside the new token, where the
+  next check warned that the token just created had already expired.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
