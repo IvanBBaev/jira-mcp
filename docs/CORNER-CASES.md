@@ -2594,3 +2594,27 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   `recordingGate` (it carries `kind` and `httpStatus`, so CC-221 holds); the
   `reader` profile stripping writes from a package named beside it (the
   documented fail-safe direction).
+
+## Fortieth defect hunt — stdio pipes, logger, clock and telemetry (2026-10-16)
+
+- **CC-920** A closed stderr pipe no longer crashes the server. The logger
+  wrapped `process.stderr.write` in `try`/`catch`, but a write to a pipe whose
+  reader is gone does not throw: the `EPIPE` arrives as an `error` event, and
+  with no listener that is an uncaught exception — exit 1 while stdout was
+  still serving. The logger now attaches one no-op `error` listener to stderr
+  before its first write; the line is lost, as the module always promised.
+- **CC-921** A client that stops reading stdout is a `fatal` shutdown, not an
+  uncaught `EPIPE`. The SDK's stdio transport listens for errors on stdin only,
+  so a response written after the client closed its read end crashed the
+  process with a non-JSON stack on stderr and no `shutdown` line. The stdio
+  wiring now closes the server with reason `fatal` on a stdout `error`, and
+  keeps that listener after the close, since a write queued before it can
+  still fail.
+- Leads checked and rejected: stdin ending while `connect` is still pending
+  (the EOF listener is attached after `connect`, but with the SDK's real
+  `connect` stdin's `end` cannot land in between — a real server on an empty
+  stdin logs `stdin_eof` and exits 0); a `__proto__` error kind in the
+  telemetry snapshot (kinds come from the closed `JiraErrorKind` set or
+  `unknown`); the logger's fallback line skipping cid redaction (cids are
+  minted internally); timer delays above 2^31−1 ms (already clamped);
+  `newCorrelationId` widening on an out-of-contract rng (already clamped).
