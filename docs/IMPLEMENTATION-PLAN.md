@@ -23,7 +23,7 @@
 | Remaining | **20 h** Opus 5.5 (0 h workable now, 20 h blocked) |
 | Blocked by | test-account permissions (project admin, delete, bulk changes); a live `--write` run of Gate C; npm trusted publisher + token revoke (D86); leaked API token rotation; `live` Actions secrets |
 | Calibration | Phase 13.1–13.3 landed in ~1.5 h of commits (2026-09-26 13:51→15:14); defect hunts 17–20 ran ~1 h each (2026-10-10 18:43→22:43); phases 9–12 took one session of 4–5 h each |
-| Updated | 2026-10-14 at `22ee78f` |
+| Updated | 2026-10-16 at `5f605ca` |
 
 Out of target: verifying the Data Center preview against a real DC host
 (Phase 13 exit, D104/D106). It stays a labelled UNVERIFIED preview and does not
@@ -62,6 +62,7 @@ block `1.0.0`.
 ### History
 - 2026-10-13 `6484ffb` — 88.4 %, 20 h left (first run; baseline)
 - 2026-10-14 `22ee78f` — 88.4 %, 20 h left (±0 pp; 22nd hunt and CC-430 fold into D17, already `done`; no status, estimate or scope change — every remaining row is still owner/external-blocked)
+- 2026-10-16 `5f605ca` — 88.4 %, 20 h left (±0 pp; 57 commits — defect hunts 23–36 (CC-5xx–CC-8xx), the 0.9.5 changelog, CI action bumps — are quality work outside the 1.0.0 rows; no status, estimate or scope change, every remaining row still owner/external-blocked)
 <!-- release-progress:end -->
 
 ## Standing decisions
