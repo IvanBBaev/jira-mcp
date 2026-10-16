@@ -190,7 +190,12 @@ export function compileAllowlist(entries: readonly string[]): CompiledAllowlist 
       continue;
     }
 
-    const exact = entry.toLowerCase();
+    // A trailing FQDN dot names the same host, and `normalizeHost` in
+    // `http-util.ts` strips it from both sides at request time — so it is
+    // stripped here too. Refusing it would block startup over an entry the
+    // request layer accepts, and blame JIRA_ALLOWED_HOSTS for one that an OAuth
+    // origin contributed (CC-981).
+    const exact = entry.toLowerCase().replace(/\.$/, '');
     if (!HOSTNAME_RE.test(exact)) {
       problems.push(
         problem(
@@ -220,7 +225,7 @@ export function isAllowedHost(
   hostname: string,
   allowedHosts: readonly string[] = [],
 ): boolean {
-  const host = hostname.trim().toLowerCase();
+  const host = hostname.trim().toLowerCase().replace(/\.$/, '');
   if (host.length === 0) return false;
   if (isCanonicalCloudHost(host)) return true;
   return compileAllowlist(allowedHosts).matchers.some((m) => m.matches(host));

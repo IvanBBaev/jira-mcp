@@ -178,6 +178,21 @@ describe('resolveHost', () => {
 });
 
 describe('host allowlist (default deny)', () => {
+  it('accepts an exact entry or host with a trailing FQDN dot, as the request layer does [CC-981]', () => {
+    assert.deepEqual(compileAllowlist(['jira.example.com.']).problems, []);
+    assert.equal(isAllowedHost('jira.example.com', ['jira.example.com.']), true);
+    assert.equal(isAllowedHost('jira.example.com.', ['jira.example.com']), true);
+    assert.equal(isAllowedHost('jira.example.com.', ['jira.example.com.']), true);
+    assert.equal(checkHost('jira.example.com', ['jira.example.com.']), 'allowlisted');
+    const result = resolveHost('https://jira.example.com', ['jira.example.com.']);
+    assert.deepEqual(result.problems, []);
+    assert.equal(result.host?.origin, 'https://jira.example.com');
+    // Only one dot is the FQDN root; an empty label is still malformed.
+    assert.deepEqual(codes(compileAllowlist(['jira.example.com..']).problems), [
+      'allowlist_invalid_pattern',
+    ]);
+  });
+
   it('rejects a non-atlassian.net host and names JIRA_ALLOWED_HOSTS (CC-28)', () => {
     const result = resolveHost('jira.example.com');
     assert.equal(result.host, undefined);

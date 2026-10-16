@@ -254,6 +254,16 @@ describe('loadSettings — auth mode and the OAuth block', () => {
     });
   });
 
+  it('does not blame JIRA_ALLOWED_HOSTS for an OAuth origin with a trailing FQDN dot [CC-981]', () => {
+    for (const key of ['JIRA_OAUTH_AUTH_ORIGIN', 'JIRA_OAUTH_GATEWAY_ORIGIN']) {
+      const { report } = load(
+        { ...VALID_OAUTH, [key]: 'https://gateway.example.com.' },
+        PATHS,
+      );
+      assert.deepEqual(report.findings, [], key);
+    }
+  });
+
   it('parses every JIRA_OAUTH_* variable', () => {
     const { settings, report } = load(
       {
