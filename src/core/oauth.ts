@@ -181,8 +181,9 @@ function nonEmptyString(value: unknown): value is string {
  */
 function safeLabel(value: string, max = 80): string {
   const firstLine = value.split(/\r?\n/, 1)[0] ?? '';
+  // C1 as well as C0 and DEL: U+009B is a one-character CSI (CC-742).
   // eslint-disable-next-line no-control-regex
-  const cleaned = firstLine.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  const cleaned = firstLine.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim();
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
 }
 

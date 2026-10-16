@@ -713,6 +713,20 @@ describe('selectSite', () => {
     assert.equal(selectSite([bare, { ...acme }]).scopes, undefined);
   });
 
+  it('[CC-742] strips C1 controls from a site name it quotes, not only C0', () => {
+    // U+009B is a one-character CSI: a terminal that honours 8-bit controls
+    // reads `\u009b2J` as "clear the screen", just as it reads `\u001b[2J`.
+    const hostile: AccessibleSite = {
+      id: OTHER_CLOUD_ID,
+      url: 'https://beta.atlassian.net',
+      name: 'Beta\u009b2J\u0085\u001b[31m',
+    };
+    const error = throws(() => selectSite([acme, hostile]));
+    assert.equal(/[\u0080-\u009f]/.test(error.message), false);
+    assert.equal(error.message.includes('\u001b'), false);
+    assert.ok(error.message.includes('Beta 2J  [31m — https://beta.atlassian.net'));
+  });
+
   it('does not crash on a site whose url will not parse', () => {
     const broken: AccessibleSite = {
       id: OTHER_CLOUD_ID,

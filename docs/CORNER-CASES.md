@@ -2489,3 +2489,10 @@ CC-232); the two cases below are what remained to state or pin.
   first parameter, so a title-first block lost its language. `languageOf`
   now takes a bare first parameter or a `language=` parameter at any
   position; a bare value after the first stays ignored, as Jira ignores it.
+- **CC-742** A site name quoted in an OAuth refusal loses its C1 controls
+  too. `safeLabel` said it treated untrusted text the way `env-lock.ts` does,
+  but it dropped only C0 and DEL; U+0080–U+009F passed, and U+009B is a
+  one-character CSI, so a site name from the accessible-resources response
+  could still drive a terminal that honours 8-bit controls when `login`
+  printed the candidate list. It now drops C1 as well, as `stripControl` in
+  `login.ts` already did (CC-144).
