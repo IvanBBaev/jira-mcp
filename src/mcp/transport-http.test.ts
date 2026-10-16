@@ -1313,3 +1313,51 @@ test('[CC-1060] a POST body with a UTF-8 byte order mark is read as the SDK read
     assert.equal(typeof res.headers['mcp-session-id'], 'string');
   });
 });
+
+test('[CC-1061] a registered initialize still answering is not counted twice against the cap', async () => {
+  const harness = await makeHarness();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let park = false;
+  let parked = false;
+  const deps: HttpTransportDeps = {
+    ...harness.deps,
+    createServer: (): ConnectableServer => {
+      const product = harness.deps.createServer();
+      const parks = park;
+      return {
+        connect: async (transport) => {
+          await product.connect(transport);
+          if (!parks) return;
+          const deliver = transport.onmessage;
+          transport.onmessage = (message, extra): void => {
+            parked = true;
+            void gate.then(() => deliver?.(message, extra));
+          };
+        },
+        close: () => product.close(),
+      };
+    },
+  };
+  const handle = await connectHttpTransport(deps);
+  try {
+    for (let i = 0; i < HTTP_MAX_SESSIONS - 2; i += 1) await openSession(harness);
+    park = true;
+    // Registered (onsessioninitialized ran) but its answer is parked.
+    const slow = send('POST', mcpUrl(harness.port), initializeBody(), rpcHeaders());
+    await until(() => parked, 'the initialize to register and park');
+    park = false;
+    // 31 sessions exist; the 32nd is within the cap.
+    const last = await send('POST', mcpUrl(harness.port), initializeBody(), rpcHeaders());
+    assert.equal(last.status, 200, last.body);
+    release();
+    assert.equal((await slow).status, 200);
+    const over = await send('POST', mcpUrl(harness.port), initializeBody(), rpcHeaders());
+    assert.equal(over.status, 503, over.body);
+  } finally {
+    release();
+    await handle.close('sigterm');
+  }
+});

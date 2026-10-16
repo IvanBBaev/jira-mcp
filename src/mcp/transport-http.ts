@@ -261,7 +261,9 @@ export async function connectHttpTransport(
   // can still deliver an initialize while the loop awaits, and a session
   // registered after the loop copied the keys would never be closed.
   let stopping = false;
-  // Initialize POSTs between the cap check and registration (CC-234).
+  // Initialize POSTs between the cap check and registration (CC-234). A POST
+  // leaves this count as it registers, not when its answer is out, or a
+  // session still answering its initialize counts twice (CC-1061).
   let initializing = 0;
 
   const teardown = async (sid: string): Promise<void> => {
@@ -380,6 +382,12 @@ export async function connectHttpTransport(
         );
         return;
       }
+      let counted = true;
+      const uncount = (): void => {
+        if (!counted) return;
+        counted = false;
+        initializing -= 1;
+      };
       const entry: SessionEntry = {
         server: createServer(),
         transport: new StreamableHTTPServerTransport({
@@ -387,6 +395,7 @@ export async function connectHttpTransport(
           enableJsonResponse: true,
           onsessioninitialized: (sessionId: string): void => {
             sessions.set(sessionId, entry);
+            uncount();
             // A request past the `stopping` check before `close()` ran lands
             // here after close has snapshotted the map; nothing else would
             // ever tear it down (CC-235).
@@ -409,7 +418,7 @@ export async function connectHttpTransport(
         // own (400).
         await entry.transport.handleRequest(req, res, parsedBody);
       } finally {
-        initializing -= 1;
+        uncount();
         if (entry.transport.sessionId === undefined) {
           // The POST never became a session — answered above, or thrown out of
           // the SDK. Close the speculative pair either way, so neither a junk
