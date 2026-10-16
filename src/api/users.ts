@@ -773,7 +773,12 @@ async function resolveOneMention<U extends ShapedUser>(
   // CC-840 — a loop that stopped before its one page was sent read NO
   // directory, so its empty result says nothing about the name. Reported as
   // what it is; "No user matched" would send the caller to fix a spelling.
-  if (page.stopReason === 'aborted' || page.stopReason === 'budget') {
+  // A page that WAS read is never empty here (an empty page is `exhausted`),
+  // and a full one that hit the boundary is judged on its rows like any other.
+  if (
+    page.users.length === 0 &&
+    (page.stopReason === 'aborted' || page.stopReason === 'budget')
+  ) {
     throw mentionLookupStopped(name, page.stopReason);
   }
 

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { createFakeClock, createFakeJiraRequest, jiraOk } from '../core/fakes/index.js';
-import { JiraError } from '../core/types.js';
+import { JiraError, type JiraRequestSpec } from '../core/types.js';
 import {
   ASSIGNABLE_USER_SEARCH_PATH,
   DEFAULT_USER_SEARCH_MAX_RESULTS,
@@ -978,4 +978,27 @@ test('[CC-841] a mention left with no call budget is budget_exceeded before the 
     },
   );
   assert.equal(jira.calls.length, 0);
+});
+
+test('[CC-840] a full page read just as the budget ran out is still judged on its rows', async () => {
+  const clock = createFakeClock(1_000);
+  const rows = Array.from({ length: DEFAULT_USER_SEARCH_MAX_RESULTS }, (_, index) =>
+    user(`5b10a2844c20165700ede${String(100 + index)}`, `User One ${String(index)}`),
+  ); // synthetic
+  rows[0] = user('5b10a2844c20165700ede21g', 'User One'); // synthetic
+  const fake = createFakeJiraRequest().enqueue(jiraOk(rows));
+  const jira: typeof fake.fn = async <T>(spec: JiraRequestSpec) => {
+    const response = await fake.fn<T>(spec);
+    clock.advance(5_000);
+    return response;
+  };
+
+  const resolved = await resolveMentionNames({
+    jira,
+    names: ['User One'],
+    clock,
+    deadlineAt: 4_000,
+  });
+
+  assert.equal(resolved.get('User One')?.id, '5b10a2844c20165700ede21g');
 });
