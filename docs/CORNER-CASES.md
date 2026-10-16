@@ -2638,3 +2638,9 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   the shell kept winning over the one just saved: "Saved." was printed and
   the next `doctor` still failed with the old token. A value equal to the
   answer, or one the loaded file set itself, is no conflict.
+- **CC-963** With `JIRA_ENV_FILE` pointing at a missing file, the `doctor`
+  env-file probe says it looked there only and that no other location is tried
+  while the variable is set. It listed every candidate, the XDG and project
+  `.env` too, although the loader never falls through from a missing explicit
+  path; and with an injected environment it resolved the file itself, fell
+  through, and reported an XDG file as "found" that no run would load.

@@ -289,6 +289,9 @@ env var names — not internal refactors.
   environment already sets to something else. The env file never overrides a
   variable that is already set, so "Saved." printed over credentials the next
   start ignored.
+- `doctor`'s env-file line names only the `JIRA_ENV_FILE` path when that file
+  is missing, and says no other location is tried, instead of also listing the
+  fallbacks the loader never read.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

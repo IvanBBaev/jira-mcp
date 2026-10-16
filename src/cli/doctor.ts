@@ -681,6 +681,10 @@ function describeEnvFile(
   const candidates = resolveEnvFileCandidates(options);
   for (const candidate of candidates) {
     const mode = host.statFile(candidate.path);
+    // The loader stops at a missing explicit path; so does this (CC-963).
+    if (mode === undefined && candidate.source === 'explicit') {
+      return { loaded: false, candidates, problems: [] };
+    }
     if (mode !== undefined) {
       return {
         loaded: false,
@@ -952,13 +956,21 @@ const PROBES: readonly Probe[] = [
       const file = ctx.envFile;
 
       if (file.path === undefined) {
+        // A missing JIRA_ENV_FILE ends the search: naming the fallbacks too
+        // read as if they had been tried and were empty as well (CC-963).
+        const explicit = file.candidates.find(
+          (candidate) => candidate.source === 'explicit',
+        );
         // `resolveEnvFileCandidates` always ends with the project `.env`, so the
         // candidate list is never empty and "looked at …" always names a path.
         const where = file.candidates.map((candidate) => candidate.path);
         return [
           {
             status: 'info',
-            text: `no env file found; looked at ${where.map(quote).join(', ')}`,
+            text:
+              explicit === undefined
+                ? `no env file found; looked at ${where.map(quote).join(', ')}`
+                : `no env file at ${quote(explicit.path)} (JIRA_ENV_FILE); no other location is tried while it is set`,
           },
           ...findings,
         ];

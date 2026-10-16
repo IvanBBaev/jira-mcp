@@ -1801,6 +1801,44 @@ test('[CC-962] --save replaces a value the loaded env file itself set', async ()
   }
 });
 
+test('[CC-963] a missing JIRA_ENV_FILE is the only place the env-file probe says it looked', async () => {
+  const missing = '/srv/jira/missing.env';
+  // Injected env: doctor resolves the file itself, and must stop where the
+  // loader stops instead of reporting the XDG file it would never read.
+  const injected = rig({
+    env: baseEnv({ JIRA_ENV_FILE: missing }),
+    files: { [XDG_ENV_PATH]: 0o600 },
+  });
+  await run({ ...injected.options, argv: ['--offline'] });
+  assert.match(injected.stdout(), /no other location is tried while it is set/);
+  assert.equal(injected.stdout().includes(XDG_ENV_PATH), false, injected.stdout());
+
+  // `process.env`: the loader ran and refused the path itself.
+  const saved = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('JIRA_') || key === 'XDG_CONFIG_HOME') delete process.env[key];
+    }
+    Object.assign(process.env, baseEnv({ JIRA_ENV_FILE: missing }));
+    const r = rig({
+      extra: {
+        env: process.env,
+        envFileHost: { statFile: () => undefined, loadFile: () => undefined },
+      },
+    });
+    const code = await run({ ...r.options, argv: ['--offline'] });
+    assert.equal(code, EXIT_CONFIG, r.stdout());
+    assert.match(
+      r.stdout(),
+      new RegExp(`no env file at "${missing}" \\(JIRA_ENV_FILE\\); no other location`),
+    );
+    assert.equal(r.stdout().includes(XDG_ENV_PATH), false, r.stdout());
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});
+
 test('--save records the expiry date when one is given', async () => {
   const r = rig();
   const answers = ['acme.atlassian.net', 'ops@example.com', TOKEN, '2027-01-31'];
