@@ -511,8 +511,11 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   const profiles = parseProfiles(env, add);
   const activeProfileRaw = str('JIRA_ACTIVE_PROFILE');
   const activeProfileKey = activeProfileRaw?.toLowerCase();
+  // Own keys only, as in `profileOf` (CC-760): `constructor` is not a profile.
   const activeProfile =
-    activeProfileKey !== undefined ? profiles[activeProfileKey] : undefined;
+    activeProfileKey !== undefined && Object.hasOwn(profiles, activeProfileKey)
+      ? profiles[activeProfileKey]
+      : undefined;
 
   if (activeProfileRaw !== undefined && activeProfile === undefined) {
     const known = Object.keys(profiles);

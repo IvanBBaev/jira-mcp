@@ -91,6 +91,20 @@ describe('profileOf', () => {
     assert.equal(profileOf(settings, 'eu')?.name, 'eu');
   });
 
+  it('[CC-760] does not answer an Object.prototype member as a profile', () => {
+    assert.equal(profileOf(settingsOf(), 'constructor'), undefined);
+    assert.equal(profileOf(settingsOf(), '__proto__'), undefined);
+    const resolve = buildCredentialResolver({
+      settings: settingsOf(),
+      host: DEFAULT_HOST,
+      resolveHost: fakeResolveHost,
+    });
+    assert.throws(
+      () => resolve('constructor'),
+      /Profile "constructor" is not configured/,
+    );
+  });
+
   it('has nothing to look up without a name', () => {
     assert.equal(profileOf(settingsOf(), undefined), undefined);
   });

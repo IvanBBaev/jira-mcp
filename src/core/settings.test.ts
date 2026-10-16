@@ -541,6 +541,12 @@ describe('loadSettings — profiles (v1: locked single profile)', () => {
     assert.deepEqual(codes(report), ['empty_profile_value']);
   });
 
+  it('[CC-760] an active profile named after an Object.prototype member is unknown', () => {
+    const { report } = load({ ...VALID, JIRA_ACTIVE_PROFILE: 'constructor' });
+    assert.deepEqual(codes(report), ['unknown_profile']);
+    assert.match(report.errors[0]?.message ?? '', /No profiles are defined/);
+  });
+
   it('[CC-188] refuses two profile variables that differ only in case', () => {
     const { report } = load({
       ...VALID,

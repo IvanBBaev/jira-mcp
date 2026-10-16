@@ -60,14 +60,19 @@ export type CredentialSource = Pick<
  * them in upper case (`JIRA_PROFILE_EU_SITE`) and humans write them in lower
  * case; `loadSettings` keys the map by the lowercased name. Trimmed as well, the
  * same way the token store's `profileKey` is: `login --profile " work "` stored
- * under `work` while matching the DEFAULT profile's site (CC-248).
+ * under `work` while matching the DEFAULT profile's site (CC-248). Own keys
+ * only: `profiles.constructor` is `Object`, and a call naming that profile would
+ * otherwise pass as configured and be signed with the default credentials
+ * (CC-760).
  */
 export function profileOf(
   settings: CredentialSource,
   profileName: string | undefined,
 ): ProfileConfig | undefined {
   const key = profileName?.trim().toLowerCase();
-  return key === undefined ? undefined : settings.profiles[key];
+  return key !== undefined && Object.hasOwn(settings.profiles, key)
+    ? settings.profiles[key]
+    : undefined;
 }
 
 /**
