@@ -52,6 +52,7 @@ import {
   EXIT_FLOW_FAILED,
   EXIT_OK,
   LOOPBACK_HOST,
+  MAX_TIMEOUT_SECONDS,
   redirectUriFor,
   run,
   runLogout,
@@ -1075,6 +1076,34 @@ test('login rejects a --timeout that is not a positive number of seconds', async
   assert.equal(code, EXIT_CONFIG);
   assert.match(r.stderr(), /--timeout takes a positive number of seconds/);
   assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
+});
+
+test('[CC-1161] login refuses a --timeout longer than the clock can wait', async (t) => {
+  // The system clock clamps a sleep at 2^31 - 1 ms, so a longer wait ended
+  // after about 24.8 days while the message named the requested length.
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  const atCeiling = run({
+    ...r.options,
+    argv: ['--timeout', String(MAX_TIMEOUT_SECONDS)],
+    openBrowser: (): boolean => {
+      queueMicrotask(() => {
+        r.clock.advance(MAX_TIMEOUT_SECONDS * 1000);
+      });
+      return true;
+    },
+  });
+  assert.equal(await atCeiling, EXIT_FLOW_FAILED);
+
+  const code = await run({
+    ...r.options,
+    argv: ['--timeout', String(MAX_TIMEOUT_SECONDS + 1)],
+  });
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /--timeout is at most 2147483 seconds \(about 24 days\)/);
+  assert.equal(r.authorizeUrl(), undefined);
 });
 
 test('login refuses a valued option that arrived without its value', async (t) => {

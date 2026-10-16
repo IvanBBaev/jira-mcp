@@ -123,6 +123,13 @@ export const CALLBACK_PATH = '/callback';
 export const DEFAULT_TIMEOUT_SECONDS = 300;
 
 /**
+ * The longest `--timeout` the wait can honour: the system clock's `setTimeout`
+ * clamps anything past 2^31 - 1 ms, so a longer wait would end at about 24.8
+ * days while the abandon message still named the requested length (CC-1161).
+ */
+export const MAX_TIMEOUT_SECONDS = Math.floor(2_147_483_647 / 1000);
+
+/**
  * The `redirect_uri` sent to `/authorize` and repeated on the token exchange.
  *
  * Exported because it is a coupling point with the operator: Atlassian matches
@@ -271,6 +278,12 @@ function parseLoginArgs(argv: readonly string[]): ParseResult<LoginFlags> {
             return {
               ok: false,
               message: `--timeout takes a positive number of seconds, not ${JSON.stringify(taken.value)}.`,
+            };
+          }
+          if (seconds > MAX_TIMEOUT_SECONDS) {
+            return {
+              ok: false,
+              message: `--timeout is at most ${String(MAX_TIMEOUT_SECONDS)} seconds (about 24 days), not ${JSON.stringify(taken.value)}.`,
             };
           }
           timeoutSeconds = seconds;
