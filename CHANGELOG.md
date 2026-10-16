@@ -299,6 +299,15 @@ env var names — not internal refactors.
 - `jira_add_worklog` with a `started` in the years 0000–0099 renders it in the
   user's zone instead of failing with a "utcOffsetMinutes … ±14 hours" error
   about an argument the caller never passed.
+- A `JIRA_SITE` whose site name is longer than 63 characters is refused at
+  startup as malformed. It used to pass startup and `doctor`, then fail every
+  call with "not a Jira Cloud site".
+- An exact `JIRA_ALLOWED_HOSTS` entry, `JIRA_OAUTH_AUTH_ORIGIN` or
+  `JIRA_OAUTH_GATEWAY_ORIGIN` written with a trailing dot
+  (`jira.example.com.`) is accepted. In oauth mode such an origin used to block
+  startup with an error about a `JIRA_ALLOWED_HOSTS` entry you never wrote.
+- A long Jira error message or proxy error page that is cut short no longer
+  splits an emoji in half, which left text that strict JSON decoders refuse.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
