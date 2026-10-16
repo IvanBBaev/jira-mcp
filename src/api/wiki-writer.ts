@@ -13,7 +13,8 @@
 //   codeBlock                → `{code:lang}` … `{code}` (or `{noformat}`)
 //   blockquote               → `{quote}` … `{quote}`
 //   rule                     → `----`
-//   table                    → `||h||h||` / `|c|c|`
+//   table                    → `||h||h||` / `|c|c|`, a merged cell padded
+//                              with blank cells (CC-800)
 //   strong em strike code    → `*x*` `_x_` `-x-` `{{x}}`
 //   link                     → `[label|url]`
 //   mention                  → its display text (`@Name`) as LITERAL text,
@@ -626,24 +627,66 @@ function renderCell(cell: AdfNode, ctx: Ctx): string {
   return text.trim() === '' ? ' ' : text;
 }
 
+/** The widest `colspan` written out as blank cells; a wider one is refused. */
+const MAX_COLSPAN = 1000;
+
+/** A cell's `colspan` / `rowspan`: an integer of 2 or more, else 1. */
+function span(cell: AdfNode, name: 'colspan' | 'rowspan'): number {
+  const raw = cell.attrs?.[name];
+  return typeof raw === 'number' && Number.isInteger(raw) && raw > 1 ? raw : 1;
+}
+
+/**
+ * Wiki markup has no merged cells, so a spanned cell keeps its text in its
+ * first column and the columns and rows it covers are written as blank cells
+ * of its kind — every later cell stays under its own header (CC-800).
+ */
 function renderTable(node: AdfNode, ctx: Ctx): string {
   const cellCtx: Ctx = { ...deeper(ctx), cell: true };
   const rows: string[] = [];
+  // Per column: the rows a `rowspan` above still covers, and its delimiter.
+  let covered: { rows: number; delimiter: string }[] = [];
   for (const value of children(node)) {
     const row = asNode(value, deeper(ctx));
     if (row.type !== 'tableRow') {
       throw unsupported(`a "${label(row.type)}" node`, 'directly inside a table');
     }
+    const next: typeof covered = [];
     let line = '';
     let last = '|';
+    let column = 0;
+    const blank = (delimiter: string, rowsLeft: number): void => {
+      if (rowsLeft > 0) next[column] = { rows: rowsLeft, delimiter };
+      last = delimiter;
+      line += `${delimiter} `;
+      column += 1;
+    };
+    const skipCovered = (): void => {
+      for (let above = covered[column]; above !== undefined && above.rows > 0;) {
+        blank(above.delimiter, above.rows - 1);
+        above = covered[column];
+      }
+    };
     for (const cellValue of children(row)) {
       const cell = asNode(cellValue, cellCtx);
       if (cell.type !== 'tableHeader' && cell.type !== 'tableCell') {
         throw unsupported(`a "${label(cell.type)}" node`, 'directly inside a table row');
       }
-      last = cell.type === 'tableHeader' ? '||' : '|';
-      line += `${last}${renderCell(cell, cellCtx)}`;
+      skipCovered();
+      const delimiter = cell.type === 'tableHeader' ? '||' : '|';
+      const width = span(cell, 'colspan');
+      if (width > MAX_COLSPAN) {
+        throw unsupported(`a cell spanning more than ${String(MAX_COLSPAN)} columns`);
+      }
+      const rowsLeft = span(cell, 'rowspan') - 1;
+      if (rowsLeft > 0) next[column] = { rows: rowsLeft, delimiter };
+      last = delimiter;
+      line += `${delimiter}${renderCell(cell, cellCtx)}`;
+      column += 1;
+      for (let k = 1; k < width; k += 1) blank(delimiter, rowsLeft);
     }
+    skipCovered();
+    covered = next;
     if (line !== '') rows.push(`${line}${last}`);
   }
   return rows.join('\n');

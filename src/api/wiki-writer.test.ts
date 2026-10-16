@@ -759,6 +759,72 @@ test('CC-288: tables write || headers and | cells, with [ ] | inside a cell as r
   assert.equal(wikiFromAdf(doc({ type: 'table', content: [{ type: 'tableRow' }] })), '');
 });
 
+test('CC-800: a merged cell is padded with blank cells, so later cells keep their column', () => {
+  const cell = (
+    type: string,
+    text: string,
+    attrs?: Record<string, unknown>,
+  ): AdfNode => ({
+    type,
+    ...(attrs === undefined ? {} : { attrs }),
+    content: [p(t(text))],
+  });
+  const row = (...content: AdfNode[]): AdfNode => ({ type: 'tableRow', content });
+  const table = (...content: AdfNode[]): AdfNode => doc({ type: 'table', content });
+  // A colspan writes blank cells after the text; `c` stays under `C`.
+  assert.equal(
+    wikiFromAdf(
+      table(
+        row(cell('tableHeader', 'A'), cell('tableHeader', 'B'), cell('tableHeader', 'C')),
+        row(cell('tableCell', 'wide', { colspan: 2 }), cell('tableCell', 'c')),
+      ),
+    ),
+    '||A||B||C||\n|wide| |c|',
+  );
+  // A rowspan writes a blank cell of its kind in the rows below, at its column.
+  assert.equal(
+    wikiFromAdf(
+      table(
+        row(cell('tableCell', 'a1'), cell('tableHeader', 'tall', { rowspan: 3 })),
+        row(cell('tableCell', 'a2')),
+        row(cell('tableCell', 'a3')),
+        row(cell('tableCell', 'a4'), cell('tableCell', 'b4')),
+      ),
+    ),
+    '|a1||tall||\n|a2|| ||\n|a3|| ||\n|a4|b4|',
+  );
+  // Both at once cover a block.
+  assert.equal(
+    wikiFromAdf(
+      table(
+        row(
+          cell('tableCell', 'big', { colspan: 2, rowspan: 2 }),
+          cell('tableCell', 'c1'),
+        ),
+        row(cell('tableCell', 'c2')),
+        row(cell('tableCell', 'x'), cell('tableCell', 'y'), cell('tableCell', 'z')),
+      ),
+    ),
+    '|big| |c1|\n| | |c2|\n|x|y|z|',
+  );
+  // A span that is not an integer of 2 or more is no span.
+  assert.equal(
+    wikiFromAdf(
+      table(
+        row(
+          cell('tableCell', 'a', { colspan: 2.5, rowspan: '3' }),
+          cell('tableCell', 'b', { colspan: 0 }),
+        ),
+      ),
+    ),
+    '|a|b|',
+  );
+  validationError(
+    () => wikiFromAdf(table(row(cell('tableCell', 'a', { colspan: 1e9 })))),
+    /spanning more than 1000 columns/,
+  );
+});
+
 test('CC-289: quotes do not nest, and an empty heading or quote writes nothing', () => {
   const adf = doc({
     type: 'blockquote',
