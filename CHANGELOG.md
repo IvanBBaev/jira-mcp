@@ -311,6 +311,24 @@ env var names — not internal refactors.
 - Applying a `plan_id` that expired because more than 64 newer plans were made
   first is refused with a message that says so. It used to claim the plan came
   from an earlier process or was already used.
+- A profile named after an `Object.prototype` member, such as `constructor`,
+  is refused as unknown. `JIRA_ACTIVE_PROFILE=constructor` used to pass, and a
+  call naming that profile was signed with the default credentials.
+- A profile named `__proto__` is kept, and its API token is redacted from logs
+  and errors. The profile used to vanish and its token was never registered
+  with the redactor.
+- A temp file left by a run killed mid-write no longer blocks later writes of
+  the env file or the OAuth token store. Every later run's first write used to
+  fail until the leftover was deleted by hand, so a rotated refresh token was
+  never saved.
+- `JIRA_ACTIVE_PROFILE` with `JIRA_AUTH_MODE=pat` is refused at startup. The
+  server used to report itself healthy and then fail every call.
+- A `JIRA_TOKEN_EXPIRES` date-time without a zone (`2027-01-31T12:00`) is read
+  as UTC, like a bare date, instead of in the host's local time, which moved
+  the expiry warning by up to a day from one machine to the next.
+- A closed stderr or stdout pipe no longer crashes the server with an uncaught
+  `EPIPE`. A lost stderr drops diagnostics silently; a lost stdout shuts the
+  server down cleanly with a `fatal` shutdown event.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
