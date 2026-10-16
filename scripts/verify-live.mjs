@@ -90,8 +90,14 @@ const REPO_ROOT = resolve(dirname(MODULE_PATH), '..');
 const SERVER_ENTRY = join(REPO_ROOT, 'build', 'index.js');
 const RUNBOOK = 'docs/RELEASING.md (section 6, "Gate C")';
 
-/** One tool call's ceiling. Generous: a cold Jira Cloud site is slow. */
-const CALL_TIMEOUT_MS = 90_000;
+/**
+ * One tool call's ceiling. It sits above the server's own default call budget
+ * (`JIRA_CALL_BUDGET_MS`, 120 s, retry waits included), so the server — which
+ * knows whether a write already landed — answers first. It is handed to the
+ * SDK as the request timeout: without it the SDK's own 60 s default fires
+ * first and cancels the call on the server mid-apply (CC-1120).
+ */
+export const CALL_TIMEOUT_MS = 130_000;
 
 /**
  * Spawn-to-`initialize` ceiling. Startup reads configuration and nothing else
@@ -642,9 +648,11 @@ let recordingFor = '-';
  * and wrapped when the result is branded `_untrusted`, so it is the wrong thing
  * to parse.
  */
-async function call(session, name, args = {}) {
+export async function call(session, name, args = {}) {
   const result = await withTimeout(
-    session.client.callTool({ name, arguments: args }),
+    session.client.callTool({ name, arguments: args }, undefined, {
+      timeout: CALL_TIMEOUT_MS,
+    }),
     CALL_TIMEOUT_MS,
     name,
   );
@@ -2454,103 +2462,12 @@ async function residuePhase(session, flags, site) {
 async function purgePhase(session) {
   await claim('C33', 'residue purge: the deletable leftovers are removed', async () => {
     if (residue === undefined) skip('the inventory did not run');
-    const removed = [];
-    const refused = [];
-
-    for (const target of residue.issues) {
-      // Belt and braces: the inventory already anchored this, and the delete
-      // path anchors it again. A regression that widened the JQL would have to
-      // get past both to touch an issue this gate did not create.
-      if (!isGateCIssue(target.summary)) {
-        throw new Error(`refusing to delete ${target.key}: "${target.summary}"`);
-      }
-      await planAndApply(session, 'jira_delete_issue', { issue: target.key });
-      removed.push(target.key);
-    }
-
-    // The three classes D102 made deletable, issues first so nothing in the
-    // gate's own sprint or version is still referenced when they go. An error
-    // envelope here is the TENANT refusing (permissions, licence) — recorded,
-    // never retried, and the artifact keeps its row in the residue table. A
-    // plan that carries no plan_id is a defect of ours, not a refusal.
-    const attempt = async (tool, args, label) => {
-      const plan = await call(session, tool, args);
-      if (plan.ok !== true) {
-        refused.push(`${label} (${String(plan.error?.kind)})`);
-        return false;
-      }
-      const planId = plan.data?.plan_id;
-      if (typeof planId !== 'string' || planId === '') {
-        throw new Error(`${tool}: plan carried no plan_id`);
-      }
-      const applied = await call(session, tool, {
-        ...args,
-        apply: true,
-        plan_id: planId,
-      });
-      if (applied.ok !== true) {
-        refused.push(`${label} (${String(applied.error?.kind)})`);
-        return false;
-      }
-      removed.push(label);
-      return true;
-    };
-
-    const kept = { sprints: [], components: [], versions: [] };
-    for (const sprint of residue.sprints) {
-      if (!isGateCArtifact(sprint.name)) {
-        throw new Error(
-          `refusing to delete sprint ${String(sprint.id)}: "${sprint.name}"`,
-        );
-      }
-      const gone = await attempt(
-        'jira_delete_sprint',
-        { sprintId: sprint.id },
-        `sprint ${String(sprint.id)}`,
-      );
-      if (!gone) kept.sprints.push(sprint);
-    }
-    for (const component of residue.components) {
-      if (!isGateCArtifact(component.name)) {
-        throw new Error(
-          `refusing to delete component ${component.id}: "${component.name}"`,
-        );
-      }
-      const gone = await attempt(
-        'jira_delete_component',
-        { componentId: Number(component.id) },
-        `component ${component.id}`,
-      );
-      if (!gone) kept.components.push(component);
-    }
-    for (const version of residue.versions) {
-      if (!isGateCArtifact(version.name)) {
-        throw new Error(`refusing to delete version ${version.id}: "${version.name}"`);
-      }
-      const gone = await attempt(
-        'jira_delete_version',
-        { versionId: Number(version.id) },
-        `version ${version.id}`,
-      );
-      if (!gone) kept.versions.push(version);
-    }
-
-    const removedFiles = [];
-    const dir = mediaDir();
-    if (dir !== undefined) {
-      for (const name of residue.mediaFiles) {
-        await rm(join(dir, name), { force: true });
-        removedFiles.push(name);
-      }
-    }
-    residue = {
-      ...residue,
-      issues: [],
-      mediaFiles: [],
-      sprints: kept.sprints,
-      components: kept.components,
-      versions: kept.versions,
-    };
+    const { removed, removedFiles, refused, kept } = await purgeResidue(
+      session,
+      residue,
+      mediaDir(),
+    );
+    residue = { ...residue, ...kept, mediaFiles: [] };
     if (removed.length === 0 && removedFiles.length === 0 && refused.length === 0) {
       return 'nothing deletable was left';
     }
@@ -2561,6 +2478,105 @@ async function purgePhase(session) {
     if (refused.length === 0) return note;
     return `${note}; the tenant refused ${refused.join(', ')} — still in the residue table`;
   });
+}
+
+/**
+ * Delete what the inventory found, class by class, issues first so nothing in
+ * the gate's own sprint or version is still referenced when they go. An error
+ * envelope is the TENANT refusing (permissions, an issue already gone) —
+ * recorded, never retried, and the artifact keeps its row in `kept`, so one
+ * refused issue neither stops the classes after it nor leaves the residue
+ * table claiming issues that were deleted before it (CC-1121). A name the gate
+ * did not write, or a plan with no plan_id, is a defect of ours and throws.
+ *
+ * @param {{ client: { callTool: Function } }} session
+ * @param {{ issues: { key: string, summary: string }[], sprints: { id: number, name: string }[],
+ *   components: { id: string, name: string }[], versions: { id: string, name: string }[],
+ *   mediaFiles: string[] }} found
+ * @param {string | undefined} dir the media directory, if one exists
+ */
+export async function purgeResidue(session, found, dir) {
+  const removed = [];
+  const refused = [];
+
+  const attempt = async (tool, args, label) => {
+    const plan = await call(session, tool, args);
+    if (plan.ok !== true) {
+      refused.push(`${label} (${String(plan.error?.kind)})`);
+      return false;
+    }
+    const planId = plan.data?.plan_id;
+    if (typeof planId !== 'string' || planId === '') {
+      throw new Error(`${tool}: plan carried no plan_id`);
+    }
+    const applied = await call(session, tool, {
+      ...args,
+      apply: true,
+      plan_id: planId,
+    });
+    if (applied.ok !== true) {
+      refused.push(`${label} (${String(applied.error?.kind)})`);
+      return false;
+    }
+    removed.push(label);
+    return true;
+  };
+
+  const kept = { issues: [], sprints: [], components: [], versions: [] };
+  for (const target of found.issues) {
+    // Belt and braces: the inventory already anchored this, and the delete
+    // path anchors it again. A regression that widened the JQL would have to
+    // get past both to touch an issue this gate did not create.
+    if (!isGateCIssue(target.summary)) {
+      throw new Error(`refusing to delete ${target.key}: "${target.summary}"`);
+    }
+    const gone = await attempt('jira_delete_issue', { issue: target.key }, target.key);
+    if (!gone) kept.issues.push(target);
+  }
+  for (const sprint of found.sprints) {
+    if (!isGateCArtifact(sprint.name)) {
+      throw new Error(`refusing to delete sprint ${String(sprint.id)}: "${sprint.name}"`);
+    }
+    const gone = await attempt(
+      'jira_delete_sprint',
+      { sprintId: sprint.id },
+      `sprint ${String(sprint.id)}`,
+    );
+    if (!gone) kept.sprints.push(sprint);
+  }
+  for (const component of found.components) {
+    if (!isGateCArtifact(component.name)) {
+      throw new Error(
+        `refusing to delete component ${component.id}: "${component.name}"`,
+      );
+    }
+    const gone = await attempt(
+      'jira_delete_component',
+      { componentId: Number(component.id) },
+      `component ${component.id}`,
+    );
+    if (!gone) kept.components.push(component);
+  }
+  for (const version of found.versions) {
+    if (!isGateCArtifact(version.name)) {
+      throw new Error(`refusing to delete version ${version.id}: "${version.name}"`);
+    }
+    const gone = await attempt(
+      'jira_delete_version',
+      { versionId: Number(version.id) },
+      `version ${version.id}`,
+    );
+    if (!gone) kept.versions.push(version);
+  }
+
+  const removedFiles = [];
+  if (dir !== undefined) {
+    for (const name of found.mediaFiles) {
+      await rm(join(dir, name), { force: true });
+      removedFiles.push(name);
+    }
+  }
+  return { removed, removedFiles, refused, kept };
 }
 
 // ---------------------------------------------------------------------------

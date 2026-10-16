@@ -39,6 +39,7 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 import { REPO_ROOT } from '../core/fakes/fixtures.js';
+import { DEFAULT_CALL_BUDGET_MS } from '../core/settings.js';
 
 // --- the driver's contract, as this suite understands it -------------------
 
@@ -66,6 +67,33 @@ interface DriverModule {
   readonly flagCombinationError: (flags: Record<string, unknown>) => string | undefined;
   readonly runsDeletePhase: (flags: Record<string, unknown>) => boolean;
   readonly phaseList: (flags: Record<string, unknown>) => string;
+  readonly CALL_TIMEOUT_MS: number;
+  readonly call: (session: FakeSession, name: string, args?: object) => Promise<unknown>;
+  readonly purgeResidue: (
+    session: FakeSession,
+    found: Record<string, readonly object[]>,
+    dir: string | undefined,
+  ) => Promise<{
+    readonly removed: readonly string[];
+    readonly removedFiles: readonly string[];
+    readonly refused: readonly string[];
+    readonly kept: Record<string, readonly object[]>;
+  }>;
+}
+
+interface ToolCall {
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+}
+
+interface FakeSession {
+  readonly client: {
+    readonly callTool: (
+      params: ToolCall,
+      schema?: unknown,
+      options?: { readonly timeout?: number },
+    ) => Promise<{ structuredContent: unknown }>;
+  };
 }
 
 const DRIVER_URL = pathToFileURL(join(REPO_ROOT, 'scripts', 'verify-live.mjs')).href;
@@ -388,4 +416,104 @@ test('[CC-219] the banner announces a delete phase only when one runs, and --irr
     driver.flagCombinationError({ residue: true, purge: true }) ?? '',
     /needs --irreversible too/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// CC-1120 — the call ceiling reaches the SDK
+// ---------------------------------------------------------------------------
+
+test('[CC-1120] every tool call hands the SDK a timeout above the server call budget', async () => {
+  const seen: (number | undefined)[] = [];
+  const session: FakeSession = {
+    client: {
+      callTool: (_params, _schema, options) => {
+        seen.push(options?.timeout);
+        return Promise.resolve({ structuredContent: { ok: true, data: {} } });
+      },
+    },
+  };
+  await driver.call(session, 'jira_whoami');
+  // The SDK's own default is 60 s; the server may legitimately spend its whole
+  // 120 s budget (retry waits included) before it answers.
+  assert.deepEqual(seen, [driver.CALL_TIMEOUT_MS]);
+  assert.ok(driver.CALL_TIMEOUT_MS > DEFAULT_CALL_BUDGET_MS);
+});
+
+// ---------------------------------------------------------------------------
+// CC-1121 — one refused delete does not end the purge
+// ---------------------------------------------------------------------------
+
+/** A session whose deletes plan fine and whose applies follow `refuse`. */
+function purgeSession(refuse: (args: Record<string, unknown>) => string | undefined): {
+  readonly session: FakeSession;
+  readonly calls: ToolCall[];
+} {
+  const calls: ToolCall[] = [];
+  const session: FakeSession = {
+    client: {
+      callTool: (params) => {
+        calls.push(params);
+        if (params.arguments.apply !== true) {
+          return Promise.resolve({
+            structuredContent: { ok: true, data: { executed: false, plan_id: 'p1' } },
+          });
+        }
+        const kind = refuse(params.arguments);
+        return Promise.resolve({
+          structuredContent:
+            kind === undefined
+              ? { ok: true, data: { executed: true } }
+              : { ok: false, error: { kind } },
+        });
+      },
+    },
+  };
+  return { session, calls };
+}
+
+test('[CC-1121] a refused issue delete is recorded and the purge carries on', async () => {
+  const first = { key: 'SCRATCH-1', summary: REAL_SUMMARY };
+  const second = { key: 'SCRATCH-2', summary: REAL_SUMMARY };
+  const sprint = { id: 7, name: 'gate-c-45703112' };
+  const { session, calls } = purgeSession((args) =>
+    args.issue === 'SCRATCH-1' ? 'permission' : undefined,
+  );
+  const out = await driver.purgeResidue(
+    session,
+    {
+      issues: [first, second],
+      sprints: [sprint],
+      components: [],
+      versions: [],
+      mediaFiles: [],
+    },
+    undefined,
+  );
+  assert.deepEqual(out.refused, ['SCRATCH-1 (permission)']);
+  assert.deepEqual(out.removed, ['SCRATCH-2', 'sprint 7']);
+  // The refused issue keeps its residue row; the deleted one does not.
+  assert.deepEqual(out.kept.issues, [first]);
+  assert.deepEqual(out.kept.sprints, []);
+  assert.ok(
+    calls.some((c) => c.name === 'jira_delete_sprint' && c.arguments.apply === true),
+  );
+});
+
+test('[CC-1121] a summary the gate did not write still stops the purge before any delete', async () => {
+  const { session, calls } = purgeSession(() => undefined);
+  await assert.rejects(
+    driver.purgeResidue(
+      session,
+      {
+        issues: [{ key: 'SCRATCH-9', summary: 'Gate C rollout plan' }],
+        sprints: [],
+        components: [],
+        versions: [],
+        mediaFiles: [],
+      },
+      undefined,
+    ),
+    /refusing to delete SCRATCH-9/,
+  );
+  assert.equal(calls.length, 0);
 });
