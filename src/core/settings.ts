@@ -596,6 +596,17 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
         field: 'JIRA_PAT',
       });
     }
+    // The PAT resolver refuses every profile, the active one included, so a
+    // server started with one reported itself healthy and then failed every
+    // call it made (CC-763). Said here, where the report can still stop it.
+    if (activeProfileRaw !== undefined) {
+      add({
+        severity: 'error',
+        code: 'profile_unsupported',
+        message: `JIRA_ACTIVE_PROFILE is ${JSON.stringify(activeProfileRaw)}, but JIRA_AUTH_MODE=pat has no profiles: a profile carries Basic-auth credentials, and this server signs with one personal access token. Unset JIRA_ACTIVE_PROFILE.`,
+        field: 'JIRA_ACTIVE_PROFILE',
+      });
+    }
   } else {
     // In oauth mode the email/token pair signs nothing, so their absence is not
     // a problem to report — sending an operator to fix `JIRA_API_TOKEN` when the

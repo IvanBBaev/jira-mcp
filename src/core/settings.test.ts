@@ -1054,6 +1054,19 @@ describe('loadSettings — Data Center (D106)', () => {
     assert.equal(finding?.severity, 'warning');
   });
 
+  it('[CC-763] under pat, an active profile is a startup error, not a failure on every call', () => {
+    const { report } = load({
+      ...VALID_DC,
+      JIRA_DATACENTER_PREVIEW: 'true',
+      JIRA_ACTIVE_PROFILE: 'work',
+      [profileVar('work', 'SITE')]: VALID_DC.JIRA_SITE,
+    });
+    assert.equal(report.ok, false);
+    const finding = report.findings.find((f) => f.code === 'profile_unsupported');
+    assert.equal(finding?.severity, 'error');
+    assert.equal(finding?.field, 'JIRA_ACTIVE_PROFILE');
+  });
+
   it('refuses an unknown JIRA_DEPLOYMENT rather than falling back to cloud', () => {
     const { report } = load({ ...VALID, JIRA_DEPLOYMENT: 'server' });
     assert.equal(report.ok, false);
