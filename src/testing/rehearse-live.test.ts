@@ -41,6 +41,12 @@ interface RehearsalModule {
     readonly id: string;
     readonly check: (input: CheckInput) => string[];
   }[];
+  readonly spawnDriver: (
+    args: readonly string[],
+    env: Record<string, string>,
+    verbose: boolean,
+    timeoutMs?: number,
+  ) => Promise<{ exitCode: number | string; stdout: string; stderr: string }>;
 }
 
 // Computed specifiers are `any` to TypeScript — asserted, not trusted.
@@ -168,4 +174,35 @@ test('CC-1102: an unknown --pass id is refused before any pass runs', async () =
   assert.equal(run.code, 2, `exit ${String(run.code)}; stderr: ${run.stderr}`);
   assert.match(run.stderr, /no pass named Z \(passes: A B C/u);
   assert.equal(run.stdout, '', 'a pass started before the refusal');
+});
+
+// The driver, stood in for by a one-line node program.
+const driver = (
+  code: string,
+  timeoutMs?: number,
+): Promise<{ exitCode: number | string; stdout: string }> =>
+  rehearsal.spawnDriver(
+    ['-e', code],
+    { PATH: process.env['PATH'] ?? '' },
+    false,
+    timeoutMs,
+  );
+
+test('CC-1105: a driver that never exits fails its pass instead of crashing the rehearsal', async () => {
+  // It used to reject, and main() turned that into exit 2 — "set-up error" —
+  // with every later pass unrun.
+  const run = await driver(
+    "process.stdout.write('partial'); setInterval(() => {}, 1000);",
+    300,
+  );
+  assert.equal(run.exitCode, 'none (killed after 300 ms)');
+  assert.equal(run.stdout, 'partial');
+});
+
+test('CC-1105: a driver killed by a signal has no exit code, not EXIT_FAILURE', async () => {
+  // `code ?? 1` once read this as exit 1 — the code pass D expects.
+  const run = await driver("process.kill(process.pid, 'SIGKILL');");
+  assert.equal(run.exitCode, 'none (killed by SIGKILL)');
+  // The control: a real exit code still comes through as a number.
+  assert.equal((await driver('process.exit(3);')).exitCode, 3);
 });

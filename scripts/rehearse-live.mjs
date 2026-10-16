@@ -792,7 +792,7 @@ function argvFor(pass, args, recordDir) {
 /**
  * @param {Pass} pass
  * @param {object} context
- * @returns {Promise<{ pass: Pass, exitCode: number, claims: object[], failures: string[], stdout: string, stderr: string }>}
+ * @returns {Promise<{ pass: Pass, exitCode: number | string, claims: object[], failures: string[], stdout: string, stderr: string }>}
  */
 async function runPass(pass, context) {
   const fake = await startFakeJira({
@@ -876,8 +876,16 @@ async function runPass(pass, context) {
   }
 }
 
-/** @returns {Promise<{ exitCode: number, stdout: string, stderr: string }>} */
-function spawnDriver(args, env, verbose) {
+/**
+ * A driver that never exits, or dies to a signal, has no exit code — and must
+ * not be given one. `code ?? 1` once read a SIGKILL as EXIT_FAILURE, the very
+ * code pass D expects; a timeout rejected and took the whole rehearsal down as
+ * a set-up error (exit 2) instead of a regression. Both now resolve with an
+ * `exitCode` string that equals no expected code, so the pass reports it.
+ *
+ * @returns {Promise<{ exitCode: number | string, stdout: string, stderr: string }>}
+ */
+export function spawnDriver(args, env, verbose, timeoutMs = PASS_TIMEOUT_MS) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, args, {
       cwd: REPO_ROOT,
@@ -896,17 +904,27 @@ function spawnDriver(args, env, verbose) {
       stderr += chunk;
       if (verbose) process.stderr.write(chunk);
     });
+    let settled = false;
+    const settle = (exitCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ exitCode, stdout, stderr });
+    };
+    // Settled here, not on 'close': a grandchild still holding the pipes
+    // would keep 'close' from ever firing.
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      rejectPromise(new Error(`the driver did not finish within ${PASS_TIMEOUT_MS} ms`));
-    }, PASS_TIMEOUT_MS);
+      settle(`none (killed after ${String(timeoutMs)} ms)`);
+    }, timeoutMs);
     child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       rejectPromise(error);
     });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolvePromise({ exitCode: code ?? 1, stdout, stderr });
+    child.on('close', (code, signal) => {
+      settle(code ?? `none (killed by ${String(signal)})`);
     });
   });
 }
