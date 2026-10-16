@@ -2534,3 +2534,42 @@ CC-232); the two cases below are what remained to state or pin.
   `properties` passed through unshaped (app-written JSON, already under the
   untrusted brand); the Data Center changelog window arithmetic when `startAt`
   falls before or past the embedded block (D114, covered by its tests).
+
+## Thirty-eighth defect hunt — the irreversible surface (2026-10-16)
+
+Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
+`src/api/issues.ts`.
+
+- **CC-860** A before-state excerpt never cuts through a surrogate pair.
+  `excerpt` sliced comment bodies, worklog comments, component and version
+  descriptions and sprint goals at 500 UTF-16 units. When an emoji or any
+  other astral character straddled the cap, the plan put a lone high
+  surrogate in front of the human approving the delete. JSON escapes it
+  (`\ud83d`), but a client that re-encodes the text as strict UTF-8 refuses
+  it, and that plan is the one response that must render. The cut now steps
+  back one unit when it would land between the two halves, as
+  `truncateName` already does for file names (CC-150). The `…` marker and
+  `truncated: true` are unchanged.
+- **CC-861** A restricted comment or worklog states its audience in the
+  plan. The snapshot carried `jsdPublic` for a JSM internal comment, but
+  dropped `visibility`. A comment visible only to the Administrators role
+  therefore planned exactly like a public one, and the receipt, which is
+  the only record left after a delete the changelog does not record, could
+  not say who had been able to read it. Both snapshots now carry
+  `visibility: {type, value}` when Jira reports a restriction. By
+  construction the group `identifier` is not echoed, and a half-named
+  restriction is omitted rather than guessed.
+- Leads checked and rejected:
+  - The `commentIdSegment` remediation says "the comment to edit" on the
+    read and delete paths too. That is cosmetic.
+  - A self-targeted `moveIssuesTo` or swap target is refused by `notSelf`
+    only after the two before-state GETs. Nothing is written, so it costs
+    reads only.
+  - `subtaskCount: 0` when `fields.subtasks` is absent is documented
+    (CC-87).
+  - A worklog id that belongs to another issue is speculative. Its
+    `issueId` cannot be compared with a caller key without another read, and
+    there is no tenant evidence that Cloud serves it.
+  - A plan with `deleteSubtasks: false` on an issue that has subtasks is
+    certain to be refused at apply. The snapshot already shows both numbers,
+    and Jira refuses before anything is lost.
