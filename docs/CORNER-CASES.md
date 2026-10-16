@@ -2650,3 +2650,24 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   FAILED)", so a client that followed it looped forever on a task cancelled in
   the UI or marked DEAD, and read COMPLETE as "every issue succeeded" —
   `jira_get_bulk_status`'s own description says it does not.
+
+## Forty-second defect hunt — issue writes (2026-10-16)
+
+Scope: the eight issue write tools (`src/tools/issues-write.ts`) and their
+builders, executors, time helpers and shapers in `src/api/issues.ts`.
+
+- **CC-922** `utcOffsetMinutesForZone` reads years 0000–0099 as themselves.
+  It handed the Intl wall-clock year to `Date.UTC`, which maps 0–99 to
+  1900–1999, and Intl counts `0000` as `1 BC`. A `jira_add_worklog` with a
+  `started` in such a year got an offset of decades and failed with
+  "utcOffsetMinutes must be … within ±14 hours", naming an argument the caller
+  never passed.
+- Leads checked and rejected: the unbounded `said.join('; ')` in the stale
+  transition reason (the same pattern as the agile and meta refusals, and
+  `jiraMessages` carries the text anyway); the Data Center update refusing
+  `assignee: null` (deliberate; the remediation names `{name}` and
+  `jira_assign_issue`); label and extra-field key conflicts (already refused,
+  CC-162/CC-492); `resolveTransitionId` matching an id before a name (ids are
+  numeric, names are not); field errors missing from `jiraMessages` (`http.ts`
+  keeps `field: value`); a link whose inward and outward issue are the same
+  (Jira's own answer, passed through).
