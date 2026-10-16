@@ -2671,3 +2671,35 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   numeric, names are not); field errors missing from `jiraMessages` (`http.ts`
   keeps `field: value`); a link whose inward and outward issue are the same
   (Jira's own answer, passed through).
+
+## Forty-third defect hunt — host resolution and error construction (2026-10-16)
+
+- **CC-980** `resolveHost` and `isCanonicalCloudHost` refuse a DNS label
+  longer than 63 characters (`site_malformed`), as the request-time
+  `CANONICAL_JIRA_HOST` does. Their patterns had no length bound, so a
+  64-character site name passed startup and doctor as a canonical Cloud host
+  and then every call was refused with "not a Jira Cloud site and is not in
+  the allowed-host list" — the CC-231 split between the startup and the
+  request-time check, on the canonical path.
+- **CC-981** An exact `JIRA_ALLOWED_HOSTS` entry, and the hostname
+  `isAllowedHost` checks, lose one trailing FQDN dot, as `normalizeHost` does
+  at request time. `compileAllowlist` refused `jira.example.com.` as "not a
+  valid host name"; and in oauth mode a `JIRA_OAUTH_GATEWAY_ORIGIN` or
+  `JIRA_OAUTH_AUTH_ORIGIN` written with the dot was appended to the effective
+  allowlist as-is, so startup failed with an error blaming a
+  `JIRA_ALLOWED_HOSTS` entry the operator never wrote.
+- **CC-982** `bound()` in `core/errors.ts` cuts on a code-point boundary, as
+  CC-860 does for delete excerpts. A Jira error message (≥ 300 chars), a
+  non-JSON body snippet (≥ 200) or a wrapped native message with an emoji
+  across the cut kept its lone high surrogate in `message` or `detail`, which
+  strict JSON decoders in MCP clients refuse.
+- Leads checked and rejected: regex allowlist entries matching
+  case-insensitively while exact entries compare lowercase (every caller
+  lowercases the hostname first, so both agree); a gateway origin with an
+  explicit `:443` (`url.origin` drops it, so the origin compares equal to the
+  one `buildRequestUrl` recomputes); `JIRA_SITE` with a trailing dot still
+  refused as `site_malformed` (fails closed at startup with a clear message,
+  never at a call); `errorFromResponse` not falling back to the HTTP status
+  text (the reason always carries the status code); `isJiraError`'s
+  structural branch for a cross-realm error (it demands a real `Error`, a
+  catalog kind and a boolean `retryable`).
