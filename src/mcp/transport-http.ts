@@ -111,7 +111,13 @@ async function readJsonBody(req: IncomingMessage): Promise<BodyResult> {
   }
   if (overflow) return { kind: 'too_large' };
   try {
-    return { kind: 'ok', value: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+    // A `TextDecoder`, not `Buffer#toString`: it drops a leading byte order
+    // mark, as the SDK's own body reader does — the one this read replaced
+    // (CC-1060).
+    return {
+      kind: 'ok',
+      value: JSON.parse(new TextDecoder().decode(Buffer.concat(chunks))),
+    };
   } catch {
     return { kind: 'invalid' };
   }

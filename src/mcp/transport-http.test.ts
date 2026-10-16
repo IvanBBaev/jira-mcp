@@ -1299,3 +1299,17 @@ test('[CC-235] a session that registers after close() began is torn down', async
   await late;
   await until(() => serverCloses === 1, 'the late session to be torn down');
 });
+
+test('[CC-1060] a POST body with a UTF-8 byte order mark is read as the SDK reads it', async () => {
+  const harness = await makeHarness();
+  await withHandle(harness, async () => {
+    const res = await send(
+      'POST',
+      mcpUrl(harness.port),
+      `\uFEFF${initializeBody()}`,
+      rpcHeaders(),
+    );
+    assert.equal(res.status, 200, res.body);
+    assert.equal(typeof res.headers['mcp-session-id'], 'string');
+  });
+});
