@@ -792,6 +792,33 @@ test('a long comment body is excerpted and says so', async () => {
   assert.match(String(before.body), /…$/);
 });
 
+test('[CC-860] an excerpt never cuts through a surrogate pair', async () => {
+  // The emoji's high half sits at index 499, the last unit the cap keeps.
+  const long = `${'x'.repeat(499)}😀${'y'.repeat(100)}`;
+  const fake = createFakeJiraRequest().on(
+    COMMENT_ROUTE,
+    jiraOk({ ...COMMENT_BODY, body: adfDoc(long) }),
+  );
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(
+      callOf(deleteCommentTool, { issue: KEY, commentId: COMMENT_ID }, {}, fake.fn),
+    ),
+  );
+
+  assert.equal(before.bodyTruncated, true);
+  assert.equal(before.body, `${'x'.repeat(499)}…`);
+  assert.doesNotMatch(
+    String(before.body),
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+  );
+});
+
 test('a comment with no author and no timestamps still plans, with only its body', async () => {
   // A JSM portal comment from an unauthenticated customer arrives with no
   // `accountId`, so the projection has no user to name; a comment fetched from

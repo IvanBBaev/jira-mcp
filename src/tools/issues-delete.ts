@@ -281,11 +281,16 @@ interface BulkEditBefore {
   readonly edits: BulkEditsBefore;
 }
 
-/** Free text, capped. The marker is a character so the cut is visible as data. */
+/**
+ * Free text, capped. The marker is a character so the cut is visible as data.
+ * The cut lands on a code-point boundary (CC-860): a slice through a surrogate
+ * pair would leave a lone half in front of the human approving the delete.
+ */
 function excerpt(text: string): { readonly text: string; readonly truncated: boolean } {
-  return text.length <= EXCERPT_CHARS
-    ? { text, truncated: false }
-    : { text: `${text.slice(0, EXCERPT_CHARS)}…`, truncated: true };
+  if (text.length <= EXCERPT_CHARS) return { text, truncated: false };
+  const last = text.charCodeAt(EXCERPT_CHARS - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? EXCERPT_CHARS - 1 : EXCERPT_CHARS;
+  return { text: `${text.slice(0, end)}…`, truncated: true };
 }
 
 /** `{accountId?, displayName?}` from an already-projected user, or nothing. */
