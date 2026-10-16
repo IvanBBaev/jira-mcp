@@ -344,6 +344,7 @@ async function serve(): Promise<void> {
     assembled.report = buildCapabilitiesInfo({
       settings,
       selection,
+      ...(loaded.host === undefined ? {} : { host: loaded.host }),
       serverName: SERVER_NAME,
       version: SERVER_VERSION,
     });

@@ -42,7 +42,7 @@ import {
   createFakeLogger,
   createFakeRedactor,
 } from '../core/fakes/index.js';
-import type { Rng, Settings } from '../core/types.js';
+import type { HostRef, Rng, Settings } from '../core/types.js';
 import { createRegistry, selectPackages } from '../mcp/registry.js';
 import { toMcpTool } from '../mcp/server.js';
 import type {
@@ -174,10 +174,14 @@ function settingsOf(overrides: Partial<Settings> = {}): Settings {
 const countingRng: Rng = () => 0.5;
 
 /** Report assembled the way `main()` assembles it, over a given configuration. */
-function reportFor(settings: Settings): CapabilitiesInfo {
+function reportFor(
+  settings: Settings,
+  host: HostRef | null = { origin: 'https://example.atlassian.net', pathPrefix: '' },
+): CapabilitiesInfo {
   return buildCapabilitiesInfo({
     settings,
     selection: selectPackages(PACKAGES, settings),
+    ...(host === null ? {} : { host }),
     serverName: 'jira-mcp-ai',
     version: '9.9.9',
   });
@@ -419,7 +423,7 @@ describe('buildCapabilitiesInfo', () => {
 
     assert.equal(report.serverName, 'jira-mcp-ai');
     assert.equal(report.version, '9.9.9');
-    assert.equal(report.site, 'example.atlassian.net');
+    assert.equal(report.site, 'https://example.atlassian.net');
     assert.equal(report.transport, 'stdio');
     assert.equal(report.writeMode, 'apply');
     assert.equal(report.activeProfile, 'prod');
@@ -511,10 +515,33 @@ describe('buildCapabilitiesInfo', () => {
     // `jira_capabilities` is answerable before JIRA_SITE is set — it is how a
     // caller finds out the server is unconfigured. The key must be ABSENT
     // rather than `undefined`: `site` present-and-empty reads as a site.
-    const report = reportFor(settingsOf({ site: undefined }));
+    const report = reportFor(settingsOf({ site: undefined }), null);
 
     assert.equal(Object.hasOwn(report, 'site'), false);
     assert.equal(report.serverName, 'jira-mcp-ai');
+  });
+
+  test('[CC-1020] reports the host requests go to, not the raw JIRA_SITE', () => {
+    // An active profile with its own site sends every call there; the report
+    // used to name JIRA_SITE (or nothing, when only the profile set a site).
+    const work = reportFor(settingsOf({ site: 'https://default.atlassian.net' }), {
+      origin: 'https://work.atlassian.net',
+      pathPrefix: '',
+    });
+    assert.equal(work.site, 'https://work.atlassian.net');
+
+    const profileOnly = reportFor(settingsOf({ site: undefined }), {
+      origin: 'https://work.atlassian.net',
+      pathPrefix: '',
+    });
+    assert.equal(profileOnly.site, 'https://work.atlassian.net');
+
+    // A Data Center context path is part of the site.
+    const dc = reportFor(settingsOf({ site: 'jira.example.com/jira/' }), {
+      origin: 'https://jira.example.com',
+      pathPrefix: '/jira',
+    });
+    assert.equal(dc.site, 'https://jira.example.com/jira');
   });
 
   test('contains no credential-shaped field at all', () => {

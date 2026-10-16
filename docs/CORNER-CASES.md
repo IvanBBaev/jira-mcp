@@ -2790,3 +2790,13 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   a `returnUrl` carrying `%23access_token%3D…`. The raw pass saw one harmless
   parameter. Only an encoded `?`, `&` or `#` starts a nested parameter, so an
   encoded JQL clause (`jql=project%3DPROJ`) stays.
+
+## Forty-eighth defect hunt — startup wiring and tool plumbing (2026-10-16)
+
+- **CC-1020** `jira_capabilities` reports the host every request goes to as
+  `site`: the resolved origin, with a Data Center context path. It reported
+  the raw `JIRA_SITE`, so with `JIRA_ACTIVE_PROFILE` naming a profile that
+  sets its own site it named the default site while every call went to the
+  profile's — and named no site at all when only the profile set one. The
+  composition root now hands the report `loadSettings().host`, the value
+  `server_start` already logged.

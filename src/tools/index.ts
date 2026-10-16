@@ -37,7 +37,7 @@
 import { readFileSync } from 'node:fs';
 
 import { JiraError } from '../core/types.js';
-import type { Settings } from '../core/types.js';
+import type { HostRef, Settings } from '../core/types.js';
 import type { PackageSelection } from '../mcp/registry.js';
 import type { PackageSpec } from '../mcp/types.js';
 import { agilePackage } from './agile.js';
@@ -198,6 +198,14 @@ export interface CapabilitiesInput {
    * `excludedTools` (CC-29).
    */
   readonly selection: PackageSelection;
+  /**
+   * The host every request goes to (`loadSettings().host`): the active
+   * profile's site when it sets one, normalised, with a Data Center context
+   * path. Absent when no site resolved. Not `settings.site`, which is the raw
+   * `JIRA_SITE` — another site, or none, once a profile supplies its own
+   * (CC-1020).
+   */
+  readonly host?: HostRef;
   /** Defaults to {@link SERVER_NAME}; overridable so a test needs no fixture file. */
   readonly serverName?: string;
   /** Defaults to {@link SERVER_VERSION}. */
@@ -235,7 +243,7 @@ function capabilityLimits(settings: Settings): CapabilityLimits {
 /**
  * Assemble what `jira_capabilities` returns.
  *
- * Every field comes from settings or from the gated selection — nothing is read
+ * Every field comes from settings, the resolved host or the gated selection — nothing is read
  * out of the environment here, and no secret is representable in the output
  * (there is no token, no email and no profile credential in
  * {@link CapabilitiesInfo}; `site` is the only host that appears).
@@ -254,7 +262,9 @@ export function buildCapabilitiesInfo(input: CapabilitiesInput): CapabilitiesInf
   return {
     serverName: input.serverName ?? SERVER_NAME,
     version: input.version ?? SERVER_VERSION,
-    ...(settings.site === undefined ? {} : { site: settings.site }),
+    ...(input.host === undefined
+      ? {}
+      : { site: `${input.host.origin}${input.host.pathPrefix}` }),
     ...(settings.deployment === 'datacenter'
       ? {
           deployment: {

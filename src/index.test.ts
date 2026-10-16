@@ -479,7 +479,8 @@ describe('the built server over stdio', () => {
     };
     assert.equal(report.ok, true);
     assert.equal(report.data.serverName, 'jira-mcp-ai');
-    assert.equal(report.data.site, 'example.atlassian.net');
+    // The resolved host, normalised — not the raw JIRA_SITE spelling (CC-1020).
+    assert.equal(report.data.site, 'https://example.atlassian.net');
     assert.equal(report.data.writeMode, 'plan');
     assert.equal(report.data.packages.length, 10);
 
