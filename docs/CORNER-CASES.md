@@ -2428,3 +2428,21 @@ CC-232); the two cases below are what remained to state or pin.
   (refused as not configured); the `missing_credential` finding's `field`
   naming `JIRA_EMAIL` while the message names the profile variable (cosmetic);
   the env-lock refresh check-then-act window (an acknowledged residual).
+
+## Thirty-fourth defect hunt — project and create-screen metadata (2026-10-16)
+
+- **CC-820** A cascading select on the create screen keeps its child options.
+  Jira sends a `cascadingselect` field's second-level options as
+  `allowedValues[].children`, and the mapper kept only `id`, `value` and
+  `name`, so `jira_get_create_meta` listed the parents and dropped every child
+  id — a required cascading field could not be filled without guessing.
+  Each allowed value now carries `children` (id, value, name) when Jira sends
+  a non-empty list, on Cloud and Data Center alike; deeper nesting is ignored
+  (Jira's cascades are two levels), and a non-array `children` is dropped.
+- Leads checked and rejected: issue type descriptions in the create-screen
+  listing are unbranded while `jira_get_project` brands them (CC-146) — the
+  create-screen tool is metadata under TOOLS.md §Untrusted content and the
+  descriptions are site-admin authored; the Data Center status-category
+  lookup keyed by Jira's fixed `statusCategory.key`; the untrimmed `project`
+  echo on the create-screen result (a label, never sent back); the Data
+  Center 404 re-aim on a missing issue type, which stays scoped to that path.
