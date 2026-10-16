@@ -337,6 +337,19 @@ env var names — not internal refactors.
   surrounding spaces (`"EU"` against `"eu"`) is no longer refused as drifted;
   it targets the same site, and the plan fingerprint now spells the profile
   the way credentials resolve it.
+- `jira_search_users` refuses a whitespace-only `issue` or `project` instead
+  of silently widening the lookup to every user matching the name, and echoes
+  the trimmed `query`.
+- `jira_get_project` and `jira_get_create_meta` echo the trimmed `project` and
+  `issueTypeId` rather than the padded input.
+- When a large result is truncated, strings are cut at a character boundary,
+  so an emoji can no longer leave a lone surrogate that strict clients refuse
+  to decode.
+- Credentials in tool results, plan previews and logs are masked in three more
+  shapes: a value under a credential or header key (`password`, `x-api-key`,
+  `Authorization`), URL userinfo whose password contains `@` or that is a bare
+  token, and a credential parameter percent-encoded inside another URL
+  parameter.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

@@ -39,7 +39,11 @@
   envelope), and shaped results pass through it. Structural stripping of
   `Authorization` and `Cookie` echoes, URL-userinfo passwords and token-bearing
   query strings runs after value redaction, as a shape-based backstop for a
-  credential nobody registered. Because that backstop also sees issue text, a
+  credential nobody registered. The backstop also masks a value by the
+  credential or header key it sits under in structured output (CC-564), the
+  whole URL userinfo including a colon-less token (CC-565), and a credential
+  parameter percent-encoded inside another parameter's value (CC-566).
+  Because that backstop also sees issue text, a
   word after `Basic`/`Bearer`/`Authorization:`/`Cookie:` is masked only when it
   looks like a credential (a digit, a token symbol or an internal case change),
   so ordinary prose is not corrupted (CC-155). Error texts are scrubbed before
