@@ -2751,7 +2751,7 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   as drifted and burned its `plan_id`. Omitting the profile at plan and naming
   the active one at apply still counts as a change — that stays fail-safe.
 
-## Defect hunt — users, meta and the result envelope (2026-10-14)
+## Forty-sixth defect hunt — users, meta and the result envelope (2026-10-14)
 
 - **CC-560** A whitespace-only `issue` or `project` on `jira_search_users` is
   refused at the schema. The api layer trimmed it to "no scope", so a lookup
