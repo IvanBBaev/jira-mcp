@@ -965,14 +965,21 @@ async function main() {
     return EXIT_CONFIG;
   }
 
+  // Every id must name a pass. Dropping the unknown ones would let
+  // `--pass A --pass Z` run A alone and report green for a Z nobody ran.
+  const unknown = (values.pass ?? []).filter(
+    (id) => !PASSES.some((pass) => pass.id === id),
+  );
+  if (unknown.length > 0) {
+    process.stderr.write(
+      `no pass named ${unknown.join(', ')} (passes: ${PASSES.map((pass) => pass.id).join(' ')})\n`,
+    );
+    return EXIT_CONFIG;
+  }
   const selected =
     values.pass === undefined
       ? PASSES
       : PASSES.filter((pass) => values.pass.includes(pass.id));
-  if (selected.length === 0) {
-    process.stderr.write(`no pass matched ${String(values.pass)}\n`);
-    return EXIT_CONFIG;
-  }
 
   const workdir = await mkdtemp(join(tmpdir(), 'rehearse-live-'));
   const certDir = join(workdir, 'tls');
