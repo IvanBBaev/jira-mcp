@@ -947,3 +947,35 @@ test('[CC-840] a mention lookup cancelled before it was sent is a cancel, not "N
   );
   assert.equal(jira.calls.length, 0);
 });
+
+test('[CC-841] mention searches carry the tool call budget to the wire', async () => {
+  const clock = createFakeClock(1_000);
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk([user('5b10a2844c20165700ede21g', 'User One')]), // synthetic
+  );
+
+  await resolveMentionNames({
+    jira: jira.fn,
+    names: ['User One'],
+    clock,
+    deadlineAt: 4_000,
+  });
+
+  assert.equal(jira.lastRequest()?.deadlineAt, 4_000);
+});
+
+test('[CC-841] a mention left with no call budget is budget_exceeded before the wire', async () => {
+  const clock = createFakeClock(5_000);
+  const jira = createFakeJiraRequest();
+
+  await assert.rejects(
+    resolveMentionNames({ jira: jira.fn, names: ['User One'], clock, deadlineAt: 4_000 }),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'budget_exceeded');
+      assert.doesNotMatch(error.message, /No user matched/);
+      return true;
+    },
+  );
+  assert.equal(jira.calls.length, 0);
+});

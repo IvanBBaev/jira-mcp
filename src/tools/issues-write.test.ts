@@ -1235,6 +1235,25 @@ test('CC-105: @[name] resolves only when format is "markdown" AND resolveMention
   assert.deepEqual(mentionIds(body), [ANA_ID]);
 });
 
+test('[CC-841] the mention search runs inside the tool call budget', async () => {
+  const fake = createFakeJiraRequest()
+    .on(userSearchFor('Ana Petrova'), jiraOk([ANA]))
+    .on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+
+  await addCommentTool.handler(
+    {
+      issue: KEY,
+      body: 'Ping @[Ana Petrova].',
+      format: 'markdown',
+      resolveMentions: true,
+    },
+    ctxOf(fake),
+  );
+
+  const search = fake.calls.find((call) => call.path.endsWith('/user/search'));
+  assert.equal(search?.deadlineAt, NOW + 30_000);
+});
+
 test('CC-105: resolveMentions without format: "markdown" is refused at the flag itself', () => {
   for (const [name, field] of Object.entries(RICH_TEXT_FIELDS)) {
     const tool = ALL_TOOLS.find((candidate) => candidate.name === name);

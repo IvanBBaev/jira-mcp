@@ -315,8 +315,8 @@ export interface SearchUsersResult<U extends ShapedUser = JiraUser> {
   readonly emailHidden: boolean;
 }
 
-/** Options for {@link resolveMentionNames} (D100). */
-export interface ResolveMentionNamesOptions {
+/** The non-budget half of {@link ResolveMentionNamesOptions}. */
+export interface ResolveMentionNamesBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /**
@@ -329,6 +329,13 @@ export interface ResolveMentionNamesOptions {
   /** Cancellation from the MCP request. */
   readonly signal?: AbortSignal;
 }
+
+/**
+ * Options for {@link resolveMentionNames} (D100). The budget is the TOOL CALL's
+ * (CC-841): every search runs inside it, so twenty names cannot each start a
+ * fresh `JIRA_CALL_BUDGET_MS` of their own ahead of the write.
+ */
+export type ResolveMentionNamesOptions = ResolveMentionNamesBase & BudgetGuard;
 
 // ---------------------------------------------------------------------------
 // 3. Identity
@@ -670,6 +677,7 @@ const CLOUD_DIRECTORY: MentionDirectory<JiraUser> = {
       jira: options.jira,
       query: name,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...budgetOf(options),
     }),
   isApp: (user) => user.accountType === 'app',
   label: (user) => user.accountId,
@@ -682,6 +690,7 @@ const DATA_CENTER_DIRECTORY: MentionDirectory<DataCenterUser> = {
       jira: options.jira,
       query: name,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...budgetOf(options),
     }),
   isApp: () => false,
   label: (user) => user.name ?? user.key ?? '(no username)',

@@ -388,6 +388,9 @@ async function resolveCallMentions(
     jira: ctx.jira,
     names,
     ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+    // CC-841 — the searches spend the call's own budget, ahead of the write.
+    deadlineAt: ctx.deadlineAt,
+    clock: ctx.clock,
   });
   return { mentions, hints: [] };
 }
