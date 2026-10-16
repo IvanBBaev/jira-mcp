@@ -329,6 +329,14 @@ env var names — not internal refactors.
 - A closed stderr or stdout pipe no longer crashes the server with an uncaught
   `EPIPE`. A lost stderr drops diagnostics silently; a lost stdout shuts the
   server down cleanly with a `fatal` shutdown event.
+- Under `JIRA_WRITE_MODE=plan` a write's `plan` hint no longer tells the model
+  to re-invoke with `apply: true`, which could only plan again; it says an
+  operator has to restart the server with `JIRA_WRITE_MODE=apply` and the
+  tool then has to be planned afresh.
+- An apply that names the plan's `profile` in a different case or with
+  surrounding spaces (`"EU"` against `"eu"`) is no longer refused as drifted;
+  it targets the same site, and the plan fingerprint now spells the profile
+  the way credentials resolve it.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
