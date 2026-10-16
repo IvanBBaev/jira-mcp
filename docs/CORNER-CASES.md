@@ -2374,3 +2374,20 @@ CC-232); the two cases below are what remained to state or pin.
   serialized appends, rotation and 0600 mode; the recent-writes registry's
   skip of irreversible tiers and its leading-zero id canonicalization
   (CC-187); the taint fence's delimiter escape (CC-70).
+
+## Thirty-second defect hunt — wiki writer (2026-10-16)
+
+- **CC-800** A merged table cell keeps every later cell in its own column on
+  the Data Center write path. Wiki markup has no `colspan` or `rowspan`, so the
+  writer dropped both and wrote one cell per ADF cell: a header row
+  `||A||B||C||` over a body row holding a two-column cell came back with `c`
+  under `B`, and a cell spanning two rows pushed the next row's cells one
+  column left. The writer now keeps the spanning cell's text in its first
+  column and writes each column and row it covers as a blank cell of its kind
+  (`|` or `||`). A span that is not an integer of 2 or more counts as 1; a
+  `colspan` above 1000 is refused as a validation error instead of being
+  padded out.
+- Leads checked and rejected: an ordered list's `attrs.order` (wiki markup
+  numbers from 1, documented in the writer's tests); a code block inside a
+  list item losing its indent (documented); emoticon, entity and escape
+  coverage (complete against the reader's rules).
