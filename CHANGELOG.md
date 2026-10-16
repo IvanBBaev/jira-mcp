@@ -360,6 +360,12 @@ env var names — not internal refactors.
   `Authorization`), URL userinfo whose password contains `@` or that is a bare
   token, and a credential parameter percent-encoded inside another URL
   parameter.
+- `login --cloud-id` that contradicts `JIRA_OAUTH_CLOUD_ID` is refused before
+  the browser opens. It used to store a grant that the server then refused on
+  every call.
+- `login --timeout` is capped at about 24 days, the longest wait the clock can
+  honour. A longer value used to end early while still reporting the requested
+  wait.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
