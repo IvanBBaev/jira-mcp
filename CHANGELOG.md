@@ -144,6 +144,12 @@ env var names — not internal refactors.
 
 ### Fixed
 
+- The HTTP transport reads a POST body that starts with a UTF-8 byte order
+  mark, as the SDK did before the transport took over the body read, instead
+  of answering a parse error (CC-1060).
+- The HTTP transport no longer counts a session twice against its cap of 32
+  while that session is still answering its initialize, which refused a
+  32nd session early with a 503 (CC-1061).
 - `jira_capabilities` names the site requests actually go to — the active
   profile's site when it sets one, normalised, with a Data Center context
   path — instead of the raw `JIRA_SITE`, which named another site, or none,
