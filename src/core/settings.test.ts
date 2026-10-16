@@ -594,6 +594,16 @@ describe('loadSettings — secrets for the redactor', () => {
     ]);
   });
 
+  it('[CC-761] keeps a profile named __proto__ and registers its token', () => {
+    const { settings, secrets } = load({
+      ...VALID,
+      JIRA_ACTIVE_PROFILE: '__proto__',
+      [profileVar('__proto__', 'API_TOKEN')]: 'token-proto',
+    });
+    assert.deepEqual(Object.keys(settings.profiles), ['__proto__']);
+    assert.deepEqual([...secrets].sort(), ['token-active', 'token-proto']);
+  });
+
   it('deduplicates and skips empty values', () => {
     const { settings } = load({
       ...VALID,

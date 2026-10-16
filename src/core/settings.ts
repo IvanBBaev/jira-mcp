@@ -984,12 +984,20 @@ function parseProfiles(
 
   const out: Record<string, ProfileConfig> = {};
   for (const [key, draft] of drafts) {
-    out[key] = {
-      name: draft.name,
-      ...(draft.site === undefined ? {} : { site: draft.site }),
-      ...(draft.email === undefined ? {} : { email: draft.email }),
-      ...(draft.apiToken === undefined ? {} : { apiToken: draft.apiToken }),
-    };
+    // Defined, not assigned: `PROFILE_NAME_RE` admits `__proto__`, and
+    // assigning that key re-parents the record instead of adding a profile, so
+    // the profile vanished and its API token never reached the redactor (CC-761).
+    Object.defineProperty(out, key, {
+      value: {
+        name: draft.name,
+        ...(draft.site === undefined ? {} : { site: draft.site }),
+        ...(draft.email === undefined ? {} : { email: draft.email }),
+        ...(draft.apiToken === undefined ? {} : { apiToken: draft.apiToken }),
+      },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return out;
 }
