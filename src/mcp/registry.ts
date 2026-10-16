@@ -214,17 +214,27 @@ export function selectPackages(
     const pkg = manifest.find((candidate) => candidate.id === id);
     if (pkg === undefined) continue;
 
+    // The backend first: a tool the adapter cannot serve is out whatever the
+    // gating says, and naming that reason is what tells the operator that no
+    // package setting will bring it back (D106) — in a disabled package too,
+    // where `package_disabled` would advise enabling a package that cannot
+    // serve it (CC-880).
+    const unserved = (tool: AnyToolSpec): boolean =>
+      api.serves !== undefined && !api.serves.has(tool.name);
+
     if (!selected.has(id)) {
-      for (const tool of pkg.tools) excludedTools.set(tool.name, 'package_disabled');
+      for (const tool of pkg.tools) {
+        excludedTools.set(
+          tool.name,
+          unserved(tool) ? 'deployment_unsupported' : 'package_disabled',
+        );
+      }
       continue;
     }
 
     const stripWrites = readerProfile || readOnly.has(id);
     const tools = pkg.tools.filter((tool) => {
-      // The backend first: a tool the adapter cannot serve is out whatever the
-      // gating says, and naming that reason is what tells the operator that no
-      // package setting will bring it back (D106).
-      if (api.serves !== undefined && !api.serves.has(tool.name)) {
+      if (unserved(tool)) {
         excludedTools.set(tool.name, 'deployment_unsupported');
         return false;
       }

@@ -1022,6 +1022,36 @@ test('CC-263: on Data Center the registry lists exactly the served tools', () =>
   assert.equal(cloud.excludedTools.size, 0);
 });
 
+test('CC-880: an unserved tool in a disabled package is still deployment_unsupported', async () => {
+  const manifest = createPackages(() => {
+    throw new Error('not called');
+  });
+  const settings: Settings = { ...DC_SETTINGS, toolPackages: ['core'] };
+  const selection = selectPackages(manifest, settings, DATACENTER_API);
+  // jira_delete_version is never served on the preview; jira_list_boards is.
+  assert.equal(
+    selection.excludedTools.get('jira_delete_version'),
+    'deployment_unsupported',
+  );
+  assert.equal(selection.excludedTools.get('jira_list_boards'), 'package_disabled');
+
+  const jira = createFakeJiraRequest();
+  const registry = createRegistry(manifest, {
+    settings,
+    jira: jira.fn,
+    logger: createFakeLogger(),
+    clock: createFakeClock(1_000),
+    rng: RNG,
+    redactor: createFakeRedactor(),
+    api: DATACENTER_API,
+  });
+  const rendered = await registry.call('jira_delete_version', { versionId: '10000' });
+  const text = JSON.stringify(rendered);
+  assert.match(text, /not available on Jira Data Center/);
+  assert.doesNotMatch(text, /JIRA_TOOL_PACKAGES/);
+  assert.equal(jira.calls.length, 0);
+});
+
 test('CC-263: calling an unserved tool on Data Center is unsupported and sends nothing', async () => {
   const manifest = createPackages(() => {
     throw new Error('not called');
