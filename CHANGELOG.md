@@ -144,6 +144,10 @@ env var names — not internal refactors.
 
 ### Fixed
 
+- `jira_capabilities` names the site requests actually go to — the active
+  profile's site when it sets one, normalised, with a Data Center context
+  path — instead of the raw `JIRA_SITE`, which named another site, or none,
+  under `JIRA_ACTIVE_PROFILE`.
 - `jira_list_filters`, `jira_list_projects`, `jira_list_fields`,
   `jira_list_components` and `jira_list_versions` refuse a whitespace-only
   `query`, `filterName` or `accountId` instead of silently listing everything
