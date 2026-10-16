@@ -1277,6 +1277,33 @@ test('[CC-245] login --cloud-id picks another site than JIRA_SITE names', async 
   assert.equal(storedEntry(r.storeFile())?.['site'], OTHER_SITE_URL);
 });
 
+test('[CC-1160] login refuses a --cloud-id that contradicts JIRA_OAUTH_CLOUD_ID', async (t) => {
+  // The pin is checked against the stored cloudId on every call, so storing
+  // another site's grant was a successful login followed by refused calls.
+  const r = await rig({ env: { JIRA_OAUTH_CLOUD_ID: CLOUD_ID } });
+  r.auth.resources = { status: 200, body: twoSites() };
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['--cloud-id', OTHER_CLOUD_ID] });
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /contradicts JIRA_OAUTH_CLOUD_ID/);
+  assert.equal(r.authorizeUrl(), undefined);
+  assert.deepEqual(r.auth.calls, []);
+  assert.equal(r.storeFile(), undefined);
+});
+
+test('[CC-1160] login accepts a --cloud-id that repeats JIRA_OAUTH_CLOUD_ID', async (t) => {
+  const r = await rig({ env: { JIRA_OAUTH_CLOUD_ID: OTHER_CLOUD_ID } });
+  r.auth.resources = { status: 200, body: twoSites() };
+  t.after(() => r.cleanup());
+
+  const code = await run({ ...r.options, argv: ['--cloud-id', ` ${OTHER_CLOUD_ID} `] });
+
+  assert.equal(code, EXIT_OK, r.stderr());
+  assert.equal(storedEntry(r.storeFile())?.['cloudId'], OTHER_CLOUD_ID);
+});
+
 test('[CC-245] login --cloud-id with --site still applies both', async (t) => {
   const r = await rig({ env: { JIRA_SITE: OTHER_SITE_URL } });
   r.auth.resources = { status: 200, body: twoSites() };

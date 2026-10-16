@@ -817,6 +817,25 @@ export async function run(options: LoginOptions = {}): Promise<number> {
     );
   }
 
+  // At call time JIRA_OAUTH_CLOUD_ID is a check against the stored cloudId, not
+  // an override (CC-165). A `--cloud-id` naming another site would store a grant
+  // the server then refuses on every call, after a login that reported success
+  // (CC-1160). Known before the browser opens, so refused before it does.
+  const pinnedCloudId = oauth.cloudId?.trim();
+  const askedCloudId = flags.cloudId?.trim();
+  if (
+    pinnedCloudId !== undefined &&
+    pinnedCloudId !== '' &&
+    askedCloudId !== undefined &&
+    askedCloudId !== pinnedCloudId
+  ) {
+    return fail(
+      `--cloud-id ${quote(askedCloudId)} contradicts JIRA_OAUTH_CLOUD_ID ${quote(pinnedCloudId)}, which every call checks the stored grant against.`,
+      'Drop --cloud-id to log in to the pinned site, or change or unset JIRA_OAUTH_CLOUD_ID first.',
+      EXIT_CONFIG,
+    );
+  }
+
   const interactive = options.isTTY ?? process.stdin.isTTY === true;
   if (!interactive) {
     // The same rule as `doctor --save`, for a sharper reason: this command waits
