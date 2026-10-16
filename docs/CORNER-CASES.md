@@ -2644,3 +2644,9 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   `.env` too, although the loader never falls through from a missing explicit
   path; and with an injected environment it resolved the file itself, fell
   through, and reported an XDG file as "found" that no run would load.
+- **CC-964** The `enqueued` hint of the bulk delete and edit tools names all
+  four terminal statuses of a bulk task (COMPLETE, FAILED, CANCELLED, DEAD) and
+  points at `failedCount`. It said to poll "until the task reports COMPLETE (or
+  FAILED)", so a client that followed it looped forever on a task cancelled in
+  the UI or marked DEAD, and read COMPLETE as "every issue succeeded" —
+  `jira_get_bulk_status`'s own description says it does not.

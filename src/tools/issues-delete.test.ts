@@ -1428,7 +1428,7 @@ test('CC-126: the bulk writes ship inside issues-delete, so one deny token still
   }
 });
 
-test('CC-127 [CC-183]: a 201 means ENQUEUED — the receipt carries the enqueued hint and never claims done', async () => {
+test('CC-127 [CC-183, CC-964]: a 201 means ENQUEUED — the receipt carries the enqueued hint and never claims done', async () => {
   const fake = createFakeJiraRequest().on(BULK_DELETE_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
   const gate = createWriteGate({
     writeMode: 'apply',
@@ -1452,6 +1452,10 @@ test('CC-127 [CC-183]: a 201 means ENQUEUED — the receipt carries the enqueued
   assert.match(hint?.message ?? '', /ENQUEUED/);
   assert.match(hint?.message ?? '', /jira_get_bulk_status/);
   assert.match(hint?.message ?? '', /never waits/);
+  // CC-964: every status that ends the queue, and the COMPLETE-with-failures caveat.
+  for (const status of ['COMPLETE', 'FAILED', 'CANCELLED', 'DEAD', 'failedCount']) {
+    assert.ok((hint?.message ?? '').includes(status), status);
+  }
   assert.equal(applied._untrusted, true);
   // One POST in the whole exchange: the plan sent nothing, and the tool did
   // not block on the queue or poll it behind the caller's back.

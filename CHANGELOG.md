@@ -292,6 +292,10 @@ env var names — not internal refactors.
 - `doctor`'s env-file line names only the `JIRA_ENV_FILE` path when that file
   is missing, and says no other location is tried, instead of also listing the
   fallbacks the loader never read.
+- The `enqueued` hint on `jira_bulk_delete_issues` and `jira_bulk_edit_issues`
+  names every status that ends a bulk task (COMPLETE, FAILED, CANCELLED, DEAD)
+  and says to check `failedCount`, so a client polling to its letter no longer
+  waits forever on a cancelled or dead task.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

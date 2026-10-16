@@ -1011,12 +1011,16 @@ export const deleteSprintTool = defineTool({
  * queue itself — a write that blocks on a task Jira may run for minutes would
  * eat every caller's deadline budget — so the hint names the read that does.
  */
+// Every terminal status, not just COMPLETE and FAILED: a poller told only those
+// two never stops on a CANCELLED or DEAD task, and a COMPLETE one can still
+// hold failed issues (CC-964).
 const BULK_ENQUEUED_HINT: Hint = {
   code: 'enqueued',
   message:
     'Jira ENQUEUED the bulk operation — a 201 means accepted, not done. Poll ' +
-    'jira_get_bulk_status with this taskId until the task reports COMPLETE (or ' +
-    'FAILED); this tool never waits on the queue itself.',
+    'jira_get_bulk_status with this taskId until the status is COMPLETE, ' +
+    'FAILED, CANCELLED or DEAD; even COMPLETE can carry failed issues, so ' +
+    'check failedCount. This tool never waits on the queue itself.',
 };
 
 const bulkDeleteIssuesInput = writeToolInput({
