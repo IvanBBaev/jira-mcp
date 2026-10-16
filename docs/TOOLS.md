@@ -129,7 +129,10 @@ Apply requires `JIRA_WRITE_MODE=apply` **and** `apply: true` **and** a matching
 `plan_id` (D14, in effect from 2026-08-09): the id is single-use,
 in-memory, and dies with the process. A fingerprint mismatch means the arguments
 changed between plan and apply → `write_gated` error rather than a surprise
-write.
+write. At most 64 plans are outstanding per process: a newer plan
+evicts the oldest unapplied one, and applying an evicted id is refused with a
+`write_gated` message that says so (CC-1000) — apply as you plan rather than
+planning a batch of more than 64 writes first.
 Reads needed to build a plan (transitions, create-meta, fields, the user
 searches behind `resolveMentions`) are never gated — only the write itself is.
 Mention resolution is execution-time in both modes (D100): a plan's

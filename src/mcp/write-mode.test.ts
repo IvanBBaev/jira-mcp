@@ -24,6 +24,7 @@ import { defineTool, toolInput, writeToolInput, z } from './define.js';
 import { ok } from './result.js';
 import {
   IRREVERSIBLE_ENV_VAR,
+  MAX_EVICTED_TOMBSTONES,
   MAX_OUTSTANDING_PLANS,
   PLAN_ID_PATTERN,
   PLAN_NOTICE_LINE,
@@ -407,13 +408,38 @@ test('the store is bounded — the oldest outstanding plan is evicted', () => {
   assert.equal(store.size, 3);
   assert.equal(
     store.consume(String(ids[0]), { tool: 'jira_test_write', fingerprint: 'fp-0' }),
-    'unknown',
+    'evicted',
   );
   assert.equal(
     store.consume(String(ids[3]), { tool: 'jira_test_write', fingerprint: 'fp-3' }),
     'ok',
   );
   assert.equal(MAX_OUTSTANDING_PLANS, 64);
+});
+
+test('CC-1000: an evicted id is reported as evicted once, then as unknown', () => {
+  const store = createPlanStore(countingRng(), 1);
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const first = store.issue(binding);
+  store.issue(binding);
+
+  assert.equal(store.consume(first, binding), 'evicted');
+  assert.equal(store.consume(first, binding), 'unknown', 'the tombstone is spent too');
+  assert.equal(store.consume('plan_ffffffffffffffffffffffff', binding), 'unknown');
+});
+
+test('CC-1000: the tombstones are bounded — the oldest evicted id becomes unknown', () => {
+  const store = createPlanStore(countingRng(), 1);
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const ids = Array.from({ length: MAX_EVICTED_TOMBSTONES + 2 }, () =>
+    store.issue(binding),
+  );
+
+  // ids[0 .. N] were evicted; only the newest N tombstones are kept.
+  assert.equal(store.consume(String(ids[0]), binding), 'unknown');
+  assert.equal(store.consume(String(ids[1]), binding), 'evicted');
+  assert.equal(store.consume(String(ids.at(-1)), binding), 'ok');
+  assert.equal(MAX_EVICTED_TOMBSTONES, 256);
 });
 
 test('a colliding plan id is drawn again; a stuck rng lets the newer plan win', () => {
@@ -1043,14 +1069,46 @@ test('a plan bound to one profile does not authorize another', async () => {
   assert.deepEqual(fake.calls, []);
 });
 
+test('CC-1000: applying a plan the bound evicted is refused as evicted, nothing sent', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+    store: createPlanStore(countingRng(), 1),
+  });
+
+  const first = await gate.execute(callOf(writeTool, { summary: 'One' }, {}, fake.fn));
+  await gate.execute(callOf(writeTool, { summary: 'Two' }, {}, fake.fn));
+  const applied = await gate.execute(
+    callOf(
+      writeTool,
+      { summary: 'One' },
+      { apply: true, plan_id: planIdOf(first) },
+      fake.fn,
+    ),
+  );
+
+  assert.equal(applied.error?.kind, 'write_gated');
+  assert.ok(applied.error?.message.includes('expired unused'));
+  assert.deepEqual(fake.calls, []);
+});
+
 test('writeGatedResult is never retryable and always names the replan path', () => {
-  for (const reason of ['missing', 'unknown', 'mismatch'] as const) {
+  for (const reason of ['missing', 'unknown', 'mismatch', 'evicted'] as const) {
     const result = writeGatedResult(reason);
     assert.equal(result.ok, false);
     assert.equal(result.error?.kind, 'write_gated');
     assert.equal(result.error?.retryable, false);
     assert.ok(result.error?.remediation?.includes('apply: true'));
   }
+});
+
+test('CC-1000: the evicted refusal names the bound instead of an earlier process', () => {
+  const message = writeGatedResult('evicted').error?.message ?? '';
+  assert.ok(message.includes(`at most ${String(MAX_OUTSTANDING_PLANS)} unapplied plans`));
+  assert.ok(!message.includes('earlier server process'));
+  assert.ok(message.includes('Nothing was sent to Jira.'));
 });
 
 test('writeGatedResult("irreversible") points at the operator, not at a replan', () => {

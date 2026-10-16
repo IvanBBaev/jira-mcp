@@ -165,6 +165,13 @@ export const PLAN_ID_PATTERN = /^plan_[0-9a-f]{24}$/;
 export const MAX_OUTSTANDING_PLANS = 64;
 
 /**
+ * How many evicted ids the store still recognizes, so an apply of one is told
+ * WHY it failed (CC-1000). Ids only — a tombstone holds no binding — and bounded
+ * on its own, so a runaway planner cannot grow memory through this side either.
+ */
+export const MAX_EVICTED_TOMBSTONES = 256;
+
+/**
  * Mint a plan id from the injected Rng — never `Math.random`, so a test can
  * assert the exact id a call returns. Four 24-bit draws; this is a handle, not
  * a capability token (the store is in-process and unreachable from the wire).
@@ -241,7 +248,7 @@ export interface PlanBinding {
 }
 
 /** Outcome of an apply's id check; `ok` is the only one that lets a write run. */
-export type PlanConsumeOutcome = 'ok' | 'unknown' | 'mismatch';
+export type PlanConsumeOutcome = 'ok' | 'unknown' | 'mismatch' | 'evicted';
 
 /** A consumed plan: the outcome, and on `ok` what the plan was issued with. */
 export interface PlanClaim {
@@ -269,6 +276,11 @@ export function createPlanStore(
   maxOutstanding: number = MAX_OUTSTANDING_PLANS,
 ): PlanStore {
   const plans = new Map<string, PlanBinding>();
+  // Ids pushed out by the bound below, oldest first. Without them an evicted id
+  // read as "unknown, already used, or from an earlier process" — none of which
+  // was true for a model that planned a batch of more than 64 writes and then
+  // applied it in order, and nothing told it to apply as it plans (CC-1000).
+  const evicted = new Set<string>();
 
   return {
     get size(): number {
@@ -282,6 +294,12 @@ export function createPlanStore(
         const oldest = plans.keys().next();
         if (oldest.done === true) break;
         plans.delete(oldest.value);
+        evicted.add(oldest.value);
+        while (evicted.size > MAX_EVICTED_TOMBSTONES) {
+          const stalest = evicted.values().next();
+          if (stalest.done === true) break;
+          evicted.delete(stalest.value);
+        }
       }
 
       let id = newPlanId(rng);
@@ -291,6 +309,7 @@ export function createPlanStore(
       // A deterministic (test) rng can repeat forever; the newer plan wins so an
       // id never authorizes two different requests.
       plans.delete(id);
+      evicted.delete(id);
       plans.set(id, binding);
       return id;
     },
@@ -301,7 +320,10 @@ export function createPlanStore(
 
     claim(planId: string, binding: PlanBinding): PlanClaim {
       const found = plans.get(planId);
-      if (found === undefined) return { outcome: 'unknown' };
+      if (found === undefined) {
+        // Reported once, like any other spent id: the next try is `unknown`.
+        return { outcome: evicted.delete(planId) ? 'evicted' : 'unknown' };
+      }
       // Single-use is unconditional: a mismatched apply burns the id too, so a
       // caller cannot probe arguments against a live plan.
       plans.delete(planId);
@@ -616,6 +638,13 @@ function refusal(reason: GateRefusal): string {
         'The file changed between the plan and this apply, so the plan_id no ' +
         'longer describes what would be uploaded. The plan_id is spent. Nothing ' +
         'was sent to Jira.'
+      );
+    case 'evicted':
+      return (
+        'That plan_id expired unused: the server keeps at most ' +
+        `${String(MAX_OUTSTANDING_PLANS)} unapplied plans and drops the oldest ` +
+        'when a newer plan would exceed that. Apply each plan before planning that ' +
+        'many more. Nothing was sent to Jira.'
       );
     case 'unknown':
       return (
