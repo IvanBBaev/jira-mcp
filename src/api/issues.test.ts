@@ -1377,6 +1377,27 @@ test('utcOffsetMinutesForZone reads a zone at an instant and falls back to the h
   );
 });
 
+test('utcOffsetMinutesForZone reads years 0000-0099 as themselves, not as 19xx (CC-922)', () => {
+  assert.equal(utcOffsetMinutesForZone('UTC', Date.parse('0050-06-01T10:00:00Z')), 0);
+  assert.equal(
+    utcOffsetMinutesForZone('Asia/Kolkata', Date.parse('0099-12-31T23:00:00Z')),
+    353,
+  );
+  // `0000` is `1 BC` to Intl.
+  assert.equal(utcOffsetMinutesForZone('UTC', Date.parse('0000-01-01T00:00:00Z')), 0);
+
+  const started = startedInstant('0050-06-01T10:00:00', 'UTC', 0);
+  assert.ok(started);
+  assert.deepEqual(started, {
+    epochMs: Date.parse('0050-06-01T10:00:00Z'),
+    offsetMinutes: 0,
+  });
+  assert.equal(
+    formatJiraTimestamp(started.epochMs, started.offsetMinutes),
+    '0050-06-01T10:00:00.000+0000',
+  );
+});
+
 test('startedInstant without a started value uses the injected now in the user zone', () => {
   assert.deepEqual(startedInstant(undefined, 'Asia/Kolkata', STARTED_AT), {
     epochMs: STARTED_AT,

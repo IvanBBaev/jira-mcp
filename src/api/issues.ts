@@ -1440,6 +1440,7 @@ export function utcOffsetMinutesForZone(timeZone: string, atEpochMs: number): nu
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone,
       hourCycle: 'h23',
+      era: 'short',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -1452,7 +1453,11 @@ export function utcOffsetMinutesForZone(timeZone: string, atEpochMs: number): nu
       const part = parts.find((entry) => entry.type === type);
       return part === undefined ? Number.NaN : Number(part.value);
     };
-    const year = read('year');
+    // Intl counts years by era (`0000` is `1 BC`); the arithmetic needs the
+    // astronomical year.
+    const eraYear = read('year');
+    const year =
+      parts.find((entry) => entry.type === 'era')?.value === 'BC' ? 1 - eraYear : eraYear;
     const month = read('month');
     const day = read('day');
     const hour = read('hour') % 24;
@@ -1462,7 +1467,12 @@ export function utcOffsetMinutesForZone(timeZone: string, atEpochMs: number): nu
       return -at.getTimezoneOffset();
     }
 
-    const asUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+    // Not `Date.UTC`: it maps years 0-99 to 1900-1999, and a `started` in year
+    // 0050 then read an offset of decades and failed the ±14h check (CC-922).
+    const wall = new Date(0);
+    wall.setUTCFullYear(year, month - 1, day);
+    wall.setUTCHours(hour, minute, second, 0);
+    const asUtc = wall.getTime();
     return Math.round((asUtc - (atEpochMs - at.getMilliseconds())) / 60_000);
   } catch {
     // An invalid zone name throws a RangeError out of Intl; the host offset is
