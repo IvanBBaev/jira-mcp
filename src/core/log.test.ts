@@ -120,6 +120,29 @@ describe('createLogger — record shape', () => {
     }
   });
 
+  it('omits fields when every value is undefined (CC-700)', () => {
+    // An optional field passed straight through (`{ status: maybeStatus }`)
+    // would otherwise render as `"fields":{}` — JSON drops the key, not the
+    // container — and break the documented shape.
+    const captured = capture(() => {
+      createLogger().emit('shutdown', { status: undefined, host: undefined });
+    });
+
+    const [line] = lines(captured);
+    assert.ok(line);
+    assert.deepEqual(Object.keys(parse(line)), ['ts', 'level', 'event', 'cid']);
+  });
+
+  it('keeps the defined fields next to an undefined one (CC-700)', () => {
+    const captured = capture(() => {
+      createLogger().emit('shutdown', { status: undefined, host: 'acme' });
+    });
+
+    const [line] = lines(captured);
+    assert.ok(line);
+    assert.deepEqual(parse(line).fields, { host: 'acme' });
+  });
+
   it('stamps ts from the injected clock', () => {
     const clock = createFakeClock(1_700_000_000_000);
     const captured = capture(() => createLogger({ clock }).emit('server_start'));

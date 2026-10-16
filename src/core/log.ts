@@ -134,7 +134,9 @@ function render(
       event,
       cid: redactor.redactString(cid),
     };
-    if (fields && Object.keys(fields).length > 0) {
+    // An undefined value serializes to nothing, so a set holding only those
+    // would render as `"fields":{}` — count what will actually appear (CC-700).
+    if (fields && Object.values(fields).some((value) => value !== undefined)) {
       record.fields = redactor.redact(fields);
     }
     // The finished line goes through the redactor a second time: `redact` sees
