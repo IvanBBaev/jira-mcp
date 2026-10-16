@@ -721,6 +721,33 @@ test('unknown high-entropy value fails with the field path, writes nothing', asy
   await assert.rejects(stat(target), /ENOENT/, 'a half-redacted fixture was written');
 });
 
+test('CC-1101: a percent-encoded email the redactor missed fails the leak check', async () => {
+  const { record } = await loadRecorder();
+  const target = out('encoded-relative');
+  await assert.rejects(
+    record({
+      scenario: 'myself',
+      out: target,
+      env: ENV,
+      clock: CLOCK,
+      fetchImpl: fakeFetch(() =>
+        json(200, {
+          ...user(ACCOUNT_A, REAL_EMAIL, NAME_A),
+          // Relative, so it is not an http(s) URL the redactor decodes.
+          next: `/rest/api/3/user/search?query=${encodeURIComponent(SECOND_EMAIL)}`,
+        }),
+      ),
+    }),
+    (error: Error) => {
+      assert.match(error.message, /Redaction is incomplete — NOTHING was written/);
+      assert.match(error.message, /\$\.exchanges\[0\]\.response\.body\.next/);
+      assert.match(error.message, /percent-decoded/);
+      return true;
+    },
+  );
+  await assert.rejects(stat(target), /ENOENT/, 'a half-redacted fixture was written');
+});
+
 test('--allow-opaque-key is the deliberate escape hatch', async () => {
   const { record } = await loadRecorder();
   const target = out('opaque-allowed');

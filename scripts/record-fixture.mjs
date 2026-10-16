@@ -601,7 +601,7 @@ function assertClean(document, { secrets, hosts, labels, allowOpaqueKeys }) {
     [...OPAQUE_ALLOWED_KEYS, ...allowOpaqueKeys].map((key) => key.toLowerCase()),
   );
 
-  const checkString = (value, path, key) => {
+  const checkSpelling = (value, path, key) => {
     for (const needle of needles) {
       if (value.includes(needle)) {
         findings.push(`${path}: a registered secret survived redaction`);
@@ -647,6 +647,20 @@ function assertClean(document, { secrets, hosts, labels, allowOpaqueKeys }) {
           '--allow-opaque-key once you have confirmed it is not a credential',
       );
     }
+  };
+
+  /**
+   * Every rule again on the percent-decoded spelling, when there is one. A URL
+   * the redactor did not recognise as a URL — a relative `/rest/…?query=` link,
+   * one buried in prose — still carries `maria%40corp.example`, and the raw
+   * spelling has no `@` for the email rule to see.
+   */
+  const checkString = (value, path, key) => {
+    const before = findings.length;
+    checkSpelling(value, path, key);
+    if (findings.length > before) return;
+    const decoded = safeDecode(value);
+    if (decoded !== value) checkSpelling(decoded, `${path} (percent-decoded)`, key);
   };
 
   const walk = (node, path, key) => {
