@@ -924,3 +924,26 @@ test('CC-270: a Data Center /myself with neither name nor key is an unexpected s
     });
   }
 });
+
+test('[CC-840] a mention lookup cancelled before it was sent is a cancel, not "No user matched"', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const jira = createFakeJiraRequest();
+
+  await assert.rejects(
+    resolveMentionNames({
+      jira: jira.fn,
+      names: ['User One'],
+      signal: controller.signal,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'transport');
+      assert.equal(error.retryable, false);
+      assert.match(error.message, /cancelled/);
+      assert.doesNotMatch(error.message, /No user matched/);
+      return true;
+    },
+  );
+  assert.equal(jira.calls.length, 0);
+});

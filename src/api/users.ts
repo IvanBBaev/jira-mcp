@@ -651,7 +651,11 @@ interface MentionDirectory<U extends ShapedUser> {
   readonly search: (
     options: ResolveMentionNamesOptions,
     name: string,
-  ) => Promise<{ readonly users: readonly U[]; readonly partial: boolean }>;
+  ) => Promise<{
+    readonly users: readonly U[];
+    readonly partial: boolean;
+    readonly stopReason: PageStopReason;
+  }>;
   /** An account that cannot be a mention candidate at all (a bot). */
   readonly isApp: (user: U) => boolean;
   /** The identifier an ambiguity refusal lists next to the display name. */
@@ -757,6 +761,12 @@ async function resolveOneMention<U extends ShapedUser>(
   directory: MentionDirectory<U>,
 ): Promise<MentionTarget> {
   const page = await directory.search(options, name);
+  // CC-840 — a loop that stopped before its one page was sent read NO
+  // directory, so its empty result says nothing about the name. Reported as
+  // what it is; "No user matched" would send the caller to fix a spelling.
+  if (page.stopReason === 'aborted' || page.stopReason === 'budget') {
+    throw mentionLookupStopped(name, page.stopReason);
+  }
 
   // CC-113 — exclusion happens BEFORE any counting or tiebreak: an `app` row is
   // a bot and an inactive account cannot be notified, so neither may claim an
@@ -813,6 +823,26 @@ async function resolveOneMention<U extends ShapedUser>(
   }
 
   throw ambiguousMentionError(name, candidates, page.partial, directory);
+}
+
+/**
+ * CC-840 — the mention search never reached Jira: the caller cancelled, or the
+ * call budget ran out at the page boundary. Resolution precedes the write, so
+ * nothing was written either way.
+ */
+function mentionLookupStopped(name: string, reason: 'aborted' | 'budget'): JiraError {
+  return reason === 'aborted'
+    ? createJiraError({
+        kind: 'transport',
+        retryable: false,
+        reason: `The call was cancelled before the mention @[${name}] was looked up. Nothing was written.`,
+        remediation: 'Call again if the change is still wanted.',
+      })
+    : createJiraError({
+        kind: 'budget_exceeded',
+        reason: `The call budget ran out before the mention @[${name}] was looked up. Nothing was written.`,
+        remediation: 'Mention fewer people in one call, or raise JIRA_CALL_BUDGET_MS.',
+      });
 }
 
 /** `text` is `'@' + displayName`; omitted when the tenant blanked the name. */
