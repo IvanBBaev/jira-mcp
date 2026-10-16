@@ -400,6 +400,8 @@ const NEEDLES: readonly (readonly [string, string])[] = [
   ['second email', SECOND_EMAIL],
   ['accountId (24-hex)', ACCOUNT_A],
   ['accountId (legacy)', ACCOUNT_B],
+  // CC-1100: the `self` link carries it as `712020%3A…` — no `:` to match on.
+  ['accountId (legacy, percent-encoded)', encodeURIComponent(ACCOUNT_B)],
   ['display name A', NAME_A],
   ['display name B', NAME_B],
   ['JWT', JWT],
@@ -510,6 +512,43 @@ test('a token embedded in a URL query is masked, URL shape kept', async () => {
   );
   assert.match(attachment.content, /token=%5BREDACTED%5D|token=\[REDACTED\]/);
   assert.match(attachment.thumbnail, /sig=%5BREDACTED%5D|sig=\[REDACTED\]/);
+});
+
+test('CC-1100: a person percent-encoded into a URL query or path is redacted', async () => {
+  const { record } = await loadRecorder();
+  const target = out('encoded-pii');
+  const pathLink =
+    `https://${SITE}/rest/api/3/user/properties/` +
+    `${encodeURIComponent(SECOND_EMAIL)}/${encodeURIComponent(ACCOUNT_B)}`;
+  await record({
+    scenario: 'user-search',
+    out: target,
+    params: { query: NAME_B },
+    env: ENV,
+    clock: CLOCK,
+    fetchImpl: fakeFetch(() =>
+      json(200, [{ ...user(ACCOUNT_B, SECOND_EMAIL, NAME_B), properties: pathLink }]),
+    ),
+  });
+  const text = await readFile(target, 'utf8');
+  for (const needle of [
+    SECOND_EMAIL,
+    encodeURIComponent(SECOND_EMAIL),
+    encodeURIComponent(ACCOUNT_B),
+    NAME_B,
+    encodeURIComponent(NAME_B),
+    'Maria+Petrova',
+  ]) {
+    assert.ok(!text.includes(needle), `found ${JSON.stringify(needle)} in the fixture`);
+  }
+  // The same person is the same placeholder in the URL as in the body.
+  const doc = JSON.parse(text) as RecordedDocument;
+  assert.match(exchange(doc).request.url, /[?&]query=User(\+|%20)1(&|$)/);
+  const row = required((responseOf(doc).body as RecordedUser[])[0], 'user 0');
+  assert.equal(
+    row.self,
+    `https://example.atlassian.net/rest/api/3/user?accountId=${encodeURIComponent(row.accountId)}`,
+  );
 });
 
 test('credential headers are dropped, not masked', async () => {

@@ -245,6 +245,15 @@ function isOpaqueBlob(value) {
   );
 }
 
+/** `decodeURIComponent`, or the input unchanged when it is not valid escaping. */
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function isHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
@@ -449,12 +458,33 @@ function createFixtureRedactor({ scrub, hosts, labels, placeholder }) {
         'a URL carried inline userinfo (user:password@host); it was replaced',
       );
     }
+    // The PII rules in `text` match the DECODED spelling: `maria%40corp.example`
+    // carries no `@` and `712020%3A…` no `:`, so a person in a query value or a
+    // path segment would sail past them on the raw href. Decode, redact, and
+    // re-encode only what changed, so an untouched URL keeps its exact bytes.
+    const segments = parsed.pathname.split('/');
+    for (let index = 0; index < segments.length; index += 1) {
+      const decoded = safeDecode(segments[index]);
+      if (decoded === segments[index]) continue;
+      const redacted = text(decoded);
+      if (redacted !== decoded) {
+        segments[index] = encodeURIComponent(redacted);
+        changed = true;
+      }
+    }
+    if (changed) parsed.pathname = segments.join('/');
     for (const key of [...parsed.searchParams.keys()]) {
       const current = parsed.searchParams.get(key);
       if (SENSITIVE_QUERY_KEY_RE.test(key) || isOpaqueBlob(current)) {
         parsed.searchParams.set(key, placeholder);
         changed = true;
         stats.tokenShapeHits += 1;
+        continue;
+      }
+      const redacted = text(current);
+      if (redacted !== current) {
+        parsed.searchParams.set(key, redacted);
+        changed = true;
       }
     }
     return changed ? parsed.href : value;
