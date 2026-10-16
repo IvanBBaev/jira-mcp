@@ -2703,3 +2703,29 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   text (the reason always carries the status code); `isJiraError`'s
   structural branch for a cross-realm error (it demands a real `Error`, a
   catalog kind and a boolean `retryable`).
+
+## Forty-fourth defect hunt — write gate (2026-10-16)
+
+- **CC-1000** Applying a `plan_id` that the 64-plan bound
+  (`MAX_OUTSTANDING_PLANS`) evicted is refused as `evicted`, with a
+  `write_gated` message that names the bound and says nothing was sent. The
+  store forgot an evicted id completely, so the apply was refused as
+  `unknown` — "issued by an earlier process, already used, or never issued" —
+  which sent an agent that planned a batch of more than 64 writes looking for
+  a restart that never happened. The store keeps the evicted ids only (no
+  binding), capped at `MAX_EVICTED_TOMBSTONES` = 256, and reports each one
+  once; the next try is `unknown`, like any other spent id.
+- Leads checked and rejected: `safe: true` requests passing the plan-mode
+  seam as reads (only the search POSTs and doctor set it); a handler
+  rewrapping `PlanCaptured` into a tool error (every api rewrapper passes a
+  non-`JiraError` through); the profile changing between plan and apply (it
+  is fixed per process); the fingerprint over zod-parsed args differing on
+  defaults (both calls parse through the same schema); a plan showing only
+  part of a multi-mutation tool (each api write issues a single mutation, and
+  the seam captures the first); a large plan envelope truncated by the
+  result ladder (the default budget fits a 1000-key bulk delete, rung 2 names
+  the field it cut, the bulk before-state is capped at 20, and a dropped
+  `plan_id` fails safe as `unknown`); `-0` against `0` in the fingerprint
+  (canonicalized to the same JSON); a non-finite `maxOutstanding` (only
+  injectable in tests); no import-time assertion that an irreversible tool is
+  `destructiveHint` (all eight comply).
