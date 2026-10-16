@@ -2496,3 +2496,11 @@ CC-232); the two cases below are what remained to state or pin.
   could still drive a terminal that honours 8-bit controls when `login`
   printed the candidate list. It now drops C1 as well, as `stripControl` in
   `login.ts` already did (CC-144).
+- **CC-743** A request target the loopback listener cannot parse is refused,
+  not fatal. The callback handler built `new URL(req.url, base)` unguarded;
+  an absolute-form target is legal HTTP, and one whose host will not parse
+  (`GET http://[/callback HTTP/1.1`) made it throw inside the request
+  listener — an uncaught exception that killed `login` mid-flow. Any local
+  process could end a login the operator was completing in the browser,
+  the very thing CC-104 and CC-246 keep stray requests from doing. The
+  listener now answers 400 and keeps waiting.

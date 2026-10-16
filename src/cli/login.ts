@@ -538,8 +538,18 @@ async function startLoopback(args: {
   received.catch(() => undefined);
 
   const server: Server = createServer((req, res) => {
-    // `req.url` is origin-form (a path), so the base is a parsing formality.
-    const url = new URL(req.url ?? '/', `http://${LOOPBACK_HOST}`);
+    // `req.url` is usually origin-form (a path), so the base is a parsing
+    // formality. An absolute-form target is legal HTTP too, and one with a host
+    // that will not parse (`http://[/callback`) makes `new URL` throw — inside a
+    // request listener that is an uncaught exception, so one stray request
+    // would kill the login. It is refused like any other non-callback (CC-743).
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', `http://${LOOPBACK_HOST}`);
+    } catch {
+      respond(res, 400, 'Malformed request target; this is not an OAuth callback.');
+      return;
+    }
 
     if (url.pathname !== CALLBACK_PATH) {
       respond(res, 404, 'Not found. This listener only answers the OAuth callback.');

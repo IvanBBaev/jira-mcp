@@ -890,6 +890,52 @@ test('the loopback callback binds 127.0.0.1 only and rejects a request without a
   assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
 });
 
+/** The status line of one raw request, for targets `fetch` will not send. */
+function rawStatusLine(port: number, target: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const socket = connect({ host: LOOPBACK_HOST, port }, () => {
+      socket.write(`GET ${target} HTTP/1.1\r\nHost: ${LOOPBACK_HOST}\r\n\r\n`);
+    });
+    let text = '';
+    socket.on('data', (chunk: Buffer) => {
+      text += chunk.toString('latin1');
+      if (text.includes('\r\n')) {
+        socket.destroy();
+        resolve(text.split('\r\n', 1)[0] ?? '');
+      }
+    });
+    socket.once('error', reject);
+    // A listener that died on the request never answers; fail, do not hang.
+    socket.setTimeout(5000, () => {
+      socket.destroy();
+      reject(new Error(`no response to ${target}`));
+    });
+  });
+}
+
+test('[CC-743] a request target that will not parse is refused, and the wait goes on', async (t) => {
+  const r = await rig();
+  t.after(() => r.cleanup());
+
+  let authorizeUrl = '';
+  const running = run({
+    ...r.options,
+    openBrowser: (url: string): boolean => {
+      authorizeUrl = url;
+      return true;
+    },
+  });
+  await until(() => r.stdout().includes('waiting for the callback'), 'the listener');
+
+  // Absolute-form with a host `new URL` rejects: before the fix this threw
+  // inside the request listener and took the whole process down.
+  assert.match(await rawStatusLine(r.port, 'http://[/callback'), / 400 /);
+
+  const state = new URL(authorizeUrl).searchParams.get('state') ?? '';
+  await r.callback({ code: AUTH_CODE, state });
+  assert.equal(await running, EXIT_OK);
+});
+
 test('a state mismatch on the callback is refused before the token exchange, and the wait goes on [CC-97][CC-246]', async (t) => {
   const r = await rig();
   t.after(() => r.cleanup());
