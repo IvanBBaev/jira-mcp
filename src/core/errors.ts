@@ -216,10 +216,17 @@ export function extractJiraMessages(body: unknown): string[] {
   return out;
 }
 
-/** Collapse whitespace and cut to `max`, marking the cut with an ellipsis. */
+/**
+ * Collapse whitespace and cut to `max`, marking the cut with an ellipsis. The
+ * cut lands on a code-point boundary: a slice through a surrogate pair leaves a
+ * lone half that strict JSON decoders refuse (CC-982, as CC-860).
+ */
 function bound(text: string, max: number): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1)}…`;
+  if (collapsed.length <= max) return collapsed;
+  const last = collapsed.charCodeAt(max - 2);
+  const end = last >= 0xd800 && last <= 0xdbff ? max - 2 : max - 1;
+  return `${collapsed.slice(0, end)}…`;
 }
 
 /**

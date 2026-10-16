@@ -477,6 +477,42 @@ describe('scrub before bound (CC-158)', () => {
   });
 });
 
+/** No lone surrogate: `encodeURIComponent` throws on one. */
+function wellFormed(text: string | undefined): boolean {
+  try {
+    encodeURIComponent(text ?? '');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe('bound cuts on a code-point boundary (CC-982)', () => {
+  it('[CC-982] an emoji straddling a cut is dropped whole, never halved', () => {
+    const emoji = '\u{1F600}';
+    // The cut keeps `max - 1` units, so a pair starting at `max - 2` straddles it.
+    const message = `${'x'.repeat(MESSAGE_DETAIL_MAX - 2)}${emoji} tail`;
+    const fromResponse = errorFromResponse({
+      status: 400,
+      body: { errorMessages: [message] },
+    });
+    assert.ok(wellFormed(fromResponse.message), fromResponse.message);
+    assert.ok(fromResponse.message.includes(`${'x'.repeat(MESSAGE_DETAIL_MAX - 2)}…`));
+
+    const wrapped = toJiraError(new Error(message));
+    assert.ok(wellFormed(wrapped.message), wrapped.message);
+
+    const html = `<p>${'y'.repeat(NON_JSON_DETAIL_MAX - 5)}${emoji} more</p>`;
+    const snippet = bodySnippet(html);
+    assert.ok(wellFormed(snippet), snippet);
+    assert.ok(snippet !== undefined && snippet.length <= NON_JSON_DETAIL_MAX);
+
+    // A pair that ends before the cut survives intact.
+    const kept = bodySnippet(`${'z'.repeat(NON_JSON_DETAIL_MAX - 3)}${emoji} more`);
+    assert.ok(kept?.endsWith(`${emoji}…`), kept);
+  });
+});
+
 describe('toErrorRecord', () => {
   it('projects the full error', () => {
     const error = errorFromResponse({
