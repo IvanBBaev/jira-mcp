@@ -107,11 +107,28 @@ export interface LoggerOptions {
   readonly cid?: string;
 }
 
+/** Whether {@link guardStderr} has already attached its listener. */
+let stderrGuarded = false;
+
+/**
+ * A closed stderr pipe does not make `write` throw: the `EPIPE` arrives as an
+ * `error` EVENT on the stream, and an `error` event nobody listens for is an
+ * uncaught exception that ends the process (CC-920). One no-op listener, added
+ * once, turns that into the documented outcome — the line is lost, the server
+ * keeps serving on stdout.
+ */
+function guardStderr(): void {
+  if (stderrGuarded) return;
+  stderrGuarded = true;
+  process.stderr.on('error', () => undefined);
+}
+
 /**
  * A broken stderr pipe (`EPIPE` after the parent closed the handle) must never
  * take the server down: the line is simply lost.
  */
 function writeStderr(line: string): void {
+  guardStderr();
   try {
     process.stderr.write(`${line}\n`);
   } catch {

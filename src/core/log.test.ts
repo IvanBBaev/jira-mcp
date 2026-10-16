@@ -95,6 +95,14 @@ describe('createLogger — sink', () => {
       process.stderr.write = originalErr;
     }
   });
+
+  it('[CC-920] survives a stderr pipe that reports EPIPE as an error event', () => {
+    capture(() => createLogger().emit('server_start'));
+    const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+    // With no listener, `emit('error')` throws — which is what crashes the
+    // process when the stream reports a closed pipe.
+    assert.doesNotThrow(() => process.stderr.emit('error', epipe));
+  });
 });
 
 describe('createLogger — record shape', () => {
