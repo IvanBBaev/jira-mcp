@@ -31,7 +31,7 @@
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -904,12 +904,13 @@ interface CliRun {
 function runCli(
   args: readonly string[],
   extraEnv: Readonly<Record<string, string>> = {},
+  script: string = RECORDER_PATH,
 ): Promise<CliRun> {
   const coverage = process.env['NODE_V8_COVERAGE'];
   return new Promise<CliRun>((resolve) => {
     const child = execFile(
       process.execPath,
-      [RECORDER_PATH, ...args],
+      [script, ...args],
       {
         cwd: DIR,
         env: {
@@ -952,6 +953,16 @@ test('--list names every scenario, and --help repeats them with their inputs', a
   for (const name of names) {
     assert.ok(help.stdout.includes(name), `usage() dropped the ${name} scenario`);
   }
+});
+
+test('CC-1104: run through a symlink, the recorder still runs', async () => {
+  // Node loads a symlinked main module under its real path; an entry guard
+  // that compared argv[1] verbatim would see two paths and do nothing, exit 0.
+  const link = join(DIR, 'record-fixture-link.mjs');
+  symlinkSync(RECORDER_PATH, link);
+  const run = await runCli(['--list'], {}, link);
+  assert.equal(run.code, 0);
+  assert.match(run.stdout, /^search-page\b/mu, 'the recorder never ran');
 });
 
 test('an unknown flag names itself, prints the usage, and exits 2', async () => {

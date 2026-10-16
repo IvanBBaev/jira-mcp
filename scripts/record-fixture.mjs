@@ -75,6 +75,7 @@
  * a rule nobody can find is a rule nobody will extend when Jira adds a field.
  */
 
+import { realpathSync } from 'node:fs';
 import { access, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import process from 'node:process';
@@ -1561,9 +1562,23 @@ async function main(argv) {
   return 0;
 }
 
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+/** `argv[1]` and this module, compared through realpath (CC-217, CC-1104). */
+function isEntryPoint(moduleUrl) {
+  const entry = process.argv[1];
+  if (entry === undefined || entry === '') return false;
+  const real = (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return path;
+    }
+  };
+  return real(resolve(entry)) === real(fileURLToPath(moduleUrl));
+}
+
+// Node runs a symlinked script under its real path, so a plain comparison
+// would make `node ./link-to-record-fixture.mjs` do nothing and exit 0.
+const invokedDirectly = isEntryPoint(import.meta.url);
 
 if (invokedDirectly) {
   try {
