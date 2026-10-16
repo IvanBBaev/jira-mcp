@@ -162,6 +162,17 @@ export function isIsoDate(value: string): boolean {
 }
 
 /**
+ * The instant a {@link isIsoDate} value names. A date-time without a zone is
+ * read as UTC, like a bare date: `Date.parse` reads it in the machine's local
+ * time, so `2027-01-31T12:00` meant different instants on different hosts —
+ * the drift CC-142 closed for `1/2/2027` (CC-764).
+ */
+function isoInstant(value: string): number {
+  const zoneless = value.includes('T') && !/(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+  return Date.parse(zoneless ? `${value}Z` : value);
+}
+
+/**
  * `Date.parse` rolls 2026-02-30 over to 2026-03-02 rather than refusing it, so
  * the shape and a parse do not prove the day exists (CC-415, as CC-182).
  */
@@ -725,7 +736,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     // ISO 8601 only: `Date.parse` alone also takes `1/2/2027`, read in US order
     // and local time, so the same value would mean different days on
     // different machines (CC-142).
-    const expiresAt = isIsoDate(tokenExpires) ? Date.parse(tokenExpires) : Number.NaN;
+    const expiresAt = isIsoDate(tokenExpires) ? isoInstant(tokenExpires) : Number.NaN;
     if (Number.isNaN(expiresAt)) {
       add({
         severity: 'error',

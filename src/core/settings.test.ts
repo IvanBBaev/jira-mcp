@@ -808,6 +808,22 @@ describe('loadSettings — token expiry', () => {
     assert.match(String(report.warnings[0]?.message), /expired 7 day/);
   });
 
+  it('[CC-764] reads a zoneless date-time as UTC, not as the host’s local time', () => {
+    const savedTz = process.env.TZ;
+    // A host east of UTC: read locally, 05:00 on the 11th is 20:00Z on the 10th.
+    process.env.TZ = 'Asia/Tokyo';
+    try {
+      const { report } = load(
+        { ...VALID, JIRA_TOKEN_EXPIRES: '2026-01-11T05:00' },
+        { clock: createFakeClock(now) },
+      );
+      assert.deepEqual(report.warnings[0]?.data, { daysLeft: 10 });
+    } finally {
+      if (savedTz === undefined) delete process.env.TZ;
+      else process.env.TZ = savedTz;
+    }
+  });
+
   it('reports an unparseable expiry date as an error', () => {
     const { report } = load(
       { ...VALID, JIRA_TOKEN_EXPIRES: 'next summer' },
