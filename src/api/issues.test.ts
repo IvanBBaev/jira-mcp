@@ -2223,6 +2223,48 @@ test('listComments reads a body with no comments key as an empty page', async ()
   assert.equal(result.stopReason, 'exhausted');
 });
 
+test('CC-900: listWorklogs cuts a server that ignores the window down to the one asked for', async () => {
+  // Data Center's worklog route answers every worklog from offset 0, whatever
+  // startAt/maxResults said. // synthetic
+  const all = ['1', '2', '3', '4', '5'].map((id) => ({ id: `4000${id}` }));
+  const fake = createFakeJiraRequest().on(
+    `GET /rest/api/3/issue/${KEY}/worklog`,
+    jiraOk({ startAt: 0, maxResults: 5, total: 5, isLast: true, worklogs: all }),
+  );
+  const ids = (result: { worklogs: readonly { id: string }[] }): string[] =>
+    result.worklogs.map((worklog) => worklog.id);
+
+  const first = await listWorklogs({ jira: fake.fn, issue: KEY, maxResults: 2 });
+  assert.deepEqual(ids(first), ['40001', '40002']);
+  assert.equal(first.partial, true);
+  assert.equal(first.nextStartAt, 2);
+
+  const middle = await listWorklogs({
+    jira: fake.fn,
+    issue: KEY,
+    startAt: 2,
+    maxResults: 2,
+  });
+  assert.deepEqual(ids(middle), ['40003', '40004']);
+  assert.equal(middle.startAt, 2);
+  assert.equal(middle.nextStartAt, 4);
+
+  const last = await listWorklogs({
+    jira: fake.fn,
+    issue: KEY,
+    startAt: 4,
+    maxResults: 2,
+  });
+  assert.deepEqual(ids(last), ['40005']);
+  assert.equal(last.partial, false);
+  assert.equal(last.stopReason, 'exhausted');
+  assert.equal(last.total, 5);
+
+  const past = await listWorklogs({ jira: fake.fn, issue: KEY, startAt: 9 });
+  assert.deepEqual(ids(past), []);
+  assert.equal(past.partial, false);
+});
+
 test('listWorklogs keeps a bare worklog and drops rows that are not one', async () => {
   const fake = createFakeJiraRequest().on(
     `GET /rest/api/3/issue/${KEY}/worklog`,

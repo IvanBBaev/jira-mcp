@@ -1961,23 +1961,38 @@ async function classicList<T>(
   const pageSize = normalizePageSize(options.maxResults ?? spec.defaultPageSize);
   const path = issuePath(options.issue, spec.suffix);
 
-  const request = (cursor: ClassicCursor): JiraRequestSpec => ({
-    method: 'GET',
-    path,
-    pathTemplate: spec.pathTemplate,
-    query: {
-      startAt: cursor.startAt,
-      maxResults: cursor.maxResults,
-      ...(spec.query ?? {}),
-    },
-  });
+  // The offset the page in flight asked for; `readPage` needs it to tell a
+  // server that ignored the window from one that honoured it (CC-900).
+  let asked = startAt;
+  const request = (cursor: ClassicCursor): JiraRequestSpec => {
+    asked = cursor.startAt;
+    return {
+      method: 'GET',
+      path,
+      pathTemplate: spec.pathTemplate,
+      query: {
+        startAt: cursor.startAt,
+        maxResults: cursor.maxResults,
+        ...(spec.query ?? {}),
+      },
+    };
+  };
 
   const readPage = (response: JiraResponse): ClassicPage<T> => {
     const data = requireRecord(response.data, spec.collection);
-    const rows = data[spec.collection] ?? [];
-    if (!isUnknownArray(rows)) {
+    const sent = data[spec.collection] ?? [];
+    if (!isUnknownArray(sent)) {
       throw shapeError(`"${spec.collection}" is present but is not an array`);
     }
+    // A server that ignores `startAt`/`maxResults` (Data Center's worklog route
+    // answers every worklog from offset 0) echoes a lower `startAt` or sends
+    // more rows than asked. Its rows are cut to the window asked for, so a
+    // resumed read never returns the first page again under a later offset
+    // (CC-900). UNVERIFIED on a live Data Center host; Cloud honours the window.
+    const echoed = typeof data.startAt === 'number' ? data.startAt : asked;
+    const skip = echoed < asked ? asked - echoed : 0;
+    const ignored = skip > 0 || sent.length > pageSize;
+    const rows = ignored ? sent.slice(skip, skip + pageSize) : sent;
     const items: T[] = [];
     for (const row of rows) {
       const mapped = spec.map(row);
@@ -1986,10 +2001,16 @@ async function classicList<T>(
     return {
       items,
       ...(items.length === rows.length ? {} : { scanned: rows.length }),
-      ...(typeof data.isLast === 'boolean' ? { isLast: data.isLast } : {}),
+      ...(typeof data.isLast === 'boolean' && !ignored ? { isLast: data.isLast } : {}),
       ...(typeof data.total === 'number' ? { total: data.total } : {}),
-      ...(typeof data.startAt === 'number' ? { startAt: data.startAt } : {}),
-      ...(typeof data.maxResults === 'number' ? { maxResults: data.maxResults } : {}),
+      ...(ignored
+        ? { startAt: asked, maxResults: pageSize }
+        : {
+            ...(typeof data.startAt === 'number' ? { startAt: data.startAt } : {}),
+            ...(typeof data.maxResults === 'number'
+              ? { maxResults: data.maxResults }
+              : {}),
+          }),
     };
   };
 
