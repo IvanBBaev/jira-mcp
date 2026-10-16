@@ -2339,3 +2339,21 @@ CC-232); the two cases below are what remained to state or pin.
   longer than any backtick run); a newline inside a status or mention attribute
   (already escaped). A property fuzz of the markdown fixed point (50 000 runs)
   and of the ADF subset round trip (20 000 runs) found nothing else.
+
+## Thirtieth defect hunt — MCP result ring (2026-10-16)
+
+- **CC-700** A log event whose every field is `undefined` omits `fields`. The
+  logger counted keys, not values, so an optional field passed straight
+  through (`{ status: maybeStatus }`) rendered `"fields":{}` — `JSON.stringify`
+  drops the key but keeps the container — against the documented line shape,
+  where `fields` is absent when empty. Defined fields next to an undefined one
+  are unchanged.
+- Leads checked and rejected: a whitespace-only per-call `profile` (trimmed to
+  empty and refused as not configured, never the default profile); the log
+  line's second redaction pass breaking JSON (fuzzed with quotes, backslashes
+  and `\u` escapes beside cookie, authorization and userinfo shapes — every
+  line parsed); an unredacted `cid` on the serialization fallback (every `cid`
+  is minted by `newCorrelationId`); the telemetry error buckets. A property
+  fuzz of the truncation ladder (30 000 runs: valid JSON, `json` mirrors
+  `result`, within budget whenever `data` survives, exactly one `truncated`
+  hint) found nothing else.
