@@ -2834,3 +2834,29 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   programming error a protocol error and a `JiraError` a tool result, as
   designed; `defineTool` and the core tools validate before they reach the
   network.
+
+## Forty-ninth defect hunt — the OAuth login CLI (2026-10-16)
+
+- **CC-1160** `login --cloud-id` that names a different site than
+  `JIRA_OAUTH_CLOUD_ID` is refused with exit 2 before the listener starts or
+  the browser opens. At call time the pin is checked against the stored
+  cloudId (CC-165), so the flow used to report success and store a grant that
+  the server then refused on every call. A `--cloud-id` that repeats the pin
+  (after trimming) is still accepted.
+- **CC-1161** `login --timeout` is capped at 2147483 seconds (about 24 days).
+  Above that the system clock clamps the sleep to 2^31−1 ms, so the wait
+  ended up to weeks before the requested length while the abandon message
+  still named that length. This reverses the thirty-sixth hunt's "only the
+  printed duration is off" rejection: the wait itself was shorter too.
+- Leads checked and rejected:
+  - Blank or padded `--profile` values normalize the same way in `profileKey`,
+    `profileOf` and the token store.
+  - `--site` alone under a pin needs no fix: `selectSite` filters by the pin
+    first, so a contradicting site is already refused before anything is
+    stored.
+  - Usage errors under `--json` print prose to stderr with an empty stdout.
+    This follows the usage-error convention, and exit 2 still says so.
+  - `Number()` accepting `0x10` or `1e3` for `--timeout` is harmless.
+  - A repeated option with the last value winning is the usual CLI behaviour.
+  - `describeDuration` showing 89.5 minutes as "2 hours" is rounding.
+  - `logout` normalizes profiles exactly as `login` stores them.
