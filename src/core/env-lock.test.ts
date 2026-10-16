@@ -215,6 +215,17 @@ describe('writeFileAtomic', () => {
     assert.deepEqual(readdirSync(dir), ['.env']);
   });
 
+  it('[CC-762] steps past a temp name a killed run left behind', () => {
+    const target = join(dir, '.env');
+    // pid 1 on every container start, counter back at 1: the next run's first
+    // temp name is the one the SIGKILLed run never cleaned up.
+    writeFileSync(join(dir, '.env.tmp-x'), 'stale');
+    writeFileAtomic(target, 'new', { tmpSuffix: 'x' });
+    assert.equal(readFileSync(target, 'utf8'), 'new');
+    assert.equal(readFileSync(join(dir, '.env.tmp-x'), 'utf8'), 'stale');
+    assert.deepEqual(readdirSync(dir).sort(), ['.env', '.env.tmp-x']);
+  });
+
   it('removes the temp file when the rename fails', () => {
     const target = join(dir, '.env');
     // A directory under the target name: the write succeeds, `rename` cannot.

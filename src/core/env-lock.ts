@@ -234,11 +234,7 @@ export function writeFileAtomic(
   // The temp file MUST be a sibling: `rename` is only atomic within one
   // filesystem, and `/tmp` is routinely a different one.
   const suffix = options.tmpSuffix ?? `${String(process.pid)}-${String(nextSeq())}`;
-  const tmpPath = `${targetPath}.tmp-${suffix}`;
-
-  // `wx` fails if the temp name already exists rather than clobbering a
-  // concurrent writer's file.
-  const fd = openSync(tmpPath, 'wx', mode);
+  const { fd, tmpPath } = openFreshTemp(`${targetPath}.tmp-${suffix}`, mode);
   try {
     // Explicit chmod: the open mode is masked by the process umask, and a
     // credentials file must be 0600 regardless of how the shell was configured.
@@ -279,6 +275,35 @@ export function writeFileAtomic(
     throw cause;
   }
   syncDirectory(dir);
+}
+
+/** How many taken temp names {@link openFreshTemp} steps past before giving up. */
+const MAX_TEMP_NAME_ATTEMPTS = 16;
+
+/**
+ * Create the temp file under `base`, or under `base-1`, `base-2`, … when that
+ * name is taken.
+ *
+ * `wx` fails if the name already exists rather than clobbering a concurrent
+ * writer's file — but the name is only pid + a per-process counter, and both
+ * repeat: a container's server is pid 1 on every start, and the counter starts
+ * at 1. A run that was SIGKILLed between `open` and `rename` (no cleanup arm
+ * runs) left `<target>.tmp-1-1` behind, and every later run's first write then
+ * failed EEXIST until someone deleted it by hand — for the token store, a
+ * refresh token rotated by Atlassian and never saved (CC-762). The leftover is
+ * left alone: it may still be a live writer's.
+ */
+function openFreshTemp(base: string, mode: number): { fd: number; tmpPath: string } {
+  for (let attempt = 0; ; attempt += 1) {
+    const tmpPath = attempt === 0 ? base : `${base}-${String(attempt)}`;
+    try {
+      return { fd: openSync(tmpPath, 'wx', mode), tmpPath };
+    } catch (cause) {
+      if (errnoCode(cause) !== 'EEXIST' || attempt + 1 >= MAX_TEMP_NAME_ATTEMPTS) {
+        throw cause;
+      }
+    }
+  }
 }
 
 /**
