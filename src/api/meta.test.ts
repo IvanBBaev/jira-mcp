@@ -880,6 +880,54 @@ test('getCreateMeta falls back to key and fieldId when the modern names are miss
   assert.deepEqual(meta.required, []);
 });
 
+test('CC-820: a cascading select keeps its child options, one level deep', async () => {
+  const jira = createFakeJiraRequest();
+  // synthetic
+  jira.on(
+    'GET /rest/api/3/issue/createmeta/ABC/issuetypes/10001',
+    jiraOk({
+      maxResults: 50,
+      startAt: 0,
+      total: 1,
+      fields: [
+        {
+          fieldId: 'customfield_10050',
+          name: 'Region',
+          required: true,
+          schema: {
+            type: 'option-with-child',
+            custom: 'com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect',
+          },
+          allowedValues: [
+            {
+              id: '10100',
+              value: 'EMEA',
+              children: [
+                { id: '10102', value: 'Sofia', children: [{ id: '1', value: 'deeper' }] },
+                'junk',
+              ],
+            },
+            { id: '10101', value: 'APAC', children: [] },
+            { id: '10103', value: 'AMER', children: 'not a list' },
+          ],
+        },
+      ],
+    }),
+  );
+
+  const meta = await getCreateMeta({
+    jira: jira.fn,
+    project: 'ABC',
+    issueTypeId: '10001',
+  });
+
+  assert.deepEqual(at(meta.items, 0).allowedValues, [
+    { id: '10100', value: 'EMEA', children: [{ id: '10102', value: 'Sofia' }, {}] },
+    { id: '10101', value: 'APAC' },
+    { id: '10103', value: 'AMER' },
+  ]);
+});
+
 test('listStatuses maps a status with no scope and a scope with no project', async () => {
   const jira = createFakeJiraRequest();
   jira.on(

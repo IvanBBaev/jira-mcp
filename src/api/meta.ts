@@ -315,6 +315,11 @@ export interface AllowedValue {
   readonly id?: string;
   readonly value?: string;
   readonly name?: string;
+  /**
+   * A cascading select's second-level options, which `POST /issue` takes as
+   * `{"id": parent, "child": {"id": …}}` — one level deep, as Jira's are (CC-820).
+   */
+  readonly children?: readonly AllowedValue[];
 }
 
 /** One field of a create screen, from `.../issuetypes/{issueTypeId}`. */
@@ -1206,15 +1211,25 @@ function mapCreateMetaField(entry: Record<string, unknown>): CreateMetaField {
   });
 }
 
-function mapAllowedValues(value: unknown): readonly AllowedValue[] | undefined {
+/**
+ * A cascading select carries its second-level options in `children`; without
+ * them a required cascading field names no child id to send (CC-820). Only the
+ * first level is followed — Jira's cascades are two levels deep.
+ */
+function mapAllowedValues(
+  value: unknown,
+  withChildren = true,
+): readonly AllowedValue[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.map((entry) => {
     const record = asRecord(entry);
     if (record === undefined) return {};
+    const children = withChildren ? mapAllowedValues(record.children, false) : undefined;
     return compact({
       id: readId(record, 'id'),
       value: readString(record, 'value'),
       name: readString(record, 'name'),
+      children: children === undefined || children.length === 0 ? undefined : children,
     });
   });
 }
