@@ -2357,3 +2357,20 @@ CC-232); the two cases below are what remained to state or pin.
   fuzz of the truncation ladder (30 000 runs: valid JSON, `json` mirrors
   `result`, within budget whenever `data` survives, exactly one `truncated`
   hint) found nothing else.
+
+## Thirty-first defect hunt — filters, journal, recent writes and taint (2026-10-16)
+
+- **CC-600** A component or version update echo that carries a description is
+  branded untrusted. Both updates are partial, but Jira echoes the whole
+  record, so a call that only renamed a component or released a version
+  returned the description a tenant user wrote — unbranded, beside a list
+  read of the same row that was branded. The echo now follows the sprint rule
+  (CC-176): branded whenever it carries a description, and only then. A
+  create echoes only what the caller sent and stays unbranded.
+- Leads checked and rejected: `jira_list_boards` and the metadata lists
+  (projects, fields, statuses, link types, users) are unbranded on purpose —
+  TOOLS.md §Untrusted content names them metadata; the filter pair's mapper
+  is an allowlist and its `filterName`/`accountId` are trimmed; the journal's
+  serialized appends, rotation and 0600 mode; the recent-writes registry's
+  skip of irreversible tiers and its leading-zero id canonicalization
+  (CC-187); the taint fence's delimiter escape (CC-70).
