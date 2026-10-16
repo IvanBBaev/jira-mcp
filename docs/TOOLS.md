@@ -294,7 +294,10 @@ The same seven tools take `resolveMentions?: boolean` (default off): with
 `format: "markdown"`, `@[Display Name]` tokens resolve to real mention nodes
 via user search — one resolution pass per call across all rich-text fields,
 exact matching rules in JIRA-API.md §Users. Zero matches and ambiguity refuse
-before anything is written (CC-106, CC-107); tokens in a markdown call without
+before anything is written (CC-106, CC-107); the searches spend the call's own
+budget, and a search that a cancel or an exhausted budget kept off the wire
+fails as that, never as "no user matched" (CC-840, CC-841); tokens in a
+markdown call without
 the flag stay literal text and the result carries `mentions_skipped` (CC-105);
 `resolveMentions: true` without `format: "markdown"` is refused at the schema.
 The bracketed syntax is deliberately not what reads emit, so round-tripped

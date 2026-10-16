@@ -2446,3 +2446,29 @@ CC-232); the two cases below are what remained to state or pin.
   lookup keyed by Jira's fixed `statusCategory.key`; the untrimmed `project`
   echo on the create-screen result (a label, never sent back); the Data
   Center 404 re-aim on a missing issue type, which stays scoped to that path.
+
+## Thirty-fifth defect hunt — user search and mention resolution (2026-10-16)
+
+- **CC-840** A mention lookup that never reached Jira is reported as what
+  it is. When the caller had cancelled, or the call budget had run out,
+  before a name's one search page was sent, the page loop returned an empty
+  result. `resolveMentionNames` then refused the write with "No user matched
+  the mention @[name]", which sends the model off to fix a spelling. It is
+  now a non-retryable `transport` cancel or a `budget_exceeded` error, and
+  both say that nothing was written. A full page that was read just as the
+  budget ran out is still judged on its rows: a unique exact display-name
+  match resolves.
+- **CC-841** Mention searches run inside the tool call's budget. The write
+  tools passed `resolveMentionNames` only the abort signal, so each of up to
+  twenty user searches started its own `JIRA_CALL_BUDGET_MS` from
+  `core/http.ts`. A slow directory could hold the call far past its budget
+  before the write itself was even attempted. The call's `deadlineAt` and
+  clock now reach every search, on Cloud and on Data Center.
+- Leads checked and rejected:
+  - A blank-only `issue` or `project` on `jira_search_users` falls back to
+    the plain scope. The answer's `scope: "query"` says so.
+  - The tool echoes the untrimmed `query`. This is cosmetic.
+  - The `max_pages` note on an assignable search says more users exist. The
+    window rule behind it is CC-201's, by design.
+  - Empty `@[ ]` tokens never reach the resolver: `extractMentions` keeps
+    them literal.
