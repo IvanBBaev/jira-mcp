@@ -2887,3 +2887,49 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   child (D14); the residue search passes no `reconcileIssues`, so an issue
   created seconds earlier could in principle lag the search index — not
   reproducible offline and not observed in the two live runs, left as is.
+
+## Fifty-first defect hunt — the Gate C rehearsal and fixture recorder (2026-10-16)
+
+- **CC-1100** `scripts/record-fixture.mjs` redacted people in bodies but not
+  in percent-encoded URLs: a `user-search` capture wrote
+  `query=<email>%40…` and a `self` link with `accountId=712020%3A…` to the
+  fixture verbatim. Path segments and query values are now decoded, run
+  through the same redaction as text, and re-encoded, so a URL carries the
+  same placeholder as the body.
+- **CC-1101** The recorder's leak check (`assertClean`) only knew the raw
+  spelling of each secret, which is why CC-1100 went unseen. A string that is
+  clean as written is checked again percent-decoded, and the refusal names
+  the path with "(percent-decoded)".
+- **CC-1102** `scripts/rehearse-live.mjs --pass A --pass Z` dropped the
+  unknown `Z`, ran A, and reported green for a pass nobody ran. An unknown
+  id now exits 2 before any pass starts, naming the valid ids.
+- **CC-1103** Passes B, C and D judged a claim only when it was present
+  (`c17 !== undefined && …`), so a missing claim read as a good one. That
+  matters most in D, which expects exit 1: a driver that died before the
+  create also exits 1. Pass G likewise ignored zero or two gate sprints. A
+  missing claim, or the wrong sprint count, is now a failure. The script's
+  entry point is guarded so the suite can judge each check directly.
+- **CC-1104** The recorder's entry guard compared `argv[1]` to the module
+  path verbatim. Node runs a symlinked script under its real path, so
+  `node ./link.mjs` did nothing and exited 0. It now compares through
+  realpath, as `rehearse-datacenter.mjs` does (CC-217).
+- **CC-1105** The rehearsal read a driver killed by a signal as exit 1
+  (`code ?? 1`), the very code pass D expects. A driver that timed out
+  rejected instead, and `main()` reported the whole run as a set-up error
+  (exit 2) with every later pass unrun. Both now resolve with an exit
+  "code" that matches no expectation, so the pass fails and the run goes on.
+  A timeout settles at once, without waiting for pipes a grandchild may hold.
+- **CC-1106** The rehearsal's recording audit looked for the literal token,
+  email, host and accountIds only. It now also catches their percent-encoded
+  spellings and the base64 Basic credential.
+- Leads checked and rejected:
+  - The recorder's leak check matches project labels as substrings, but the
+    redactor matches them on word boundaries. The check can refuse a
+    recording the redactor would pass; that is the safe direction.
+  - `assertClean` quotes the leaked value in its refusal. That output goes
+    only to the operator's own terminal, and naming the value is how they
+    find it.
+  - The display-name sweep is case-sensitive. Jira echoes a name back with
+    the case it was stored in, and no route here re-cases it.
+  - A timed-out driver's server grandchild is not killed by name. It exits
+    when its stdin closes with the driver.

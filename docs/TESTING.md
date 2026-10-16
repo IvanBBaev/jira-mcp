@@ -316,8 +316,12 @@ nonetheless the only whole-system test
 that decide what the gate may delete, and the residue table — are additionally
 pinned by `src/testing/verify-live.test.ts`, which does run in `npm run check`
 and reaches the driver by the same repo-root dynamic `import()` the fixture
-recorder's suite uses (D75). A green rehearsal is a statement about this code,
-never about Jira's.
+recorder's suite uses (D75). The rehearsal's own verdict is pinned by
+`src/testing/rehearse-live.test.ts`, also in `npm run check`: an unknown
+`--pass` is refused, a pass whose judged claim never ran fails, a hung or
+signalled driver fails its pass rather than the run, and the recording audit
+catches encoded secrets (CC-1102, CC-1103, CC-1105, CC-1106). A green rehearsal
+is a statement about this code, never about Jira's.
 
 **Rehearsing Data Center.** `scripts/fake-jira.mjs --deployment datacenter` is
 the fake's Data Center twin: it serves only the twenty-seven routes the Data Center
