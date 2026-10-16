@@ -279,6 +279,9 @@ env var names — not internal refactors.
   project as such, not as "Jira Software is not available".
 - Data Center preview: `jira_list_components` and `jira_list_versions` honour
   `startAt` and `maxResults` instead of returning the whole list every time.
+- `doctor` no longer prints a green token-expiry countdown for a
+  `JIRA_TOKEN_EXPIRES` the loader refuses (`2027-02-30`, `01/02/2027`); only
+  the failure is shown.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

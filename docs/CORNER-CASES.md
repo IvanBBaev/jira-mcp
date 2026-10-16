@@ -2618,3 +2618,11 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   `unknown`); the logger's fallback line skipping cid redaction (cids are
   minted internally); timer delays above 2^31−1 ms (already clamped);
   `newCorrelationId` widening on an out-of-contract rng (already clamped).
+
+## Forty-first defect hunt — doctor (2026-10-16)
+
+- **CC-960** The `doctor` token-expiry probe checks the date the way the
+  loader does (`isIsoDate`), not with a bare `Date.parse`. That accepted a
+  rolled-over `2027-02-30` (as 2027-03-02) or a US-order `01/02/2027` that the
+  loader refuses (CC-142, CC-415), so the report printed an `[ ok ]` countdown
+  directly above the `[FAIL]` for the same value.

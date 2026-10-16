@@ -658,6 +658,19 @@ test('a healthy far-off expiry is reported as ok', async () => {
   assert.equal(r.logger.has('token_expiry_warning'), false);
 });
 
+test('CC-960: a date the loader refuses prints no green countdown beside the FAIL', async () => {
+  for (const expires of ['2027-02-30', '01/02/2027']) {
+    const r = rig({ env: baseEnv({ JIRA_TOKEN_EXPIRES: expires }) });
+
+    const code = await run({ ...r.options, argv: ['--offline'] });
+
+    const out = r.stdout();
+    assert.equal(code, EXIT_CONFIG, out);
+    assert.match(out, /\[FAIL] token expiry: JIRA_TOKEN_EXPIRES/, expires);
+    assert.doesNotMatch(out, /token expiry: the API token expires/, expires);
+  }
+});
+
 test('an unparseable JIRA_TOKEN_EXPIRES is a config error, exit 2, with an example date', async () => {
   const r = rig({ env: baseEnv({ JIRA_TOKEN_EXPIRES: 'next tuesday' }) });
 

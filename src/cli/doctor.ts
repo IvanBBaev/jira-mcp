@@ -1226,7 +1226,10 @@ const PROBES: readonly Probe[] = [
           ...problems,
         ];
       }
-      const expiresAt = Date.parse(raw);
+      // The loader's own date check, not a bare Date.parse: that accepts a
+      // rolled-over 2027-02-30 or a US-order 01/02/2027 the loader refuses, and
+      // printed a green countdown above the FAIL line (CC-960).
+      const expiresAt = isIsoDate(raw) ? Date.parse(raw) : Number.NaN;
       if (Number.isNaN(expiresAt)) return problems;
       const daysLeft = Math.floor((expiresAt - ctx.clock.now()) / MS_PER_DAY);
       if (daysLeft <= TOKEN_EXPIRY_WARNING_DAYS) return problems;
