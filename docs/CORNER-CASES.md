@@ -2860,3 +2860,30 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   - A repeated option with the last value winning is the usual CLI behaviour.
   - `describeDuration` showing 89.5 minutes as "2 hours" is rounding.
   - `logout` normalizes profiles exactly as `login` stores them.
+
+## Fiftieth defect hunt — the Gate C live driver (2026-10-16)
+
+- **CC-1120** Every tool call `scripts/verify-live.mjs` makes hands the SDK
+  its own ceiling as the request timeout, and that ceiling (130 s) sits above
+  the server's default call budget (`JIRA_CALL_BUDGET_MS`, 120 s, retry waits
+  included). The driver raced the call against a 90 s timer but passed the
+  SDK no options, so the SDK's 60 s default fired first: under 429 backoff
+  or a slow tenant an apply was cancelled on the server mid-flight, the claim
+  failed as a "timeout" its own timer never raised, and an issue whose POST
+  had already landed was not recorded for the delete phase.
+- **CC-1121** `--purge` records a refused issue delete and carries on. The
+  issue loop called `planAndApply`, which throws on an error envelope, so one
+  issue the tenant would not delete (no delete permission, already gone)
+  failed C33, skipped the sprint, component, version and media purges after
+  it, and left the residue table listing issues deleted before the throw —
+  a residue report as wrong as a clean one (CC-85). Issues now go through
+  the same refuse-and-keep path as the other classes; a summary the gate did
+  not write still throws before any delete (CC-84).
+- Leads checked and rejected: `--confirm-site` does not expand a dot-less
+  site to `.atlassian.net` as the server does, but both sides go through the
+  same `siteHost`, so a mismatch refuses (the safe direction); every argument
+  the driver sends matches `manifest.snapshot.json`; `readAllPages` reads the
+  `paging` shape the list tools return; plan and apply always share one
+  child (D14); the residue search passes no `reconcileIssues`, so an issue
+  created seconds earlier could in principle lag the search index — not
+  reproducible offline and not observed in the two live runs, left as is.
