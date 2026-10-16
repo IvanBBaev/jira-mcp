@@ -939,7 +939,7 @@ export function spawnDriver(args, env, verbose, timeoutMs = PASS_TIMEOUT_MS) {
  * every secret the fake knows about. Anything that survives is a leak the live
  * run would have written to disk with a REAL token and REAL accountIds in it.
  */
-async function auditRecording(dir, accountIds) {
+export async function auditRecording(dir, accountIds) {
   if (dir === undefined) return [];
   if (!existsSync(dir)) return [`--record wrote nothing to ${dir}`];
   const files = await readdir(dir);
@@ -948,13 +948,19 @@ async function auditRecording(dir, accountIds) {
     ['the API token', TOKEN],
     ['the account email', EMAIL],
     ['the site hostname', API_HOST],
+    // The header the driver sends, should a request ever be captured whole.
+    ['the Basic credential', Buffer.from(`${EMAIL}:${TOKEN}`).toString('base64')],
     ...accountIds.map((id, index) => [`accountId #${String(index + 1)} (${id})`, id]),
   ];
+  // A secret in a URL is percent-encoded (`%40`, `%3A`), so the literal
+  // spelling alone misses exactly the leak CC-1100 found in the recorder.
+  const spellings = (secret) => [...new Set([secret, encodeURIComponent(secret)])];
   const failures = [];
   for (const name of files) {
     const text = await readFile(join(dir, name), 'utf8');
     for (const [label, secret] of secrets) {
-      if (secret !== undefined && secret !== '' && text.includes(secret)) {
+      if (secret === undefined || secret === '') continue;
+      if (spellings(secret).some((spelling) => text.includes(spelling))) {
         failures.push(`${name} leaks ${label}`);
       }
     }

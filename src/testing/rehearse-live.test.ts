@@ -15,8 +15,10 @@
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { REPO_ROOT } from '../core/fakes/fixtures.js';
@@ -41,6 +43,10 @@ interface RehearsalModule {
     readonly id: string;
     readonly check: (input: CheckInput) => string[];
   }[];
+  readonly auditRecording: (
+    dir: string | undefined,
+    accountIds: readonly string[],
+  ) => Promise<string[]>;
   readonly spawnDriver: (
     args: readonly string[],
     env: Record<string, string>,
@@ -205,4 +211,28 @@ test('CC-1105: a driver killed by a signal has no exit code, not EXIT_FAILURE', 
   assert.equal(run.exitCode, 'none (killed by SIGKILL)');
   // The control: a real exit code still comes through as a number.
   assert.equal((await driver('process.exit(3);')).exitCode, 3);
+});
+
+test('CC-1106: the recording audit catches a percent-encoded or Basic-encoded secret', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rehearse-live-audit-'));
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const accountId = '712020:aaaaaaaa-0000-4000-8000-000000000001';
+  const basic = Buffer.from(
+    'rehearsal@example.invalid:rehearsal-token-not-a-real-secret',
+  ).toString('base64');
+  writeFileSync(
+    join(dir, 'leaky.json'),
+    JSON.stringify({
+      url: `/rest/api/3/user/search?query=rehearsal%40example.invalid&accountId=${encodeURIComponent(accountId)}`,
+      headers: { authorization: `Basic ${basic}` },
+    }),
+  );
+  writeFileSync(join(dir, 'clean.json'), JSON.stringify({ url: '/rest/api/3/myself' }));
+  assert.deepEqual((await rehearsal.auditRecording(dir, [accountId])).sort(), [
+    `leaky.json leaks accountId #1 (${accountId})`,
+    'leaky.json leaks the Basic credential',
+    'leaky.json leaks the account email',
+  ]);
 });
