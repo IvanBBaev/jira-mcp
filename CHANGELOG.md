@@ -308,6 +308,9 @@ env var names — not internal refactors.
   startup with an error about a `JIRA_ALLOWED_HOSTS` entry you never wrote.
 - A long Jira error message or proxy error page that is cut short no longer
   splits an emoji in half, which left text that strict JSON decoders refuse.
+- Applying a `plan_id` that expired because more than 64 newer plans were made
+  first is refused with a message that says so. It used to claim the plan came
+  from an earlier process or was already used.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
