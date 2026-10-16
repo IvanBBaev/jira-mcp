@@ -193,15 +193,22 @@ export function wikiToText(input: unknown): string {
   return out.join('\n').trimEnd();
 }
 
-/** `{code:language=js|title=x}` and `{code:js}` both name the language. */
+/**
+ * `{code:js}`, `{code:language=js|title=x}` and `{code:title=x|language=js}`
+ * all name the language: a bare first parameter, or `language=` anywhere
+ * (CC-741).
+ */
 function languageOf(params: string | undefined): string {
   if (params === undefined) return '';
-  const first = params.split('|')[0]?.trim() ?? '';
-  const value = first.includes('=')
-    ? first.startsWith('language=')
-      ? first.slice('language='.length)
-      : ''
-    : first;
+  const parts = params.split('|').map((part) => part.trim());
+  const first = parts[0] ?? '';
+  const named = parts.find((part) => part.startsWith('language='));
+  const value =
+    named !== undefined
+      ? named.slice('language='.length)
+      : first.includes('=')
+        ? ''
+        : first;
   return /^[\w+#.-]{1,32}$/.test(value) ? value : '';
 }
 

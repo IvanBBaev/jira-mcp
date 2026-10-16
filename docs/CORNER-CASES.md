@@ -2483,3 +2483,9 @@ CC-232); the two cases below are what remained to state or pin.
   for every line-leading `#`. Past the cap the reader now still undoes
   backslash escapes, `\\` line breaks and numeric references; only the mark
   pairing is skipped.
+- **CC-741** A code block names its language wherever `language=` sits.
+  Data Center accepts `{code:title=Bar.java|language=java}` as readily as
+  `{code:language=java|title=Bar.java}`, but the reader only looked at the
+  first parameter, so a title-first block lost its language. `languageOf`
+  now takes a bare first parameter or a `language=` parameter at any
+  position; a bare value after the first stays ignored, as Jira ignores it.

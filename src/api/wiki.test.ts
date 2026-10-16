@@ -133,6 +133,15 @@ test('[CC-740] a line past the inline cap still undoes escapes, breaks and refer
   assert.equal(wikiToText(`*${tail}* \\*`), `*${tail}* *`);
 });
 
+test('[CC-741] a code block names its language wherever the language= parameter sits', () => {
+  assert.equal(
+    wikiToText('{code:title=Bar.java|language=java}\nx\n{code}'),
+    '```java\nx\n```',
+  );
+  assert.equal(wikiToText('{code:title=Bar.java|java}\nx\n{code}'), '```\nx\n```');
+  assert.equal(wikiToText('{code:java|title=Bar.java}\nx\n{code}'), '```java\nx\n```');
+});
+
 test('CC-273: text carrying the private-use sentinel characters is not rewritten', () => {
   const text = 'odd 0 and \\* and  here';
   assert.equal(wikiToText(text), text);
