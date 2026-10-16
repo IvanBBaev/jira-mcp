@@ -296,6 +296,9 @@ env var names — not internal refactors.
   names every status that ends a bulk task (COMPLETE, FAILED, CANCELLED, DEAD)
   and says to check `failedCount`, so a client polling to its letter no longer
   waits forever on a cancelled or dead task.
+- `jira_add_worklog` with a `started` in the years 0000–0099 renders it in the
+  user's zone instead of failing with a "utcOffsetMinutes … ±14 hours" error
+  about an argument the caller never passed.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a
