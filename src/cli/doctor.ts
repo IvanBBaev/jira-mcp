@@ -21,6 +21,7 @@
 
 import { closeSync, openSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
+import { parseEnv } from 'node:util';
 
 import { systemClock } from '../core/clock.js';
 import {
@@ -1742,6 +1743,35 @@ async function runProbe(
   }
 }
 
+/**
+ * The keys `--save` would write that the next run still reads from somewhere
+ * else: set non-blank in the environment, not by the env file that run loaded
+ * (the file never overwrites a variable already there), and different from
+ * the new answer. Saving those printed "Saved." over credentials the next
+ * start ignores (CC-962).
+ */
+function shellOverrides(
+  loaded: LoadSettingsResult,
+  env: NodeJS.ProcessEnv,
+  fs: DoctorFsHost,
+  values: readonly (readonly [string, string])[],
+): string[] {
+  const text =
+    loaded.envFile.path === undefined ? undefined : fs.readText(loaded.envFile.path);
+  const fromFile = text === undefined ? {} : parseEnv(text);
+  return values
+    .filter(([key, value]) => {
+      const current = env[key];
+      return (
+        current !== undefined &&
+        current.trim() !== '' &&
+        current !== value &&
+        current !== fromFile[key]
+      );
+    })
+    .map(([key]) => key);
+}
+
 interface SaveArgs {
   readonly options: DoctorOptions;
   readonly loaded: LoadSettingsResult;
@@ -1856,6 +1886,14 @@ async function saveCredentials(args: SaveArgs): Promise<number> {
       : [
           `JIRA_TOKEN_EXPIRES ${JSON.stringify(expires)} is not an ISO date (e.g. 2027-01-31).`,
         ]),
+    ...shellOverrides(loaded, envOptions.env ?? process.env, fs, [
+      ['JIRA_SITE', site],
+      ['JIRA_EMAIL', email],
+      ['JIRA_API_TOKEN', apiToken],
+    ]).map(
+      (key) =>
+        `--save writes ${key}, but ${key} is also set in the environment, which the file never overrides; unset it first.`,
+    ),
   ];
   if (problems.length > 0) {
     for (const problem of problems) err(`${problem}\n`);

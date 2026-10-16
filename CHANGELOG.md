@@ -285,6 +285,10 @@ env var names — not internal refactors.
 - `doctor --save` with the expiry left blank removes the previous
   `JIRA_TOKEN_EXPIRES` instead of keeping it beside the new token, where the
   next check warned that the token just created had already expired.
+- `doctor --save` refuses, before writing, a site, email or token that the
+  environment already sets to something else. The env file never overrides a
+  variable that is already set, so "Saved." printed over credentials the next
+  start ignored.
 
 58 tools in the same 10 packages, up from 52: six added, none removed or
 renamed, and every existing input and output as it was. `resolveMentions` is a

@@ -1736,6 +1736,71 @@ test("CC-961: --save with a blank expiry drops the replaced token's expiry", asy
   assert.match(written, /^OTHER=1$/m);
 });
 
+test('[CC-962] --save refuses a value the environment would keep overriding', async () => {
+  const r = rig({
+    env: baseEnv({ JIRA_API_TOKEN: 'from-the-shell', JIRA_SITE: 'acme.atlassian.net' }),
+    texts: { [XDG_ENV_PATH]: 'JIRA_EMAIL=old@example.com\n' },
+    files: { [XDG_ENV_PATH]: 0o600 },
+  });
+  const answers = ['acme.atlassian.net', 'new@example.com', TOKEN, ''];
+  let asked = 0;
+
+  const code = await run({
+    ...r.options,
+    argv: ['--save'],
+    prompt: () => Promise.resolve(answers[asked++] ?? ''),
+  });
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.equal(r.written.path, undefined);
+  // The shell token differs from the answer and is not in the file: refused.
+  assert.match(
+    r.stderr(),
+    /--save writes JIRA_API_TOKEN, but JIRA_API_TOKEN is also set/,
+  );
+  // The same site as the answer shadows nothing.
+  assert.doesNotMatch(r.stderr(), /writes JIRA_SITE/);
+  // baseEnv's email is neither the file's nor the answer: refused as well.
+  assert.match(r.stderr(), /writes JIRA_EMAIL/);
+  assert.equal(r.stderr().includes('from-the-shell'), false);
+});
+
+test('[CC-962] --save replaces a value the loaded env file itself set', async () => {
+  // Only a run over `process.env` loads the file (see CC-180 above); the
+  // loader's effect — the file's email landing in the environment — is staged.
+  const saved = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('JIRA_') || key === 'XDG_CONFIG_HOME') delete process.env[key];
+    }
+    Object.assign(process.env, baseEnv({ JIRA_EMAIL: 'old@example.com' }));
+    const r = rig({
+      texts: { [XDG_ENV_PATH]: 'JIRA_EMAIL=old@example.com\n' },
+      extra: {
+        env: process.env,
+        envFileHost: {
+          statFile: (path) => (path === XDG_ENV_PATH ? 0o600 : undefined),
+          loadFile: () => undefined,
+        },
+      },
+    });
+    const answers = ['acme.atlassian.net', 'new@example.com', TOKEN, ''];
+    let asked = 0;
+
+    const code = await run({
+      ...r.options,
+      argv: ['--save'],
+      prompt: () => Promise.resolve(answers[asked++] ?? ''),
+    });
+
+    assert.equal(code, EXIT_OK, r.stderr());
+    assert.match(r.written.contents ?? '', /^JIRA_EMAIL=new@example.com$/m);
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});
+
 test('--save records the expiry date when one is given', async () => {
   const r = rig();
   const answers = ['acme.atlassian.net', 'ops@example.com', TOKEN, '2027-01-31'];

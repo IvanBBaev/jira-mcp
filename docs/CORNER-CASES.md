@@ -2631,3 +2631,10 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   so a blank one wrote no key and left the replaced token's date in place: the
   next `doctor` warned that the token just created had expired, or counted down
   to a date that belonged to another token.
+- **CC-962** `doctor --save` refuses a `JIRA_SITE`, `JIRA_EMAIL` or
+  `JIRA_API_TOKEN` that is set non-blank in the environment, does not come
+  from the env file the run loaded, and differs from the new answer. The
+  loader never overwrites a variable already present, so a token exported in
+  the shell kept winning over the one just saved: "Saved." was printed and
+  the next `doctor` still failed with the old token. A value equal to the
+  answer, or one the loaded file set itself, is no conflict.

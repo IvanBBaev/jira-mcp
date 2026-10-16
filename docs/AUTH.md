@@ -448,8 +448,9 @@ Contract (D11 in DECISIONS.md):
   offline-only rule (OBSERVABILITY.md).
 - Prompts (`doctor --save`) only on a TTY; non-interactive runs fail with a
   message instead of hanging. `--save` writes the three top-level variables,
-  so it refuses in oauth mode and under an active profile that overrides any
-  of them (CC-212).
+  so it refuses in oauth mode, under an active profile that overrides any
+  of them (CC-212), and when the environment already holds a different value
+  the file would never override (CC-962).
 
 ## Still not supported (see ROADMAP.md)
 
