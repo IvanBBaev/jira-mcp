@@ -2472,3 +2472,14 @@ CC-232); the two cases below are what remained to state or pin.
     window rule behind it is CC-201's, by design.
   - Empty `@[ ]` tokens never reach the resolver: `extractMentions` keeps
     them literal.
+
+## Defect hunt — Data Center wiki reader and OAuth (2026-10-16)
+
+- **CC-740** A line past the inline cap still reads as text. `wikiToText`
+  skips inline processing on a line longer than `MAX_INLINE_LINE_CHARS`, so
+  the pairing regexes cannot go quadratic — but it skipped the linear steps
+  too, and the writer's own spelling came back visible: a 10 000-character
+  JSON line written by `wikiFromText` read back as `\{"a":\[1\]…` with `&#35;`
+  for every line-leading `#`. Past the cap the reader now still undoes
+  backslash escapes, `\\` line breaks and numeric references; only the mark
+  pairing is skipped.

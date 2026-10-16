@@ -28,15 +28,16 @@
 //     left alone.
 //   * An unknown `{macro}` is left as written: a visible token is better than
 //     silently dropping content nobody here understood.
-//   * Lines longer than {@link MAX_INLINE_LINE_CHARS} skip inline processing,
-//     so a hostile line cannot make the pairing regexes quadratic.
+//   * Lines longer than {@link MAX_INLINE_LINE_CHARS} skip mark pairing, so a
+//     hostile line cannot make the pairing regexes quadratic; their escapes,
+//     line breaks and references are still undone, which is linear (CC-740).
 //
 // It is a READ-side rendering only; the write side is `wiki-writer.ts`
 // (stage 13.4a). Numeric character references (`&#35;`) are decoded last,
 // since that is how the writer spells what a backslash cannot escape.
 // ---------------------------------------------------------------------------
 
-/** Longest line that inline marks are removed from; longer ones pass verbatim. */
+/** Longest line that inline marks are removed from; longer ones keep their marks. */
 export const MAX_INLINE_LINE_CHARS = 10_000;
 
 /** Private-use sentinels for parked escapes and line breaks (see `inline`). */
@@ -263,7 +264,16 @@ function stripBlockMacros(line: string): string {
  * marks), then the paired marks, then the line break.
  */
 function inline(text: string): string {
-  if (text.length > MAX_INLINE_LINE_CHARS) return text;
+  // Past the cap only the linear steps run: escapes, `\\` breaks and
+  // references are undone, so the writer's spelling never shows (CC-740).
+  if (text.length > MAX_INLINE_LINE_CHARS) {
+    return decodeReferences(
+      text.replace(
+        /\\\\|\\([*_+\-^~?{}[\]!|])/g,
+        (_m, ch: string | undefined) => ch ?? '\n',
+      ),
+    );
+  }
   // Escapes and `\\` line breaks are parked behind private-use sentinels while
   // the marks are removed. A line that already contains a sentinel character
   // skips that parking rather than risk rewriting its own text.

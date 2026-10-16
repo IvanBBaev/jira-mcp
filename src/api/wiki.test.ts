@@ -122,6 +122,17 @@ test('CC-273: a line past the inline cap passes verbatim instead of being scanne
   assert.equal(wikiToText(long), long);
 });
 
+test('[CC-740] a line past the inline cap still undoes escapes, breaks and references', () => {
+  const tail = 'a'.repeat(MAX_INLINE_LINE_CHARS);
+  assert.equal(
+    wikiToText(`\\{"a":\\[1\\],"b":"x\\-y"\\} &#35;tag ${tail}`),
+    `{"a":[1],"b":"x-y"} #tag ${tail}`,
+  );
+  assert.equal(wikiToText(`one\\\\two ${tail}`), `one\ntwo ${tail}`);
+  // Marks are still not paired there.
+  assert.equal(wikiToText(`*${tail}* \\*`), `*${tail}* *`);
+});
+
 test('CC-273: text carrying the private-use sentinel characters is not rewritten', () => {
   const text = 'odd 0 and \\* and  here';
   assert.equal(wikiToText(text), text);
