@@ -2800,3 +2800,9 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
   profile's — and named no site at all when only the profile set one. The
   composition root now hands the report `loadSettings().host`, the value
   `server_start` already logged.
+- Leads checked and rejected: `fetchAll` has no guard against a server that
+  echoes a `startAt` that does not advance, but `maxPages` bounds the loop and
+  no Jira endpoint is known to do it; `guarded` and `rethrowUnexpected` keep a
+  programming error a protocol error and a `JiraError` a tool result, as
+  designed; `defineTool` and the core tools validate before they reach the
+  network.
