@@ -64,7 +64,7 @@ import {
 } from '../api/collab.js';
 import type { PageStopReason } from '../api/shared.js';
 import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
-import { ok } from '../mcp/result.js';
+import { ok, type EnvelopeOptions } from '../mcp/result.js';
 import {
   IDEMPOTENT_WRITE_ANNOTATIONS,
   READ_ANNOTATIONS,
@@ -624,10 +624,22 @@ export const updateComponentTool = defineTool<
         leadAccountId: args.leadAccountId,
         assigneeType: args.assigneeType,
       });
-      return ok<ComponentChangeData>(result);
+      return ok<ComponentChangeData>(result, echoBrand(result.component));
     });
   },
 });
+
+/**
+ * The brand of an update echo. The update is PARTIAL but Jira echoes the WHOLE
+ * record, so a call that only renamed a component or released a version still
+ * carries the description a tenant user wrote — branded untrusted whenever it is
+ * there, the rule the sprint echo follows for its goal (CC-176, CC-600). A create
+ * echoes only what the caller sent, so it stays unbranded.
+ */
+function echoBrand(echoed: { readonly description?: string }): EnvelopeOptions {
+  const { description } = echoed;
+  return typeof description === 'string' && description !== '' ? { untrusted: true } : {};
+}
 
 // ---------------------------------------------------------------------------
 // 8. `jira_list_versions`
@@ -812,7 +824,7 @@ export const updateVersionTool = defineTool<
         released: args.released,
         archived: args.archived,
       });
-      return ok<VersionChangeData>(result);
+      return ok<VersionChangeData>(result, echoBrand(result.version));
     });
   },
 });

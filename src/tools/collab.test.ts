@@ -642,6 +642,45 @@ test('CC-50: jira_create_version sends the NUMERIC projectId, unlike the compone
   );
 });
 
+test('[CC-600] a partial update echo carrying a tenant description is branded untrusted', async () => {
+  const fake = createFakeJiraRequest()
+    .on(COMPONENT_UPDATE_ROUTE, jiraOk(componentRow('10100', 'Payments')))
+    .on(VERSION_UPDATE_ROUTE, jiraOk(versionRow('10200', '1.4.0')));
+  const ctx = createCtx(fake.fn);
+
+  // Neither call names a description, yet Jira echoes the stored one back.
+  const component = await updateComponentTool.handler(
+    { componentId: 10_100, name: 'Payments' },
+    ctx,
+  );
+  const version = await updateVersionTool.handler(
+    { versionId: 10_200, released: true },
+    ctx,
+  );
+
+  for (const result of [component, version] as readonly ToolResult<unknown>[]) {
+    dataOf(result);
+    assert.equal(result._untrusted, true);
+    assert.ok(hintCodes(result).includes('untrusted_content'));
+  }
+});
+
+test('[CC-600] an update echo without a description stays unbranded', async () => {
+  const fake = createFakeJiraRequest().on(
+    COMPONENT_UPDATE_ROUTE,
+    jiraOk({ ...componentRow('10100', 'Payments'), description: '' }),
+  );
+
+  const result = await updateComponentTool.handler(
+    { componentId: 10_100, description: '' },
+    createCtx(fake.fn),
+  );
+  dataOf(result);
+
+  assert.equal(result._untrusted, undefined);
+  assert.equal(hintCodes(result).includes('untrusted_content'), false);
+});
+
 test('jira_update_version cuts a release with one field and sends only that field', async () => {
   const fake = createFakeJiraRequest().on(
     VERSION_UPDATE_ROUTE,
