@@ -65,6 +65,7 @@ import type {
   IssueComment,
   IssueDetail,
   IssueWorklog,
+  JiraVisibility,
 } from '../api/issues.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
@@ -113,6 +114,16 @@ const BULK_PREVIEW = 20;
 /** Fields the issue snapshot needs — nothing else is fetched, so nothing leaks. */
 const ISSUE_BEFORE_FIELDS = ['summary', 'status', 'issuetype', 'subtasks'] as const;
 
+/**
+ * Who could read the entity: `{type: 'role' | 'group', value}`. A restricted
+ * comment or worklog is a different loss from a public one, and the receipt is
+ * the only record left once it is gone (CC-861).
+ */
+interface VisibilityBefore {
+  readonly type: string;
+  readonly value: string;
+}
+
 interface UserBefore {
   readonly accountId?: string;
   readonly displayName?: string;
@@ -153,6 +164,8 @@ interface CommentBefore {
   readonly bodyTruncated: boolean;
   /** JSM only: `false` marks an internal comment. */
   readonly jsdPublic?: boolean;
+  /** Present only when the comment is restricted to a role or group. */
+  readonly visibility?: VisibilityBefore;
 }
 
 interface WorklogBefore {
@@ -165,6 +178,8 @@ interface WorklogBefore {
   readonly timeSpentSeconds?: number;
   readonly comment?: string;
   readonly commentTruncated?: boolean;
+  /** Present only when the entry is restricted to a role or group. */
+  readonly visibility?: VisibilityBefore;
 }
 
 interface ComponentBefore {
@@ -313,6 +328,24 @@ function userBefore(user: IssueComment['author']): UserBefore | undefined {
     : projected;
 }
 
+/**
+ * `{type, value}` from a projected visibility, or nothing. Both halves or
+ * neither: a restriction we cannot name is not one the plan can state, and the
+ * `identifier` (a group id) adds nothing a human approver reads.
+ */
+function visibilityBefore(
+  visibility: JiraVisibility | undefined,
+): VisibilityBefore | undefined {
+  const type = visibility?.type;
+  const value = visibility?.value;
+  return typeof type === 'string' &&
+    type !== '' &&
+    typeof value === 'string' &&
+    value !== ''
+    ? { type, value }
+    : undefined;
+}
+
 /** `fields.status.name`, `fields.issuetype.name` — a record's `name`, if any. */
 function nameOf(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -376,6 +409,7 @@ function issueBefore(detail: IssueDetail, deleteSubtasks: boolean): IssueBefore 
 function commentBefore(issue: string, comment: IssueComment): CommentBefore {
   const body = excerpt(comment.body);
   const author = userBefore(comment.author);
+  const visibility = visibilityBefore(comment.visibility);
   return {
     kind: 'comment',
     issue,
@@ -386,12 +420,14 @@ function commentBefore(issue: string, comment: IssueComment): CommentBefore {
     body: body.text,
     bodyTruncated: body.truncated,
     ...(comment.jsdPublic === undefined ? {} : { jsdPublic: comment.jsdPublic }),
+    ...(visibility === undefined ? {} : { visibility }),
   };
 }
 
 function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
   const author = userBefore(worklog.author);
   const comment = worklog.comment === undefined ? undefined : excerpt(worklog.comment);
+  const visibility = visibilityBefore(worklog.visibility);
   return {
     kind: 'worklog',
     issue,
@@ -405,6 +441,7 @@ function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
     ...(comment === undefined
       ? {}
       : { comment: comment.text, commentTruncated: comment.truncated }),
+    ...(visibility === undefined ? {} : { visibility }),
   };
 }
 

@@ -2009,3 +2009,47 @@ test('[CC-195] a delete id spelled past the safe integer range is refused, not r
     false,
   );
 });
+
+test('[CC-861] a restricted comment or worklog states its audience in the plan', async () => {
+  const restricted = { type: 'role', value: 'Administrators', identifier: '10002' };
+  const fake = createFakeJiraRequest()
+    .on(COMMENT_ROUTE, jiraOk({ ...COMMENT_BODY, visibility: restricted }))
+    .on(WORKLOG_ROUTE, jiraOk({ ...WORKLOG_BODY, visibility: restricted }));
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const comment = beforeOf(
+    await gate.execute(
+      callOf(deleteCommentTool, { issue: KEY, commentId: COMMENT_ID }, {}, fake.fn),
+    ),
+  );
+  const worklog = beforeOf(
+    await gate.execute(
+      callOf(deleteWorklogTool, { issue: KEY, worklogId: WORKLOG_ID }, {}, fake.fn),
+    ),
+  );
+
+  // By construction: type and value only, the group id stays behind.
+  assert.deepEqual(comment.visibility, { type: 'role', value: 'Administrators' });
+  assert.deepEqual(worklog.visibility, { type: 'role', value: 'Administrators' });
+});
+
+test('[CC-861] a public comment carries no visibility key', async () => {
+  const fake = createFakeJiraRequest().on(COMMENT_ROUTE, jiraOk(COMMENT_BODY));
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const before = beforeOf(
+    await gate.execute(
+      callOf(deleteCommentTool, { issue: KEY, commentId: COMMENT_ID }, {}, fake.fn),
+    ),
+  );
+
+  assert.equal('visibility' in before, false);
+});
