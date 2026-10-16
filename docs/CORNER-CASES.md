@@ -2513,3 +2513,24 @@ CC-232); the two cases below are what remained to state or pin.
   site URLs carry none); `safeLabel` splitting a surrogate pair at its length
   cap is cosmetic; the token store keeps `__proto__`-named profiles as own
   data properties through parse, spread and rewrite (CC-170 holds).
+
+## Thirty-seventh defect hunt — issue reads (2026-10-16)
+
+- **CC-900** A classic list under an issue is cut to the window the caller
+  asked for when the server ignores `startAt`/`maxResults`. Data Center's
+  worklog route answers every worklog from offset 0, so `jira_get_worklogs`
+  with `startAt: 20` returned the first rows again under the later offset,
+  and a default read returned the whole list beside `maxResults: 20`. When the
+  echoed `startAt` is below the one asked for, or more rows arrive than the
+  page size, the rows are now sliced to `[startAt, startAt + maxResults)`, the
+  server's `isLast` and `maxResults` are set aside, and `partial` /
+  `nextStartAt` page through the rest as on Cloud. Comments and the Cloud
+  changelog take the same path; Cloud honours the window, so nothing changes
+  there. UNVERIFIED on a live Data Center host.
+- Leads checked and rejected: `jira_get_transitions` returning the transition
+  screen's `fields` unshaped (the tool never asks for them — only the
+  transition write's CC-21 lookup does); a Cloud worklog whose `comment` is
+  `null` coming back as an empty string (no information lost); issue
+  `properties` passed through unshaped (app-written JSON, already under the
+  untrusted brand); the Data Center changelog window arithmetic when `startAt`
+  falls before or past the embedded block (D114, covered by its tests).
