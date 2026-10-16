@@ -2473,7 +2473,7 @@ CC-232); the two cases below are what remained to state or pin.
   - Empty `@[ ]` tokens never reach the resolver: `extractMentions` keeps
     them literal.
 
-## Defect hunt — Data Center wiki reader and OAuth (2026-10-16)
+## Thirty-sixth defect hunt — Data Center wiki reader and OAuth (2026-10-16)
 
 - **CC-740** A line past the inline cap still reads as text. `wikiToText`
   skips inline processing on a line longer than `MAX_INLINE_LINE_CHARS`, so
@@ -2504,3 +2504,12 @@ CC-232); the two cases below are what remained to state or pin.
   process could end a login the operator was completing in the browser,
   the very thing CC-104 and CC-246 keep stray requests from doing. The
   listener now answers 400 and keeps waiting.
+- Leads checked and rejected: a 200 000-run writer→reader round-trip fuzz
+  over `wikiFromText`/`wikiToText` found no mismatch beyond CC-740/CC-741;
+  `{anchor:x}` left visible and a list continuation after `\\` losing its
+  indent are cosmetic; a huge `login --timeout` cannot overflow the timer
+  (the clock clamps delays to 2^31−1 ms, only the printed duration is off);
+  `dedupeSites` not normalizing a trailing slash is speculative (Atlassian
+  site URLs carry none); `safeLabel` splitting a surrogate pair at its length
+  cap is cosmetic; the token store keeps `__proto__`-named profiles as own
+  data properties through parse, spread and rewrite (CC-170 holds).
