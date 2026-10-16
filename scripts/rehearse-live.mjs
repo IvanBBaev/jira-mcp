@@ -48,7 +48,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -269,7 +269,7 @@ function agileWriteSkipped(claims, why) {
 }
 
 /** @type {Pass[]} */
-const PASSES = [
+export const PASSES = [
   {
     id: 'A',
     title: 'full run — reads, writes and the delete phase',
@@ -350,7 +350,8 @@ const PASSES = [
         failures.push('the fake flagged a violation on the media host');
       }
       const c13 = claims.find((c) => c.id === 'C13');
-      if (c13 !== undefined && c13.status === 'FAIL') {
+      if (c13 === undefined) failures.push('C13 did not run');
+      else if (c13.status === 'FAIL') {
         failures.push(`C13 failed with the redirect forced: ${c13.note}`);
       }
       return failures;
@@ -388,7 +389,8 @@ const PASSES = [
       if (field.length < 2) failures.push('a 429 on GET /field was not retried');
       for (const id of ['C03', 'C09']) {
         const row = claims.find((c) => c.id === id);
-        if (row !== undefined && row.status === 'FAIL') {
+        if (row === undefined) failures.push(`${id} did not run`);
+        else if (row.status === 'FAIL') {
           failures.push(`${id} failed under injected faults: ${row.note}`);
         }
       }
@@ -414,8 +416,11 @@ const PASSES = [
             'on a live site that is a duplicate issue',
         );
       }
+      // A missing C17 is no refusal either: a driver that died before the
+      // create also exits 1, and that must not read as the expected FAIL.
       const c17 = claims.find((c) => c.id === 'C17');
-      if (c17 !== undefined && c17.status !== 'FAIL') {
+      if (c17 === undefined) failures.push('C17 did not run');
+      else if (c17.status !== 'FAIL') {
         failures.push(`C17 should FAIL when the create 503s, got ${c17.status}`);
       }
       return failures;
@@ -546,7 +551,11 @@ const PASSES = [
         );
       }
       const stranded = state.sprints.filter((sprint) => /^gate-c-/.test(sprint.name));
-      if (stranded.length === 1 && stranded[0].state !== 'future') {
+      if (stranded.length !== 1) {
+        failures.push(
+          `expected 1 gate-c sprint on the fake, saw ${String(stranded.length)}`,
+        );
+      } else if (stranded[0].state !== 'future') {
         failures.push(
           `the sprint should still be future, it is ${String(stranded[0].state)}`,
         );
@@ -1071,11 +1080,29 @@ function summarise(results) {
   return EXIT_FAILURE;
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    process.stderr.write(`rehearse-live failed: ${String(error?.stack ?? error)}\n`);
-    process.exitCode = EXIT_CONFIG;
-  });
+/** `argv[1]` and this module, compared through realpath (CC-217). */
+function isEntryPoint(moduleUrl) {
+  const entry = process.argv[1];
+  if (entry === undefined || entry === '') return false;
+  const real = (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return path;
+    }
+  };
+  return real(resolve(entry)) === real(fileURLToPath(moduleUrl));
+}
+
+// Guarded so the suite can import PASSES and judge each check without
+// starting a rehearsal.
+if (isEntryPoint(import.meta.url)) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      process.stderr.write(`rehearse-live failed: ${String(error?.stack ?? error)}\n`);
+      process.exitCode = EXIT_CONFIG;
+    });
+}
