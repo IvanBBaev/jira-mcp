@@ -2573,3 +2573,24 @@ Scope: `src/tools/issues-delete.ts` and the delete section (§13) of
   - A plan with `deleteSubtasks: false` on an issue that has subtasks is
     certain to be refused at apply. The snapshot already shows both numbers,
     and Jira refuses before anything is lost.
+
+## Thirty-ninth defect hunt — MCP registry and server (2026-10-16)
+
+- **CC-880** A tool the deployment adapter cannot serve is excluded as
+  `deployment_unsupported` even when its package is disabled. Package
+  selection checked the adapter only inside an enabled package, so under
+  `JIRA_DEPLOYMENT=datacenter` with `JIRA_TOOL_PACKAGES=core` a Data Center
+  gap such as `jira_delete_version` was reported as `package_disabled`:
+  `jira_capabilities` listed the wrong reason, and a call answered "enable the
+  package in JIRA_TOOL_PACKAGES" — advice that could never bring the tool
+  back. The backend reason now wins in a disabled package too, as D106 says it
+  does everywhere; served tools there stay `package_disabled`.
+- Leads checked and rejected: the journal's `issueKey` falling back to
+  `result.data.key` for any write, not only a create (no write tool other
+  than `jira_create_issue` returns a top-level `key`; deletes nest theirs
+  under `before`); the plan notice prefixed onto an envelope whose render fell
+  back to `ok: false` (still true — nothing was sent — and a plan's data is
+  parsed JSON that cannot trip the fallback); a thrown `JiraError` in
+  `recordingGate` (it carries `kind` and `httpStatus`, so CC-221 holds); the
+  `reader` profile stripping writes from a package named beside it (the
+  documented fail-safe direction).
