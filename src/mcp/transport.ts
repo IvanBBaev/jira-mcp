@@ -82,7 +82,8 @@ export async function connectTransport(
   deps: TransportDeps,
 ): Promise<TransportHandle> {
   const stdin = deps.stdin ?? process.stdin;
-  const transport = new StdioServerTransport(stdin, deps.stdout ?? process.stdout);
+  const stdout = deps.stdout ?? process.stdout;
+  const transport = new StdioServerTransport(stdin, stdout);
 
   let closed = false;
   let closing: Promise<void> | undefined;
@@ -119,6 +120,19 @@ export async function connectTransport(
       /* the shutdown event is already on stderr; nothing left to report to */
     });
   }
+
+  // THE CLIENT CAN STOP READING BEFORE IT STOPS WRITING. A response written to
+  // a stdout whose reader is gone fails with `EPIPE`, and the stream reports it
+  // as an `error` EVENT — the SDK listens on stdin only, so without this the
+  // event is an uncaught exception: a non-JSON stack on stderr, exit 1, and no
+  // `shutdown` line (CC-921). Nobody can read a reply any more, so it is the
+  // same `fatal` close as a transport that died. Never detached: a write queued
+  // before the close can still fail after it.
+  stdout.on('error', () => {
+    void close('fatal').catch(() => {
+      /* the shutdown event is already on stderr; nothing left to report to */
+    });
+  });
 
   // `connect` calls `transport.start()`, which puts stdin in flowing mode — so
   // the EOF listener is attached afterwards, when there is a stream to end.

@@ -347,3 +347,30 @@ test('a shutdown log line is the only thing this module ever emits', async () =>
     ['shutdown'],
   );
 });
+
+test('[CC-921] a stdout whose reader is gone is a fatal shutdown, not an uncaught EPIPE', async () => {
+  const logger = createFakeLogger();
+  const server = fakeServer();
+  const stdout = new PassThrough();
+  const handle = await connectTransport(server, {
+    settings: settingsOf(),
+    logger,
+    stdin: new PassThrough(),
+    stdout,
+  });
+
+  // What a write to a pipe the client closed ends in. With no listener,
+  // `emit('error')` throws — in production, an uncaught exception.
+  const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+  assert.doesNotThrow(() => stdout.emit('error', epipe));
+  await tick();
+
+  assert.deepEqual(
+    logger.eventsOf('shutdown').map((event) => (event.fields ?? {})['reason']),
+    ['fatal'],
+  );
+  assert.equal(server.closeCalls, 1);
+  assert.equal(handle.closed, true);
+  // A second failed write after the close is still absorbed.
+  assert.doesNotThrow(() => stdout.emit('error', epipe));
+});
