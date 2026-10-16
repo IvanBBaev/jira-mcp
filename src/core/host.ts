@@ -45,12 +45,17 @@ export const OAUTH_GATEWAY_HOST = 'api.atlassian.com';
 export const OAUTH_AUTH_HOST = 'auth.atlassian.com';
 
 // Anchored on both ends: `evil-atlassian.net` cannot match, because the literal
-// dot before `atlassian` is part of the pattern.
-const CANONICAL_HOST_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.atlassian\.net$/;
+// dot before `atlassian` is part of the pattern. Labels stop at 63 characters,
+// as `CANONICAL_JIRA_HOST` in `http-util.ts` does: a site this accepts and the
+// request-time check refuses passes startup and then fails every call (CC-980).
+const CANONICAL_HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.atlassian\.net$/;
 
-/** A DNS name: dot-separated LDH labels, no leading/trailing dot or dash. */
+/**
+ * A DNS name: dot-separated LDH labels of at most 63 characters (RFC 1035), no
+ * leading/trailing dot or dash.
+ */
 const HOSTNAME_RE =
-  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
 // Anchored on both ends, and drawn from the smallest alphabet an identifier can
 // need. The point is not that Atlassian happens to mint UUIDs — it is that a
@@ -365,7 +370,7 @@ export function resolveHost(
       problem(
         'error',
         'site_malformed',
-        `${siteVariable} resolves to host ${JSON.stringify(hostname)}, which is not a valid DNS name (letters, digits, hyphens and dots only; no IP literals). Use the site host name.`,
+        `${siteVariable} resolves to host ${JSON.stringify(hostname)}, which is not a valid DNS name (letters, digits, hyphens and dots only, at most 63 characters between dots; no IP literals). Use the site host name.`,
         siteVariable,
       ),
     );

@@ -12,7 +12,7 @@ import {
   OAUTH_GATEWAY_HOST,
   type HostProblemCode,
 } from './host.js';
-import { buildRequestUrl } from './http-util.js';
+import { buildRequestUrl, checkHost } from './http-util.js';
 import { JiraError } from './types.js';
 
 function codes(problems: readonly { code: HostProblemCode }[]): string[] {
@@ -28,6 +28,26 @@ describe('resolveHost', () => {
     });
     assert.equal(result.hostname, 'mycompany.atlassian.net');
     assert.deepEqual(result.problems, []);
+  });
+
+  it('refuses a site label longer than 63 characters at startup, not on every call [CC-980]', () => {
+    const label = 'a'.repeat(64);
+    for (const site of [
+      label,
+      `${label}.atlassian.net`,
+      `https://${label}.atlassian.net`,
+    ]) {
+      const result = resolveHost(site);
+      assert.equal(result.host, undefined, site);
+      assert.deepEqual(codes(result.problems), ['site_malformed'], site);
+      assert.match(result.problems[0]?.message ?? '', /at most 63 characters/);
+    }
+    assert.equal(isCanonicalCloudHost(`${label}.atlassian.net`), false);
+    // The request-time check agrees on both sides of the bound.
+    const longest = 'a'.repeat(63);
+    assert.equal(resolveHost(longest).host?.origin, `https://${longest}.atlassian.net`);
+    assert.equal(checkHost(`${longest}.atlassian.net`), 'canonical');
+    assert.equal(checkHost(`${label}.atlassian.net`), 'not_allowed');
   });
 
   it('accepts a full host name unchanged', () => {
