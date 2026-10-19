@@ -841,7 +841,8 @@ describe('.claude-plugin/plugin.json', () => {
     );
     assert.match(
       spec,
-      new RegExp(`^${npmPackage.name}@\\d+\\.\\d+\\.\\d+$`),
+      // A prerelease (`1.0.0-beta.1`) is still an exact pin; a range is not.
+      new RegExp(`^${npmPackage.name}@\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.]+)?$`),
       `${PLUGIN} must pin an exact version of ${npmPackage.name}`,
     );
   });

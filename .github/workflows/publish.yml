@@ -172,7 +172,13 @@ jobs:
           else
             echo "::notice::Trusted publishing: no NPM_TOKEN secret, so npm exchanges the GitHub OIDC claim."
           fi
-          npm publish --provenance --access public
+          # A prerelease (1.0.0-beta.1) goes out under the `beta` dist-tag so
+          # `latest` keeps pointing at the last stable version; npm 11 refuses
+          # a prerelease publish without an explicit tag anyway.
+          case "$GITHUB_REF_NAME" in
+            *-*) npm publish --provenance --access public --tag beta ;;
+            *) npm publish --provenance --access public ;;
+          esac
 
       - name: Rehearsal summary
         if: github.event_name == 'workflow_dispatch'
