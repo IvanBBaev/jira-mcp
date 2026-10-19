@@ -20,7 +20,7 @@
       },
       "homepage": "https://github.com/IvanBBaev/jira-mcp#readme",
       "repository": "https://github.com/IvanBBaev/jira-mcp",
-      "license": "MIT",
+      "license": "GPL-3.0-only",
       "category": "productivity",
       "keywords": ["mcp", "jira", "jira-cloud", "atlassian", "jql", "issue-tracker"],
       "tags": ["jira", "atlassian", "issue-tracker"]

@@ -12,6 +12,13 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
+### Changed
+
+- **The license is now GPL-3.0-only** (was MIT). Using the server is
+  unaffected; distributing a modified copy now requires releasing it under the
+  GPL as well. Versions up to and including 1.0.0-beta.1 were published under
+  MIT and remain available under it.
+
 ## [1.0.0-beta.1] — 2026-10-19
 
 ### Added

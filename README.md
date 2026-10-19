@@ -251,7 +251,8 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-[MIT](LICENSE).
+Copyright (C) 2026 Ivan Baev. Licensed under
+[GPL-3.0-only](LICENSE). Versions up to and including 1.0.0-beta.1 were published under MIT and remain available under it.
 
 Jira and Atlassian are trademarks of Atlassian Pty Ltd. This project is an
 independent, unofficial client and is not affiliated with or endorsed by
