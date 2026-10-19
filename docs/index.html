@@ -131,7 +131,7 @@
                 "name": "Is it on npm?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Yes — jira-mcp-ai, currently 0.9.4. It is published from a git tag by GitHub Actions with provenance attestation, so the artifact on npm is verifiably built from this repository; npm audit signatures will say so. The version is deliberately below 1.0.0 and will stay there until the live verification is complete. Pin the exact version in your client configuration — the changelog is written for someone deciding whether to move that pin."
+                  "text": "Yes — jira-mcp-ai, currently 1.0.0-beta.1. It is published from a git tag by GitHub Actions with provenance attestation, so the artifact on npm is verifiably built from this repository; npm audit signatures will say so. The version is deliberately below 1.0.0 and will stay there until the live verification is complete. Pin the exact version in your client configuration — the changelog is written for someone deciding whether to move that pin."
                 }
               },
               {
@@ -1447,7 +1447,7 @@
           </div>
 
           <p class="note warn">
-            <strong>On npm as <code>jira-mcp-ai@0.9.4</code>, and pre-1.0 on
+            <strong>On npm as <code>jira-mcp-ai@1.0.0-beta.1</code>, and pre-1.0 on
             purpose.</strong> The surface is complete, the offline gate is green, and the
             build has now been run against a real Atlassian tenant — 40 of the 58 tools
             have been proven live, and the three bugs that run found are fixed in this
@@ -1522,7 +1522,7 @@
   <span class="p">"mcpServers"</span>: {
     <span class="p">"jira"</span>: {
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.4"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@1.0.0-beta.1"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -1555,7 +1555,7 @@
   <span class="p">"mcpServers"</span>: {
     <span class="p">"jira"</span>: {
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.4"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@1.0.0-beta.1"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -1609,7 +1609,7 @@
     <span class="p">"jira"</span>: {
       <span class="p">"type"</span>: "stdio",
       <span class="p">"command"</span>: "npx",
-      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@0.9.4"],
+      <span class="p">"args"</span>: ["-y", "jira-mcp-ai@1.0.0-beta.1"],
       <span class="p">"env"</span>: {
         <span class="p">"JIRA_SITE"</span>: "mycompany",
         <span class="p">"JIRA_EMAIL"</span>: "me@example.com",
@@ -2641,7 +2641,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 Yes —
                 <a href="https://www.npmjs.com/package/jira-mcp-ai"
                   ><code>jira-mcp-ai</code></a
-                >, currently 0.9.4. It is published from a git tag by GitHub Actions with
+                >, currently 1.0.0-beta.1. It is published from a git tag by GitHub Actions with
                 provenance attestation, so the artifact on npm is verifiably built from
                 this repository; <code>npm audit signatures</code> will say so.
               </p>

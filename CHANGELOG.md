@@ -12,6 +12,8 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] — 2026-10-19
+
 ### Added
 
 - **Jira Data Center, as an unverified preview.** Set
