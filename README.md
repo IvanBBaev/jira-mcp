@@ -14,11 +14,13 @@ Two things shape the design:
 - **Jira content is untrusted input.** Issue text arrives from whoever filed the
   ticket. It is labelled as data, never merged into the agent's instructions.
 
-> **Status: published, pre-1.0.** The specification in [`docs/`](docs/README.md)
+> **Status: 1.0.0.** The specification in [`docs/`](docs/README.md)
 > is normative and the code ships with it; drift is a bug. `jira-mcp-ai` is on
-> npm with provenance, so the registration example below resolves as written.
-> The version stays below 1.0.0 because 18 of the 58 tools have not yet been run
-> against a real Jira site — see [the implementation plan](docs/IMPLEMENTATION-PLAN.md) and
+> npm with provenance, so the registration example below resolves as written,
+> and the tool surface now follows semver. 40 of the 58 tools have been run
+> against a real Jira site; the other 18 — mostly the permission-gated,
+> irreversible and bulk writes — are verified offline only. See
+> [the implementation plan](docs/IMPLEMENTATION-PLAN.md) and
 > [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Requirements
@@ -38,7 +40,7 @@ arguments, not JSON.
   "mcpServers": {
     "jira": {
       "command": "npx",
-      "args": ["-y", "jira-mcp-ai@1.0.0-beta.1"],
+      "args": ["-y", "jira-mcp-ai@1.0.0"],
       "env": {
         "JIRA_SITE": "mycompany",
         "JIRA_EMAIL": "me@example.com",
@@ -55,7 +57,7 @@ newest at spawn time, so a fresh publish could start running new code inside an
 agent session with no review step. Bump the pin once you have read the changelog.
 
 Before wiring the server into a client, run
-`npx -y jira-mcp-ai@1.0.0-beta.1 doctor` with the same environment variables set: it
+`npx -y jira-mcp-ai@1.0.0 doctor` with the same environment variables set: it
 runs the configuration and credential probes from a plain terminal and prints a
 report — the fastest way to learn whether the site, email and token actually
 work. `login` and `logout` (the OAuth flow), `--help` and `--version` are also

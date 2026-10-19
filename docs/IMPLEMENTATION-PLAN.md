@@ -18,7 +18,7 @@
 
 | | |
 |---|---|
-| Release target | `1.0.0` — the version published after Gate C closes on Cloud (D87, RELEASING.md §6) (current version `1.0.0-beta.1`) |
+| Release target | `1.0.0` — the version published after Gate C closes on Cloud (D87, RELEASING.md §6) (current version `1.0.0`, released by owner decision before Gate C closed — D121) |
 | Progress | **88.4 %** — 153 h of 173 h earned |
 | Remaining | **20 h** Opus 5.5 (0 h workable now, 20 h blocked) |
 | Blocked by | test-account permissions (project admin, delete, bulk changes); a live `--write` run of Gate C; npm trusted publisher + token revoke (D86); leaked API token rotation; `live` Actions secrets |
@@ -56,8 +56,8 @@ block `1.0.0`.
 | R05 | Fix what that run finds (each past live run found 3–4 defects) | Risks table | `blocked-external` | 6 |
 | R06 | Record the minimum fixture set against the live site | Phase 1, Phase 3 open items | `blocked-external` | 3 |
 | R07 | `live` environment `JIRA_*` secrets; weekly live suite green | Phase 5 open item | `blocked-owner` | 1 |
-| R08 | Flip docs to 1.0.0: README status, live counts, CHANGELOG, RELEASING, site | D87 | `blocked-external` | 3 |
-| R09 | Publish `1.0.0`: tag, publish workflow, registry and provenance checks | RELEASING.md §4–§5 | `blocked-owner` | 1.5 |
+| R08 | Flip docs to 1.0.0: README status, live counts, CHANGELOG, RELEASING, site | D87, D121 | `done` | 3 |
+| R09 | Publish `1.0.0`: tag, publish workflow, registry and provenance checks | RELEASING.md §4–§5, D121 | `done` | 1.5 |
 
 ### History
 - 2026-10-13 `6484ffb` — 88.4 %, 20 h left (first run; baseline)

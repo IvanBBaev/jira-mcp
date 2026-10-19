@@ -12,6 +12,13 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-10-19
+
+The first stable release, cut by owner decision (D121) from the same code as
+`1.0.0-beta.1`. From this version the tool surface follows semver. 40 of the
+58 tools are proven against a live tenant; the other 18 are verified offline
+only (see the implementation plan, R03–R05).
+
 ### Changed
 
 - **The license is now GPL-3.0-only** (was MIT). Using the server is

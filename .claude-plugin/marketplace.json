@@ -12,7 +12,7 @@
       "source": "./",
       "displayName": "Jira Cloud (jira-mcp-ai)",
       "description": "Jira Cloud tools for Claude Code: JQL search, issue reads, and writes behind a plan/apply gate.",
-      "version": "1.0.0-beta.1",
+      "version": "1.0.0",
       "author": {
         "name": "Ivan Baev",
         "email": "ivanbbaev@gmail.com",
