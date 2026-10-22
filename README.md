@@ -115,7 +115,7 @@ JQL search over issues, approximate result counts, and the saved filters that st
 | --- | --- | --- | --- |
 | `jira_search` | Search issues | read-only | Run JQL and return ONE page of issues plus data.nextPageToken — pass it back to read the next page. There is no total; use jira_count. |
 | `jira_count` | Count issues | read-only | Count the issues a JQL matches without fetching any of them. |
-| `jira_list_filters` | List saved filters | read-only | Finds saved filters — named, stored JQL — by name substring or owner, and returns each one with its jql. |
+| `jira_list_filters` | List saved filters | read-only | Find saved filters — named, stored JQL — by name substring or owner, each with its jql. |
 | `jira_get_filter` | Get saved filter | read-only | Reads one saved filter by numeric id (from jira_list_filters): name, description, owner, the JQL it stores and whether you favourited it. |
 
 ### Issues (read) — `issues`
@@ -124,7 +124,7 @@ One issue and its comments, available transitions, change history and worklogs, 
 
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
-| `jira_get_issue` | Get issue | read-only | Read one Jira issue by key or id. Name the fields you need — omitting fields returns Jira's whole navigable set and burns the result budget. |
+| `jira_get_issue` | Get issue | read-only | Read one issue by key or id. Name the fields you need — omitting fields returns Jira's whole navigable set and burns the result budget. |
 | `jira_get_comments` | Get comments | read-only | List the comments on an issue, newest first by default (orderBy -created; Jira's own default is oldest first). |
 | `jira_get_transitions` | Get transitions | read-only | List the workflow transitions available from this issue's CURRENT status: id, name and target status. |
 | `jira_get_changelog` | Get changelog | read-only | Read an issue's change history — field, from → to, author, created. |
@@ -137,8 +137,8 @@ Issue changes: creation, fields, workflow transitions, comments and comment edit
 
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
-| `jira_create_issue` | Create issue | write · standard | Create one issue. project and issueType are instance-specific — resolve them with jira_list_projects and jira_get_create_meta, which also names the custom fields this project requires. |
-| `jira_update_issue` | Update issue | write · standard | Update fields on one issue. REPLACE semantics: description (text or ADF) replaces the WHOLE rich-text field, so tables and panels in the old value are lost — never "append" a paragraph this way. |
+| `jira_create_issue` | Create issue | write · standard | Create one issue. project and issueType are instance-specific: jira_list_projects and jira_get_create_meta resolve them, and the latter names the custom fields the project requires. |
+| `jira_update_issue` | Update issue | write · standard | Update fields on one issue. REPLACE semantics: description replaces the WHOLE rich-text field, so tables and panels in the old value are lost — never "append" this way. |
 | `jira_transition_issue` | Transition issue | write · standard | Move one issue through its workflow. |
 | `jira_add_comment` | Add comment | write · standard | Add a comment to one issue. body takes plain text (converted to ADF) or a raw ADF document; format: "markdown" parses a string body as the markdown subset. |
 | `jira_update_comment` | Update comment | write · standard | Edit one existing comment. |
@@ -155,10 +155,10 @@ Irreversible deletions — an issue, a comment, a worklog entry, a component, a 
 | `jira_delete_issue` | Delete issue | write · irreversible | Permanently delete one issue. IRREVERSIBLE: Jira has no undo and no trash for this, the issue and its comments, worklogs and attachments are gone. |
 | `jira_delete_comment` | Delete comment | write · irreversible | Permanently delete one comment from an issue. IRREVERSIBLE: the comment is not recoverable and the deletion is not recorded in the issue changelog. |
 | `jira_delete_worklog` | Delete worklog | write · irreversible | Permanently delete one worklog entry from an issue. IRREVERSIBLE: the logged time is gone and Jira gives it back to the remaining estimate (its default adjustment). |
-| `jira_delete_component` | Delete component | write · irreversible | Permanently delete one project component. |
-| `jira_delete_version` | Delete version | write · irreversible | Permanently delete one project version (a release). |
+| `jira_delete_component` | Delete component | write · irreversible | Permanently delete one project component. IRREVERSIBLE: no undo, and every issue referencing it is rewritten — reassigned to moveIssuesTo when given, stripped of the component when not. |
+| `jira_delete_version` | Delete version | write · irreversible | Permanently delete one version (release). |
 | `jira_delete_sprint` | Delete sprint | write · irreversible | Permanently delete one sprint. IRREVERSIBLE: the sprint record and its history are gone; its issues are NOT deleted — Jira moves the open ones to the backlog. |
-| `jira_bulk_delete_issues` | Bulk delete issues | write · irreversible | Permanently delete up to 1000 issues in one asynchronous bulk operation. IRREVERSIBLE: Jira has no undo, and subtasks of selected parents are deleted with them (they count toward the 1000). |
+| `jira_bulk_delete_issues` | Bulk delete issues | write · irreversible | Permanently delete up to 1000 issues in one asynchronous bulk operation. IRREVERSIBLE: no undo, and subtasks of selected parents go with them (they count toward the 1000). |
 | `jira_bulk_edit_issues` | Bulk edit issues | write · irreversible | Apply one change set — labels, priority, assignee, fix versions — to up to 1000 issues in one asynchronous bulk operation. |
 
 ### Attachments — `attachments`
@@ -168,7 +168,7 @@ Files on issues: list what is attached, download one into the server's media dir
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
 | `jira_list_attachments` | List attachments | read-only | Lists the files attached to one issue: id, filename, size in bytes, mime type, author and creation time. Metadata only — no bytes are transferred and no local directory is needed. |
-| `jira_download_attachment` | Download attachment | read-only | Downloads one attachment INTO THIS SERVER'S media directory and returns the local path — the bytes never pass through the conversation. |
+| `jira_download_attachment` | Download attachment | read-only | Download one attachment INTO THIS SERVER'S media directory and return the local path — the bytes never pass through the conversation. |
 | `jira_upload_attachment` | Upload attachment | write · standard | Attaches a file from this server's media directory to an issue. |
 
 ### Watchers, votes & project setup — `collab`
@@ -185,10 +185,10 @@ The surface around an issue: who watches it, who voted for it, and the component
 | `jira_list_components` | List components | read-only | Lists a project's components — the sub-areas an issue's `components` field points at — with their id, name, description, lead and default assignee rule. |
 | `jira_create_component` | Create component | write · standard | Creates a component in a project — a sub-area issues can be filed under. Takes the project KEY (jira_create_version takes a numeric id instead; that asymmetry is Jira's). |
 | `jira_update_component` | Update component | write · standard | Changes a component. This is a PARTIAL update, unlike jira_update_issue: only the fields you pass are changed and everything you omit keeps its current value. |
-| `jira_list_versions` | List versions | read-only | Lists a project's versions (releases) — the values an issue's fixVersions and affectedVersions fields point at — with their id, name, dates and whether they are released or archived. |
+| `jira_list_versions` | List versions | read-only | List a project's versions (releases) — what fixVersions and affectedVersions point at — with id, name, dates and whether released or archived. |
 | `jira_create_version` | Create version | write · standard | Creates a version (a release) in a project — a value issues can then use in fixVersions. Takes the NUMERIC projectId, not the key (jira_create_component takes a key; the asymmetry is Jira's). |
-| `jira_update_version` | Update version | write · standard | Changes a version — this is how a release is cut (released: true) and how it is un-cut (released: false). |
-| `jira_list_project_roles` | List project roles | read-only | Lists a project's roles (Administrators, Developers, …) with their ids, and — when you pass a roleId — the accounts and groups in that one role. |
+| `jira_update_version` | Update version | write · standard | Change a version — how a release is cut (released: true) and un-cut (released: false). A PARTIAL update, unlike jira_update_issue: only the fields you pass change; omitted ones keep their value. |
+| `jira_list_project_roles` | List project roles | read-only | List a project's roles (Administrators, Developers, …) with their ids, and — with a roleId — the accounts and groups in that one role: who can do what here. |
 
 ### Metadata & discovery — `meta`
 
@@ -198,7 +198,7 @@ Projects, fields, create metadata, statuses and link types — the reads that tu
 | --- | --- | --- | --- |
 | `jira_list_projects` | List projects | read-only | Lists the Jira projects you can see — id, key, name, project type and lead. This is how a project NAME becomes the KEY every other tool wants. |
 | `jira_get_project` | Get project | read-only | Reads one project in detail: description, lead, issue types, components and versions — what you need before creating an issue, because issue type ids and component/version names are per-project. |
-| `jira_list_fields` | List fields | read-only | THE discovery tool for field ids: every field with id, name, schema type and the custom flag, so "Story Points" resolves to customfield_10016 and back. |
+| `jira_list_fields` | List fields | read-only | THE discovery tool for field ids: every field with id, name, schema type and custom flag, so "Story Points" resolves to customfield_10016 and back. |
 | `jira_get_create_meta` | Get create metadata | read-only | Reads what jira_create_issue accepts for a project. |
 | `jira_list_statuses` | List statuses | read-only | Lists workflow statuses — id, name, category and scope — so JQL like status = "In Review" names a status that really exists on this site. |
 | `jira_list_link_types` | List issue link types | read-only | Lists the issue link types configured on this site with their inward and outward phrases (for example "blocks" / "is blocked by"). |
@@ -209,7 +209,7 @@ Finding people by name or email — the one path from a human name to the accoun
 
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
-| `jira_search_users` | Search users | read-only | Finds Jira users by display name or email and returns their accountId — the id every other tool takes, since Cloud has no usernames. |
+| `jira_search_users` | Search users | read-only | Find users by display name or email and return their accountId — the id every other tool takes; Cloud has no usernames. |
 
 ### Boards & sprints — `agile`
 
@@ -219,14 +219,23 @@ Jira Software boards, sprints and their issues, the two moves (into a sprint, ou
 | --- | --- | --- | --- |
 | `jira_list_boards` | List boards | read-only | Lists the Jira Software boards you can see — id, name, type and the project each belongs to. The board id is what jira_list_sprints takes, so this is the first call of any sprint workflow. |
 | `jira_list_sprints` | List sprints | read-only | Lists a board's sprints with their id, name, state, goal and dates. Filter with state ("active" for the sprint in flight, "future" for the ones planned). |
-| `jira_get_sprint_issues` | Get sprint issues | read-only | Lists the issues in one sprint, flattened exactly like jira_search: rich text as plain text, users as accountId + displayName. |
+| `jira_get_sprint_issues` | Get sprint issues | read-only | List the issues in one sprint, flattened like jira_search: rich text as plain text, users as accountId + displayName. |
 | `jira_move_to_sprint` | Move issues to sprint | write · standard | Moves up to 50 issues into a sprint — the only way to set a sprint, which is not an editable field on jira_update_issue. |
 | `jira_move_to_backlog` | Move issues to backlog | write · standard | Sends up to 50 issues back to the backlog — Jira defines it as "remove the future and active sprints from these issues", so it is the inverse of jira_move_to_sprint and the only way to clear a sprint… |
 | `jira_create_sprint` | Create sprint | write · standard | Creates a sprint on a Scrum board and returns its id. The sprint is created in the "future" state — this does NOT start it, jira_start_sprint does, and only a started sprint is the work in flight. |
-| `jira_start_sprint` | Start sprint | write · standard | Starts a sprint: "future" becomes "active", which is what makes its issues the work in flight and what every board report measures from. |
+| `jira_start_sprint` | Start sprint | write · standard | Start a sprint: "future" becomes "active", making its issues the work in flight that every board report measures from. |
 | `jira_close_sprint` | Close sprint | write · standard | Completes the active sprint. |
 
 <!-- GENERATED:TOOLS:END -->
+
+Beyond the tool list, the server serves **reference resources** (MCP
+`resources/read`): `jira://reference/tools` indexes every tool and says whether
+your configuration registered it, `jira://reference/tools/{name}` returns one
+tool's full schema with an example call, and `jira://reference/write-mode`,
+`jira://reference/jql` and `jira://reference/markdown` hold the plan/apply
+contract, JQL idioms and the markdown subset the write tools accept. A client
+that reads resources gets the detail on demand; the tool descriptions stay
+short.
 
 ## Data handling
 

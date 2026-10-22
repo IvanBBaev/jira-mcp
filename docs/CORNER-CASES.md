@@ -3114,3 +3114,32 @@ before a write. Four things the wire would get wrong are settled around it:
 - **CC-1415** — the API root is part of the key: the Data Center `GET
   /rest/api/2/status` and the Cloud `GET /rest/api/3/status` are different
   catalogues and never alias.
+- **CC-1416** — the schema a client lists is trimmed: `$schema` and the
+  `±(2^53 − 1)` bounds the converter adds to every `.int()` are dropped at
+  every depth (arrays and `anyOf` included); real bounds, descriptions and
+  `additionalProperties: false` survive, and the converter output is never
+  mutated.
+- **CC-1417** — an example that fails its own schema, carries a control field
+  (`apply`, `plan_id`, `profile`), has an empty summary or non-object
+  arguments is a `config` error at import time, like every other bad spec.
+- **CC-1418** — the three control-field descriptions stay within
+  `CONTROL_DESCRIPTION_BUDGET` (130 chars): they are repeated in every listed
+  schema, so the contract lives in the write-mode reference, not in them.
+- **CC-1419** — `jira://reference/tools/<name>` answers for a tool this
+  configuration gated out: `registered: false` plus the registry's `excluded`
+  reason, and the index marks it the same way, so a model can tell "not here"
+  from "does not exist".
+- **CC-1420** — an unknown reference URI (wrong topic, unknown tool, a
+  trailing slash, an upper-case name, a foreign scheme) is an `McpError` with
+  code `-32002` whose message echoes the URI and points at the index — a
+  protocol error, because resources carry no envelope.
+- **CC-1421** — a package reference document whose URI is outside
+  `jira://reference/`, equals the index URI, or is declared twice (also
+  against the mcp-ring write-mode document) fails catalogue construction at
+  startup.
+- **CC-1422** — the server instructions carry the live configuration: the
+  current `JIRA_WRITE_MODE`, whether `JIRA_ALLOW_IRREVERSIBLE` is set, the
+  profile-lock line, the deployment, and every reference URI.
+- **CC-1423** — every manifest tool ships an example with a one-line summary
+  and every reference URI is unique and under the prefix — checked over
+  `PACKAGES`, so a new tool cannot land without one.

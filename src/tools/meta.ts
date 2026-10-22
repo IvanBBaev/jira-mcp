@@ -145,6 +145,10 @@ export const listProjectsTool = defineTool<
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listProjectsInput,
+  example: {
+    summary: 'Projects whose name or key mentions the platform',
+    arguments: { query: 'platform' },
+  },
   handler(args, ctx) {
     return guarded(async () => {
       const loop = await ctx.api.listProjects({
@@ -202,6 +206,10 @@ export const getProjectTool = defineTool<
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: getProjectInput,
+  example: {
+    summary: 'One project with its issue types and lead',
+    arguments: { project: 'PROJ', expand: 'issueTypes,lead' },
+  },
   handler(args, ctx) {
     return guarded(async () => {
       const project = await ctx.api.getProject({
@@ -283,14 +291,17 @@ export const listFieldsTool = defineTool<z.infer<typeof listFieldsInput>, FieldL
   title: 'List fields',
   description:
     'THE discovery tool for field ids: every field with id, name, schema type and ' +
-    'the custom flag, so "Story Points" resolves to customfield_10016 and back. ' +
-    '`query` filters by name or id. `duplicateNames` lists names carried by more ' +
-    'than one id — when a name appears there, ask which field is meant instead of ' +
-    'picking one. GET /field is not paginated, so this result is complete unless a ' +
-    '`truncated` hint says the character budget cut it (CC-253).',
+    'custom flag, so "Story Points" resolves to customfield_10016 and back. query ' +
+    'filters by name or id. duplicateNames lists names carried by more than one id — ' +
+    'then ask which field is meant instead of picking one. Not paginated: the result ' +
+    'is complete unless a `truncated` hint says the character budget cut it.',
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listFieldsInput,
+  example: {
+    summary: 'Find the id of the Story Points field',
+    arguments: { query: 'story points' },
+  },
   handler(args, ctx) {
     return guarded(async () => {
       const catalog = await ctx.api.listFields(callBase(ctx));
@@ -413,6 +424,10 @@ export const getCreateMetaTool = defineTool<
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: getCreateMetaInput,
+  example: {
+    summary: 'Which fields a Bug in PROJ needs on creation',
+    arguments: { project: 'PROJ', issueTypeId: '10004' },
+  },
   handler(args, ctx) {
     return guarded(async () => {
       if (args.issueTypeId === undefined) {
@@ -506,6 +521,10 @@ export const listStatusesTool = defineTool<
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listStatusesInput,
+  example: {
+    summary: "The statuses a project's workflows use",
+    arguments: { projectId: '10000' },
+  },
   handler(args, ctx) {
     return guarded(async () => {
       const loop = await ctx.api.listStatuses({
@@ -549,6 +568,10 @@ export const listLinkTypesTool = defineTool<
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listLinkTypesInput,
+  example: {
+    summary: 'The issue link types this site defines',
+    arguments: {},
+  },
   handler(_args, ctx) {
     return guarded(async () => {
       const linkTypes = await ctx.api.listLinkTypes(callBase(ctx));

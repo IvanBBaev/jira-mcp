@@ -457,6 +457,8 @@ describe('the built server over stdio', () => {
 
     const capabilities = child.client.getServerCapabilities();
     assert.ok(capabilities?.tools);
+    assert.ok(capabilities?.resources, 'the reference resources are advertised');
+    assert.match(child.client.getInstructions() ?? '', /jira:\/\/reference\/write-mode/);
 
     const listed = await child.client.listTools();
     assert.ok(

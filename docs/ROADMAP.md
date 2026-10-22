@@ -133,14 +133,15 @@ scope call:
 With 1.0.0 on npm and every row of the release plan owner- or
 external-blocked (IMPLEMENTATION-PLAN.md), the owner approved three
 post-1.0 items on 2026-10-22: the permission check (D122, shipped), the
-metadata catalogue cache (D123, shipped), and a third that is approved but
-not started. This section records that third item and the candidates
-measured against the tree on 2026-10-23, in the order they are worth doing.
-Nothing here is committed scope by being listed: the third item's D-row
-lands with its implementation, as D122's and D123's did, and every other
-entry graduates the same way or stays here.
+metadata catalogue cache (D123, shipped), and the lighter `tools/list`
+with reference resources (D124, shipped 2026-10-23). This section keeps
+the third item's record and the candidates measured against the tree on
+2026-10-23, in the order they are worth doing. Nothing here is committed
+scope by being listed: a D-row lands with its implementation, as D122's,
+D123's and D124's did, and every other entry graduates the same way or
+stays here.
 
-### 1. Approved, next: a lighter `tools/list`, examples as resources
+### 1. Shipped as D124: a lighter `tools/list`, examples as resources
 
 Measured on `main` at `874afb6`: the 59 tool descriptions total 24,103
 characters (about 6,000 tokens) and their emitted input schemas another
@@ -157,15 +158,18 @@ references such as `jira://reference/tools/{name}`. Exit: the manifest
 snapshot changes deliberately, a per-description length cap is a test, and
 `jira_capabilities` is unchanged.
 
-### 2. The rest of the MCP surface: resources, prompts, the plugin
+Outcome (D124): `tools/list` went from 107,073 to 93,722 characters, most
+of it from the schema trim; the per-tool, write-mode, JQL and markdown
+references and the server `instructions` shipped together, and the
+per-description cap is the manifest test. TOOLS.md §Reference resources
+is the contract.
 
-Cheap and offline-testable, and the natural continuation of item 1 since
-the resource handler it adds is the same one these need.
+### 2. The rest of the MCP surface: prompts, the plugin
 
-- **Reference resources** beyond the per-tool ones: a JQL reference (the
-  parked list below already prefers docs over a JQL builder, and a resource
-  is where a model finds docs) and the write-gate contract (plan → apply,
-  `plan_id`, the tiers), so a client need not read TOOLS.md to use the gate.
+Cheap and offline-testable, and the natural continuation of item 1: the
+resource handler it added is the one these would reuse, and the JQL and
+write-gate references it listed shipped with D124.
+
 - **Prompts**: ready-made workflows served on `prompts/list`, as the
   sibling `servicenow-mcp` server does — sprint review, stand-up digest,
   release notes for a version, triage of the unassigned. Each is a fixed
@@ -238,8 +242,9 @@ and coalescing concurrent cache misses (D123).
 
 - Confluence tools — separate server (`confluence-mcp`), not scope creep here.
 - JSM (requests, SLAs, queues) — separate package family at best.
-- Webhooks/events — MCP has no push channel to the model; revisit with MCP
-  spec evolution (resources/subscriptions).
+- Webhooks/events — MCP has no push channel to the model. Static reference
+  resources shipped with D124; subscriptions stay parked until there is served
+  content that changes.
 - Embedded JQL builder — the model writes JQL better than a DSL; docs instead.
 - Bulk move (`/bulk/issues/move`) — the payload is a per-target-project
   mapping monster (classification, status and custom-field mapping per

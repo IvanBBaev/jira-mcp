@@ -14,6 +14,19 @@ env var names — not internal refactors.
 
 ### Added
 
+- Reference resources (D124): the server advertises `resources` and serves
+  `jira://reference/tools` (every tool by package, whether this configuration
+  registered it, and the documents below), `jira://reference/tools/{name}`
+  (one tool's full schema, annotations, tier and an example call),
+  `jira://reference/write-mode` (the plan/apply contract),
+  `jira://reference/jql` (JQL idioms) and `jira://reference/markdown` (the
+  markdown subset the write tools accept). An unknown URI is the protocol's
+  resource-not-found error, not a tool envelope.
+- `initialize` returns server `instructions`: the product, the tool count, the
+  live write mode and irreversible flag, the profile-lock line, the reference
+  URIs, paging and the untrusted-content rule. The server used to send none.
+- Every tool carries an example call, checked against its own schema at import
+  time and served by the per-tool reference resource.
 - A session cache for the metadata catalogues (D123): a repeat `jira_list_fields`,
   `jira_list_link_types`, `jira_list_statuses` or `jira_get_create_meta` within
   `JIRA_META_CACHE_TTL_S` seconds (default `300`) is answered from memory instead
@@ -27,6 +40,16 @@ env var names — not internal refactors.
   `issue` wins over `project`; a key Jira did not answer is listed under
   `unanswered`, never reported as denied. 59 tools, 29 reads. Served on Data
   Center too. Not yet proven live (Gate C claim C44 waits for the next run).
+
+### Changed
+
+- `tools/list` is smaller (D124): schemas no longer carry `$schema` or the
+  `±(2^53 − 1)` bounds the converter put on every integer, the `apply`,
+  `plan_id` and `profile` descriptions are one line each, the `format` and
+  `resolveMentions` arguments point at `jira://reference/markdown` instead of
+  repeating it, and 19 tool descriptions were rewritten. No argument, default
+  or result shape changed. Measured over the full surface: 107,073 → 93,722
+  characters.
 
 ### Fixed
 

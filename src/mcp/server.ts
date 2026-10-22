@@ -30,9 +30,10 @@
 
 import type { JiraApi } from '../api/port.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
-import type { AnyObjectSchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import {
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -59,7 +60,9 @@ import {
 } from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
 import { createRegistry } from './registry.js';
+import { createReferenceCatalogue, serverInstructions } from './resources.js';
 import type { RenderedResult } from './result.js';
+import { toInputSchema } from './schema.js';
 import type { ConnectableServer } from './transport.js';
 import type { AnyToolSpec, PackageSpec, ToolResult } from './types.js';
 import { createWriteGate, planFingerprint } from './write-mode.js';
@@ -126,13 +129,9 @@ export function toMcpTool(spec: AnyToolSpec): Tool {
     name: spec.name,
     title: spec.title,
     description: spec.description,
-    inputSchema: toJsonSchemaCompat(spec.input as AnyObjectSchema, {
-      strictUnions: true,
-      // The schema describes what a CALLER sends, so defaults and coercions are
-      // rendered on their input side — an `output` rendering would advertise
-      // fields the model is not allowed to pass.
-      pipeStrategy: 'input',
-    }) as Tool['inputSchema'],
+    // Converted and trimmed by `mcp/schema.ts` (D124), the one rendering the
+    // per-tool reference resource shares.
+    inputSchema: toInputSchema(spec),
     annotations: spec.annotations,
   };
 }
@@ -453,6 +452,14 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     }),
   });
 
+  // The documentation half of the surface (D124): built from the SAME manifest
+  // and exclusions the registry holds, so the index never names a tool the
+  // registry does not know about.
+  const catalogue = createReferenceCatalogue({
+    manifest: deps.packages,
+    excludedTools: registry.excludedTools,
+  });
+
   const server = new Server(
     { name: deps.serverName, version: deps.version },
     {
@@ -462,9 +469,34 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
         // buys is a client that keeps the capability path open should a future
         // change ever move the surface mid-session; nothing shipped does.
         tools: { listChanged: true },
+        // Static reference documents: no subscriptions, no list changes.
+        resources: {},
         logging: {},
       },
+      instructions: serverInstructions({
+        serverName: deps.serverName,
+        version: deps.version,
+        deployment: settings.deployment,
+        toolCount: registry.tools.length,
+        packageCount: registry.enabledPackages.length,
+        writeMode: settings.writeMode,
+        allowIrreversible: settings.allowIrreversible,
+        profileLocked: settings.lockProfile,
+        references: catalogue.references,
+      }),
     },
+  );
+
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    resources: [...catalogue.resources],
+  }));
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
+    resourceTemplates: [...catalogue.templates],
+  }));
+  // `read` throws `McpError` for an unknown URI; the SDK turns that into the
+  // JSON-RPC error a resource client expects. There is no envelope to wrap.
+  server.setRequestHandler(ReadResourceRequestSchema, (request) =>
+    catalogue.read(request.params.uri),
   );
 
   // Schemas are converted ONCE, here, not per `tools/list`: the manifest is

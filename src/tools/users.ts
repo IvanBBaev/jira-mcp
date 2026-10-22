@@ -233,16 +233,19 @@ export const searchUsersTool = defineTool<
   name: 'jira_search_users',
   title: 'Search users',
   description:
-    'Finds Jira users by display name or email and returns their accountId — the ' +
-    'id every other tool takes, since Cloud has no usernames. Pass `issue` or ' +
-    '`project` to restrict the answer to people who can be assigned there (issue ' +
-    'wins). Email is personal data: dropped unless includeEmail is true; a site ' +
-    'that masks it says so with the email_hidden hint. Data Center answers by ' +
-    'name and key, not accountId. One page per call — when paging.partial is ' +
+    'Find users by display name or email and return their accountId — the id every ' +
+    'other tool takes; Cloud has no usernames. Pass issue or project to restrict to ' +
+    'people assignable there (issue wins). Email is personal data: dropped unless ' +
+    'includeEmail is true; a site that masks it says so with the email_hidden hint. ' +
+    'Data Center answers by name and key. One page per call — when paging.partial is ' +
     'true, call again with startAt = paging.nextStartAt.',
   package: 'users',
   annotations: READ_ANNOTATIONS,
   input: searchUsersInput,
+  example: {
+    summary: 'Find the accountId of a teammate by name, assignable to a project',
+    arguments: { query: 'Dana Kim', project: 'PROJ' },
+  },
   handler(args, ctx) {
     return guarded(async () => {
       const result = await ctx.api.searchUsers({

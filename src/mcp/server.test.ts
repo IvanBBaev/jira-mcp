@@ -15,7 +15,10 @@ import test from 'node:test';
 
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type {
+  CallToolResult,
+  ReadResourceResult,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import { createFakeClock } from '../core/fakes/fakeClock.js';
 import { createFakeJiraRequest, jiraErr, jiraOk } from '../core/fakes/fakeJiraRequest.js';
@@ -402,12 +405,97 @@ test('a tool renders a JSON Schema carrying its control fields', async () => {
   });
 });
 
-test('the server advertises tools.listChanged and logging', async () => {
+test('the server advertises tools.listChanged, resources and logging', async () => {
   const { deps } = makeHarness();
   await withSession(deps, ({ client }) => {
     const capabilities = client.getServerCapabilities();
     assert.deepEqual(capabilities?.tools, { listChanged: true });
+    assert.deepEqual(capabilities?.resources, {});
     assert.deepEqual(capabilities?.logging, {});
+  });
+});
+
+test('the handshake hands the client instructions that reflect this configuration', async () => {
+  const { deps } = makeHarness();
+  await withSession(deps, ({ client }) => {
+    const instructions = client.getInstructions() ?? '';
+    assert.match(instructions, /^jira-mcp-ai 9\.9\.9: Jira Cloud over REST\.$/m);
+    assert.match(instructions, /JIRA_WRITE_MODE=apply \(now: plan\)/);
+    assert.match(instructions, /JIRA_ALLOW_IRREVERSIBLE=true \(now: not set\)/);
+    assert.match(instructions, /locked by the operator/);
+    assert.match(instructions, /jira:\/\/reference\/write-mode/);
+    assert.match(instructions, /jira:\/\/reference\/tools\/\{name\}/);
+  });
+
+  const applying = makeHarness({
+    settings: { writeMode: 'apply', allowIrreversible: true, lockProfile: false },
+  });
+  await withSession(applying.deps, ({ client }) => {
+    const instructions = client.getInstructions() ?? '';
+    assert.match(instructions, /JIRA_WRITE_MODE=apply \(now: apply\)/);
+    assert.match(instructions, /JIRA_ALLOW_IRREVERSIBLE=true \(now: set\)/);
+    assert.match(instructions, /Omit profile to use the active credential profile/);
+  });
+});
+
+/** The text of a single-content resource read; a blob content fails the test. */
+function resourceText(result: ReadResourceResult): string {
+  const [content] = result.contents;
+  assert.ok(content !== undefined && 'text' in content, 'a text content');
+  return content.text;
+}
+
+test('the reference resources are listed and readable over the protocol', async () => {
+  const { deps } = makeHarness();
+  await withSession(deps, async ({ client }) => {
+    const listed = await client.listResources();
+    const uris = listed.resources.map((resource) => resource.uri);
+    assert.equal(uris[0], 'jira://reference/tools');
+    assert.ok(uris.includes('jira://reference/write-mode'));
+
+    const templates = await client.listResourceTemplates();
+    assert.deepEqual(
+      templates.resourceTemplates.map((template) => template.uriTemplate),
+      ['jira://reference/tools/{name}'],
+    );
+
+    const index = await client.readResource({ uri: 'jira://reference/tools' });
+    assert.equal(index.contents[0]?.mimeType, 'application/json');
+    const parsed = JSON.parse(resourceText(index)) as {
+      packages: { id: string; tools: { name: string; registered: boolean }[] }[];
+    };
+    const names = parsed.packages.flatMap((pkg) => pkg.tools.map((tool) => tool.name));
+    assert.ok(names.includes('jira_fx_ping'));
+    assert.ok(names.includes('jira_fx_create'));
+
+    const create = await client.readResource({
+      uri: 'jira://reference/tools/jira_fx_create',
+    });
+    const reference = JSON.parse(resourceText(create)) as {
+      name: string;
+      registered: boolean;
+      inputSchema: Record<string, unknown>;
+    };
+    assert.equal(reference.name, 'jira_fx_create');
+    assert.equal(reference.registered, true);
+    assert.ok(
+      !('$schema' in reference.inputSchema),
+      'the reference carries the trimmed schema',
+    );
+
+    const contract = await client.readResource({ uri: 'jira://reference/write-mode' });
+    assert.equal(contract.contents[0]?.mimeType, 'text/markdown');
+    assert.match(resourceText(contract), /plan_id/);
+
+    await assert.rejects(
+      client.readResource({ uri: 'jira://reference/nope' }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /Unknown resource "jira:\/\/reference\/nope"/);
+        assert.equal((error as { code?: number }).code, -32002);
+        return true;
+      },
+    );
   });
 });
 

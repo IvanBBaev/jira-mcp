@@ -321,6 +321,14 @@ export interface ToolSpec<In = unknown, Out = unknown> {
   /** `.strict()` zod object — unknown keys are rejected, never ignored. */
   readonly input: ZodType<In>;
   /**
+   * One representative call, served by the `jira://reference/tools/{name}`
+   * resource (D124). `defineTool` parses it against `input` at import time, so
+   * an example that drifts from its schema fails the build, not the reader.
+   * Optional on the type because test fixtures build throwaway tools; the
+   * manifest test requires one on every shipped tool.
+   */
+  readonly example?: ToolExample;
+  /**
    * Declared method-style on purpose: method parameters are checked
    * bivariantly, which is what makes a concrete `ToolSpec<Args, Out>` assignable
    * to {@link AnyToolSpec} so the manifest can hold a heterogeneous list. See
@@ -402,6 +410,42 @@ export interface PackageSpec {
   /** One line: what this package covers. */
   readonly description: string;
   readonly tools: readonly AnyToolSpec[];
+  /**
+   * Reference documents this package contributes to `resources/list` (D124):
+   * Jira knowledge that belongs to no single tool — JQL idioms, the markdown
+   * subset. Declared here rather than in the mcp ring so the ring keeps knowing
+   * nothing about Jira; the mcp ring adds only the write-mode contract it owns.
+   */
+  readonly references?: readonly ReferenceDoc[];
+}
+
+/**
+ * A representative call of one tool, shown next to its schema by the per-tool
+ * reference resource. `arguments` carries the tool's own fields only — never a
+ * control field — so every example reads as the plan call it would be.
+ */
+export interface ToolExample {
+  /** One sentence: what this call achieves. */
+  readonly summary: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+}
+
+/** The URI scheme every reference resource lives under (D124). */
+export const REFERENCE_URI_PREFIX = 'jira://reference/';
+
+/**
+ * A static reference document served as an MCP resource. Pure data: the text is
+ * fixed at build time, read with no credentials and no network, and identical
+ * for every profile.
+ */
+export interface ReferenceDoc {
+  readonly uri: `jira://reference/${string}`;
+  /** Short human label for `resources/list`. */
+  readonly title: string;
+  /** One line: when a model should read it. */
+  readonly description: string;
+  /** Markdown body. */
+  readonly text: string;
 }
 
 // ---------------------------------------------------------------------------

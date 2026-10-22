@@ -92,22 +92,29 @@ const CONTROL_PROBE: Readonly<Record<ControlFieldName, unknown>> = Object.freeze
   profile: 'probe',
 });
 
+/**
+ * The control-field descriptions are repeated in every schema a client lists —
+ * `profile` 59 times, the gate pair 30 times each — so they say the rule in one
+ * line and leave the contract to the server instructions and the write-mode
+ * reference resource (`mcp/resources.ts`, D124). {@link CONTROL_DESCRIPTION_BUDGET}
+ * keeps them that way.
+ */
+export const CONTROL_DESCRIPTION_BUDGET = 130;
+
 /** Normative `.describe()` text for `profile`; client UIs render it verbatim. */
 export const PROFILE_DESCRIPTION =
-  'Named credential profile for this call. Omit to use the active profile. ' +
-  'Rejected when the server locks the profile (JIRA_LOCK_PROFILE).';
+  'Credential profile for this call; omit for the active one. Rejected under ' +
+  'JIRA_LOCK_PROFILE.';
 
 /** Normative `.describe()` text for `apply` (write tools only). */
 export const APPLY_DESCRIPTION =
-  'Set true to EXECUTE this write. Omit (or false) to get a plan of the request ' +
-  'that would be sent. Executing also requires the server to run with ' +
+  'true executes the write; omitted or false returns a plan. Executing also needs ' +
   'JIRA_WRITE_MODE=apply.';
 
 /** Normative `.describe()` text for `plan_id` (write tools only). */
 export const PLAN_ID_DESCRIPTION =
-  'The single-use id returned by the preceding plan-mode call. Required together ' +
-  'with apply: true; a mismatch means the arguments changed since the plan, and ' +
-  'the write is refused rather than executed.';
+  'The single-use plan_id of the preceding plan call; required with apply: true. ' +
+  'Refused when the arguments changed since the plan.';
 
 /** The shared `profile` argument, identical on every tool. */
 export const profileArg = z.string().min(1).optional().describe(PROFILE_DESCRIPTION);
@@ -187,9 +194,10 @@ function specError(name: string, problem: string): JiraError {
  * Assertions, in order: name pattern, non-empty title/description, known
  * package, the annotation quadruple present and boolean,
  * `readOnlyHint && destructiveHint` rejected, `writeTier ⇔ !readOnlyHint`,
- * handler callable, `.strict()` probed behaviourally, and the auto-injected
+ * handler callable, `.strict()` probed behaviourally, the auto-injected
  * control fields declared (`profile` always; `apply`/`plan_id` on write tools
- * and only there).
+ * and only there), and the example — when given — free of control fields and
+ * accepted by the input schema (D124).
  */
 export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> {
   const { name } = spec;
@@ -277,6 +285,39 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
           'read-only tool — build it with toolInput()',
       );
     }
+  }
+
+  const { example } = spec;
+  if (example !== undefined) {
+    if (typeof example.summary !== 'string' || example.summary.trim() === '') {
+      throw specError(name, 'example.summary is empty');
+    }
+    const args: unknown = example.arguments;
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      throw specError(name, 'example.arguments is not an object');
+    }
+    for (const key of CONTROL_FIELD_NAMES) {
+      if (key in args) {
+        throw specError(
+          name,
+          `example.arguments carries the control field "${key}" — an example shows ` +
+            "the tool's own arguments; the write gate is documented once, in the " +
+            'write-mode reference resource',
+        );
+      }
+    }
+    const parsed = input.safeParse(args);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ');
+      throw specError(
+        name,
+        `example.arguments do not satisfy the input schema (${issues})`,
+      );
+    }
+    Object.freeze(example.arguments);
+    Object.freeze(example);
   }
 
   Object.freeze(spec.annotations);

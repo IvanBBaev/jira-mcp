@@ -45,6 +45,7 @@ import {
 import type { HostRef, Rng, Settings } from '../core/types.js';
 import { createRegistry, selectPackages } from '../mcp/registry.js';
 import { toMcpTool } from '../mcp/server.js';
+import { REFERENCE_URI_PREFIX } from '../mcp/types.js';
 import type {
   AnyToolSpec,
   PackageSpec,
@@ -296,6 +297,37 @@ describe('the tool manifest', () => {
           `${tool.name}: writeTier must be present iff the tool is not read-only`,
         );
       }
+    }
+  });
+
+  test('[CC-1423] gives every tool an example and every reference document a unique URI', () => {
+    for (const tool of PACKAGES.flatMap((pkg) => pkg.tools)) {
+      assert.ok(tool.example, `${tool.name}: has an example`);
+      assert.ok(tool.example.summary.trim().length > 0, `${tool.name}: a summary`);
+      assert.ok(
+        tool.example.summary.length <= 120,
+        `${tool.name}: the summary is one line (${String(tool.example.summary.length)})`,
+      );
+      assert.ok(Object.isFrozen(tool.example), `${tool.name}: the example is frozen`);
+    }
+
+    const references = PACKAGES.flatMap((pkg) => pkg.references ?? []);
+    assert.ok(references.length >= 2, 'the manifest ships reference documents');
+    const uris = references.map((doc) => doc.uri);
+    assert.deepEqual([...new Set(uris)], uris, 'every reference URI is unique');
+    for (const doc of references) {
+      assert.ok(doc.uri.startsWith(REFERENCE_URI_PREFIX), `${doc.uri}: under the prefix`);
+      assert.notEqual(doc.uri, `${REFERENCE_URI_PREFIX}tools`, 'never the index');
+      assert.ok(doc.title.trim() && doc.description.trim() && doc.text.trim(), doc.uri);
+    }
+  });
+
+  test('keeps every description within the per-tool budget', () => {
+    for (const tool of PACKAGES.flatMap((pkg) => pkg.tools)) {
+      assert.ok(
+        tool.description.length <= 500,
+        `${tool.name}: ${String(tool.description.length)} chars exceeds 500`,
+      );
     }
   });
 });

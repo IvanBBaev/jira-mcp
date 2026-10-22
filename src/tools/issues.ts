@@ -194,16 +194,23 @@ export const getIssueTool = defineTool({
   name: 'jira_get_issue',
   title: 'Get issue',
   description:
-    'Read one Jira issue by key or id. Name the fields you need — omitting fields ' +
-    "returns Jira's whole navigable set and burns the result budget. Rich text is " +
-    'flattened to plain text unless raw: true, which returns the ADF trees instead ' +
-    '(this is the only tool that can), or format: "markdown" for a markdown ' +
-    'rendering of the same fields. expand: ["changelog"] adds the recent ' +
+    'Read one issue by key or id. Name the fields you need — omitting fields returns ' +
+    "Jira's whole navigable set and burns the result budget. Rich text is flattened to " +
+    'plain text; raw: true returns the ADF trees instead (only this tool can), format: ' +
+    '"markdown" renders them as markdown. expand: ["changelog"] adds the recent ' +
     'history; other sections come back under data.expanded. Users are accountId + ' +
-    'displayName — never a username.',
+    'displayName, never a username.',
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getIssueInput,
+  example: {
+    summary: 'One issue with its description rendered as markdown',
+    arguments: {
+      issue: 'PROJ-123',
+      fields: ['summary', 'status', 'assignee', 'description'],
+      format: 'markdown',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<IssueDetail>> =>
     guarded(async () => {
       const issue = await ctx.api.getIssue({
@@ -256,6 +263,15 @@ export const getCommentsTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getCommentsInput,
+  example: {
+    summary: 'The newest ten comments on an issue, as markdown',
+    arguments: {
+      issue: 'PROJ-123',
+      maxResults: 10,
+      orderBy: '-created',
+      format: 'markdown',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<CommentsResult>> =>
     guarded(async () => {
       const comments = await ctx.api.listComments({
@@ -288,6 +304,10 @@ export const getTransitionsTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getTransitionsInput,
+  example: {
+    summary: 'Where PROJ-123 can move to from its current status',
+    arguments: { issue: 'PROJ-123' },
+  },
   handler: async (args, ctx): Promise<ToolResult<TransitionsResult>> =>
     guarded(async () => {
       const transitions = await ctx.api.listTransitions({
@@ -322,6 +342,10 @@ export const getChangelogTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getChangelogInput,
+  example: {
+    summary: "The first page of an issue's field history",
+    arguments: { issue: 'PROJ-123', maxResults: 50 },
+  },
   handler: async (args, ctx): Promise<ToolResult<ChangelogResult>> =>
     guarded(async () => {
       const changelog = await ctx.api.listChangelog({
@@ -356,6 +380,10 @@ export const getWorklogsTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getWorklogsInput,
+  example: {
+    summary: 'Time logged on an issue',
+    arguments: { issue: 'PROJ-123' },
+  },
   handler: async (args, ctx): Promise<ToolResult<WorklogsResult>> =>
     guarded(async () => {
       const worklogs = await ctx.api.listWorklogs({
@@ -390,12 +418,16 @@ export const getBulkStatusTool = defineTool({
     'RUNNING, COMPLETE, FAILED, CANCEL_REQUESTED, CANCELLED or DEAD, with ' +
     'progressPercent, processedCount (issues that SUCCEEDED), failedCount and ' +
     'invalidOrInaccessibleIssueCount. COMPLETE does not mean every issue succeeded: ' +
-    'check failedCount and compare processedCount with totalIssueCount. An ' +
-    'unreported count is absent, never 0. Per-issue errors are only in the Jira UI; ' +
-    'a finished task stays readable ~14 days.',
+    'compare processedCount with totalIssueCount. An unreported count is absent, never ' +
+    '0. Per-issue errors exist only in the Jira UI; a finished task stays readable ~14 ' +
+    'days.',
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getBulkStatusInput,
+  example: {
+    summary: 'Progress of a bulk task returned by a bulk submit',
+    arguments: { taskId: '10001' },
+  },
   handler: async (args, ctx): Promise<ToolResult<BulkStatusResult>> =>
     guarded(async () => {
       const status = await ctx.api.getBulkStatus({

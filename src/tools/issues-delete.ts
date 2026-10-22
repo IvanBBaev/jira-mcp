@@ -737,6 +737,10 @@ export const deleteIssueTool = defineTool({
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: deleteIssueInput,
+  example: {
+    summary: 'Plan the deletion of an issue together with its subtasks',
+    arguments: { issue: 'PROJ-123', deleteSubtasks: true },
+  },
   handler: async (args, ctx): Promise<ToolResult<DeletedIssue>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -782,6 +786,10 @@ export const deleteCommentTool = defineTool({
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: deleteCommentInput,
+  example: {
+    summary: 'Plan the deletion of one comment',
+    arguments: { issue: 'PROJ-123', commentId: '10050' },
+  },
   handler: async (args, ctx): Promise<ToolResult<DeletedComment>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -823,6 +831,10 @@ export const deleteWorklogTool = defineTool({
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: deleteWorklogInput,
+  example: {
+    summary: 'Plan the deletion of one worklog entry',
+    arguments: { issue: 'PROJ-123', worklogId: '10300' },
+  },
   handler: async (args, ctx): Promise<ToolResult<DeletedWorklog>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -861,16 +873,20 @@ export const deleteComponentTool = defineTool({
   name: 'jira_delete_component',
   title: 'Delete component',
   description:
-    'Permanently delete one project component. IRREVERSIBLE: Jira has no undo, and ' +
-    'every issue that references the component is rewritten — reassigned to ' +
-    'moveIssuesTo when given, stripped of the component when not. Requires ' +
-    'JIRA_ALLOW_IRREVERSIBLE=true on top of the usual plan → apply; the plan works ' +
-    'without it and shows the component and how many issues reference it. To rename ' +
-    'or re-describe a component, jira_update_component edits it in place instead.',
+    'Permanently delete one project component. IRREVERSIBLE: no undo, and every issue ' +
+    'referencing it is rewritten — reassigned to moveIssuesTo when given, stripped of ' +
+    'the component when not. Needs JIRA_ALLOW_IRREVERSIBLE=true on top of plan → ' +
+    'apply; the plan works without it and shows the component and how many issues ' +
+    'reference it. To rename or re-describe one, jira_update_component edits it in ' +
+    'place.',
   package: 'issues-delete',
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: deleteComponentInput,
+  example: {
+    summary: 'Plan a component delete, moving its issues to another component',
+    arguments: { componentId: '10200', moveIssuesTo: '10201' },
+  },
   handler: async (args, ctx): Promise<ToolResult<DeletedComponent>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -920,19 +936,24 @@ export const deleteVersionTool = defineTool({
   name: 'jira_delete_version',
   title: 'Delete version',
   description:
-    'Permanently delete one project version (a release). IRREVERSIBLE: every ' +
-    'fixVersion and affectedVersion occurrence is rewritten — swapped to ' +
-    'moveFixIssuesTo / moveAffectedIssuesTo when given, CLEARED when omitted, which ' +
-    'is a documented outcome and not an error. Custom version-picker fields have no ' +
-    'swap input and are always CLEARED of this version (the plan counts those issues). ' +
-    'Requires JIRA_ALLOW_IRREVERSIBLE=true ' +
-    'on top of the usual plan → apply; the plan works without it and shows the ' +
-    'release with all three related-issue counts. To retire a release reversibly, ' +
-    'jira_update_version with archived: true hides it instead.',
+    'Permanently delete one version (release). IRREVERSIBLE: every fixVersion and ' +
+    'affectedVersion reference is swapped to moveFixIssuesTo / moveAffectedIssuesTo ' +
+    'when given and CLEARED when omitted (an outcome, not an error); custom ' +
+    'version-picker fields are always cleared. Needs JIRA_ALLOW_IRREVERSIBLE=true on ' +
+    'top of plan → apply; the plan works without it and counts the issues touched. To ' +
+    'retire a release reversibly, jira_update_version with archived: true hides it.',
   package: 'issues-delete',
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: deleteVersionInput,
+  example: {
+    summary: 'Plan a version delete, moving fix and affected versions to its successor',
+    arguments: {
+      versionId: '10400',
+      moveFixIssuesTo: '10401',
+      moveAffectedIssuesTo: '10401',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<DeletedVersion>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -974,16 +995,19 @@ export const deleteSprintTool = defineTool({
   title: 'Delete sprint',
   description:
     'Permanently delete one sprint. IRREVERSIBLE: the sprint record and its history ' +
-    'are gone; its issues are NOT deleted — Jira moves the open ones to the ' +
-    'backlog. Jira accepts the delete in any sprint state, so read the state in ' +
-    "the plan's before-state first. Requires JIRA_ALLOW_IRREVERSIBLE=true on top " +
-    'of the usual plan → apply; the plan works without it and shows the sprint ' +
-    'that would be destroyed. To end an active sprint without destroying it, ' +
-    'jira_close_sprint closes it instead.',
+    'are gone; its issues are NOT deleted — Jira moves the open ones to the backlog. ' +
+    "Any sprint state is accepted, so read the state in the plan's before-state first. " +
+    'Needs JIRA_ALLOW_IRREVERSIBLE=true on top of plan → apply; the plan works without ' +
+    'it. To end an active sprint without destroying it, jira_close_sprint closes it ' +
+    'instead.',
   package: 'issues-delete',
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: deleteSprintInput,
+  example: {
+    summary: 'Plan the deletion of a sprint',
+    arguments: { sprintId: 42 },
+  },
   handler: async (args, ctx): Promise<ToolResult<DeletedSprint>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -1033,15 +1057,18 @@ export const bulkDeleteIssuesTool = defineTool({
   title: 'Bulk delete issues',
   description:
     'Permanently delete up to 1000 issues in one asynchronous bulk operation. ' +
-    'IRREVERSIBLE: Jira has no undo, and subtasks of selected parents are deleted ' +
-    'with them (they count toward the 1000). Requires JIRA_ALLOW_IRREVERSIBLE=true ' +
-    'on top of the usual plan → apply, plus the global Bulk Change permission and ' +
-    'Delete issues in every affected project. The result is a task id, not a ' +
-    'finished delete — poll jira_get_bulk_status until the task completes.',
+    'IRREVERSIBLE: no undo, and subtasks of selected parents go with them (they count ' +
+    'toward the 1000). Needs JIRA_ALLOW_IRREVERSIBLE=true on top of plan → apply, plus ' +
+    'the global Bulk Change permission and Delete issues in every affected project. ' +
+    'The result is a task id, not a finished delete — poll jira_get_bulk_status.',
   package: 'issues-delete',
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: bulkDeleteIssuesInput,
+  example: {
+    summary: 'Plan the deletion of three issues without notifying watchers',
+    arguments: { issues: ['PROJ-101', 'PROJ-102', 'PROJ-103'], notifyUsers: false },
+  },
   handler: async (args, ctx): Promise<ToolResult<BulkDeleteSubmitted>> =>
     guarded(async () => {
       // No GET before the write (CC-129): the before-state is the request's
@@ -1191,17 +1218,25 @@ export const bulkEditIssuesTool = defineTool({
   name: 'jira_bulk_edit_issues',
   title: 'Bulk edit issues',
   description:
-    'Apply one change set — labels, priority, assignee, fix versions — to up to ' +
-    '1000 issues in one asynchronous bulk operation. IRREVERSIBLE tier: nothing ' +
-    'records the per-issue values it overwrites, so restoring 1000 issues means ' +
-    'editing 1000 issues. Requires JIRA_ALLOW_IRREVERSIBLE=true on top of the ' +
-    'usual plan → apply, plus the global Bulk Change permission and Edit issues ' +
-    'in every affected project. The result is a task id, not a finished edit — ' +
-    'poll jira_get_bulk_status until the task completes.',
+    'Apply one change set — labels, priority, assignee, fix versions — to up to 1000 ' +
+    'issues in one asynchronous bulk operation. IRREVERSIBLE tier: nothing records the ' +
+    'per-issue values it overwrites. Needs JIRA_ALLOW_IRREVERSIBLE=true on top of plan ' +
+    '→ apply, plus the global Bulk Change permission and Edit issues in every affected ' +
+    'project. The result is a task id, not a finished edit — poll ' +
+    'jira_get_bulk_status.',
   package: 'issues-delete',
   annotations: DELETE_ANNOTATIONS,
   writeTier: 'irreversible',
   input: bulkEditIssuesInput,
+  example: {
+    summary: 'Add a label to many issues and unassign them in one submit',
+    arguments: {
+      issues: ['PROJ-101', 'PROJ-102', 'PROJ-103'],
+      labels: ['triage'],
+      labelsAction: 'ADD',
+      assigneeAccountId: null,
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<BulkEditSubmitted>> =>
     guarded(async () => {
       // No GET before the write (CC-129) — same rule as the bulk delete above.

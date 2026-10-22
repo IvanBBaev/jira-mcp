@@ -3,6 +3,10 @@ import { test } from 'node:test';
 
 import { JiraError } from '../core/types.js';
 import {
+  APPLY_DESCRIPTION,
+  CONTROL_DESCRIPTION_BUDGET,
+  PLAN_ID_DESCRIPTION,
+  PROFILE_DESCRIPTION,
   TOOL_NAME_PATTERN,
   declaresKey,
   defineTool,
@@ -263,4 +267,82 @@ test('the control-field probe survives a schema with several required arguments'
   const schema = toolInput({ issue: z.string(), fields: z.array(z.string()) });
   assert.equal(declaresKey(schema, 'profile', 'work'), true);
   assert.equal(declaresKey(schema, 'nonsense', 1), false);
+});
+
+// ---------------------------------------------------------------------------
+// Examples and control-field descriptions (D124)
+// ---------------------------------------------------------------------------
+
+test('[CC-1417] an example that fails its own schema, carries a control field, or is malformed is a config error', () => {
+  assertSpecError(
+    () => defineTool(spec({ example: { summary: '', arguments: { issue: 'ABC-1' } } })),
+    'example.summary is empty',
+  );
+  assertSpecError(
+    () => defineTool(spec({ example: { summary: 'Fetch.', arguments: ['ABC-1'] } })),
+    'example.arguments is not an object',
+  );
+  assertSpecError(
+    () => defineTool(spec({ example: { summary: 'Fetch.', arguments: null } })),
+    'example.arguments is not an object',
+  );
+  assertSpecError(
+    () =>
+      defineTool(
+        writeSpec({
+          example: { summary: 'Add.', arguments: { issue: 'ABC-1', apply: true } },
+        }),
+      ),
+    'control field "apply"',
+  );
+  assertSpecError(
+    () =>
+      defineTool(
+        spec({
+          example: { summary: 'Fetch.', arguments: { issue: 'ABC-1', profile: 'x' } },
+        }),
+      ),
+    'control field "profile"',
+  );
+  assertSpecError(
+    () => defineTool(spec({ example: { summary: 'Fetch.', arguments: { issue: 7 } } })),
+    'do not satisfy the input schema',
+  );
+  assertSpecError(
+    () =>
+      defineTool(spec({ example: { summary: 'Fetch.', arguments: { nonsense: 'x' } } })),
+    'do not satisfy the input schema',
+  );
+});
+
+test('a valid example is kept and frozen with the spec', () => {
+  const tool = defineTool(
+    spec({ example: { summary: 'Fetch ABC-1.', arguments: { issue: 'ABC-1' } } }),
+  );
+  assert.deepEqual(tool.example, {
+    summary: 'Fetch ABC-1.',
+    arguments: { issue: 'ABC-1' },
+  });
+  assert.ok(Object.isFrozen(tool.example));
+  assert.ok(Object.isFrozen(tool.example?.arguments));
+
+  const plain = defineTool(spec());
+  assert.equal(plain.example, undefined);
+});
+
+test('[CC-1418] the control-field descriptions stay within the per-schema budget', () => {
+  for (const [name, text] of [
+    ['profile', PROFILE_DESCRIPTION],
+    ['apply', APPLY_DESCRIPTION],
+    ['plan_id', PLAN_ID_DESCRIPTION],
+  ] as const) {
+    assert.ok(
+      text.length <= CONTROL_DESCRIPTION_BUDGET,
+      `${name}: ${String(text.length)} chars exceeds ${String(CONTROL_DESCRIPTION_BUDGET)}`,
+    );
+    assert.ok(text.trim() === text && text.endsWith('.'), `${name}: a full sentence`);
+  }
+  assert.match(PROFILE_DESCRIPTION, /JIRA_LOCK_PROFILE/);
+  assert.match(APPLY_DESCRIPTION, /JIRA_WRITE_MODE=apply/);
+  assert.match(PLAN_ID_DESCRIPTION, /apply: true/);
 });

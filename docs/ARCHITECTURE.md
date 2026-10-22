@@ -94,14 +94,18 @@ core  ←  api  ←  mcp  ←  tools
     refuses a direct import that would go around it.
 - **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
   `result.ts`, `taint.ts`, `transport.ts`, `transport-http.ts`, `write-mode.ts`,
-  `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`. No Jira
-  endpoint knowledge.
+  `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`, `schema.ts`
+  (the listed-schema trim) and `resources.ts` (the reference catalogue and the
+  server instructions, D124). No Jira endpoint knowledge: the one document the
+  mcp ring serves is the write-mode contract it owns.
 - **`src/tools/`** — one file per package, each exporting a `PackageSpec`
   (`searchPackage`, `issuesPackage`, …) that `index.ts` composes into
   `PACKAGES`; thin glue from validated input → `ctx.api` call → shaped result. One
   exception earns its size: `attachments.ts` also holds the media store, because
   the rules that keep tenant-authored filenames inside one directory belong next
-  to the only tools that move bytes.
+  to the only tools that move bytes. `references.ts` holds the package reference
+  documents (JQL idioms, the markdown subset) that `search.ts` and
+  `issues-write.ts` attach through `PackageSpec.references`.
 
 Layering is enforced twice in `eslint.config.js` (copied from facebook-mcp):
 `import-x/no-restricted-paths` zones AND string-based `no-restricted-imports`
@@ -163,7 +167,8 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
   loses the `structuredContent` envelope.
 - JSON Schema derived from zod via the SDK's own `toJsonSchemaCompat`
   (`@modelcontextprotocol/sdk/server/zod-json-schema-compat.js`).
-- Capabilities: `{ tools: { listChanged: true }, logging: {} }`.
+- Capabilities: `{ tools: { listChanged: true }, resources: {}, logging: {} }`;
+  `instructions` come from `serverInstructions` (TOOLS.md §Reference resources).
 - Zod runtime usage quarantined to `src/mcp/define.ts`.
 
 ## Tool definition contract
@@ -177,12 +182,15 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
 - the full annotation quadruple (`readOnlyHint`, `destructiveHint`,
   `idempotentHint`, `openWorldHint`) is mandatory;
 - `readOnlyHint && destructiveHint` is rejected; `writeTier ⇔ !readOnlyHint`;
+- the optional `example` (a one-line summary plus the tool's own arguments)
+  must parse against the schema and carry no control field (CC-1417);
 - the spec is `Object.freeze`d.
 
 The ordered `PACKAGES: PackageSpec[]` manifest in `src/tools/index.ts` is the
-**single source of truth** consumed by exactly three readers: server registration
-(`src/index.ts` → `mcp/registry.ts`), the manifest snapshot test
-(`src/tools/index.test.ts`), and README generation
+**single source of truth** consumed by exactly four readers: server registration
+(`src/index.ts` → `mcp/registry.ts`), the reference catalogue
+(`mcp/resources.ts`, which also reads `PackageSpec.references`), the manifest
+snapshot test (`src/tools/index.test.ts`), and README generation
 (`scripts/generate-readme.mjs`). It does **not** generate the distribution
 manifests: `server.json` is hand-maintained and *checked* against
 docs/CONFIGURATION.md by `src/manifest-sync.test.ts` (D78). Empty packages are

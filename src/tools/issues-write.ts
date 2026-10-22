@@ -64,6 +64,7 @@ import {
   guarded,
 } from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
+import { MARKDOWN_REFERENCE } from './references.js';
 
 // ---------------------------------------------------------------------------
 // Hints (TOOLS.md §Hint catalog — closed vocabulary)
@@ -202,10 +203,9 @@ const writeFormatArg = z
   .enum(['text', 'markdown'])
   .optional()
   .describe(
-    'How to interpret a string rich-text input: "text" (default — blank lines ' +
-      'split paragraphs, single newlines are hard breaks) or "markdown" (the ' +
-      'documented subset: headings, lists, code fences, bold/italic/code, ' +
-      'links). Refused alongside a raw ADF document.',
+    'Grammar of a string rich-text input: "text" (default; blank lines split ' +
+      'paragraphs) or "markdown" (subset: jira://reference/markdown). Refused ' +
+      'with a raw ADF document.',
   );
 
 /**
@@ -218,11 +218,9 @@ const resolveMentionsArg = z
   .boolean()
   .optional()
   .describe(
-    'Resolve @[Display Name] tokens in a markdown string input to real user ' +
-      'mentions via user search. Requires format: "markdown" — true without it ' +
-      'is refused. A token naming no active user, or more than one, refuses the ' +
-      'whole call before anything is written. Default off: @[...] stays literal ' +
-      'text.',
+    'Resolve @[Display Name] tokens to real mentions via user search; needs ' +
+      'format: "markdown". An ambiguous or unknown name refuses the whole call. ' +
+      'Default off: @[...] stays literal.',
   );
 
 /**
@@ -446,17 +444,30 @@ export const createIssueTool = defineTool({
   name: 'jira_create_issue',
   title: 'Create issue',
   description:
-    'Create one issue. project and issueType are instance-specific — resolve them ' +
-    'with jira_list_projects and jira_get_create_meta, which also names the custom ' +
-    'fields this project requires. description takes plain text (converted to ADF) ' +
-    'or a raw ADF document; format: "markdown" parses a string description as the ' +
-    'markdown subset. Assignees are accountId only. Custom fields go in ' +
-    'fields under their customfield_10xxx id. A sprint cannot be set here: create ' +
-    'first, then jira_move_to_sprint.',
+    'Create one issue. project and issueType are instance-specific: jira_list_projects ' +
+    'and jira_get_create_meta resolve them, and the latter names the custom fields the ' +
+    'project requires. description takes text, markdown (format: "markdown") or a raw ' +
+    'ADF document. Assignees are accountId only. Custom fields go in fields under ' +
+    'their customfield_10xxx id. A sprint cannot be set here: create first, then ' +
+    'jira_move_to_sprint.',
   package: 'issues-write',
   annotations: WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: createIssueInput,
+  example: {
+    summary: 'A labelled bug with a markdown description, assigned on creation',
+    arguments: {
+      project: 'PROJ',
+      issueType: 'Bug',
+      summary: 'Checkout times out on slow networks',
+      description:
+        '## Steps\n\n1. Throttle to 3G\n2. Submit the cart\n\n**Expected:** order placed. **Actual:** spinner forever.',
+      format: 'markdown',
+      labels: ['checkout', 'performance'],
+      priority: 'High',
+      assigneeAccountId: '5b10a2844c20165700ede21g',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<CreatedIssue>> =>
     guarded(async () => {
       const resolution = await resolveCallMentions(
@@ -542,17 +553,20 @@ export const updateIssueTool = defineTool({
   name: 'jira_update_issue',
   title: 'Update issue',
   description:
-    'Update fields on one issue. REPLACE semantics: description (text or ADF) ' +
-    'replaces the WHOLE rich-text field, so tables and panels in the old value are ' +
-    'lost — never "append" a paragraph this way. labels replaces the whole list; ' +
-    'use labelsAdd / labelsRemove for incremental edits. parent: null un-parents, ' +
-    'assigneeAccountId: null unassigns. format: "markdown" parses a string ' +
-    'description as the markdown subset. Status is not settable here — use ' +
+    'Update fields on one issue. REPLACE semantics: description replaces the WHOLE ' +
+    'rich-text field, so tables and panels in the old value are lost — never "append" ' +
+    'this way. labels replaces the whole list; labelsAdd / labelsRemove edit it ' +
+    'incrementally. parent: null un-parents, assigneeAccountId: null unassigns. ' +
+    'format: "markdown" parses a string description. Status is not settable here — use ' +
     'jira_transition_issue.',
   package: 'issues-write',
   annotations: DESTRUCTIVE_WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: updateIssueInput,
+  example: {
+    summary: 'Add a label and raise the priority, leaving every other field alone',
+    arguments: { issue: 'PROJ-123', labelsAdd: ['regression'], priority: 'Highest' },
+  },
   handler: async (args, ctx): Promise<ToolResult<UpdateIssueResult>> =>
     guarded(async () => {
       const resolution = await resolveCallMentions(
@@ -626,6 +640,14 @@ export const transitionIssueTool = defineTool({
   annotations: WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: transitionIssueInput,
+  example: {
+    summary: 'Move an issue to In Progress with a comment, by transition name',
+    arguments: {
+      issue: 'PROJ-123',
+      transition: 'In Progress',
+      comment: 'Picking this up now.',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<TransitionIssueResult>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -688,6 +710,15 @@ export const addCommentTool = defineTool({
   annotations: WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: addCommentInput,
+  example: {
+    summary: 'A markdown comment that mentions a teammate by display name',
+    arguments: {
+      issue: 'PROJ-123',
+      body: 'Reproduced on staging. @[Dana Kim] can you check the gateway logs?',
+      format: 'markdown',
+      resolveMentions: true,
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<IssueComment>> =>
     guarded(async () => {
       const resolution = await resolveCallMentions(
@@ -757,6 +788,15 @@ export const updateCommentTool = defineTool({
   annotations: DESTRUCTIVE_WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: updateCommentInput,
+  example: {
+    summary: 'Replace the text of an existing comment',
+    arguments: {
+      issue: 'PROJ-123',
+      commentId: '10050',
+      body: 'Reproduced on staging and production.',
+      format: 'text',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<IssueComment>> =>
     guarded(async () => {
       const resolution = await resolveCallMentions(
@@ -846,6 +886,10 @@ export const assignIssueTool = defineTool({
   annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: assignIssueInput,
+  example: {
+    summary: 'Assign an issue to a user found with jira_search_users',
+    arguments: { issue: 'PROJ-123', accountId: '5b10a2844c20165700ede21g' },
+  },
   handler: async (args, ctx): Promise<ToolResult<AssignIssueResult>> =>
     guarded(async () => {
       const assigned = await ctx.api.assignIssue({
@@ -924,6 +968,15 @@ export const addWorklogTool = defineTool({
   annotations: WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: addWorklogInput,
+  example: {
+    summary: 'Log an hour and a half against an issue, with a note',
+    arguments: {
+      issue: 'PROJ-123',
+      timeSpent: '1h 30m',
+      started: '2026-10-22T09:00:00+02:00',
+      comment: 'Traced the timeout to the retry loop.',
+    },
+  },
   handler: async (args, ctx): Promise<ToolResult<IssueWorklog>> =>
     guarded(async () => {
       const base = callBase(ctx);
@@ -1009,6 +1062,10 @@ export const linkIssuesTool = defineTool({
   annotations: WRITE_ANNOTATIONS,
   writeTier: 'standard',
   input: linkIssuesInput,
+  example: {
+    summary: 'Record that one issue blocks another',
+    arguments: { linkType: 'Blocks', inwardIssue: 'PROJ-123', outwardIssue: 'PROJ-456' },
+  },
   handler: async (args, ctx): Promise<ToolResult<LinkIssuesResult>> =>
     guarded(async () => {
       const resolution = await resolveCallMentions(
@@ -1058,4 +1115,5 @@ export const issuesWritePackage: PackageSpec = {
     addWorklogTool,
     linkIssuesTool,
   ],
+  references: [MARKDOWN_REFERENCE],
 };

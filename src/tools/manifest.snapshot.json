@@ -13,7 +13,6 @@
             "openWorldHint": false
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "profile": {
@@ -33,7 +32,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "profile": {
@@ -53,7 +51,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "permissions": {
@@ -96,7 +93,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "jql": {
@@ -112,8 +108,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "nextPageToken": {
                 "type": "string",
@@ -136,9 +131,7 @@
                       "minLength": 1
                     },
                     {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
+                      "type": "integer"
                     }
                   ]
                 }
@@ -161,7 +154,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "jql": {
@@ -186,7 +178,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "filterName": {
@@ -199,13 +190,11 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "profile": {
                 "type": "string",
@@ -224,7 +213,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "filterId": {
@@ -235,8 +223,7 @@
                   },
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   }
                 ]
               },
@@ -263,7 +250,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -316,7 +302,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -325,13 +310,11 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "orderBy": {
                 "type": "string",
@@ -359,7 +342,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -384,7 +366,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -393,13 +374,11 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "profile": {
                 "type": "string",
@@ -419,7 +398,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -428,13 +406,11 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "profile": {
                 "type": "string",
@@ -454,7 +430,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "taskId": {
@@ -485,7 +460,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -560,7 +534,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -664,7 +637,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -730,7 +702,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -800,7 +771,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -815,8 +785,7 @@
                   },
                   {
                     "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
+                    "exclusiveMinimum": 0
                   }
                 ]
               },
@@ -890,7 +859,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -934,7 +902,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -943,8 +910,7 @@
               },
               "timeSpentSeconds": {
                 "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
+                "exclusiveMinimum": 0
               },
               "timeSpent": {
                 "type": "string",
@@ -1002,7 +968,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "linkType": {
@@ -1070,7 +1035,6 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1106,7 +1070,6 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1143,7 +1106,6 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1180,15 +1142,13 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "componentId": {
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1200,8 +1160,7 @@
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1235,15 +1194,13 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "versionId": {
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1255,8 +1212,7 @@
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1268,8 +1224,7 @@
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1303,15 +1258,13 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "sprintId": {
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1345,7 +1298,6 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issues": {
@@ -1385,7 +1337,6 @@
           },
           "writeTier": "irreversible",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issues": {
@@ -1467,7 +1418,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1492,7 +1442,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "attachmentId": {
@@ -1503,8 +1452,7 @@
                   },
                   {
                     "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
+                    "exclusiveMinimum": 0
                   }
                 ]
               },
@@ -1527,7 +1475,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1573,7 +1520,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1599,7 +1545,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1640,7 +1585,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1681,7 +1625,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1714,7 +1657,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issue": {
@@ -1746,7 +1688,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -1759,8 +1700,7 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
@@ -1786,7 +1726,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -1836,15 +1775,13 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "componentId": {
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -1894,7 +1831,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -1915,8 +1851,7 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
@@ -1942,15 +1877,13 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "projectId": {
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -2002,15 +1935,13 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "versionId": {
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -2061,7 +1992,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -2072,8 +2002,7 @@
                 "anyOf": [
                   {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
+                    "minimum": 1
                   },
                   {
                     "type": "string",
@@ -2104,7 +2033,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "query": {
@@ -2128,7 +2056,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -2157,7 +2084,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "query": {
@@ -2181,7 +2107,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "project": {
@@ -2210,7 +2135,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "projectId": {
@@ -2234,7 +2158,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "profile": {
@@ -2259,7 +2182,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "query": {
@@ -2279,13 +2201,11 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "profile": {
                 "type": "string",
@@ -2310,7 +2230,6 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "projectKeyOrId": {
@@ -2323,8 +2242,7 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
@@ -2348,13 +2266,11 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "boardId": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "state": {
                 "anyOf": [
@@ -2374,8 +2290,7 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
@@ -2400,13 +2315,11 @@
             "openWorldHint": true
           },
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "sprintId": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "fields": {
                 "minItems": 1,
@@ -2422,8 +2335,7 @@
               },
               "startAt": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "minimum": 0
               },
               "maxResults": {
                 "type": "integer",
@@ -2449,13 +2361,11 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "sprintId": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "issues": {
                 "minItems": 1,
@@ -2491,7 +2401,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "issues": {
@@ -2528,7 +2437,6 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "name": {
@@ -2537,8 +2445,7 @@
               },
               "originBoardId": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "goal": {
                 "type": "string",
@@ -2578,13 +2485,11 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "sprintId": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "startDate": {
                 "type": "string",
@@ -2620,13 +2525,11 @@
           },
           "writeTier": "standard",
           "inputSchema": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
               "sprintId": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
+                "minimum": 1
               },
               "apply": {
                 "type": "boolean"

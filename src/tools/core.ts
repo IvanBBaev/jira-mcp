@@ -205,6 +205,10 @@ export function capabilitiesTool(
     // The one tool that touches no external system (TOOLS.md §Annotations).
     annotations: LOCAL_READ_ANNOTATIONS,
     input: capabilitiesInput,
+    example: {
+      summary: 'What this server can do in its current configuration',
+      arguments: {},
+    },
     handler: (): Promise<ToolResult<CapabilitiesInfo>> => {
       try {
         // Metadata only — nothing here is Jira free text, so no D15 brand.
@@ -285,6 +289,10 @@ export const getMyselfTool = defineTool({
   package: 'core',
   annotations: READ_ANNOTATIONS,
   input: getMyselfInput,
+  example: {
+    summary: 'Whose credentials the active profile carries',
+    arguments: {},
+  },
   handler: async (_args, ctx): Promise<ToolResult<MyselfData>> =>
     guarded(async () => {
       const myself = await ctx.api.getMyself(callBase(ctx));
@@ -381,16 +389,19 @@ export const getMyPermissionsTool = defineTool({
   name: 'jira_get_my_permissions',
   title: 'Check my permissions',
   description:
-    'Check whether the configured account holds the named permissions globally, ' +
-    'in a project or on one issue, before a write. Each key comes back granted ' +
-    'true or false; a key Jira did not answer is listed under unanswered, never ' +
-    'reported as denied. `issue` wins over `project`; with neither, a project ' +
-    'permission is granted if held in any project. Common keys: BROWSE_PROJECTS, ' +
-    'CREATE_ISSUES, EDIT_ISSUES, TRANSITION_ISSUES, ADD_COMMENTS, WORK_ON_ISSUES, ' +
-    'DELETE_ISSUES, ADMINISTER_PROJECTS, BULK_CHANGE.',
+    'Check whether the configured account holds the named permissions globally, in a ' +
+    'project or on one issue, before a write. Each key comes back granted true or ' +
+    'false; a key Jira did not answer is listed under unanswered, never reported as ' +
+    'denied. issue wins over project; with neither, a project permission counts when ' +
+    'held in any project. Common keys: EDIT_ISSUES, TRANSITION_ISSUES, ADD_COMMENTS, ' +
+    'DELETE_ISSUES, BULK_CHANGE.',
   package: 'core',
   annotations: READ_ANNOTATIONS,
   input: getMyPermissionsInput,
+  example: {
+    summary: 'Can the caller edit and transition issues in PROJ',
+    arguments: { permissions: ['EDIT_ISSUES', 'TRANSITION_ISSUES'], project: 'PROJ' },
+  },
   handler: async (args, ctx): Promise<ToolResult<MyPermissionsData>> =>
     guarded(async () => {
       const result = await ctx.api.getMyPermissions({

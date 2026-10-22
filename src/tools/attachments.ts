@@ -459,6 +459,10 @@ export const listAttachmentsTool = defineTool<
     openWorldHint: true,
   },
   input: listAttachmentsInput,
+  example: {
+    summary: 'What files are attached to an issue',
+    arguments: { issue: 'PROJ-123' },
+  },
   handler: async (args, ctx): Promise<ToolResult<AttachmentListData>> =>
     guarded(async () => {
       const result = await ctx.api.listAttachments({
@@ -518,15 +522,19 @@ function downloadAttachmentTool(
     name: 'jira_download_attachment',
     title: 'Download attachment',
     description:
-      "Downloads one attachment INTO THIS SERVER'S media directory and returns the " +
-      'local path — the bytes never pass through the conversation. Requires ' +
-      'JIRA_MEDIA_DIR; without it the call is refused, while jira_list_attachments ' +
-      'keeps working. Files over 50 MiB are refused. The name on disk is derived from ' +
-      "Jira's filename and may be rewritten to keep it safe; an existing file is never " +
-      'overwritten, so calling this twice leaves two files (renamed: true says so).',
+      "Download one attachment INTO THIS SERVER'S media directory and return the local " +
+      'path — the bytes never pass through the conversation. Needs JIRA_MEDIA_DIR; ' +
+      'without it the call is refused (jira_list_attachments keeps working). Files ' +
+      "over 50 MiB are refused. The name on disk derives from Jira's filename and may " +
+      'be rewritten to keep it safe; an existing file is never overwritten (renamed: ' +
+      'true says so).',
     package: 'attachments',
     annotations: DOWNLOAD_ANNOTATIONS,
     input: downloadAttachmentInput,
+    example: {
+      summary: 'Save one attachment into the media directory',
+      arguments: { attachmentId: '10500' },
+    },
     handler: async (args, ctx): Promise<ToolResult<AttachmentDownloadData>> =>
       guarded(async () => {
         const attachmentId = String(args.attachmentId);
@@ -612,6 +620,10 @@ function uploadAttachmentTool(
     annotations: WRITE_ANNOTATIONS,
     writeTier: 'standard',
     input: uploadAttachmentInput,
+    example: {
+      summary: 'Attach a file from the media directory to an issue',
+      arguments: { issue: 'PROJ-123', name: 'screenshot.png', contentType: 'image/png' },
+    },
     handler: async (args, ctx): Promise<ToolResult<AttachmentUploadData>> =>
       guarded(async () => {
         const result = await ctx.api.uploadAttachment({

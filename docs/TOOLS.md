@@ -14,12 +14,17 @@ import time). Every tool carries the full annotation quadruple; write tools carr
 Tool descriptions are written for the model: one sentence of purpose, then the
 non-obvious constraints (accountId not username, fields must be requested, JQL
 quoting), then a pointer to the discovery tool when relevant. Budget: ≤ 500 chars
-per description.
+per description. What a model needs rarely — the full write-gate contract, a
+worked example, JQL idioms, the markdown subset — is not in a description at
+all; it is served behind `resources/read` (§Reference resources, D124).
 
-Server-level `instructions` (returned at `initialize`) carry what belongs to no
-single tool: call `jira_capabilities` first when unsure, resolve names to ids
-via the discovery tools before writing, write tools are plan-gated, and results
-are shaped/truncated rather than raw Jira JSON.
+Server-level `instructions` (returned at `initialize`, built by
+`serverInstructions` in `mcp/resources.ts`) carry what belongs to no single
+tool: the product and the tool count, `jira_capabilities` as the
+live-configuration tool, the plan/apply gate with the current `JIRA_WRITE_MODE`
+and `JIRA_ALLOW_IRREVERSIBLE` state, the profile-lock line, accountId-only
+users, the reference resource URIs, paging, and the untrusted-content rule
+(CC-1422).
 
 ## Result envelope (normative)
 
@@ -111,6 +116,10 @@ declare them, and they are stripped before the api call:
 | `apply?: boolean` | write tools only | execute instead of plan (requires `JIRA_WRITE_MODE=apply`) |
 | `plan_id?: string` | write tools only | binds an apply to the plan it was derived from |
 | `profile?: string` | all tools | target profile; rejected with `config` when `JIRA_LOCK_PROFILE` is set (AUTH.md) |
+
+Their `.describe()` texts are repeated in every listed schema, so each is one
+line within `CONTROL_DESCRIPTION_BUDGET` (130 chars, CC-1418); the contract
+itself is said once, in `jira://reference/write-mode` (§Reference resources).
 
 ## Plan-mode contract
 
@@ -490,6 +499,45 @@ called "remove" and two are `DELETE` requests, but a watcher and a vote are
 links their matching `add` restores exactly, and the two partial updates cannot
 drop a field the caller did not name — the annotation is reserved for writes
 that can lose content or end something for good (D50).
+
+## Reference resources
+
+`tools/list` is read on every session, so each description there pays per
+token; what a model needs rarely is served behind `resources/read` instead
+(D124). The server advertises the `resources` capability (no subscriptions —
+the content is fixed at startup) and serves three kinds of URI, all under
+`jira://reference/`:
+
+| URI | Content | Mime |
+|---|---|---|
+| `jira://reference/tools` | the index: every manifest tool by package with its reference URI and whether this configuration registered it, plus every document below | `application/json` |
+| `jira://reference/tools/{name}` (template) | one tool: name, title, package, description, annotations, `writeTier`, the listed input schema, the example call, `registered`, and the `excluded` reason when gated out (CC-1419) | `application/json` |
+| `jira://reference/write-mode` | the plan/apply contract — owned by the mcp ring, the only document it contributes | `text/markdown` |
+| `jira://reference/jql` | JQL idioms for `jira_search` and `jira_count_issues` (package `search`) | `text/markdown` |
+| `jira://reference/markdown` | the markdown subset the write tools convert to ADF (package `issues-write`) | `text/markdown` |
+
+Rules:
+
+- Everything served is pure: fixed at startup, no credentials, no network,
+  identical for every profile. The catalogue is built once per server from the
+  full manifest, so a gated-out tool still has a reference — the model can tell
+  "not registered here" from "does not exist".
+- An unknown URI is `McpError` code `-32002` (resource not found) whose message
+  points at the index (CC-1420). Resources have no envelope to carry a
+  tool-style error.
+- A package contributes documents through `PackageSpec.references`; their URIs
+  must be under `jira://reference/`, never the index, and unique across the
+  manifest — a violation fails startup (CC-1421). Jira knowledge stays in the
+  tools ring (`tools/references.ts`); the mcp ring owns only the write-mode
+  contract.
+- Every tool declares an `example` (`ToolExample`: a one-line summary and the
+  tool's own arguments, control fields excluded). `defineTool` parses the
+  arguments against the tool's schema at import time (CC-1417), and the
+  manifest test refuses a tool without one (CC-1423).
+- The listed schema is trimmed before it leaves the server (`mcp/schema.ts`,
+  CC-1416): no `$schema`, no `±(2^53 − 1)` bounds on integers; descriptions,
+  real bounds and `additionalProperties: false` survive. The per-tool reference
+  carries the same schema, so the manifest snapshot locks both.
 
 ## Jira Data Center (preview)
 
