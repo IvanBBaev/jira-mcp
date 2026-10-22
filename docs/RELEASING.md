@@ -2,9 +2,10 @@
 
 > Status: procedural — the publish-day runbook. Unlike the rest of this corpus
 > it does not describe shipped behaviour but owner actions, and it has now been
-> run twice: `jira-mcp-ai` 0.9.0 from tag `v0.9.0` on 2026-08-17, and 0.9.4 from
-> `v0.9.4` on 2026-08-18. Every step below therefore describes both what to do
-> and what happened when it was done.
+> run four times: `jira-mcp-ai` 0.9.0 from tag `v0.9.0` on 2026-08-17, 0.9.4 from
+> `v0.9.4` on 2026-08-18, and `1.0.0-beta.1` and `1.0.0` from their tags on
+> 2026-10-19. Every step below therefore describes both what to do and what
+> happened when it was done.
 
 The release machinery was written, reviewed and dry-run long before the
 decision to publish. That was the point: on the day, nothing here should need a
@@ -37,9 +38,9 @@ than trusting the date.
 | CodeQL default setup — leave **off** | **correct as it stands** — `code-scanning/default-setup` reports `state: not-configured` | Analysis ships as an advanced-setup workflow (D67). Turning default setup on silently disables that file. Run one or the other, never both. This row is a guard, not a task: the only wrong action is acting. |
 | Environment `release` | **exists** — created 2026-08-17; the repository now has `github-pages`, `live` and `release` | `.github/workflows/publish.yml` declares it on the publishing job, so until it existed a tagged run failed at job start. It carries no required reviewer today: the 0.9.0 run published without a human approval step, and adding one is the single edit that puts a person in front of every future release. |
 | Variable `PUBLISH_ENABLED` | **`true`** — set 2026-08-17 | It was the go signal, and it is now a standing one: with it set, any pushed `v*` tag whose version is not already on the registry publishes. Unsetting it is the fastest way to stop that without touching a file. |
-| Secret `NPM_TOKEN` | **present** — created 2026-08-17, per `gh secret list`; it published 0.9.0 and is now due for deletion | The bootstrap credential for the **first** publish only (D86), because a trusted publisher cannot be configured for a package that does not exist. `publish.yml` uses it if it is there and OIDC if it is not. That first publish has happened, so the deletion in §5 is no longer a future step — it is the oldest open one. `gh secret list` shows names and dates only — the value is not readable back, by design. |
+| Secret `NPM_TOKEN` | **present** — created 2026-08-17, per `gh secret list`; it published 0.9.0 through 1.0.0 and is now overdue for deletion | The bootstrap credential for the **first** publish only (D86), because a trusted publisher cannot be configured for a package that does not exist. `publish.yml` uses it if it is there and OIDC if it is not. That first publish has happened, so the deletion in §5 is no longer a future step — it is the oldest open one. `gh secret list` shows names and dates only — the value is not readable back, by design. |
 | GitHub Pages — deploy from `main`, `/docs` | **on and correctly wired** — `pages` reports `status: built`, source branch `main` path `/docs`, `public: true`, `https_enforced: true`, and its `html_url` equals `package.json`'s `homepage`. One human step remains: open it and confirm the page renders | No workflow builds the site, so this is a settings toggle like the rest of the table. `package.json` `homepage` is `https://ivanbbaev.github.io/jira-mcp/`, and that is the **Homepage** link npm renders on the package page — if Pages is off, the first thing a stranger clicks on a brand-new package 404s. `docs/robots.txt` and `docs/sitemap.xml` already advertise the URL. "Built" is GitHub's word for the last deploy, not a promise the HTML is right. |
-| npm trusted publisher | **registrable now, still not registered** — the package exists (`npm view jira-mcp-ai version` → `0.9.0`), so npmjs.com now has a settings page for it. There is no read-only public API for this state, so this row cannot be checked by a command, only by logging in and looking | Registering this repository and `publish.yml` — extension included, case-sensitive, allowed action `npm publish` — is what makes the `NPM_TOKEN` secret deletable (§5). Until that is done, releases keep going out on the bootstrap token, which is exactly the long-lived-credential class of risk D37 exists to remove. |
+| npm trusted publisher | **registrable now, still not registered** — the package exists (`npm view jira-mcp-ai version` → `1.0.0`), so npmjs.com now has a settings page for it. There is no read-only public API for this state, so this row cannot be checked by a command, only by logging in and looking | Registering this repository and `publish.yml` — extension included, case-sensitive, allowed action `npm publish` — is what makes the `NPM_TOKEN` secret deletable (§5). Until that is done, releases keep going out on the bootstrap token, which is exactly the long-lived-credential class of risk D37 exists to remove. |
 
 ### 1.1 Re-reading the state
 
@@ -235,12 +236,26 @@ reasons, not for want of a run. And 0.9.1 through 0.9.3 do not exist: the jump
 was deliberate, one version per live defect that 0.9.4 carries, which is cheaper
 than explaining a gap later.
 
+The third and fourth publishes happened on 2026-10-19. `1.0.0-beta.1`, from tag
+`v1.0.0-beta.1` on commit `190b4de`, run 39315390224, went out under the `beta`
+dist-tag — `publish.yml` publishes any tag with a `-` in it as a prerelease, so
+`latest` stayed on 0.9.4. `1.0.0`, from tag `v1.0.0` on commit `e440ab2`, run
+39320291946 (1m30s), went to `latest` by owner decision before Gate C closed
+(D121) and is the first version under GPL-3.0-only (D120). Both still used the
+bootstrap `NPM_TOKEN`, and on both npm printed a notice that tokens which bypass
+2FA are being restricted for direct publishing — the first bullet below is no
+longer only hygiene, it is what keeps the next release possible. `1.0.0` was
+verified from the registry: `dist-tags.latest` is `1.0.0`, `gitHead` is
+`e440ab2`, 121 files, a `https://slsa.dev/provenance/v1` attestation, and a cold
+install into an empty directory answered `--version` with `1.0.0`.
+
 - **Retire the bootstrap token, in this order.** The package now has a settings
   page on npmjs.com, so register this repository and the workflow filename
   `publish.yml` as its trusted publisher (select at least one allowed action —
   `npm publish`), *then* delete the `NPM_TOKEN` repository secret and revoke the
-  token itself on npmjs.com. It has now carried two releases, which is one more
-  than "bootstrap" was meant to mean. Deleting the secret is what switches `publish.yml`
+  token itself on npmjs.com. It has now carried four releases, which is three
+  more than "bootstrap" was meant to mean, and npm has started warning that
+  tokens which bypass 2FA are being restricted for direct publishing. Deleting the secret is what switches `publish.yml`
   back to OIDC (D86); doing it before the publisher is registered leaves the
   next release with no credential at all, and doing neither leaves a publishing
   credential in the repository that nothing needs — the failure mode this whole
@@ -279,7 +294,9 @@ than explaining a gap later.
   release: 0.9.0 shipped before it had ever run and 0.9.4 shipped with it half
   done, deliberately and visibly, because a pre-1.0 version number is how a
   project says "complete, not fully verified" in the one place every consumer
-  already reads (D87). It blocks **1.0.0**, and nothing else will unblock it.
+  already reads (D87). It was meant to block **1.0.0**; the owner released
+  1.0.0 anyway on 2026-10-19 with 40 of 58 tools proven live (D121), so what
+  it blocks now is the claim that the remaining 18 work against a real site.
 
   **Read half: run, 2026-08-17**, against a large company tenant (58 projects,
   83 boards, ~10k issues) with `--project DEV --project2 CAL --issue DEV-1243`
