@@ -2971,3 +2971,40 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
     parallel, as documented.
   - `jira_update_component` and `jira_update_version` keep "Re-run the call"
     on an unreadable echo. Re-sending a partial PUT changes nothing more.
+
+## Fifty-third defect hunt — the Data Center rehearsal and the fake's set-up (2026-10-22)
+
+- **CC-1500** `scripts/fake-jira.mjs` reused any key and certificate already
+  in its cert directory. The default directory is a fixed path under the OS
+  temp dir, so it outlives the two-day certificate, and two days after the
+  first run every handshake to the standalone fake failed on an expired
+  certificate. A truncated certificate was reused the same way. A pair is
+  now reused only while the certificate parses and has at least an hour
+  left; otherwise it is regenerated.
+- **CC-1501** `scripts/rehearse-datacenter.mjs` made its workdir before the
+  `try` whose `finally` removes it. A set-up failure (no `openssl`) left a
+  `jira-mcp-rehearse-dc-*` directory in the temp dir on every run. The set-up
+  now runs inside the `try`.
+- **CC-1502** In the same rehearsal, a server that would not start, a call
+  that hung, or a result without `structuredContent` threw out of the run.
+  `main()` reported that as a set-up error (exit 2) and dropped every
+  finding gathered before it. A failure past set-up is now a
+  `rehearsal aborted: …` finding, reported with the others, and exits 1.
+  Exit 2 is left to what the header promises: no build, no `openssl`.
+- **CC-1503** The fake read any media mode other than `always` or `auto` as
+  `never`. A mistyped `mediaMode: 'Always'` in a rehearsal pass meant to
+  prove the 303 hop would pass without taking it. `startFakeJira` and
+  `setMediaMode` now refuse an unknown mode, like an unknown deployment
+  (CC-294).
+- Leads checked and rejected:
+  - A request target starting with `//` is parsed by the fake as a
+    host-relative URL, so its path is mis-recorded. It still matches no
+    route, so it is flagged as unmatched: the verdict is right, only the
+    recorded path is wrong.
+  - `--port ''` starts the standalone fake on a random port. The origin it
+    prints is the one to use, so nothing is misdirected.
+  - The rehearsal runs no step check on the second search page. Page 2 is
+    still checked for leaks, emptiness and overlap, and `jira_search` has
+    no Data Center-specific promise beyond those.
+  - The wrong-PAT phase does not audit the wire. It makes one call, and that
+    call's auth failure is checked request by request.

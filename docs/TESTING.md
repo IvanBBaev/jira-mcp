@@ -342,7 +342,9 @@ outside the context path answer 404 and are flagged; a user search sent
 Cloud's `query` instead of `username` is a 400 and a violation (CC-312); the
 legacy `GET /issue/createmeta?expand=`, removed in Jira 9.0, is a 404 and a
 violation (CC-366); Cloud's `/attachment/content/{id}` is a 404 and a
-violation (CC-379). Cloud mode is unchanged.
+violation (CC-379). Cloud mode is unchanged. The fake regenerates a cached
+certificate that has expired or will not parse (CC-1500) and refuses an unknown
+media mode (CC-1503).
 `scripts/rehearse-datacenter.mjs` (after `npm run build`) starts the built
 server with `JIRA_DEPLOYMENT=datacenter`, `JIRA_DATACENTER_PREVIEW=true`,
 `JIRA_AUTH_MODE=pat` and `JIRA_PAT` against it over real stdio MCP, and
