@@ -59,6 +59,13 @@ core  ←  api  ←  mcp  ←  tools
   loading, host resolution, the HTTP client, errors, logging, redaction, clock,
   settings, and — since Phase 8 — `oauth.ts`. The ONLY module allowed to touch
   the network is `core/http.ts`.
+  - **`core/meta-cache.ts`** (D123) is a decorator on the request seam: a
+    repeat bodiless `GET` on one of the metadata catalogue routes (fields,
+    link types, statuses, create meta) is answered from memory for
+    `JIRA_META_CACHE_TTL_S`. The registry applies it once to the plain seam,
+    under the gate seams and under the per-call profile wrapper, so the key
+    sees the profile and a plan-mode read warms it. It knows routes, not
+    tools, and never touches the network itself.
   - **`core/oauth.ts`** holds the 3LO logic: the PKCE pair and `state` nonce,
     the authorize URL, parsing of token and accessible-resources responses, site
     selection, the `0600` token store, and the credential resolver the server

@@ -224,6 +224,12 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   is never called, not even as a fallback. UNVERIFIED against a host.
 - `jira_create_issue` / `jira_update_issue` accept a passthrough `fields` object
   for custom fields; the tool description tells the model to discover ids first.
+- The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
+  on Data Center, and the two create-meta routes) are cached in memory for
+  `JIRA_META_CACHE_TTL_S` seconds (D123). A custom field created outside the
+  server shows up after the TTL or a restart; set the TTL to `0` when that
+  matters. `/issue/{key}/transitions` is never cached — it depends on the
+  issue's state and the caller's permissions.
 
 ## Users (GDPR mode)
 

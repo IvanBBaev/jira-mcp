@@ -127,6 +127,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_RETRY_ATTEMPTS` | `3` | Max retry attempts (policy in JIRA-API.md). Integer in 0–10; `0` disables retries. |
 | `JIRA_MAX_RESULT_CHARS` | `25000` | Truncation budget for tool results, measured on the serialized `structuredContent`. The text channel of an untrusted result can be longer: it adds the taint banner, and each fence bracket inside tenant text becomes a six-character `\uXXXX` escape. Integer in 500–10000000. |
 | `JIRA_MAX_PAGES` | `20` | Loop guard for `fetchAll`/`searchPages`. Integer in 1–1000. |
+| `JIRA_META_CACHE_TTL_S` | `300` | Seconds the metadata catalogues — fields, statuses, link types, create meta — are served from memory before being fetched again (D123). Transitions, projects, identity and permissions are never cached; a failed fetch is never cached; the cache is per profile and lives only in the process. `0` disables it. Integer in 0–86400. |
 | `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). On the Data Center preview it applies to the download only (D117); the upload is not served there. A leading `~` is expanded and a relative path is resolved against the cwd, as for `JIRA_ENV_FILE` (CC-184). |
 
 The ranges above are inclusive, and a value is plain decimal digits: `3e4`,

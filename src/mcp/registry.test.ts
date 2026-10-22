@@ -56,6 +56,7 @@ const BASE_SETTINGS: Settings = {
   retryAttempts: 3,
   maxResultChars: 25_000,
   maxPages: 20,
+  metaCacheTtlS: 300,
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',
@@ -1074,4 +1075,148 @@ test('a forwarded profile does not overwrite one the request already set', async
   await registry.call('jira_explicit_profile', { profile: 'prod' });
 
   assert.equal(h.jira.lastRequest()?.profile, 'pinned');
+});
+
+// ---------------------------------------------------------------------------
+// Metadata cache (D123)
+// ---------------------------------------------------------------------------
+
+const listFieldsTool = defineTool({
+  name: 'jira_list_fields',
+  title: 'List fields',
+  description: 'Reads the field catalogue.',
+  package: 'meta',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  input: toolInput({}),
+  async handler(_args, ctx) {
+    const res = await ctx.jira<{ id: string }[]>({ method: 'GET', path: '/field' });
+    return ok({ ids: res.data.map((f) => f.id) });
+  },
+});
+
+/** A write that reads the catalogue first, the way the create tools do. */
+const createWithMetaTool = defineTool({
+  name: 'jira_create_with_meta',
+  title: 'Create after reading meta',
+  description: 'Reads the fields, then creates an issue.',
+  package: 'issues-write',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  writeTier: 'standard',
+  input: writeToolInput({ summary: z.string() }),
+  async handler(args, ctx) {
+    await ctx.jira({ method: 'GET', path: '/field' });
+    const res = await ctx.jira<{ key: string }>({
+      method: 'POST',
+      path: '/issue',
+      body: { fields: { summary: args.summary } },
+    });
+    return ok({ created: res.data.key });
+  },
+});
+
+const META_MANIFEST: readonly PackageSpec[] = [
+  packageOf('core', [capabilitiesTool]),
+  packageOf('meta', [listFieldsTool]),
+  packageOf('issues-write', [createWithMetaTool]),
+];
+
+function fieldRequests(h: Harness): number {
+  return h.jira.calls.filter((req) => req.method === 'GET' && req.path === '/field')
+    .length;
+}
+
+test('a repeat catalogue read within the TTL is served from memory (D123)', async () => {
+  const h = harness(settingsOf());
+  h.jira.on('GET /rest/api/3/field', jiraOk([{ id: 'summary' }]));
+  const registry = createRegistry(META_MANIFEST, h.deps);
+
+  const first = await registry.call('jira_list_fields', {});
+  h.clock.advance(299_000);
+  const second = await registry.call('jira_list_fields', {});
+  assert.equal(fieldRequests(h), 1);
+  assert.deepEqual(second.structuredContent.data, first.structuredContent.data);
+
+  h.clock.advance(1_000); // 300 s after the first fetch started
+  await registry.call('jira_list_fields', {});
+  assert.equal(fieldRequests(h), 2);
+});
+
+test('JIRA_META_CACHE_TTL_S=0 switches the cache off (D123)', async () => {
+  const h = harness(settingsOf({ metaCacheTtlS: 0 }));
+  h.jira.on('GET /rest/api/3/field', jiraOk([]));
+  const registry = createRegistry(META_MANIFEST, h.deps);
+
+  await registry.call('jira_list_fields', {});
+  await registry.call('jira_list_fields', {});
+
+  assert.equal(fieldRequests(h), 2);
+});
+
+test('[CC-1404] a per-call profile gets its own cache entries, never another tenant’s', async () => {
+  const h = harness(settingsOf({ lockProfile: false }));
+  h.jira.on((req) => req.profile === 'prod', jiraOk([{ id: 'prod' }]));
+  h.jira.on((req) => req.profile === 'staging', jiraOk([{ id: 'staging' }]));
+  h.jira.on((req) => req.profile === undefined, jiraOk([{ id: 'default' }]));
+  const registry = createRegistry(META_MANIFEST, h.deps);
+
+  const prod = await registry.call('jira_list_fields', { profile: 'prod' });
+  const staging = await registry.call('jira_list_fields', { profile: 'staging' });
+  const plain = await registry.call('jira_list_fields', {});
+  const prodAgain = await registry.call('jira_list_fields', { profile: 'prod' });
+
+  assert.equal(fieldRequests(h), 3);
+  assert.deepEqual(prod.structuredContent.data, { ids: ['prod'] });
+  assert.deepEqual(staging.structuredContent.data, { ids: ['staging'] });
+  assert.deepEqual(plain.structuredContent.data, { ids: ['default'] });
+  assert.deepEqual(prodAgain.structuredContent.data, { ids: ['prod'] });
+});
+
+test('[CC-1414] a read a plan-mode write makes before its mutation warms the cache', async () => {
+  const h = harness(settingsOf({ writeMode: 'plan' }));
+  h.jira.on('GET /rest/api/3/field', jiraOk([{ id: 'summary' }]));
+  const registry = createRegistry(META_MANIFEST, h.deps);
+
+  const plan = await registry.call('jira_create_with_meta', { summary: 'Ship it' });
+  assert.equal(plan.structuredContent.ok, true);
+  assert.equal(fieldRequests(h), 1, 'the plan capture forwarded the read');
+  assert.equal(
+    h.jira.calls.some((req) => req.method === 'POST'),
+    false,
+    'and stopped the write',
+  );
+
+  const read = await registry.call('jira_list_fields', {});
+  assert.equal(fieldRequests(h), 1, 'the read tool was answered from memory');
+  assert.deepEqual(read.structuredContent.data, { ids: ['summary'] });
+});
+
+test('[CC-1414] the plan call warms the cache the apply call then reads from', async () => {
+  const h = harness(settingsOf({ writeMode: 'apply' }));
+  h.jira.on('GET /rest/api/3/field', jiraOk([{ id: 'summary' }]));
+  h.jira.on('POST /rest/api/3/issue', jiraOk({ key: 'ABC-1' }));
+  const registry = createRegistry(META_MANIFEST, h.deps);
+
+  const plan = await registry.call('jira_create_with_meta', { summary: 'Ship it' });
+  const planId = (plan.structuredContent.data as { plan_id: string }).plan_id;
+  assert.equal(fieldRequests(h), 1);
+
+  const applied = await registry.call('jira_create_with_meta', {
+    summary: 'Ship it',
+    apply: true,
+    plan_id: planId,
+  });
+
+  assert.deepEqual(applied.structuredContent.data, { created: 'ABC-1' });
+  assert.equal(fieldRequests(h), 1, 'the apply call read the catalogue from memory');
+  assert.deepEqual(h.jira.routes(), ['GET /rest/api/3/field', 'POST /rest/api/3/issue']);
 });

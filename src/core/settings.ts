@@ -73,6 +73,8 @@ export const DEFAULT_RETRY_ATTEMPTS = 3;
 export const DEFAULT_MAX_RESULT_CHARS = 25000;
 /** `JIRA_MAX_PAGES` default. */
 export const DEFAULT_MAX_PAGES = 20;
+/** `JIRA_META_CACHE_TTL_S` default: five minutes (D123). */
+export const DEFAULT_META_CACHE_TTL_S = 300;
 /** `JIRA_TRANSPORT` default. */
 export const DEFAULT_TRANSPORT: TransportKind = 'stdio';
 /** `JIRA_HTTP_PORT` default. */
@@ -799,6 +801,8 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     10000000,
   );
   const maxPages = int('JIRA_MAX_PAGES', DEFAULT_MAX_PAGES, 1, 1000);
+  // `0` is a legal value — it switches the metadata cache off (D123).
+  const metaCacheTtlS = int('JIRA_META_CACHE_TTL_S', DEFAULT_META_CACHE_TTL_S, 0, 86400);
   // Both paths are normalised the way `JIRA_ENV_FILE` is (CC-184): an env var
   // carries no shell expansion, so `~/jira-media` would otherwise name a
   // directory called `~` under whatever cwd the client spawned the server in.
@@ -873,6 +877,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     retryAttempts,
     maxResultChars,
     maxPages,
+    metaCacheTtlS,
     mediaDir,
     transport,
     httpPort,

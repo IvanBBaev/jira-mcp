@@ -82,6 +82,7 @@ function infoOf(overrides: Partial<CapabilitiesInfo> = {}): CapabilitiesInfo {
     limits: {
       maxResultChars: 40_000,
       maxPages: 20,
+      metaCacheTtlS: 300,
       requestTimeoutMs: 30_000,
       callBudgetMs: 60_000,
     },

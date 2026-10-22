@@ -1024,6 +1024,7 @@ const DC_SETTINGS: Settings = {
   retryAttempts: 3,
   maxResultChars: 25_000,
   maxPages: 20,
+  metaCacheTtlS: 300,
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',

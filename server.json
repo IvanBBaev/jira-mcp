@@ -144,6 +144,13 @@
           "format": "number"
         },
         {
+          "name": "JIRA_META_CACHE_TTL_S",
+          "description": "Seconds the field, status, link-type and create-meta catalogues are cached in memory; 0 disables.",
+          "isRequired": false,
+          "default": "300",
+          "format": "number"
+        },
+        {
           "name": "JIRA_MEDIA_DIR",
           "description": "Directory attachment downloads land in and uploads are read from. Unset: those tools refuse.",
           "isRequired": false,

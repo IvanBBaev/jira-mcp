@@ -234,7 +234,7 @@ a model always has a way to ask what it is talking to.
 
 | Tool | Endpoint | Notes |
 |---|---|---|
-| `jira_capabilities` | — (local) | Lists registered packages/tools, active profile, write mode, site. First call a model should make when unsure. |
+| `jira_capabilities` | — (local) | Lists registered packages/tools, active profile, write mode, site, and the per-call limits (`limits.maxResultChars`, `maxPages`, `metaCacheTtlS`, `requestTimeoutMs`, `callBudgetMs`). First call a model should make when unsure. |
 | `jira_get_myself` | `GET /rest/api/3/myself` | Verifies credentials; returns accountId, displayName, timezone. Also the source of the worklog offset (D16). |
 | `jira_get_my_permissions` | `GET /rest/api/3/mypermissions` | Answers whether the account holds the named permission keys globally, in a project or on one issue (D122) — "what may I do here?" before a write. `issue` wins over `project`; only the most specific scope is sent and `context` names it (CC-1403). A key Jira did not answer comes back under `unanswered`, never as denied (CC-1401). Keys are validated before the wire (CC-1400): one unknown key fails the whole call. |
 
@@ -417,6 +417,15 @@ irreversible tier, where destruction pays the tier's full ceremony.
 | `jira_get_create_meta` | `GET /rest/api/3/issue/createmeta/{project}/issuetypes[/{type}]` | Required/optional fields incl. allowed values, per project + issue type. |
 | `jira_list_statuses` | `GET /rest/api/3/statuses/search` | Supports `projectId?` filter; paged internally up to `JIRA_MAX_PAGES` — no `startAt` input, `paging.partial` says more exist upstream. (`GET /rest/api/3/status` returns the full unfiltered list — not used.) |
 | `jira_list_link_types` | `GET /rest/api/3/issueLinkType` | Names for `jira_link_issues`. |
+
+The four catalogue reads here — fields, create meta, statuses, link types —
+are answered from an in-process cache for `JIRA_META_CACHE_TTL_S` seconds
+(default 300) after the first fetch (D123): a model asks for them before
+every write it plans, and they change once a quarter. The cache is per
+profile, never stores a failed fetch, and never covers projects (`_untrusted`
+descriptions, visibility-dependent), transitions, identity or permissions.
+`0` switches it off; `jira_capabilities` reports the TTL under
+`limits.metaCacheTtlS`.
 
 ## Package `users`
 

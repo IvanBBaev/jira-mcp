@@ -372,7 +372,9 @@ exists because an MCP server is a data conduit, not just a client:
   into `JIRA_MEDIA_DIR` — real tenant documents, at `0600`, kept until the
   operator deletes them. In oauth mode the token store is a third file the
   server writes, but it holds credentials and a site identifier, never tenant
-  content. No other tenant data is written and there is no cache; the only
+  content. No other tenant data is written. The only cache is the in-memory
+  metadata cache (D123): field, status, link-type and create-meta catalogues,
+  keyed by profile, bounded, never written to disk, gone with the process. The only
   other files the server touches are operator-initiated (`doctor --save`'s env
   file) or transient (`<file>.lock` directories, `<journal>.1` rotation).
 - **Acceptable use**: the tool surface (worklogs, changelogs, user search, and

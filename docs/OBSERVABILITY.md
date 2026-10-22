@@ -155,6 +155,17 @@ waits, errors by kind) are kept and surfaced in two places only:
 anywhere — no OTel, no metrics endpoint, no phone-home; the counters die with
 the process.
 
+## Metadata cache (D123)
+
+The field, link-type, status and create-meta catalogues are served from an
+in-process cache for `JIRA_META_CACHE_TTL_S` seconds (CONFIGURATION.md). There
+is deliberately no `cache_hit` event: a hit is already visible as a `tool_call`
+/ `tool_result` pair with **no** `http_request` / `http_response` under its
+correlation id, and a miss as the usual pair. The counters are unaffected by a
+hit (no request was made). To see the cache at work, set `JIRA_LOG_LEVEL=debug`
+and call `jira_list_fields` twice. `JIRA_META_CACHE_TTL_S=0` disables it when a
+freshly created custom field has to show up at once.
+
 ## Call budget
 
 `JIRA_CALL_BUDGET_MS` (CONFIGURATION.md) bounds one tool call's total HTTP

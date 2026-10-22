@@ -13,6 +13,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RESULT_CHARS,
+  DEFAULT_META_CACHE_TTL_S,
   DEFAULT_OAUTH_AUTH_ORIGIN,
   DEFAULT_OAUTH_GATEWAY_ORIGIN,
   DEFAULT_OAUTH_REDIRECT_PORT,
@@ -642,6 +643,7 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(settings.retryAttempts, DEFAULT_RETRY_ATTEMPTS);
     assert.equal(settings.maxResultChars, DEFAULT_MAX_RESULT_CHARS);
     assert.equal(settings.maxPages, DEFAULT_MAX_PAGES);
+    assert.equal(settings.metaCacheTtlS, DEFAULT_META_CACHE_TTL_S);
     assert.equal(settings.httpPort, DEFAULT_HTTP_PORT);
     assert.equal(settings.writeMode, DEFAULT_WRITE_MODE);
     assert.equal(settings.transport, DEFAULT_TRANSPORT);
@@ -658,6 +660,7 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(DEFAULT_RETRY_ATTEMPTS, 3);
     assert.equal(DEFAULT_MAX_RESULT_CHARS, 25000);
     assert.equal(DEFAULT_MAX_PAGES, 20);
+    assert.equal(DEFAULT_META_CACHE_TTL_S, 300);
     assert.equal(DEFAULT_HTTP_PORT, 3334);
     assert.equal(DEFAULT_WRITE_MODE, 'plan');
     assert.equal(DEFAULT_TRANSPORT, 'stdio');
@@ -674,6 +677,7 @@ describe('loadSettings — numeric and enum knobs', () => {
       JIRA_RETRY_ATTEMPTS: '0',
       JIRA_MAX_RESULT_CHARS: '1000',
       JIRA_MAX_PAGES: '5',
+      JIRA_META_CACHE_TTL_S: '60',
       JIRA_HTTP_PORT: '4000',
       JIRA_WRITE_MODE: 'apply',
       JIRA_LOG_LEVEL: 'debug',
@@ -683,6 +687,7 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(report.ok, true);
     assert.equal(settings.requestTimeoutMs, 5000);
     assert.equal(settings.retryAttempts, 0);
+    assert.equal(settings.metaCacheTtlS, 60);
     assert.equal(settings.writeMode, 'apply');
     assert.equal(settings.logLevel, 'debug');
     assert.equal(settings.allowIrreversible, true);
@@ -737,6 +742,18 @@ describe('loadSettings — numeric and enum knobs', () => {
   it('treats an out-of-range number as an error finding', () => {
     const { report } = load({ ...VALID, JIRA_MAX_PAGES: '100000' });
     assert.deepEqual(codes(report), ['invalid_number']);
+  });
+
+  it('[CC-1409] accepts JIRA_META_CACHE_TTL_S=0 as the documented off switch', () => {
+    const { report, settings } = load({ ...VALID, JIRA_META_CACHE_TTL_S: '0' });
+    assert.equal(report.ok, true);
+    assert.equal(settings.metaCacheTtlS, 0);
+  });
+
+  it('rejects a metadata cache TTL above one day', () => {
+    const { report, settings } = load({ ...VALID, JIRA_META_CACHE_TTL_S: '86401' });
+    assert.deepEqual(codes(report), ['invalid_number']);
+    assert.equal(settings.metaCacheTtlS, DEFAULT_META_CACHE_TTL_S);
   });
 
   it('treats an invalid enum as an error finding', () => {

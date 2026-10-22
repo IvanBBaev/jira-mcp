@@ -3066,3 +3066,51 @@ before a write. Four things the wire would get wrong are settled around it:
   beside an issue would otherwise be an avoidable 404. A numeric reference
   goes as `issueId`/`projectId`, a key as `issueKey`/`projectKey`, and the
   result's `context` names the scope that was checked.
+
+## Metadata cache (D123, 2026-10-22)
+
+- **CC-1404** — the cache key carries the profile, so a `prod` fetch never
+  answers a `staging` ask and a per-call profile gets its own entries. The
+  registry applies the cache UNDER the profile wrapper for exactly this
+  reason: the key sees `req.profile` as the handler sent it.
+- **CC-1405** — an entry expires at exactly `ttlMs` after its fetch STARTED,
+  not after it answered: a slow upstream must not stretch the window, and the
+  expiry instant itself is a miss. The refreshed entry replaces the stale one
+  rather than sitting beside it.
+- **CC-1406** — a failed fetch is never stored. The error propagates and the
+  next ask reaches the host, so a transient 5xx or a timeout cannot be
+  replayed for five minutes.
+- **CC-1407** — a hit is a deep copy of the stored body (and of the headers).
+  The create-meta paging loops splice rows out of `values`; without the copy
+  the second caller would see a shorter catalogue than the first.
+- **CC-1408** — the whitelist is by path template, never by prefix:
+  `/issue/{key}/transitions` depends on the issue's state, `/project/…` on
+  the caller's visibility, `/myself` and `/mypermissions` on the credential,
+  `/field/{id}/context` on a field's configuration — none is ever answered
+  from memory. The create-meta routes match on `pathTemplate`, which the api
+  ring always sets for them; the literal path alone does not match.
+- **CC-1409** — `JIRA_META_CACHE_TTL_S=0` is the documented off switch and a
+  legal value (the loader's range starts at 0, unlike `JIRA_MAX_PAGES`). With
+  TTL 0 `wrap` returns the seam itself: no wrapper, no store, nothing per
+  call.
+- **CC-1410** — the store is bounded (64 entries) and evicts the oldest first;
+  a refresh moves its key to the back. A model paging through every project's
+  create meta cannot grow the process without limit.
+- **CC-1411** — the query is canonicalised into the key: sorted keys,
+  `undefined` dropped (the client omits it from the wire too), values
+  stringified. `{maxResults: 200, startAt: 0}` and `{startAt: 0,
+  maxResults: 200}` are one entry; the next page is another.
+- **CC-1412** — only a bodiless `GET` qualifies. `POST /field` creates a custom
+  field and `POST /statuses` creates statuses; a method check by path alone
+  would have cached their answers. A `GET` carrying a body, multipart or
+  `accept: 'binary'` is forwarded untouched as well.
+- **CC-1413** — a request whose signal is already aborted bypasses the cache
+  and reaches the seam, which raises the caller's own `aborted` error. A hit
+  would otherwise answer a call the client has already given up on.
+- **CC-1414** — the cache sits under the gate seams. A plan-mode write that
+  reads the catalogue before its first mutation warms the cache through the
+  plan capture, and the apply call (or a later read tool) is answered from
+  memory; a payload-guarded apply reads from memory the same way.
+- **CC-1415** — the API root is part of the key: the Data Center `GET
+  /rest/api/2/status` and the Cloud `GET /rest/api/3/status` are different
+  catalogues and never alias.

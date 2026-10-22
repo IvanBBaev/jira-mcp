@@ -161,6 +161,7 @@ const BASE_SETTINGS: Settings = {
   retryAttempts: 3,
   maxResultChars: 25_000,
   maxPages: 20,
+  metaCacheTtlS: 300,
   transport: 'stdio',
   httpPort: 3334,
   logLevel: 'info',
@@ -429,6 +430,7 @@ describe('buildCapabilitiesInfo', () => {
     assert.equal(report.activeProfile, 'prod');
     assert.equal(report.profileLocked, true);
     assert.equal(report.limits.maxPages, 7);
+    assert.equal(report.limits.metaCacheTtlS, 300);
     assert.equal(report.limits.maxResultChars, 25_000);
     assert.equal(report.limits.requestTimeoutMs, 30_000);
     assert.equal(report.limits.callBudgetMs, 120_000);

@@ -235,6 +235,7 @@ function capabilityLimits(settings: Settings): CapabilityLimits {
   return {
     maxResultChars: settings.maxResultChars,
     maxPages: settings.maxPages,
+    metaCacheTtlS: settings.metaCacheTtlS,
     requestTimeoutMs: settings.requestTimeoutMs,
     callBudgetMs: settings.callBudgetMs,
   };

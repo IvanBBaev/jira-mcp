@@ -291,6 +291,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_RETRY_ATTEMPTS', (s: Settings) => String(s.retryAttempts)],
   ['JIRA_MAX_RESULT_CHARS', (s: Settings) => String(s.maxResultChars)],
   ['JIRA_MAX_PAGES', (s: Settings) => String(s.maxPages)],
+  ['JIRA_META_CACHE_TTL_S', (s: Settings) => String(s.metaCacheTtlS)],
   ['JIRA_MEDIA_DIR', (s: Settings) => s.mediaDir],
   ['JIRA_TRANSPORT', (s: Settings) => s.transport],
   ['JIRA_HTTP_PORT', (s: Settings) => String(s.httpPort)],

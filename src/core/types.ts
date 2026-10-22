@@ -458,6 +458,12 @@ export interface Settings {
   /** `JIRA_MAX_PAGES` (default 20). Loop guard for `fetchAll`/`searchPages`. */
   readonly maxPages: number;
   /**
+   * `JIRA_META_CACHE_TTL_S` (default 300). Seconds the field, status,
+   * link-type and create-meta catalogues are served from memory before being
+   * fetched again; `0` disables the cache (D123).
+   */
+  readonly metaCacheTtlS: number;
+  /**
    * `JIRA_MEDIA_DIR`. Directory attachment downloads land in (and uploads are
    * read from). Unset ⇒ the binary attachment tools refuse with a `config`
    * error; metadata listing needs no directory (D45).

@@ -92,6 +92,8 @@ export interface CapabilityLimits {
   readonly maxResultChars: number;
   /** `JIRA_MAX_PAGES` — the loop guard on sweeping reads. */
   readonly maxPages: number;
+  /** `JIRA_META_CACHE_TTL_S` — seconds the metadata catalogues stay cached; `0` = off (D123). */
+  readonly metaCacheTtlS: number;
   /** `JIRA_REQUEST_TIMEOUT_MS`. */
   readonly requestTimeoutMs: number;
   /** `JIRA_CALL_BUDGET_MS` — total HTTP time one tool call may spend. */

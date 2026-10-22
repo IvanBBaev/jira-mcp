@@ -35,6 +35,7 @@ import { CLOUD_API } from '../api/port.js';
 import type { JiraApi } from '../api/port.js';
 import { isJiraError, toLogFields } from '../core/errors.js';
 import { newCorrelationId, runWithCid } from '../core/log.js';
+import { createMetaCache } from '../core/meta-cache.js';
 import { JiraError } from '../core/types.js';
 import type {
   Clock,
@@ -386,6 +387,14 @@ export function createRegistry(
       rng: deps.rng,
       redact: (value: unknown) => deps.redactor.redact(value),
     });
+  // One cache per registry, applied to the plain seam once: every tool call
+  // shares it, and it sits UNDER the gate seams (plan capture, payload guard)
+  // so a plan-mode read warms it like an apply-mode one (D123). The profile
+  // wrapper goes on top so the key sees `req.profile` (CC-1404).
+  const cachedJira = createMetaCache({
+    clock: deps.clock,
+    ttlMs: settings.metaCacheTtlS * 1000,
+  }).wrap(deps.jira);
 
   const tools: AnyToolSpec[] = [];
   const byName = new Map<string, AnyToolSpec>();
@@ -493,7 +502,9 @@ export function createRegistry(
     }
 
     const jira =
-      control.profile === undefined ? deps.jira : withProfile(deps.jira, control.profile);
+      control.profile === undefined
+        ? cachedJira
+        : withProfile(cachedJira, control.profile);
     const ctx = (seam: JiraRequestFn): ToolCtx => ({
       jira: seam,
       api,

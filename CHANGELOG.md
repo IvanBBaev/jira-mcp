@@ -14,6 +14,13 @@ env var names — not internal refactors.
 
 ### Added
 
+- A session cache for the metadata catalogues (D123): a repeat `jira_list_fields`,
+  `jira_list_link_types`, `jira_list_statuses` or `jira_get_create_meta` within
+  `JIRA_META_CACHE_TTL_S` seconds (default `300`) is answered from memory instead
+  of a round trip. Per profile, in-process only, never a failed fetch; transitions,
+  projects, identity and permissions are never cached. `JIRA_META_CACHE_TTL_S=0`
+  switches it off. `jira_capabilities` reports the TTL under
+  `limits.metaCacheTtlS`.
 - `jira_get_my_permissions` (package `core`, read-only, D122): checks whether the
   configured account holds the named permission keys globally, in a project or on
   one issue — "what may I do here?" before a write, instead of a 403 on apply.
