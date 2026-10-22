@@ -21,6 +21,12 @@ env var names — not internal refactors.
   list tool before creating it again. It used to be `unexpected_shape` — for
   components and versions with "Re-run the call", which sends a second
   create (CC-1220, CC-1221).
+- A credential holding a lone UTF-16 surrogate no longer breaks redaction: it
+  used to make every later credential registration fail, so a refresh token
+  stored after it reached the logs unmasked (CC-1300).
+- Redaction never throws on a value it cannot read (an array index getter, a
+  throwing or revoked proxy); that part becomes `[UNREADABLE]` and the rest of
+  the log line is kept (CC-1301).
 
 ## [1.0.0] — 2026-10-19
 
