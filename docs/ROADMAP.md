@@ -128,6 +128,112 @@ scope call:
   condition is carried rather than waived — with no DC host, every DC stage
   ships fail-closed and labelled UNVERIFIED.
 
+## Post-1.0 candidates (2026-10-23)
+
+With 1.0.0 on npm and every row of the release plan owner- or
+external-blocked (IMPLEMENTATION-PLAN.md), the owner approved three
+post-1.0 items on 2026-10-22: the permission check (D122, shipped), the
+metadata catalogue cache (D123, shipped), and a third that is approved but
+not started. This section records that third item and the candidates
+measured against the tree on 2026-10-23, in the order they are worth doing.
+Nothing here is committed scope by being listed: the third item's D-row
+lands with its implementation, as D122's and D123's did, and every other
+entry graduates the same way or stays here.
+
+### 1. Approved, next: a lighter `tools/list`, examples as resources
+
+Measured on `main` at `874afb6`: the 59 tool descriptions total 24,103
+characters (about 6,000 tokens) and their emitted input schemas another
+~25 k characters, so a session pays roughly 12,000 tokens of context before
+its first call. The five longest descriptions are `jira_delete_version`
+(626 characters), then `jira_get_my_permissions`, `jira_bulk_edit_issues`,
+`jira_search_users` and `jira_create_issue` at just under 500 each. The
+server declares only the `tools` and `logging` capabilities
+(`src/mcp/server.ts`); it has no MCP resources and no prompts. The item is
+two moves: trim each description to its contract (what the tool does, what
+it needs, what it refuses) and move the worked examples, the
+markdown-subset notes and the per-tool caveats into `resources/read`
+references such as `jira://reference/tools/{name}`. Exit: the manifest
+snapshot changes deliberately, a per-description length cap is a test, and
+`jira_capabilities` is unchanged.
+
+### 2. The rest of the MCP surface: resources, prompts, the plugin
+
+Cheap and offline-testable, and the natural continuation of item 1 since
+the resource handler it adds is the same one these need.
+
+- **Reference resources** beyond the per-tool ones: a JQL reference (the
+  parked list below already prefers docs over a JQL builder, and a resource
+  is where a model finds docs) and the write-gate contract (plan → apply,
+  `plan_id`, the tiers), so a client need not read TOOLS.md to use the gate.
+- **Prompts**: ready-made workflows served on `prompts/list`, as the
+  sibling `servicenow-mcp` server does — sprint review, stand-up digest,
+  release notes for a version, triage of the unassigned. Each is a fixed
+  sequence over existing read tools, so it adds no write surface.
+- **The plugin**: `.claude-plugin/` ships two manifests and nothing else. A
+  skill or two inside it (a stand-up, a release-notes run) would make the
+  Claude Code install useful on its first day.
+
+### 3. Gaps in the Jira surface
+
+None of these is in "Considered and parked" below, and each names one
+endpoint the tree does not call today (checked over `src/api` and
+`src/tools` on 2026-10-23).
+
+Reads:
+
+- **Backlog read**, `GET /rest/agile/1.0/board/{boardId}/backlog`. O-4
+  deferred it and was resolved by default into D26; nothing has shipped it
+  since, so `jira_move_to_backlog` exists without the read that would show
+  what it moved.
+- **Priorities, resolutions and labels** — `GET /rest/api/3/priority`,
+  `/resolution` and `/label`. `jira_create_issue` takes a priority by name
+  and the model has no list to pick from. All three are immutable
+  catalogues the D123 whitelist would admit.
+- **Remote links**, `GET /rest/api/3/issue/{key}/remotelink`: the pull
+  requests and pages attached to an issue.
+- **Server info**, `GET /rest/api/3/serverInfo` (`/rest/api/2/serverInfo`
+  on Data Center): the version the server is talking to. The Data Center
+  8.4+ routes (D116) are assumed, not detected; with this read the doctor
+  can report the version and the adapter can refuse an older host by name.
+
+Writes, standard tier:
+
+- **`jira_update_sprint`** — goal, dates and name over the same
+  `POST /rest/agile/1.0/sprint/{id}` partial update that start and close
+  already use; the sprint has create, start, close and delete, and no edit.
+- **`jira_rank_issues`**, `PUT /rest/agile/1.0/issue/rank`:
+  `jira_move_to_sprint` says in its own description that ranking is
+  unchanged.
+- **`jira_update_worklog`**, `PUT …/worklog/{id}`: add and delete exist.
+- **`jira_add_remote_link`**, `POST …/remotelink`: a web link to a pull
+  request or a Confluence page — the one Confluence-shaped need that does
+  not need Confluence tools.
+- **`jira_create_filter`**, `POST /rest/api/3/filter`: "save this JQL".
+
+Irreversible tier, under the `issues-delete` ceremony (D45):
+
+- **`jira_delete_attachment`**, `DELETE /rest/api/3/attachment/{id}`, and
+  **`jira_unlink_issues`**, `DELETE /rest/api/3/issueLink/{id}` — the
+  mirrors of `jira_upload_attachment` and `jira_link_issues`.
+
+The natural bundles: the agile items (backlog read, sprint update, rank)
+with the three catalogues as one "agile completeness" wave; the two
+deletes as another, since they share the tier's receipts and gate claims.
+
+### 4. Operational
+
+- **Closing Gate C** (R03–R05) stays the most valuable open item and is not
+  code: it is the sandbox account's permissions.
+- **A file output for large reads**, as the sibling server's
+  `format: "file"`: today `JIRA_MAX_RESULT_CHARS` truncates and the hint
+  tells the model to narrow; a file would let a thousand-row search be
+  handed to a script instead.
+
+Not proposed, because already parked below or rejected in a D-row:
+Confluence, JSM, webhooks, a JQL builder, bulk move / transition / watch,
+and coalescing concurrent cache misses (D123).
+
 ## Considered and parked
 
 - Confluence tools — separate server (`confluence-mcp`), not scope creep here.
