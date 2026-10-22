@@ -804,11 +804,36 @@ test('a component write failure names the project-admin permission', async () =>
   assert.match(error.message, /Administer projects/);
 });
 
-test('a component write that answers with a non-object body is unexpected_shape', async () => {
+test('[CC-1220] a created component whose echo cannot be read is ambiguous_write, not "re-run"', async () => {
+  // A 2xx means Jira most likely created the component. Each unreadable echo —
+  // not an object, no body at all, no id — is reported the CC-521 way: applied
+  // or not unknown, never retried, check the list before creating it again.
+  for (const echo of [[1, 2, 3], undefined, { name: 'B' }]) {
+    const jira = createFakeJiraRequest().enqueue(jiraOk(echo, { status: 201 }));
+
+    const error = asJiraError(
+      await caught(() => createComponent({ jira: jira.fn, project: 'ABC', name: 'B' })),
+    );
+
+    assert.equal(error.kind, 'ambiguous_write', JSON.stringify(echo));
+    assert.equal(error.httpStatus, 201);
+    assert.equal(error.retryable, false);
+    assert.match(error.message, /component/);
+    assert.match(error.message, /NOT retried/);
+    assert.doesNotMatch(error.remediation ?? '', /Re-run/);
+    assert.match(error.remediation ?? '', /jira_list_components/);
+    assert.equal(jira.calls.length, 1);
+  }
+});
+
+test('a component UPDATE whose echo cannot be read stays unexpected_shape', async () => {
+  // A partial PUT replays the same values: re-running it duplicates nothing.
   const jira = createFakeJiraRequest().enqueue(jiraOk([1, 2, 3]));
 
   const error = asJiraError(
-    await caught(() => createComponent({ jira: jira.fn, project: 'ABC', name: 'B' })),
+    await caught(() =>
+      updateComponent({ jira: jira.fn, componentId: '10000', name: 'B' }),
+    ),
   );
 
   assert.equal(error.kind, 'unexpected_shape');
@@ -911,6 +936,26 @@ test('createVersion posts the NUMERIC projectId and verbatim calendar dates', as
   assert.equal(typeof (spec?.body as { projectId: unknown }).projectId, 'number');
   assert.equal(result.version.name, '1.1.0');
   assert.equal(result.status, 201);
+});
+
+test('[CC-1220] a created version whose echo cannot be read is ambiguous_write, not "re-run"', async () => {
+  for (const echo of ['Created', undefined, { name: '1.4.0', projectId: 10000 }]) {
+    const jira = createFakeJiraRequest().enqueue(jiraOk(echo, { status: 201 }));
+
+    const error = asJiraError(
+      await caught(() =>
+        createVersion({ jira: jira.fn, projectId: '10000', name: '1.4.0' }),
+      ),
+    );
+
+    assert.equal(error.kind, 'ambiguous_write', JSON.stringify(echo));
+    assert.equal(error.httpStatus, 201);
+    assert.equal(error.retryable, false);
+    assert.match(error.message, /version/);
+    assert.doesNotMatch(error.remediation ?? '', /Re-run/);
+    assert.match(error.remediation ?? '', /jira_list_versions/);
+    assert.equal(jira.calls.length, 1);
+  }
 });
 
 test('createVersion refuses a project KEY where the numeric id belongs', async () => {

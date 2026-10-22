@@ -12,6 +12,16 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
+### Fixed
+
+- `jira_create_component`, `jira_create_version` and `jira_create_sprint`
+  report a 2xx answer whose echo cannot be read (no body, not an object, no
+  id or name) as `ambiguous_write`: the record was most likely created, the
+  request was not retried, and the remediation says to check the matching
+  list tool before creating it again. It used to be `unexpected_shape` — for
+  components and versions with "Re-run the call", which sends a second
+  create (CC-1220, CC-1221).
+
 ## [1.0.0] — 2026-10-19
 
 The first stable release, cut by owner decision (D121) from the same code as

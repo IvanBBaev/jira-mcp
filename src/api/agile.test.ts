@@ -766,53 +766,40 @@ test('createSprint rejects a board id that is not one, and points at the board l
   assert.deepEqual(jira.calls, []);
 });
 
-test('createSprint fails loudly when the created sprint cannot be read', async () => {
-  const jira = createFakeJiraRequest().on(
-    CREATE_SPRINT_ROUTE,
+test('[CC-1221] a created sprint whose echo cannot be read is ambiguous_write', async () => {
+  // A 2xx means Jira most likely created the sprint, and sprint names are not
+  // unique, so a caller told only "unexpected shape" who sends it again gets a
+  // second sprint. Reported the CC-521 way instead — and the message still
+  // names the field it could not read, so a report says what changed upstream.
+  const cases: readonly [unknown, RegExp][] = [
     // synthetic — a proxy that swallowed the body, or an API change
-    jiraOk({ name: 'Sprint 14', state: 'future' }, { status: 201 }),
-  );
+    [{ name: 'Sprint 14', state: 'future' }, /sprint\.id/],
+    [{ id: 77, state: 'future' }, /sprint\.name/],
+    ['Created', /sprint that is not a JSON object/],
+    [undefined, /sprint that is not a JSON object/],
+  ];
+  for (const [echo, field] of cases) {
+    const jira = createFakeJiraRequest().on(
+      CREATE_SPRINT_ROUTE,
+      jiraOk(echo, { status: 201 }),
+    );
 
-  const error = asJiraError(
-    await caught(() =>
-      createSprint({ jira: jira.fn, name: 'Sprint 14', originBoardId: 7 }),
-    ),
-  );
+    const error = asJiraError(
+      await caught(() =>
+        createSprint({ jira: jira.fn, name: 'Sprint 14', originBoardId: 7 }),
+      ),
+    );
 
-  // Strict on purpose: a created sprint whose id cannot be read is useless to
-  // every caller, so this one does NOT degrade the way the echo below does.
-  assert.equal(error.kind, 'unexpected_shape');
-  assert.match(error.message, /sprint\.id/);
-});
-
-test('createSprint names the field it could not read, whatever went missing', async () => {
-  // A body that is not an object at all, and one that is an object without the
-  // name — each names itself, so a report says what changed upstream.
-  const noBody = createFakeJiraRequest().on(
-    CREATE_SPRINT_ROUTE,
-    jiraOk('Created', { status: 201 }),
-  );
-  const noName = createFakeJiraRequest().on(
-    CREATE_SPRINT_ROUTE,
-    jiraOk({ id: 77, state: 'future' }, { status: 201 }),
-  );
-
-  const bodyless = asJiraError(
-    await caught(() =>
-      createSprint({ jira: noBody.fn, name: 'Sprint 14', originBoardId: 7 }),
-    ),
-  );
-  const nameless = asJiraError(
-    await caught(() =>
-      createSprint({ jira: noName.fn, name: 'Sprint 14', originBoardId: 7 }),
-    ),
-  );
-
-  assert.equal(bodyless.kind, 'unexpected_shape');
-  assert.match(bodyless.message, /sprint that is not a JSON object/);
-  assert.match(bodyless.message, /POST \/sprint/);
-  assert.equal(nameless.kind, 'unexpected_shape');
-  assert.match(nameless.message, /sprint\.name/);
+    assert.equal(error.kind, 'ambiguous_write', JSON.stringify(echo));
+    assert.equal(error.httpStatus, 201);
+    assert.equal(error.retryable, false);
+    assert.match(error.message, field);
+    assert.match(error.message, /POST \/sprint/);
+    assert.match(error.message, /NOT retried/);
+    assert.doesNotMatch(error.remediation ?? '', /Retrying will not help/);
+    assert.match(error.remediation ?? '', /jira_list_sprints/);
+    assert.equal(jira.calls.length, 1);
+  }
 });
 
 // ---------------------------------------------------------------------------

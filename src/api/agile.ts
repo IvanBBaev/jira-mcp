@@ -548,7 +548,8 @@ export async function moveIssuesToBacklog(
 /**
  * Create a sprint. `POST /rest/agile/1.0/sprint`; Jira answers `201` with the
  * created sprint, which is narrowed strictly — a create whose id cannot be read
- * is useless to every caller.
+ * is useless to every caller, and is reported as `ambiguous_write` because the
+ * sprint most likely exists all the same (CC-1221).
  *
  * `name` and `originBoardId` are the only required inputs. A sprint is born in
  * the `future` state; `startDate`/`endDate` here only PLAN the window, they do
@@ -580,9 +581,35 @@ export async function createSprint(
 
   const response = await agileCall({ rootProbe: false }, () => options.jira(spec));
   return {
-    sprint: narrowSprint(response.data, 'POST /sprint'),
+    sprint: createdSprint(response.data, response.status),
     status: response.status,
   };
+}
+
+/**
+ * The strict read of a create's echo, with the failure re-classed (CC-1221).
+ * A 2xx means Jira most likely created the sprint, and sprint names are not
+ * unique, so "unexpected shape — report it" invites a corrected resend that
+ * leaves two sprints on the board. An unreadable echo is reported the
+ * CC-482/CC-521 way instead: applied-or-not unknown, not retried, verify
+ * before resending. The reason still names the field that could not be read.
+ */
+function createdSprint(value: unknown, status: number): AgileSprint {
+  try {
+    return narrowSprint(value, 'POST /sprint');
+  } catch (error) {
+    if (!(error instanceof JiraError) || error.kind !== 'unexpected_shape') throw error;
+    const unread = (error.reason ?? error.message).replace(/\.$/, '');
+    throw createJiraError({
+      kind: 'ambiguous_write',
+      reason: `Jira answered the sprint create with HTTP ${String(status)}, but its echo could not be read (${unread}). The sprint was most likely created; the request was NOT retried.`,
+      httpStatus: status,
+      retryable: false,
+      remediation:
+        'Do not resend it: check jira_list_sprints on the board for the sprint before creating it again.',
+      cause: error,
+    });
+  }
 }
 
 /**

@@ -1044,9 +1044,8 @@ export async function createComponent(
     }),
   );
   return {
-    component: mapComponent(
-      requireRecord(response.data, 'component'),
-      options.deployment,
+    component: createdEcho(response.status, 'component', 'jira_list_components', () =>
+      mapComponent(requireRecord(response.data, 'component'), options.deployment),
     ),
     status: response.status,
   };
@@ -1129,7 +1128,9 @@ export async function createVersion(
     }),
   );
   return {
-    version: mapVersion(requireRecord(response.data, 'version')),
+    version: createdEcho(response.status, 'version', 'jira_list_versions', () =>
+      mapVersion(requireRecord(response.data, 'version')),
+    ),
     status: response.status,
   };
 }
@@ -1574,6 +1575,36 @@ function shapeError(message: string): JiraError {
     reason: message,
     remediation: SHAPE_REMEDIATION,
   });
+}
+
+/**
+ * Read the echo of a CREATE (CC-1220). A 2xx means Jira most likely created
+ * the record, so an echo that cannot be read is not a plain shape mismatch:
+ * {@link SHAPE_REMEDIATION}'s "re-run the call" would send a second create. It
+ * is reported the CC-482/CC-521 way instead — applied-or-not unknown, not
+ * retried, verify before resending. Updates keep the shape error: a partial
+ * PUT replays the same values, so re-running one duplicates nothing.
+ */
+function createdEcho<T>(
+  status: number,
+  what: string,
+  listTool: string,
+  read: () => T,
+): T {
+  try {
+    return read();
+  } catch (error) {
+    if (!(error instanceof JiraError) || error.kind !== 'unexpected_shape') throw error;
+    const unread = (error.reason ?? error.message).replace(/\.$/, '');
+    throw createJiraError({
+      kind: 'ambiguous_write',
+      reason: `Jira answered the ${what} create with HTTP ${String(status)}, but its echo could not be read (${unread}). The ${what} was most likely created; the request was NOT retried.`,
+      httpStatus: status,
+      retryable: false,
+      remediation: `Do not resend it: check ${listTool} for the ${what} before creating it again.`,
+      cause: error,
+    });
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
