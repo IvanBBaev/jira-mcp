@@ -2933,3 +2933,41 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
     the case it was stored in, and no route here re-cases it.
   - A timed-out driver's server grandchild is not killed by name. It exits
     when its stdin closes with the driver.
+
+## Fifty-second defect hunt — sprint and project-admin creates (2026-10-22)
+
+- **CC-1220** A `jira_create_component` or `jira_create_version` answered 2xx
+  with an echo that cannot be read — no body, a body that is not an object,
+  or an object without `id` or `name` — is `ambiguous_write`. The record was
+  most likely created and the request was not retried, so the remediation
+  says to check `jira_list_components` or `jira_list_versions` before creating
+  it again. It used to be `unexpected_shape` with the module's shared "Re-run
+  the call" remediation, which reports an applied write as failed and asks
+  for a second create — the CC-521 class on the project-admin writes. The
+  reason still names the field that could not be read. Updates keep
+  `unexpected_shape`: a partial PUT replays the same values.
+- **CC-1221** A `jira_create_sprint` answered 2xx with an unreadable echo is
+  `ambiguous_write` too, with a remediation naming `jira_list_sprints`. It
+  was `unexpected_shape`, "report it. Retrying will not help." That said
+  nothing about the sprint existing, and sprint names are not unique, so a
+  caller who resent a corrected request got a second sprint on the board.
+  The lenient echo of a start or close was already right: those writes are
+  applied, so their echo is optional.
+- Leads checked and rejected:
+  - `jira_start_sprint` brands its result untrusted only when the echo
+    carries a goal. A sprint name is a short label written by a board admin,
+    the same policy CC-176 set for every echo.
+  - The bulk issue list drops exact repeats but not key-versus-id or case
+    aliases. Only Jira knows those (CC-243).
+  - The sprint receipt converts the id with `Number()`. `agileId` accepts
+    only digit strings, and the tools take ids past 2^53 out at the schema
+    (CC-195).
+  - The bulk edit wire shapes (labels, priority, assignee, fix versions,
+    `selectedActions`) match the documented request.
+  - Component, version and sprint deletes refuse a swap target equal to the
+    record being deleted (CC-163), send `removeAndSwap` rather than the
+    deprecated version `DELETE` (CC-122), and build their receipts from the
+    validated inputs. The plan snapshots read the record and its counts in
+    parallel, as documented.
+  - `jira_update_component` and `jira_update_version` keep "Re-run the call"
+    on an unreadable echo. Re-sending a partial PUT changes nothing more.
