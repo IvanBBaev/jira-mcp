@@ -359,14 +359,14 @@ export function dataCenterChildEnv({ home, site, pat, certFile, preloadUrl, medi
   };
 }
 
-async function withServer(env, body) {
+async function withServer(env, body, entry = SERVER_ENTRY) {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } =
     await import('@modelcontextprotocol/sdk/client/stdio.js');
   let stderr = '';
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [SERVER_ENTRY],
+    args: [entry],
     cwd: env.HOME,
     stderr: 'pipe',
     env,
@@ -425,6 +425,8 @@ function describeError(envelope) {
  * @param {string} [options.certDir] Where the TLS material lives (default: the
  *   workdir, so a run leaves nothing behind).
  * @param {boolean} [options.keep] Keep the workdir.
+ * @param {string} [options.serverEntry] The server to spawn (default: the
+ *   build); the tests point it at a stand-in that fails.
  * @param {(line: string) => void} [options.log] Progress output.
  * @returns {Promise<{findings: string[], calls: {tool: string, ok: boolean}[],
  *   requests: object[], workdir: string}>}
@@ -461,6 +463,8 @@ export async function runDataCenterRehearsal(options = {}) {
     // The download (D117) writes here and nowhere else.
     const mediaDir = join(workdir, 'media');
     await mkdir(mediaDir);
+    const serve = (env, body) =>
+      withServer(env, body, options.serverEntry ?? SERVER_ENTRY);
     const envFor = async (pat) => {
       const home = await mkdtemp(join(workdir, 'home-'));
       return dataCenterChildEnv({
@@ -473,140 +477,151 @@ export async function runDataCenterRehearsal(options = {}) {
       });
     };
 
-    // -- phase 1: every served tool, over one server -----------------------
-    log(`phase 1: ${String(DATACENTER_PLAN.length)} tools against ${fake.origin}`);
-    await withServer(await envFor(PAT), async (session) => {
-      const listed = (await session.client.listTools()).tools.map((tool) => tool.name);
-      findings.push(
-        ...toolListFindings(listed, DATACENTER_TOOLS).map(
-          (line) => `tools/list: ${line}`,
-        ),
-        ...toolListFindings(
-          DATACENTER_PLAN.map((step) => step.tool),
-          dataCenterReads(DATACENTER_TOOLS, DATACENTER_WRITE_TOOLS),
-        ).map((line) => `the rehearsal plan: ${line}`),
-      );
+    // A failure past set-up — a server that will not start, a call that hangs
+    // or answers without structuredContent — is a regression, not a set-up
+    // error: it is reported with what was found so far and exits 1 (CC-1502).
+    try {
+      // -- phase 1: every served tool, over one server -----------------------
+      log(`phase 1: ${String(DATACENTER_PLAN.length)} tools against ${fake.origin}`);
+      await serve(await envFor(PAT), async (session) => {
+        const listed = (await session.client.listTools()).tools.map((tool) => tool.name);
+        findings.push(
+          ...toolListFindings(listed, DATACENTER_TOOLS).map(
+            (line) => `tools/list: ${line}`,
+          ),
+          ...toolListFindings(
+            DATACENTER_PLAN.map((step) => step.tool),
+            dataCenterReads(DATACENTER_TOOLS, DATACENTER_WRITE_TOOLS),
+          ).map((line) => `the rehearsal plan: ${line}`),
+        );
 
-      for (const step of DATACENTER_PLAN) {
-        const envelope = await session.call(step.tool, step.args);
-        calls.push({ tool: step.tool, ok: envelope.ok === true });
-        log(`  ${envelope.ok === true ? 'ok  ' : 'FAIL'} ${step.tool}`);
-        findings.push(...leakFindings(step.tool, envelope));
-        if (envelope.ok !== true) {
-          findings.push(`${step.tool}: ok:false (${describeError(envelope)})`);
-          continue;
-        }
-        findings.push(...stepFindings(step.tool, envelope.data));
+        for (const step of DATACENTER_PLAN) {
+          const envelope = await session.call(step.tool, step.args);
+          calls.push({ tool: step.tool, ok: envelope.ok === true });
+          log(`  ${envelope.ok === true ? 'ok  ' : 'FAIL'} ${step.tool}`);
+          findings.push(...leakFindings(step.tool, envelope));
+          if (envelope.ok !== true) {
+            findings.push(`${step.tool}: ok:false (${describeError(envelope)})`);
+            continue;
+          }
+          findings.push(...stepFindings(step.tool, envelope.data));
 
-        if (step.tool === 'jira_download_attachment') {
-          const data = envelope.data;
-          const path = typeof data.path === 'string' ? data.path : undefined;
-          const real = (target) => {
+          if (step.tool === 'jira_download_attachment') {
+            const data = envelope.data;
+            const path = typeof data.path === 'string' ? data.path : undefined;
+            const real = (target) => {
+              try {
+                return realpathSync(target);
+              } catch {
+                return undefined;
+              }
+            };
+            let actual;
             try {
-              return realpathSync(target);
+              actual = path === undefined ? undefined : await readFile(path);
             } catch {
-              return undefined;
+              actual = undefined;
             }
-          };
-          let actual;
-          try {
-            actual = path === undefined ? undefined : await readFile(path);
-          } catch {
-            actual = undefined;
-          }
-          findings.push(
-            ...downloadFindings(data, {
-              mediaDir: real(mediaDir) ?? mediaDir,
-              fileDir: path === undefined ? undefined : real(dirname(path)),
-              expected: fake.state.attachments.get(ATTACHMENT_ID).bytes,
-              actual,
-            }),
-          );
-        }
-
-        for (const [index, args] of (step.also ?? []).entries()) {
-          const label = `${step.tool} (also #${String(index + 1)})`;
-          const extra = await session.call(step.tool, args);
-          calls.push({ tool: label, ok: extra.ok === true });
-          log(`  ${extra.ok === true ? 'ok  ' : 'FAIL'} ${label}`);
-          findings.push(...leakFindings(label, extra));
-          if (extra.ok !== true) {
-            findings.push(`${label}: ok:false (${describeError(extra)})`);
-          } else if (step.checkAlso === true) {
-            findings.push(...stepFindings(step.tool, extra.data));
-          }
-        }
-
-        if (step.tool === 'jira_search') {
-          const first = envelope.data;
-          if (typeof first.nextPageToken !== 'string') {
-            findings.push('jira_search: page 1 of 3 carried no nextPageToken');
-            continue;
-          }
-          const next = await session.call(step.tool, {
-            ...step.args,
-            nextPageToken: first.nextPageToken,
-          });
-          calls.push({ tool: `${step.tool} (page 2)`, ok: next.ok === true });
-          findings.push(...leakFindings(`${step.tool} (page 2)`, next));
-          if (next.ok !== true) {
-            findings.push(`jira_search page 2: ok:false (${describeError(next)})`);
-            continue;
-          }
-          const keysOf = (data) => (data.issues ?? []).map((issue) => issue.key);
-          const seen = new Set(keysOf(first));
-          const overlap = keysOf(next.data).filter((key) => seen.has(key));
-          if (keysOf(next.data).length === 0) {
-            findings.push('jira_search page 2: no issues');
-          }
-          if (overlap.length > 0) {
             findings.push(
-              `jira_search page 2: repeats ${overlap.join(', ')} from page 1`,
+              ...downloadFindings(data, {
+                mediaDir: real(mediaDir) ?? mediaDir,
+                fileDir: path === undefined ? undefined : real(dirname(path)),
+                expected: fake.state.attachments.get(ATTACHMENT_ID).bytes,
+                actual,
+              }),
             );
           }
+
+          for (const [index, args] of (step.also ?? []).entries()) {
+            const label = `${step.tool} (also #${String(index + 1)})`;
+            const extra = await session.call(step.tool, args);
+            calls.push({ tool: label, ok: extra.ok === true });
+            log(`  ${extra.ok === true ? 'ok  ' : 'FAIL'} ${label}`);
+            findings.push(...leakFindings(label, extra));
+            if (extra.ok !== true) {
+              findings.push(`${label}: ok:false (${describeError(extra)})`);
+            } else if (step.checkAlso === true) {
+              findings.push(...stepFindings(step.tool, extra.data));
+            }
+          }
+
+          if (step.tool === 'jira_search') {
+            const first = envelope.data;
+            if (typeof first.nextPageToken !== 'string') {
+              findings.push('jira_search: page 1 of 3 carried no nextPageToken');
+              continue;
+            }
+            const next = await session.call(step.tool, {
+              ...step.args,
+              nextPageToken: first.nextPageToken,
+            });
+            calls.push({ tool: `${step.tool} (page 2)`, ok: next.ok === true });
+            findings.push(...leakFindings(`${step.tool} (page 2)`, next));
+            if (next.ok !== true) {
+              findings.push(`jira_search page 2: ok:false (${describeError(next)})`);
+              continue;
+            }
+            const keysOf = (data) => (data.issues ?? []).map((issue) => issue.key);
+            const seen = new Set(keysOf(first));
+            const overlap = keysOf(next.data).filter((key) => seen.has(key));
+            if (keysOf(next.data).length === 0) {
+              findings.push('jira_search page 2: no issues');
+            }
+            if (overlap.length > 0) {
+              findings.push(
+                `jira_search page 2: repeats ${overlap.join(', ')} from page 1`,
+              );
+            }
+          }
+        }
+
+        // The one refusal the adapter promises: no wiki → markdown renderer.
+        const markdown = await session.call('jira_get_issue', {
+          issue: ISSUE,
+          format: 'markdown',
+        });
+        if (markdown.ok !== false || markdown.error?.kind !== 'validation') {
+          findings.push(
+            `jira_get_issue format:"markdown": expected kind validation, got ${
+              markdown.ok === true ? 'ok:true' : describeError(markdown)
+            }`,
+          );
+        }
+      });
+      findings.push(
+        ...wireFindings(fake.requests, CONTEXT_PATH).map((line) => `wire: ${line}`),
+      );
+
+      // -- phase 2: a wrong PAT is an auth error, not something else ----------
+      log('phase 2: a wrong PAT');
+      fake.clearRequests();
+      await serve(await envFor(`${PAT}-wrong`), async (session) => {
+        const envelope = await session.call('jira_get_myself', {});
+        if (envelope.ok !== false || envelope.error?.kind !== 'auth') {
+          findings.push(
+            `wrong PAT: expected kind auth, got ${
+              envelope.ok === true ? 'ok:true' : describeError(envelope)
+            }`,
+          );
+        }
+      });
+      const refused = fake.requests.filter(
+        (request) => request.authFailure !== undefined,
+      );
+      if (refused.length === 0) {
+        findings.push('wrong PAT: the fake never refused a request');
+      }
+      for (const request of refused) {
+        if (request.authScheme !== 'Bearer' || request.authFailure !== 'wrong token') {
+          findings.push(
+            `wrong PAT: ${request.method} ${request.path} failed as "${request.authFailure}" with ${String(request.authScheme)} credentials`,
+          );
         }
       }
-
-      // The one refusal the adapter promises: no wiki → markdown renderer.
-      const markdown = await session.call('jira_get_issue', {
-        issue: ISSUE,
-        format: 'markdown',
-      });
-      if (markdown.ok !== false || markdown.error?.kind !== 'validation') {
-        findings.push(
-          `jira_get_issue format:"markdown": expected kind validation, got ${
-            markdown.ok === true ? 'ok:true' : describeError(markdown)
-          }`,
-        );
-      }
-    });
-    findings.push(
-      ...wireFindings(fake.requests, CONTEXT_PATH).map((line) => `wire: ${line}`),
-    );
-
-    // -- phase 2: a wrong PAT is an auth error, not something else ----------
-    log('phase 2: a wrong PAT');
-    fake.clearRequests();
-    await withServer(await envFor(`${PAT}-wrong`), async (session) => {
-      const envelope = await session.call('jira_get_myself', {});
-      if (envelope.ok !== false || envelope.error?.kind !== 'auth') {
-        findings.push(
-          `wrong PAT: expected kind auth, got ${
-            envelope.ok === true ? 'ok:true' : describeError(envelope)
-          }`,
-        );
-      }
-    });
-    const refused = fake.requests.filter((request) => request.authFailure !== undefined);
-    if (refused.length === 0) {
-      findings.push('wrong PAT: the fake never refused a request');
-    }
-    for (const request of refused) {
-      if (request.authScheme !== 'Bearer' || request.authFailure !== 'wrong token') {
-        findings.push(
-          `wrong PAT: ${request.method} ${request.path} failed as "${request.authFailure}" with ${String(request.authScheme)} credentials`,
-        );
-      }
+    } catch (error) {
+      findings.push(
+        `rehearsal aborted: ${String(error instanceof Error ? error.message : error)}`,
+      );
     }
 
     return { findings, calls, requests: [...fake.requests], workdir };

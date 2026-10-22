@@ -1253,3 +1253,28 @@ test('[CC-1501] a rehearsal that cannot start its fake leaves no workdir behind'
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// CC-1502 — a server that fails past set-up is a finding, not a set-up error
+// ---------------------------------------------------------------------------
+
+test(
+  '[CC-1502] a server that dies on start is reported as a finding, not thrown as a set-up error',
+  { skip: noTls },
+  async () => {
+    // A throw reached main() and exited 2 — "set-up error" — for what is a
+    // server regression, and dropped every finding gathered before it.
+    const dir = mkdtempSync(join(tmpdir(), 'jira-mcp-dc-dead-server-'));
+    const entry = join(dir, 'dead-server.mjs');
+    writeFileSync(entry, 'process.exit(3);\n');
+    try {
+      const result = await rehearsal.runDataCenterRehearsal({ serverEntry: entry });
+      assert.ok(
+        result.findings.some((line) => line.startsWith('rehearsal aborted: ')),
+        result.findings.join('\n'),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
