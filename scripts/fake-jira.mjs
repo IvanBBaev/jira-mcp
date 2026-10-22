@@ -3761,6 +3761,16 @@ function buildDataCenterRoutes(server, cloudRoutes) {
 // The server
 // ---------------------------------------------------------------------------
 
+const MEDIA_MODES = new Set(['auto', 'always', 'never']);
+
+function assertMediaMode(mode) {
+  if (!MEDIA_MODES.has(mode)) {
+    throw new Error(
+      `fake-jira: unknown media mode ${JSON.stringify(mode)} (auto, always or never)`,
+    );
+  }
+}
+
 /**
  * Start the fake.
  *
@@ -3795,6 +3805,9 @@ export async function startFakeJira(options = {}) {
   if (deployment !== 'cloud' && deployment !== 'datacenter') {
     throw new Error(`fake-jira: unknown deployment ${JSON.stringify(deployment)}`);
   }
+  // A mistyped media mode ('Always') once behaved as 'never', so the pass meant
+  // to prove the 303 hop passed without taking it (CC-1503).
+  assertMediaMode(options.mediaMode ?? 'auto');
   const contextPath =
     deployment === 'datacenter' ? (options.contextPath ?? DATACENTER_CONTEXT_PATH) : '';
   if (contextPath !== '' && !/^(\/[A-Za-z0-9._-]+)+$/.test(contextPath)) {
@@ -4072,6 +4085,7 @@ export async function startFakeJira(options = {}) {
       server.requests.length = 0;
     },
     setMediaMode(mode) {
+      assertMediaMode(mode);
       config.mediaMode = mode;
     },
     async close() {

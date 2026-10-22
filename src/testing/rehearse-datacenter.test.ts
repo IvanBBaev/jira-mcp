@@ -58,6 +58,7 @@ interface Fake {
   readonly certFile: string;
   readonly requests: FakeRecord[];
   clearRequests(): void;
+  setMediaMode(mode: string): void;
   close(): Promise<void>;
 }
 
@@ -1276,5 +1277,32 @@ test(
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// CC-1503 — an unknown media mode is refused, not read as "never"
+// ---------------------------------------------------------------------------
+
+test('[CC-1503] an unknown media mode is refused at start', async () => {
+  // A fake that starts anyway is closed, so the regression fails, not hangs.
+  let started = undefined as Fake | undefined;
+  try {
+    await assert.rejects(async () => {
+      started = await fakeJira.startFakeJira({ mediaMode: 'Always', certDir: TLS_DIR });
+    }, /unknown media mode "Always"/);
+  } finally {
+    await started?.close();
+  }
+});
+
+test(
+  '[CC-1503] an unknown media mode is refused by setMediaMode, and the mode is kept',
+  { skip: noTls },
+  () => {
+    assert.throws(() => {
+      cloud.setMediaMode('alway');
+    }, /unknown media mode "alway"/);
+    cloud.setMediaMode('auto');
   },
 );
