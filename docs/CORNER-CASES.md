@@ -3008,3 +3008,38 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
     no Data Center-specific promise beyond those.
   - The wrong-PAT phase does not audit the wire. It makes one call, and that
     call's auth failure is checked request by request.
+
+## Fifty-fourth defect hunt — the redactor (2026-10-22)
+
+- **CC-1300** A secret holding a lone UTF-16 surrogate registers. A token
+  parsed from `"\udc00"` in a JSON response is a string `encodeURIComponent`
+  throws on, and the throw came from rebuilding the needle list after the
+  value was already recorded. So every later `addSecret` threw as well, and
+  no secret registered after it was masked: a refresh token stored after a
+  poisoned access token reached the log in the clear. The percent-encoded
+  variants now encode the lone half as U+FFFD, the way `URLSearchParams`
+  writes it; the raw and JSON-escaped variants are unchanged.
+- **CC-1301** The walk marks an object it cannot read as `[UNREADABLE]`
+  instead of throwing. Property getters were already guarded, but an array
+  index getter, a proxy whose `ownKeys` or `getPrototypeOf` trap throws, a
+  revoked proxy, and a `Date.prototype` object that is not a date all threw
+  out of `redact`. The module promises never to throw, and the logger's
+  fallback dropped every field of the line, not only the bad one. Now only
+  that subtree is replaced and its siblings are redacted as usual.
+- Leads checked and rejected:
+  - An `Error`'s `cause` is not walked. It is non-enumerable, and the error
+    model keeps the cause chain off every sink on purpose (`core/errors.ts`).
+  - `token: abc123`, `"token":"abc123"` and `X-Api-Key: …` in free text keep
+    their value. The shape pass covers what this server sends (the
+    `Authorization` and cookie headers) and URL parameters; a parsed body is
+    masked by key (CC-564), and journal lines carry metadata only.
+  - camelCase keys such as `jiraApiToken` or `bearerToken` are not masked by
+    key. The name must start the key or follow a `_`/`-` separator so that
+    `nextPageToken` survives (CC-564); a registered value is still masked.
+  - A numeric value under a credential key (`{ password: 12345678 }`) is
+    kept. No credential Atlassian issues is a JSON number.
+  - Two registered secrets overlapping in the text leave the tail of the
+    second unmatched. That needs a line that already concatenates two
+    credentials.
+  - Keys that redact to the same placeholder collapse into one property.
+    That loses data, never a secret.
