@@ -16,6 +16,7 @@ import * as collab from './collab.js';
 import * as filters from './filters.js';
 import * as issues from './issues.js';
 import * as meta from './meta.js';
+import * as permissions from './permissions.js';
 import { CLOUD_API } from './port.js';
 import * as search from './search.js';
 import * as users from './users.js';
@@ -29,13 +30,14 @@ const MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   filters,
   issues,
   meta,
+  permissions,
   search,
   users,
 };
 
 test('every Cloud adapter member is the api-ring export of the same name', () => {
   const members = Object.entries(CLOUD_API).filter(([name]) => name !== 'deployment');
-  assert.equal(members.length, 70);
+  assert.equal(members.length, 71);
   for (const [name, value] of members) {
     assert.equal(typeof value, 'function', `${name} is a function`);
     const owners = Object.entries(MODULES).filter(([, mod]) => mod[name] === value);

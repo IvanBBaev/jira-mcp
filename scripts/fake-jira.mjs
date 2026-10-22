@@ -560,6 +560,44 @@ function seedState(config) {
 }
 
 // ---------------------------------------------------------------------------
+// Permissions (D122)
+// ---------------------------------------------------------------------------
+
+/**
+ * The permission keys the fake knows, in the record shape `GET /mypermissions`
+ * answers with (`havePermission` is added per call). A key outside this
+ * catalog is a 400 on Cloud, as on the real site. // synthetic
+ */
+const PERMISSION_CATALOG = Object.freeze({
+  ADMINISTER: { id: '0', name: 'Jira Administrators', type: 'GLOBAL' },
+  BULK_CHANGE: { id: '33', name: 'Make bulk changes', type: 'GLOBAL' },
+  BROWSE_PROJECTS: { id: '10', name: 'Browse Projects', type: 'PROJECT' },
+  CREATE_ISSUES: { id: '11', name: 'Create Issues', type: 'PROJECT' },
+  EDIT_ISSUES: { id: '12', name: 'Edit Issues', type: 'PROJECT' },
+  TRANSITION_ISSUES: { id: '46', name: 'Transition Issues', type: 'PROJECT' },
+  ADD_COMMENTS: { id: '15', name: 'Add Comments', type: 'PROJECT' },
+  WORK_ON_ISSUES: { id: '20', name: 'Work On Issues', type: 'PROJECT' },
+  DELETE_ISSUES: { id: '16', name: 'Delete Issues', type: 'PROJECT' },
+  ADMINISTER_PROJECTS: { id: '23', name: 'Administer Projects', type: 'PROJECT' },
+});
+
+/** What the fake's account lacks: the site-admin and project-admin grants. */
+const DENIED_PERMISSIONS = new Set(['ADMINISTER', 'BULK_CHANGE', 'ADMINISTER_PROJECTS']);
+
+/** One `permissions` record for `key`, with the fake account's verdict. */
+function permissionRecord(key) {
+  const entry = PERMISSION_CATALOG[key];
+  return {
+    id: entry.id,
+    key,
+    name: entry.name,
+    type: entry.type,
+    description: `Ability to ${entry.name.toLowerCase()}.`,
+    havePermission: !DENIED_PERMISSIONS.has(key),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
@@ -1201,6 +1239,47 @@ function buildRoutes(server) {
       'GET',
       '/rest/api/3/myself',
       () => json(200, wireUser(state, SELF_ACCOUNT, origin())),
+    ],
+    [
+      'GET',
+      '/rest/api/3/mypermissions',
+      (ctx) => {
+        // D122. Cloud requires the `permissions` filter and refuses a key it
+        // does not know (400); an unknown scope is a 404. Only the keys asked
+        // for are answered, which is what the api ring relies on (CC-1401).
+        const requested = String(ctx.query.permissions ?? '')
+          .split(',')
+          .map((key) => key.trim())
+          .filter((key) => key !== '');
+        if (requested.length === 0) {
+          return jiraError(400, ["The 'permissions' query parameter is required."]);
+        }
+        const unknown = requested.filter(
+          (key) => !Object.hasOwn(PERMISSION_CATALOG, key),
+        );
+        if (unknown.length > 0) {
+          return jiraError(400, [`Invalid permission keys: ${unknown.join(', ')}.`]);
+        }
+        const issueRef = ctx.query.issueKey ?? ctx.query.issueId;
+        if (issueRef !== undefined && findIssue(issueRef) === undefined) {
+          return notFound('Issue');
+        }
+        const projectRef = ctx.query.projectKey ?? ctx.query.projectId;
+        if (
+          issueRef === undefined &&
+          projectRef !== undefined &&
+          state.projects.find(
+            (row) => row.key === projectRef || row.id === projectRef,
+          ) === undefined
+        ) {
+          return notFound('Project');
+        }
+        return json(200, {
+          permissions: Object.fromEntries(
+            requested.map((key) => [key, permissionRecord(key)]),
+          ),
+        });
+      },
     ],
 
     [
@@ -2775,6 +2854,7 @@ function buildRoutes(server) {
 /** The routes the Data Center adapter calls, relative to the context path. */
 export const DATACENTER_ROUTES = Object.freeze([
   'GET /rest/api/2/myself',
+  'GET /rest/api/2/mypermissions',
   'POST /rest/api/2/search',
   'GET /rest/api/2/issue/{issueIdOrKey}',
   'GET /rest/api/2/issue/{issueIdOrKey}/comment',
@@ -3280,6 +3360,29 @@ function buildDataCenterRoutes(server, cloudRoutes) {
           groups: { size: 1, items: [] },
           applicationRoles: { size: 1, items: [] },
           expand: 'groups,applicationRoles',
+        });
+      },
+    ],
+    [
+      'GET',
+      '/rest/api/2/mypermissions',
+      (ctx) => {
+        // D122. Data Center answers every permission it knows whether or not
+        // a `permissions` filter was sent (older builds ignore it), in the same
+        // record shape as Cloud; the api ring keeps only what it asked for
+        // (CC-1402). An unknown scope is a 404 here too.
+        const projectRef = ctx.query.projectKey ?? ctx.query.projectId;
+        if (projectRef !== undefined && findProject(projectRef) === undefined) {
+          return notFound('Project');
+        }
+        const issueRef = ctx.query.issueKey ?? ctx.query.issueId;
+        if (issueRef !== undefined && findIssue(issueRef) === undefined) {
+          return notFound('Issue');
+        }
+        return json(200, {
+          permissions: Object.fromEntries(
+            Object.keys(PERMISSION_CATALOG).map((key) => [key, permissionRecord(key)]),
+          ),
         });
       },
     ],

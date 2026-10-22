@@ -252,6 +252,15 @@ Cloud identifies users **only by `accountId`** — no usernames, no user keys.
   response in the same call — never from input text.
 - `GET /rest/api/3/myself` verifies credentials and returns the caller identity —
   the doctor probe and `jira_get_myself` use it.
+- `GET /rest/api/3/mypermissions?permissions=A,B` answers `jira_get_my_permissions`
+  (D122). `permissions` is required — a comma-joined list, at most 50 keys — and one
+  key Jira does not know fails the whole call with 400, so the api ring refuses blank,
+  comma-joined, empty or over-long key lists before the wire (CC-1400). Scope is
+  optional: `issueKey`/`issueId` or `projectKey`/`projectId`, and only the most
+  specific one is sent (CC-1403); an unknown scope is 404. The answer is keyed by
+  permission key with `havePermission`; a key missing from it is reported as
+  unanswered, never as denied (CC-1401), and keys Jira volunteers beyond the asked
+  ones are dropped (CC-1402).
 
 ## Transitions
 
@@ -552,6 +561,7 @@ excludes every other tool (CC-263).
 | Cloud route (v3 root unless noted) | Data Center | Verdict |
 |---|---|---|
 | `GET /myself` | `GET /rest/api/2/myself` — `name` + `key`, no `accountId` | served, own mapper (CC-270) |
+| `GET /mypermissions` | `GET /rest/api/2/mypermissions` — same record shape; older builds ignore the key filter and answer the whole catalog | served (D122), the api ring keeps only the asked keys (CC-1402) |
 | `POST /search/jql` (`nextPageToken`) | `POST /rest/api/2/search` (`startAt`, `total`) | served, twin + `dc1:` cursor (CC-267) |
 | `POST /search/approximate-count` | none — `POST /rest/api/2/search` with `maxResults: 0` answers an exact `total` | served (D114) as `jira_count` over the classic search, `approximate: false`, no `approximate` hint (CC-340, CC-341) |
 | `GET /issue/{key}`, `/comment`, `/worklog`, `/transitions` | same paths under `/rest/api/2` | served, same function on the v2 root, DC user dialect |

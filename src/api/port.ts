@@ -101,6 +101,7 @@ import {
   listProjects,
   listStatuses,
 } from './meta.js';
+import { getMyPermissions } from './permissions.js';
 import { approximateCount, searchIssues } from './search.js';
 import {
   getMyself,
@@ -213,6 +214,9 @@ export interface JiraApi {
   readonly listProjects: typeof listProjects;
   readonly listStatuses: typeof listStatuses;
 
+  // --- permissions ---
+  readonly getMyPermissions: typeof getMyPermissions;
+
   // --- search ---
   readonly approximateCount: typeof approximateCount;
   readonly searchIssues: typeof searchIssues;
@@ -308,6 +312,8 @@ export const CLOUD_API: JiraApi = Object.freeze({
   listLinkTypes,
   listProjects,
   listStatuses,
+
+  getMyPermissions,
 
   approximateCount,
   searchIssues,

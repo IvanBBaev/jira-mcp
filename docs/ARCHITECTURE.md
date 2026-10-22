@@ -77,8 +77,8 @@ core  ←  api  ←  mcp  ←  tools
     Phase-8 change is returning the basic branch of the credential union.
 - **`src/api/`** — typed wrappers over Jira REST endpoints, one module per domain
   (`search.ts`, `issues.ts`, `collab.ts`, `attachments.ts`, `filters.ts`,
-  `meta.ts`, `users.ts`, `agile.ts`, `adf.ts`, `shared.ts` for pagination
-  helpers). No MCP concepts here.
+  `meta.ts`, `users.ts`, `permissions.ts`, `agile.ts`, `adf.ts`, `shared.ts` for
+  pagination helpers). No MCP concepts here.
   - **`api/port.ts`** is the domain-level port (D106): `JiraApi` names every
     api-ring function a tool may call — each one that talks to Jira, and the
     converters that speak a wire body format — and `CLOUD_API` is the existing

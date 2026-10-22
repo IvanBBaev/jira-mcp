@@ -236,6 +236,7 @@ a model always has a way to ask what it is talking to.
 |---|---|---|
 | `jira_capabilities` | — (local) | Lists registered packages/tools, active profile, write mode, site. First call a model should make when unsure. |
 | `jira_get_myself` | `GET /rest/api/3/myself` | Verifies credentials; returns accountId, displayName, timezone. Also the source of the worklog offset (D16). |
+| `jira_get_my_permissions` | `GET /rest/api/3/mypermissions` | Answers whether the account holds the named permission keys globally, in a project or on one issue (D122) — "what may I do here?" before a write. `issue` wins over `project`; only the most specific scope is sent and `context` names it (CC-1403). A key Jira did not answer comes back under `unanswered`, never as denied (CC-1401). Keys are validated before the wire (CC-1400): one unknown key fails the whole call. |
 
 ## Package `search`
 
@@ -483,7 +484,7 @@ that can lose content or end something for good (D50).
 
 ## Jira Data Center (preview)
 
-Under `JIRA_DEPLOYMENT=datacenter` (an unverified preview — reads since D107, a first set of writes since D109, the user writes since D111, mention resolution since D112, the admin and agile writes since D113, the count, changelog and attachment list since D114, the saved filters since D115, the create metadata since D116; 27 reads and 20 writes, 47 tools, since D117) the
+Under `JIRA_DEPLOYMENT=datacenter` (an unverified preview — reads since D107, a first set of writes since D109, the user writes since D111, mention resolution since D112, the admin and agile writes since D113, the count, changelog and attachment list since D114, the saved filters since D115, the create metadata since D116, the permission check since D122; 28 reads and 20 writes, 48 tools, since D122) the
 server serves a subset of this catalog; `jira_capabilities` lists it and names
 the rest in `excludedTools` with reason `deployment_unsupported`. Three things
 read differently there, and the tool descriptions above describe Cloud:
@@ -569,7 +570,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**58 tools / 10 packages** (core 2, search 4, issues 6, issues-write 8,
+**59 tools / 10 packages** (core 3, search 4, issues 6, issues-write 8,
 issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 8). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —

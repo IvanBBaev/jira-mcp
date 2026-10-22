@@ -145,6 +145,7 @@ import {
   listProjectsDataCenter,
   listStatusesDataCenter,
 } from './meta.js';
+import { getMyPermissions } from './permissions.js';
 import { CLOUD_API } from './port.js';
 import type { JiraApi } from './port.js';
 import { countIssuesDataCenter, searchIssuesDataCenter } from './search.js';
@@ -232,6 +233,10 @@ export const DATACENTER_TOOLS: ReadonlySet<string> = new Set([
   // D117 (stage 13.8): the attachment download — a read that writes only into
   // the local JIRA_MEDIA_DIR. jira_upload_attachment stays unserved.
   'jira_download_attachment',
+  // D122: the permission check — the same route and record shape on the v2
+  // root; a build that ignores the key filter answers everything and the api
+  // ring keeps only what was asked (CC-1402).
+  'jira_get_my_permissions',
   ...DATACENTER_WRITE_TOOLS_LIST,
 ]);
 
@@ -363,6 +368,8 @@ const adfFromMarkdown: JiraApi['adfFromMarkdown'] = (text, options) => {
 
 const served: Partial<JiraApi> = {
   getMyself: getMyselfDataCenter,
+  getMyPermissions: (options) =>
+    getMyPermissions({ ...options, jira: onV2(options.jira) }),
   getIssue: (options) => {
     refuseMarkdown(options.format);
     return getIssue({ ...options, jira: onV2(options.jira), deployment: 'datacenter' });

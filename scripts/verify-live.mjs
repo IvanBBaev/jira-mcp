@@ -987,6 +987,36 @@ async function readPhase(session, flags, credentials) {
     return 'authenticated, accountId captured';
   });
 
+  await claim(
+    'C44',
+    'jira_get_my_permissions answers a global browse check',
+    async () => {
+      // D122. One key, no scope: Jira answers BROWSE_PROJECTS granted when the
+      // account can see any project at all, which an account that passed C03 on
+      // a site with projects can. A key left unanswered is a shape change, not
+      // a denial (CC-1401), and would be a finding of its own.
+      const data = dataOf(
+        await call(session, 'jira_get_my_permissions', {
+          permissions: ['BROWSE_PROJECTS'],
+        }),
+        'jira_get_my_permissions',
+      );
+      if (data.context !== 'global') {
+        throw new Error(`expected context global, got ${String(data.context)}`);
+      }
+      const browse = (data.permissions ?? []).find(
+        (check) => check.key === 'BROWSE_PROJECTS',
+      );
+      if (browse === undefined) {
+        throw new Error(
+          `BROWSE_PROJECTS was not answered: ${JSON.stringify(data.unanswered)}`,
+        );
+      }
+      if (browse.granted !== true) throw new Error('BROWSE_PROJECTS is not granted');
+      return `granted, type=${String(browse.type)}`;
+    },
+  );
+
   await claim('C04', 'both project types are visible', async () => {
     const data = dataOf(await call(session, 'jira_list_projects'), 'jira_list_projects');
     const projects = data.projects ?? [];

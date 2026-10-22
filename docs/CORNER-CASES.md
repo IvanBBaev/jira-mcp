@@ -3043,3 +3043,26 @@ builders, executors, time helpers and shapers in `src/api/issues.ts`.
     credentials.
   - Keys that redact to the same placeholder collapse into one property.
     That loses data, never a secret.
+
+## `jira_get_my_permissions` (D122, 2026-10-22)
+
+One GET, `/rest/api/3/mypermissions`, so a model can ask "what may I do here?"
+before a write. Four things the wire would get wrong are settled around it:
+
+- **CC-1400** — the keys are validated before the wire: a blank key, a
+  comma-joined list in one entry (`"BROWSE_PROJECTS,EDIT_ISSUES"`), an empty
+  list, more than 50 keys, or a blank `issue`/`project` is refused with
+  `validation` and no request is made. One key Jira does not know fails the
+  whole call with 400, so a comma-joined entry would otherwise have surfaced as
+  an unknown key; the remediation says "one key per array entry".
+- **CC-1401** — a key Jira did not answer is listed under `unanswered`, never
+  reported as `granted: false`. A missing answer is not a denial, and a model
+  that read it as one would hold back a write the account may perform.
+- **CC-1402** — keys Jira volunteers beyond the asked ones are dropped and the
+  asked order is kept. Older Data Center builds ignore the key filter and
+  answer the whole catalog; the adapter sees only what it asked for either way.
+- **CC-1403** — `issue` wins over `project`, and only the most specific scope
+  is sent: Jira resolves the pair itself, but a stale or mismatched project
+  beside an issue would otherwise be an avoidable 404. A numeric reference
+  goes as `issueId`/`projectId`, a key as `issueKey`/`projectKey`, and the
+  result's `context` names the scope that was checked.

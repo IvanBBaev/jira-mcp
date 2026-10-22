@@ -43,7 +43,7 @@ import {
   listVersionsTool,
   listWatchersTool,
 } from './collab.js';
-import { getMyselfTool } from './core.js';
+import { getMyPermissionsTool, getMyselfTool } from './core.js';
 import { buildCapabilitiesInfo, createPackages } from './index.js';
 import {
   getChangelogTool,
@@ -343,6 +343,38 @@ const CASES: readonly Case[] = [
     args: {},
     routes: [['GET /rest/api/2/myself', { ...DC_USER, locale: 'en_US' }]],
     hasUser: true,
+  },
+  {
+    // D122: the same record shape on the v2 root; a build that ignores the
+    // key filter answers everything, and only what was asked survives.
+    tool: getMyPermissionsTool,
+    args: { permissions: ['BROWSE_PROJECTS'] },
+    routes: [
+      [
+        'GET /rest/api/2/mypermissions',
+        {
+          permissions: {
+            BROWSE_PROJECTS: {
+              id: '10',
+              key: 'BROWSE_PROJECTS',
+              name: 'Browse Projects',
+              type: 'PROJECT',
+              description: 'Ability to browse projects and the issues within them.',
+              havePermission: true,
+            },
+            ADMINISTER: {
+              id: '0',
+              key: 'ADMINISTER',
+              name: 'Jira Administrators',
+              type: 'GLOBAL',
+              description: 'Ability to perform most administration functions.',
+              havePermission: false,
+            },
+          },
+        },
+      ],
+    ],
+    hasUser: false,
   },
   {
     tool: searchTool,

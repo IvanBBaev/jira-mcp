@@ -103,6 +103,10 @@ export const DATACENTER_PLAN = Object.freeze([
   { tool: 'jira_capabilities', args: {} },
   { tool: 'jira_get_myself', args: {} },
   {
+    tool: 'jira_get_my_permissions',
+    args: { permissions: ['BROWSE_PROJECTS', 'CREATE_ISSUES'], project: PROJECT },
+  },
+  {
     tool: 'jira_search',
     args: { jql: `project = ${PROJECT} ORDER BY created ASC`, maxResults: 2 },
   },
@@ -639,6 +643,39 @@ export function stepFindings(tool, data) {
     if (deployment?.product !== 'datacenter' || deployment?.verified !== false) {
       findings.push(
         `jira_capabilities: expected deployment {product: datacenter, verified: false}, got ${JSON.stringify(deployment)}`,
+      );
+    }
+  }
+  if (tool === 'jira_get_my_permissions') {
+    // D122: the fake's v2 route ignores the key filter and answers every
+    // permission it knows; the api ring must keep only the two asked for and
+    // answer both, and a browse verdict of anything but true on the rehearsal
+    // project is a wrong answer, not a denied one.
+    const checks = Array.isArray(data.permissions) ? data.permissions : [];
+    const keys = checks.map((check) => check?.key);
+    if (
+      keys.length !== 2 ||
+      !keys.includes('BROWSE_PROJECTS') ||
+      !keys.includes('CREATE_ISSUES')
+    ) {
+      findings.push(
+        `jira_get_my_permissions: expected exactly the two keys asked for, got ${JSON.stringify(keys)}`,
+      );
+    }
+    const browse = checks.find((check) => check?.key === 'BROWSE_PROJECTS');
+    if (browse?.granted !== true) {
+      findings.push(
+        `jira_get_my_permissions: expected BROWSE_PROJECTS granted, got ${JSON.stringify(browse)}`,
+      );
+    }
+    if (data.context !== 'project' || data.project !== PROJECT) {
+      findings.push(
+        `jira_get_my_permissions: expected context project ${PROJECT}, got ${JSON.stringify({ context: data.context, project: data.project })}`,
+      );
+    }
+    if (data.unanswered !== undefined) {
+      findings.push(
+        `jira_get_my_permissions: unanswered keys ${JSON.stringify(data.unanswered)}`,
       );
     }
   }

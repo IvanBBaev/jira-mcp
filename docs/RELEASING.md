@@ -361,16 +361,16 @@ install into an empty directory answered `--version` with `1.0.0`.
   was refused. Those five should clear on the next run against any board; the
   seven will not clear anywhere the account is not a project administrator.
 
-  **Six more tools have landed since that run, so the unproven count is now
-  eighteen of fifty-eight.** D102's three deletes (component, version, sprint)
-  and D103's three bulk tools (bulk delete, bulk edit, the queue read) have never
-  executed against Atlassian, and the two bulk writes additionally need the
+  **Seven more tools have landed since that run, so the unproven count is now
+  nineteen of fifty-nine.** D102's three deletes (component, version, sprint),
+  D103's three bulk tools (bulk delete, bulk edit, the queue read) and D122's
+  permission check (claim C44) have never executed against Atlassian, and the two bulk writes additionally need the
   site-wide *Make bulk changes* permission, which is not implied by project
   administration. All six do run end to end in the offline rehearsal — C42 and
   C43 exercise the bulk pair through the queue read, and C33's purge removes a
   sprint, a component and a version — so what is missing is a tenant, not a
   driver. Point the next run at a site where the account administers the project
-  and holds *Make bulk changes*, and the same command closes all eighteen.
+  and holds *Make bulk changes*, and the same command closes all nineteen.
 
   Read the run as three separate results. The write path works — plan → apply,
   fingerprint binding, the bare-string watcher body, the multipart upload, links,

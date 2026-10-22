@@ -12,6 +12,15 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
+### Added
+
+- `jira_get_my_permissions` (package `core`, read-only, D122): checks whether the
+  configured account holds the named permission keys globally, in a project or on
+  one issue — "what may I do here?" before a write, instead of a 403 on apply.
+  `issue` wins over `project`; a key Jira did not answer is listed under
+  `unanswered`, never reported as denied. 59 tools, 29 reads. Served on Data
+  Center too. Not yet proven live (Gate C claim C44 waits for the next run).
+
 ### Fixed
 
 - `jira_create_component`, `jira_create_version` and `jira_create_sprint`

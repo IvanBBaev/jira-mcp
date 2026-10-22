@@ -30,6 +30,7 @@ import type { AnyToolSpec, Hint, ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   capabilitiesTool,
   corePackage,
+  getMyPermissionsTool,
   getMyselfTool,
   type CapabilitiesInfo,
 } from './core.js';
@@ -112,15 +113,22 @@ function hintCodes(result: ToolResult<unknown>): string[] {
 const PACKAGE = corePackage(infoOf());
 const ALL_TOOLS: readonly AnyToolSpec[] = PACKAGE.tools;
 
+/** The smallest input each core tool's schema accepts. */
+function minimalArgs(tool: AnyToolSpec): Record<string, unknown> {
+  return tool.name === 'jira_get_my_permissions'
+    ? { permissions: ['BROWSE_PROJECTS'] }
+    : {};
+}
+
 // ---------------------------------------------------------------------------
 // The package and its annotations
 // ---------------------------------------------------------------------------
 
-test('the core package exports exactly the two documented tools', () => {
+test('the core package exports exactly the three documented tools', () => {
   assert.equal(PACKAGE.id, 'core');
   assert.deepEqual(
     ALL_TOOLS.map((tool) => tool.name),
-    ['jira_capabilities', 'jira_get_myself'],
+    ['jira_capabilities', 'jira_get_myself', 'jira_get_my_permissions'],
   );
   for (const tool of ALL_TOOLS) assert.equal(tool.package, 'core');
 });
@@ -138,6 +146,7 @@ test('jira_capabilities is the local tool — openWorldHint is false there alone
   const capabilities = capabilitiesTool(infoOf());
   assert.equal(capabilities.annotations.openWorldHint, false);
   assert.equal(getMyselfTool.annotations.openWorldHint, true);
+  assert.equal(getMyPermissionsTool.annotations.openWorldHint, true);
 });
 
 test('every core tool description stays inside the 500-character budget', () => {
@@ -152,7 +161,7 @@ test('every core tool description stays inside the 500-character budget', () => 
 test('every core input schema is strict — an unknown key is rejected, not ignored', () => {
   for (const tool of ALL_TOOLS) {
     assert.equal(
-      tool.input.safeParse({ bogus: 1 }).success,
+      tool.input.safeParse({ ...minimalArgs(tool), bogus: 1 }).success,
       false,
       `${tool.name} accepted an unknown key`,
     );
@@ -161,21 +170,26 @@ test('every core input schema is strict — an unknown key is rejected, not igno
 
 test('every core tool takes profile and refuses the write control fields', () => {
   for (const tool of ALL_TOOLS) {
-    assert.equal(tool.input.safeParse({}).success, true, `${tool.name} rejected {}`);
+    const minimal = minimalArgs(tool);
     assert.equal(
-      tool.input.safeParse({ profile: 'agile' }).success,
+      tool.input.safeParse(minimal).success,
+      true,
+      `${tool.name} rejected its minimal input`,
+    );
+    assert.equal(
+      tool.input.safeParse({ ...minimal, profile: 'agile' }).success,
       true,
       `${tool.name} rejected profile`,
     );
     // A read tool never declares the plan/apply pair — accepting `apply` would
     // let a model believe there is a gate to satisfy here.
     assert.equal(
-      tool.input.safeParse({ apply: true }).success,
+      tool.input.safeParse({ ...minimal, apply: true }).success,
       false,
       `${tool.name} accepted apply`,
     );
     assert.equal(
-      tool.input.safeParse({ plan_id: 'p-1' }).success,
+      tool.input.safeParse({ ...minimal, plan_id: 'p-1' }).success,
       false,
       `${tool.name} accepted plan_id`,
     );
@@ -413,6 +427,174 @@ test('a malformed /myself body fails loudly rather than returning a blank accoun
   );
 
   const result = await getMyselfTool.handler({}, ctxOf(fake));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'unexpected_shape');
+});
+
+// ---------------------------------------------------------------------------
+// jira_get_my_permissions (D122)
+// ---------------------------------------------------------------------------
+
+const PERMISSIONS_ROUTE = 'GET /rest/api/3/mypermissions';
+
+/** One entry of `GET /mypermissions`, as Jira Cloud shapes it. // synthetic */
+function permissionEntry(key: string, havePermission: boolean, type = 'PROJECT') {
+  return {
+    id: '10',
+    key,
+    name: key.toLowerCase().replaceAll('_', ' '),
+    type,
+    description: `Ability to ${key.toLowerCase().replaceAll('_', ' ')}.`,
+    havePermission,
+  };
+}
+
+test('jira_get_my_permissions reads /mypermissions once and returns one verdict per key', async () => {
+  const fake = createFakeJiraRequest().on(
+    PERMISSIONS_ROUTE,
+    jiraOk({
+      permissions: {
+        BROWSE_PROJECTS: permissionEntry('BROWSE_PROJECTS', true),
+        ADMINISTER: permissionEntry('ADMINISTER', false, 'GLOBAL'),
+      },
+    }),
+  );
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['BROWSE_PROJECTS', 'ADMINISTER'] },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.routes(), [PERMISSIONS_ROUTE]);
+  assert.deepEqual(fake.lastRequest()?.query, {
+    permissions: 'BROWSE_PROJECTS,ADMINISTER',
+  });
+  assert.deepEqual(result.data, {
+    context: 'global',
+    permissions: [
+      { key: 'BROWSE_PROJECTS', granted: true, name: 'browse projects', type: 'PROJECT' },
+      { key: 'ADMINISTER', granted: false, name: 'administer', type: 'GLOBAL' },
+    ],
+  });
+  // Verdicts are metadata, not Jira free text: no brand, no hints.
+  assert.equal(result.hints, undefined);
+  assert.equal(result._untrusted, undefined);
+});
+
+test('jira_get_my_permissions checks in a project and says so in the result', async () => {
+  const fake = createFakeJiraRequest().on(
+    PERMISSIONS_ROUTE,
+    jiraOk({ permissions: { CREATE_ISSUES: permissionEntry('CREATE_ISSUES', true) } }),
+  );
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['CREATE_ISSUES'], project: ' ABC ' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.lastRequest()?.query, {
+    permissions: 'CREATE_ISSUES',
+    projectKey: 'ABC',
+  });
+  assert.equal(result.data?.context, 'project');
+  assert.equal(result.data?.project, 'ABC');
+  assert.equal(result.data?.issue, undefined);
+});
+
+test('[CC-1403] jira_get_my_permissions sends only the issue when both scopes are given', async () => {
+  const fake = createFakeJiraRequest().on(
+    PERMISSIONS_ROUTE,
+    jiraOk({ permissions: { EDIT_ISSUES: permissionEntry('EDIT_ISSUES', false) } }),
+  );
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['EDIT_ISSUES'], project: 'ABC', issue: 'ABC-7' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  // The project is not sent alongside: Jira would evaluate the pair in its own
+  // order, and the result must name the scope the verdict applies to.
+  assert.deepEqual(fake.lastRequest()?.query, {
+    permissions: 'EDIT_ISSUES',
+    issueKey: 'ABC-7',
+  });
+  assert.deepEqual(result.data, {
+    context: 'issue',
+    issue: 'ABC-7',
+    permissions: [
+      { key: 'EDIT_ISSUES', granted: false, name: 'edit issues', type: 'PROJECT' },
+    ],
+  });
+});
+
+test('[CC-1401] jira_get_my_permissions lists a key Jira skipped as unanswered, not as denied', async () => {
+  const fake = createFakeJiraRequest().on(
+    PERMISSIONS_ROUTE,
+    jiraOk({
+      permissions: { BROWSE_PROJECTS: permissionEntry('BROWSE_PROJECTS', true) },
+    }),
+  );
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['BROWSE_PROJECTS', 'DELETE_ISSUES'] },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.data?.permissions.map((check) => check.key),
+    ['BROWSE_PROJECTS'],
+  );
+  assert.deepEqual(result.data?.unanswered, ['DELETE_ISSUES']);
+});
+
+test('[CC-1400] jira_get_my_permissions refuses a comma-joined key before the wire', async () => {
+  const fake = createFakeJiraRequest();
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['BROWSE_PROJECTS,CREATE_ISSUES'] },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(String(result.error?.remediation), /one key per array entry/);
+  assert.equal(fake.calls.length, 0, 'nothing may reach Jira');
+});
+
+test('a Jira 400 for an unknown permission key reaches the model as validation, wording untouched', async () => {
+  const rejected = errorFromResponse({
+    status: 400,
+    body: { errorMessages: ["Invalid permission key 'BROWSE'."] },
+    method: 'GET',
+    pathTemplate: '/mypermissions',
+  });
+  const fake = createFakeJiraRequest().on(PERMISSIONS_ROUTE, jiraErr(rejected));
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['BROWSE'] },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.equal(result.error?.message, rejected.message);
+});
+
+test('a malformed /mypermissions body fails loudly rather than returning no verdicts', async () => {
+  const fake = createFakeJiraRequest().on(
+    PERMISSIONS_ROUTE,
+    jiraOk({ permissions: { BROWSE_PROJECTS: { key: 'BROWSE_PROJECTS' } } }),
+  );
+
+  const result = await getMyPermissionsTool.handler(
+    { permissions: ['BROWSE_PROJECTS'] },
+    ctxOf(fake),
+  );
 
   assert.equal(result.ok, false);
   assert.equal(result.error?.kind, 'unexpected_shape');

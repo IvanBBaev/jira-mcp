@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------------
 // Package `core` — TOOLS.md §Package `core`.
 //
-// Two tools, and they answer the two questions every session starts with:
-// "what is this server?" (`jira_capabilities`, local) and "who am I on it?"
-// (`jira_get_myself`, one GET). The package is ALWAYS registered — a deny list
-// force-re-adds it (CC-29) — because a session that lost its other tools needs
-// something left to ask why.
+// Three tools, and they answer the questions every session starts with: "what
+// is this server?" (`jira_capabilities`, local), "who am I on it?"
+// (`jira_get_myself`, one GET) and, since D122, "what may I do here?"
+// (`jira_get_my_permissions`, one GET). The package is ALWAYS registered — a
+// deny list force-re-adds it (CC-29) — because a session that lost its other
+// tools needs something left to ask why.
 //
 // WHY THIS MODULE EXPORTS A FACTORY AND NOT A CONSTANT. `jira_capabilities`
 // describes the registry that contains `jira_capabilities`. That circle is
@@ -26,10 +27,11 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
+import { MAX_PERMISSION_KEYS, type PermissionCheck } from '../api/permissions.js';
 import type { MyselfResult } from '../api/users.js';
 import type { Counters } from '../core/telemetry.js';
 import type { TransportKind, WriteMode } from '../core/types.js';
-import { defineTool, toolInput } from '../mcp/define.js';
+import { defineTool, toolInput, z } from '../mcp/define.js';
 import { errorResult } from '../mcp/errors.js';
 import { ok } from '../mcp/result.js';
 import type { ExclusionReason } from '../mcp/registry.js';
@@ -290,6 +292,123 @@ export const getMyselfTool = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// jira_get_my_permissions (D122)
+// ---------------------------------------------------------------------------
+
+/**
+ * One permission check, as answered. `granted` is Jira's verdict for the
+ * scope the call named; a key Jira did not answer is never here — it is in
+ * {@link MyPermissionsData.unanswered} instead (CC-1401).
+ */
+export interface MyPermissionData {
+  readonly key: string;
+  readonly granted: boolean;
+  /** Jira's display name for the permission, when it sent one. */
+  readonly name?: string;
+  /** `GLOBAL` or `PROJECT` — which scope the permission is evaluated in. */
+  readonly type?: string;
+}
+
+/**
+ * The result of `jira_get_my_permissions`. `context` names the scope the check
+ * ran in, and only the most specific one given is echoed back (CC-1403), so a
+ * caller can see at a glance whether `granted` means "on this issue", "in
+ * this project" or "somewhere on the site".
+ */
+export interface MyPermissionsData {
+  readonly context: 'global' | 'project' | 'issue';
+  /** The project key or id the check ran against (`context: 'project'`). */
+  readonly project?: string;
+  /** The issue key or id the check ran against (`context: 'issue'`). */
+  readonly issue?: string;
+  readonly permissions: readonly MyPermissionData[];
+  /**
+   * Keys Jira did not answer at all — present only when non-empty. Not the
+   * same as denied: a missing answer is a question Jira did not take, not a
+   * verdict (CC-1401).
+   */
+  readonly unanswered?: readonly string[];
+}
+
+const getMyPermissionsInput = toolInput({
+  permissions: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(MAX_PERMISSION_KEYS)
+    .describe(
+      'Permission keys to check, one per entry (not a comma-separated string), at ' +
+        `most ${String(MAX_PERMISSION_KEYS)}. Common keys: BROWSE_PROJECTS, ` +
+        'CREATE_ISSUES, EDIT_ISSUES, TRANSITION_ISSUES, ADD_COMMENTS, ' +
+        'WORK_ON_ISSUES, DELETE_ISSUES, ADMINISTER_PROJECTS, BULK_CHANGE, ' +
+        'ADMINISTER. Keys Jira does not know make the whole call fail.',
+    ),
+  issue: z
+    .string()
+    // Trimmed so a blank scope is refused here rather than silently widening
+    // the check to the whole site (CC-560, CC-1400).
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Issue key or id to check the permissions ON. Wins over `project` when both ' +
+        'are given: only the most specific scope is sent.',
+    ),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Project key or id to check the permissions IN. Without `issue` and ' +
+        '`project` a project permission reads granted if the account holds it in ' +
+        'ANY project.',
+    ),
+});
+
+/** Absent keys are omitted rather than set to `undefined` (envelope hygiene). */
+function permissionData(check: PermissionCheck): MyPermissionData {
+  return {
+    key: check.key,
+    granted: check.granted,
+    ...(check.name === undefined ? {} : { name: check.name }),
+    ...(check.type === undefined ? {} : { type: check.type }),
+  };
+}
+
+export const getMyPermissionsTool = defineTool({
+  name: 'jira_get_my_permissions',
+  title: 'Check my permissions',
+  description:
+    'Check whether the configured account holds the named permissions globally, ' +
+    'in a project or on one issue, before a write. Each key comes back granted ' +
+    'true or false; a key Jira did not answer is listed under unanswered, never ' +
+    'reported as denied. `issue` wins over `project`; with neither, a project ' +
+    'permission is granted if held in any project. Common keys: BROWSE_PROJECTS, ' +
+    'CREATE_ISSUES, EDIT_ISSUES, TRANSITION_ISSUES, ADD_COMMENTS, WORK_ON_ISSUES, ' +
+    'DELETE_ISSUES, ADMINISTER_PROJECTS, BULK_CHANGE.',
+  package: 'core',
+  annotations: READ_ANNOTATIONS,
+  input: getMyPermissionsInput,
+  handler: async (args, ctx): Promise<ToolResult<MyPermissionsData>> =>
+    guarded(async () => {
+      const result = await ctx.api.getMyPermissions({
+        ...callBase(ctx),
+        permissions: args.permissions,
+        ...(args.project === undefined ? {} : { projectKey: args.project }),
+        ...(args.issue === undefined ? {} : { issueKey: args.issue }),
+      });
+      // Permission verdicts are metadata, not Jira free text: no D15 brand.
+      return ok({
+        context: result.context,
+        ...(result.projectKey === undefined ? {} : { project: result.projectKey }),
+        ...(result.issueKey === undefined ? {} : { issue: result.issueKey }),
+        permissions: result.permissions.map(permissionData),
+        ...(result.unanswered.length === 0 ? {} : { unanswered: result.unanswered }),
+      });
+    }),
+});
+
+// ---------------------------------------------------------------------------
 // The package
 // ---------------------------------------------------------------------------
 
@@ -307,8 +426,8 @@ export function corePackage(source: CapabilitiesSource): PackageSpec {
     id: 'core',
     title: 'Core',
     description:
-      'Server self-description and credential check — always registered, even ' +
-      'when every other package is denied.',
-    tools: [capabilitiesTool(source), getMyselfTool],
+      'Server self-description, credential and permission checks — always ' +
+      'registered, even when every other package is denied.',
+    tools: [capabilitiesTool(source), getMyselfTool, getMyPermissionsTool],
   };
 }

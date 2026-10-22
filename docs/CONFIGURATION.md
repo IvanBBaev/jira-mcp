@@ -79,9 +79,9 @@ Jira site a call is about, whether or not the credentials came from a token.
 
 The Data Center adapter is being built in stages (D106, D107,
 IMPLEMENTATION-PLAN.md Phase 13). Stages 13.3–13.8 serve a subset of the
-tools — 27 reads (user search and project roles since D110; the count, changelog and attachment list since D114; the saved filters since D115; the create metadata, on Data Center 8.4 or later, since D116; the attachment download, into `JIRA_MEDIA_DIR`, since D117), and since D109,
+tools — 28 reads (user search and project roles since D110; the count, changelog and attachment list since D114; the saved filters since D115; the create metadata, on Data Center 8.4 or later, since D116; the attachment download, into `JIRA_MEDIA_DIR`, since D117; the permission check since D122), and since D109,
 D111 and D113 twenty writes behind the usual `JIRA_WRITE_MODE`
-gate — 47 in all, with `resolveMentions: true` since D112 (`jira_capabilities` lists them; the rest are excluded as
+gate — 48 in all, with `resolveMentions: true` since D112 (`jira_capabilities` lists them; the rest are excluded as
 `deployment_unsupported`), built from Atlassian's Data Center documentation and
 **never run against a Data Center instance**. It therefore fails closed:
 selecting `datacenter` is a startup error (`deployment_unavailable`) unless

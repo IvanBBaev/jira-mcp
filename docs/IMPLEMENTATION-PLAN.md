@@ -140,8 +140,8 @@ runbook for the mechanical half is [RELEASING.md](RELEASING.md).
       then widened the ask without reopening it: the three D102 deletes have
       never met Atlassian and need the same project-admin grant, and the three
       D103 bulk tools landed after the last run — the two writes also need
-      site-wide "Make bulk changes". Eighteen of 58 unproven, one grant and one
-      run away. Fixture recording still needs the same site.
+      site-wide "Make bulk changes"; the D122 permission check has never run live
+      either. Nineteen of 59 unproven, one grant and one run away. Fixture recording still needs the same site.
 
 Exit: `npm run check` green on an empty-but-wired repo (one placeholder test).
 **Met.** The gate has been green continuously since Phase 1 and is now green on
@@ -526,7 +526,7 @@ keyboard:
   a site where the gate can clean up after itself, were what stood between
   0.9.4 and 1.0.0 at the time (D87). Phases 11 and 12 have since added six tools
   that have never run live — the D102 deletes and the D103 bulk tools — so the
-  count is eighteen of 58 now; the Phase 0 O-2 note above and RELEASING.md §6
+  count is nineteen of 59 now (D122 added the permission check, also unproven); the Phase 0 O-2 note above and RELEASING.md §6
   keep the current account.
 - ~~**O-9**~~ — resolved 2026-08-17: published. It cost one repository variable,
   one environment and one tag, as the inert-by-construction design intended
@@ -884,7 +884,7 @@ coverage floors intact.
 
 Deliberately **not** in that exit: proof against a real tenant. None of the
 three bulk tools has ever spoken to a real Jira site — the proven count
-stays 40, now of 58 — and the two submits additionally need the global
+stays 40, now of 59 since D122 — and the two submits additionally need the global
 "Make bulk changes" permission, which is exactly why C42 and C43 are
 allowed to SKIP on a tenant that withholds it. Both claims have run only
 against the fake, whose queue reaches COMPLETE in three polls; a real queue

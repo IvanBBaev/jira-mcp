@@ -120,8 +120,8 @@ scope call:
   13.7a the two saved-filter reads, the list scoped to your favourites
   (D115) — and stage 13.7b the create metadata over the paged 8.4+ routes
   only (D116) — and stage 13.8 the attachment download over the
-  `/secure/attachment` servlet, the upload left unserved (D117) — 47 tools
-  in all, 27 reads and 20 writes — an unverified
+  `/secure/attachment` servlet, the upload left unserved (D117) — and the
+  permission check since D122 — 48 tools in all, 28 reads and 20 writes — an unverified
   preview that starts only with `JIRA_DATACENTER_PREVIEW=true` (D107). The
   remaining reads and writes, `jira_close_sprint` among them, wait for a real
   host (D108, D109, D111, D113, D114, D115, D116, D117). The price above is unchanged, and D104's verification
