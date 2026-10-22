@@ -27,7 +27,7 @@
 // the tests that need it are skipped with that reason rather than failed.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +102,9 @@ interface RehearsalModule {
   readonly dataCenterChildEnv: (
     options: Record<string, string>,
   ) => Record<string, string>;
+  readonly runDataCenterRehearsal: (options?: {
+    readonly serverEntry?: string;
+  }) => Promise<{ readonly findings: readonly string[]; readonly workdir: string }>;
   readonly downloadFindings: (
     data: Record<string, unknown>,
     disk: {
@@ -1227,3 +1230,26 @@ test(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// CC-1501 — a set-up failure still removes the rehearsal's workdir
+// ---------------------------------------------------------------------------
+
+test('[CC-1501] a rehearsal that cannot start its fake leaves no workdir behind', async () => {
+  // No openssl on PATH is the set-up failure the header names; the workdir
+  // was made before the fake and removed only by a finally the fake never reached.
+  const temp = mkdtempSync(join(tmpdir(), 'jira-mcp-dc-workdir-test-'));
+  const saved = { TMPDIR: process.env['TMPDIR'], PATH: process.env['PATH'] };
+  process.env['TMPDIR'] = temp;
+  process.env['PATH'] = '';
+  try {
+    await assert.rejects(rehearsal.runDataCenterRehearsal(), /openssl/);
+    assert.deepEqual(readdirSync(temp), []);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(temp, { recursive: true, force: true });
+  }
+});

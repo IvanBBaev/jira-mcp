@@ -441,35 +441,38 @@ export async function runDataCenterRehearsal(options = {}) {
   );
 
   const workdir = await mkdtemp(join(tmpdir(), 'jira-mcp-rehearse-dc-'));
-  const preload = join(workdir, 'rehearsal-dns.mjs');
-  await writeFile(preload, REHEARSAL_DNS_PRELOAD, 'utf8');
-  const preloadUrl = pathToFileURL(preload).href;
-  const fake = await startFakeJira({
-    deployment: 'datacenter',
-    pat: PAT,
-    contextPath: CONTEXT_PATH,
-    projectKey: PROJECT,
-    certDir: options.certDir ?? join(workdir, 'tls'),
-  });
-
-  const findings = [];
-  const calls = [];
-  // The download (D117) writes here and nowhere else.
-  const mediaDir = join(workdir, 'media');
-  await mkdir(mediaDir);
-  const envFor = async (pat) => {
-    const home = await mkdtemp(join(workdir, 'home-'));
-    return dataCenterChildEnv({
-      home,
-      site: fake.origin,
-      pat,
-      certFile: fake.certFile,
-      preloadUrl,
-      mediaDir,
-    });
-  };
-
+  // Everything after the workdir exists runs inside the try, so a set-up
+  // failure (no openssl) still removes it (CC-1501).
+  let fake;
   try {
+    const preload = join(workdir, 'rehearsal-dns.mjs');
+    await writeFile(preload, REHEARSAL_DNS_PRELOAD, 'utf8');
+    const preloadUrl = pathToFileURL(preload).href;
+    fake = await startFakeJira({
+      deployment: 'datacenter',
+      pat: PAT,
+      contextPath: CONTEXT_PATH,
+      projectKey: PROJECT,
+      certDir: options.certDir ?? join(workdir, 'tls'),
+    });
+
+    const findings = [];
+    const calls = [];
+    // The download (D117) writes here and nowhere else.
+    const mediaDir = join(workdir, 'media');
+    await mkdir(mediaDir);
+    const envFor = async (pat) => {
+      const home = await mkdtemp(join(workdir, 'home-'));
+      return dataCenterChildEnv({
+        home,
+        site: fake.origin,
+        pat,
+        certFile: fake.certFile,
+        preloadUrl,
+        mediaDir,
+      });
+    };
+
     // -- phase 1: every served tool, over one server -----------------------
     log(`phase 1: ${String(DATACENTER_PLAN.length)} tools against ${fake.origin}`);
     await withServer(await envFor(PAT), async (session) => {
@@ -608,7 +611,7 @@ export async function runDataCenterRehearsal(options = {}) {
 
     return { findings, calls, requests: [...fake.requests], workdir };
   } finally {
-    await fake.close();
+    await fake?.close();
     if (options.keep !== true) await rm(workdir, { recursive: true, force: true });
   }
 }
