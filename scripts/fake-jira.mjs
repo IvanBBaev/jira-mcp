@@ -49,6 +49,7 @@
 
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
+import { X509Certificate } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -124,24 +125,43 @@ dns.promises.lookup = async function lookup(hostname, options) {
 // TLS material
 // ---------------------------------------------------------------------------
 
+/** How long a reused certificate must still be valid for (CC-1500). */
+const CERT_REUSE_MARGIN_MS = 60 * 60 * 1000;
+
+/** Whether `pem` parses and stays valid for the reuse margin past `now`. */
+function certificateUsable(pem, now) {
+  try {
+    const { validFrom, validTo } = new X509Certificate(pem);
+    return (
+      Date.parse(validFrom) <= now && Date.parse(validTo) - now >= CERT_REUSE_MARGIN_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Generate (once per directory) a self-signed certificate covering both names.
  *
  * Node can create key pairs but not X.509 certificates, so this shells out to
  * openssl. It is the only external tool the rehearsal needs, and it ships with
  * macOS and every mainstream Linux.
+ *
+ * A pair already in `dir` is reused only while the certificate parses and has
+ * at least {@link CERT_REUSE_MARGIN_MS} left: the default directory is a fixed
+ * path under the OS temp dir, so it outlives the two-day certificate, and an
+ * expired one fails every TLS handshake (CC-1500). `now` is injectable for the
+ * tests.
  */
-export function ensureCertificate(dir) {
+export function ensureCertificate(dir, now = Date.now()) {
   mkdirSync(dir, { recursive: true });
   const keyFile = join(dir, 'fake-jira-key.pem');
   const certFile = join(dir, 'fake-jira-cert.pem');
   if (existsSync(keyFile) && existsSync(certFile)) {
-    return {
-      keyFile,
-      certFile,
-      key: readFileSync(keyFile),
-      cert: readFileSync(certFile),
-    };
+    const cert = readFileSync(certFile);
+    if (certificateUsable(cert, now)) {
+      return { keyFile, certFile, key: readFileSync(keyFile), cert };
+    }
   }
 
   const configFile = join(dir, 'fake-jira-openssl.cnf');

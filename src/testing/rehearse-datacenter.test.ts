@@ -27,7 +27,7 @@
 // the tests that need it are skipped with that reason rather than failed.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -65,7 +65,10 @@ interface FakeModule {
   readonly API_HOST: string;
   readonly DATACENTER_ROUTES: readonly string[];
   readonly DATACENTER_PAT: string;
-  readonly ensureCertificate: (dir: string) => unknown;
+  readonly ensureCertificate: (
+    dir: string,
+    now?: number,
+  ) => { readonly cert: Uint8Array };
   readonly cloudOnlyReason: (
     pathname: string,
     query: Record<string, string>,
@@ -1195,3 +1198,32 @@ test('[CC-379] the download check names a file outside the media dir, wrong byte
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// CC-1500 — a certificate left in the cert directory is not reused past expiry
+// ---------------------------------------------------------------------------
+
+test(
+  '[CC-1500] an expired or unreadable certificate in the cert dir is regenerated, a live one reused',
+  { skip: noTls },
+  () => {
+    // The fake's default cert dir is a fixed path under the OS temp dir, so it
+    // outlives the two-day certificate; reusing it then failed every handshake.
+    const dir = mkdtempSync(join(tmpdir(), 'jira-mcp-dc-cert-test-'));
+    try {
+      const first = fakeJira.ensureCertificate(dir);
+      const again = fakeJira.ensureCertificate(dir);
+      assert.deepEqual(again.cert, first.cert, 'a live certificate is reused');
+
+      const threeDays = 3 * 24 * 60 * 60 * 1000;
+      const later = fakeJira.ensureCertificate(dir, Date.now() + threeDays);
+      assert.notDeepEqual(later.cert, first.cert, 'an expired certificate is replaced');
+
+      writeFileSync(join(dir, 'fake-jira-cert.pem'), 'truncated');
+      const repaired = fakeJira.ensureCertificate(dir);
+      assert.match(Buffer.from(repaired.cert).toString('utf8'), /BEGIN CERTIFICATE/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
