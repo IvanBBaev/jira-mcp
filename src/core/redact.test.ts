@@ -59,6 +59,22 @@ describe('createRedactor — registered secrets', () => {
     }
   });
 
+  it('[CC-1300] registers a lone-surrogate secret and every secret after it', () => {
+    const poisoned = 'access\uDC00token123';
+    const later = 'refreshTokenABC987';
+    const redactor = createRedactor({ secrets: [poisoned] });
+
+    assert.doesNotThrow(() => redactor.addSecret(later));
+    assert.equal(
+      redactor.redactString(`a=${poisoned} b=${later} c=access%EF%BF%BDtoken123`),
+      `a=${DEFAULT_PLACEHOLDER} b=${DEFAULT_PLACEHOLDER} c=${DEFAULT_PLACEHOLDER}`,
+    );
+    assert.equal(
+      redactor.redactString(JSON.stringify(poisoned)),
+      `"${DEFAULT_PLACEHOLDER}"`,
+    );
+  });
+
   it('masks a registered secret inside a serialized JSON blob', () => {
     const redactor = createRedactor({ secrets: [TOKEN] });
     const blob = JSON.stringify({ auth: { headers: { token: TOKEN } }, ok: false });

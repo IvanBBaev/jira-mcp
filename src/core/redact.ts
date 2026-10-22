@@ -257,9 +257,15 @@ export function stripCredentialShapes(
  * (`+` for a space, `!'()~` escaped), since other encoders than ours write
  * those (CC-406). Duplicates are dropped, so an ASCII-only token costs
  * exactly one comparison.
+ *
+ * A lone UTF-16 surrogate (a token parsed from `"\udc00"` in a JSON response)
+ * is percent-encoded as U+FFFD, the way `URLSearchParams` writes it.
+ * `encodeURIComponent` throws on it instead, and the throw came from
+ * `rebuild` after the value was already recorded, so every later `addSecret`
+ * threw too and no secret registered after it was ever masked (CC-1300).
  */
 function literalVariants(secret: string): string[] {
-  const encoded = encodeURIComponent(secret);
+  const encoded = encodeURIComponent(toWellFormed(secret));
   const formEncoded = new URLSearchParams([['', secret]]).toString().slice(1);
   const candidates = [
     secret,
@@ -270,6 +276,14 @@ function literalVariants(secret: string): string[] {
     lowerHex(formEncoded),
   ];
   return [...new Set(candidates)];
+}
+
+/** Replace each lone surrogate with U+FFFD (`String#toWellFormed`, ES2024). */
+function toWellFormed(text: string): string {
+  return text.replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    '�',
+  );
 }
 
 /** `%2B` → `%2b`: the hex digits of a percent escape are case-insensitive. */
