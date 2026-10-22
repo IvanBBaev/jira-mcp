@@ -459,10 +459,15 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
     if (depth >= MAX_DEPTH) return TOO_DEEP;
     if (seen.has(object)) return CIRCULAR;
 
-    if (object instanceof Date) return new Date(object.getTime());
-
     seen.add(object);
+    // Reading an object can throw beyond a property getter: an array index
+    // getter, a proxy's `ownKeys` or `getPrototypeOf` trap, a revoked proxy,
+    // a `Date.prototype` object that is not a date. That subtree becomes a
+    // marker; the throw used to escape, and the logger dropped every field of
+    // the line with it (CC-1301).
     try {
+      if (object instanceof Date) return new Date(object.getTime());
+
       if (Array.isArray(object)) {
         return (object as unknown[]).map((item) => walk(item, depth + 1, seen));
       }
@@ -495,6 +500,8 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
         setOwn(out, scrub(key), maskByKey(key, item) ?? walk(item, depth + 1, seen));
       }
       return out;
+    } catch {
+      return UNREADABLE;
     } finally {
       seen.delete(object);
     }

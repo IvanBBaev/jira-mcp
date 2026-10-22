@@ -496,6 +496,47 @@ describe('createRedactor — deep values', () => {
     assert.equal(output.safe, 'kept');
   });
 
+  it('[CC-1301] marks an object it cannot read and keeps its siblings', () => {
+    const redactor = createRedactor({ secrets: [TOKEN] });
+    const getterArray: unknown[] = [];
+    Object.defineProperty(getterArray, 0, {
+      get(): never {
+        throw new Error('nope');
+      },
+      enumerable: true,
+    });
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+    const keyless = new Proxy(
+      {},
+      {
+        ownKeys(): never {
+          throw new Error('nope');
+        },
+      },
+    );
+
+    let output: Record<string, unknown> = {};
+    assert.doesNotThrow(() => {
+      output = redactor.redact({
+        getterArray,
+        fakeDate: Object.create(Date.prototype) as unknown,
+        revoked: revocable.proxy,
+        keyless,
+        nested: { list: [1, getterArray] },
+        safe: `kept ${TOKEN}`,
+      }) as Record<string, unknown>;
+    });
+    assert.deepEqual(output, {
+      getterArray: '[UNREADABLE]',
+      fakeDate: '[UNREADABLE]',
+      revoked: '[UNREADABLE]',
+      keyless: '[UNREADABLE]',
+      nested: { list: [1, '[UNREADABLE]'] },
+      safe: `kept ${DEFAULT_PLACEHOLDER}`,
+    });
+  });
+
   it('survives an Error whose name or message is not a string, or throws', () => {
     // `name` / `message` are read through the same defensive path as any
     // other property: a non-string becomes an empty string, a throwing getter
