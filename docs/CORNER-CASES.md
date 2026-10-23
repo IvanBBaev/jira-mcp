@@ -3218,3 +3218,21 @@ Prompts (D125):
   the path and counts, never the document or Jira text.
 - **CC-1444** — the report store never overwrites (a clash gets `-1`, `-2`,
   …), writes `0600`, and a missing directory is a `config` error.
+
+## Rate-limit reasons (D127, 2026-10-24)
+
+- **CC-1445** — `parseRateLimit` keeps only the four documented
+  `RateLimit-Reason` values (case- and space-insensitive), marks the two quota
+  reasons as `quota`, drops an unknown value, and answers
+  `{ quota: false, nearLimit: false }` for no headers.
+- **CC-1446** — `X-RateLimit-NearLimit: true` sets `nearLimit`; `Retry-After`
+  wins over `X-RateLimit-Reset`; an ISO reset in the past is clamped to now;
+  a numeric or junk reset is ignored.
+- **CC-1447** — a quota 429 sends exactly one request, logs no `http_retry`,
+  logs `rate_limited` with the reason and `waitS: 0`, and fails as
+  `rate_limited` naming the reason and the reset instant.
+- **CC-1448** — a burst 429 retries under the normal policy and logs its
+  reason; a per-issue 429 that outlives the retry budget names the reason and
+  tells the model to slow down on that issue.
+- **CC-1449** — an unknown `RateLimit-Reason` reaches neither the error
+  message nor the log.

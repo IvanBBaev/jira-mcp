@@ -434,6 +434,83 @@ test('[CC-203] a zero Retry-After backs off instead of retrying at once', async 
   });
 });
 
+test('[CC-1447] a quota 429 fails at once with the reset instant, not after 60 s retries', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({
+      status: 429,
+      headers: { 'retry-after': '1800', 'ratelimit-reason': 'jira-quota-tenant-based' },
+    });
+    const { request, clock, logger } = harness({ retryAttempts: 3 });
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(mock.requests.length, 1, 'no retry can lift an hourly quota');
+    assert.equal(err.kind, 'rate_limited');
+    assert.equal(err.httpStatus, 429);
+    assert.match(
+      err.message,
+      /jira-quota-tenant-based rate-limit quota is spent until \d{4}-/,
+    );
+    assert.match(err.remediation ?? '', /Do not retry before/);
+    assert.equal(logger.eventsOf('http_retry').length, 0);
+    const limited = fieldsOf(logger.eventsOf('rate_limited')[0]);
+    assert.equal(limited['reason'], 'jira-quota-tenant-based');
+    assert.equal(limited['waitS'], 0);
+  });
+});
+
+test('[CC-1448] burst and per-issue 429s keep retrying and name their reason', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({
+        status: 429,
+        headers: { 'retry-after': '1', 'ratelimit-reason': 'jira-burst-based' },
+      })
+      .enqueue({ json: { ok: true } });
+    const { request, clock, logger } = harness();
+
+    await settle(clock, request(GET_ISSUE));
+
+    assert.equal(mock.requests.length, 2);
+    assert.equal(
+      fieldsOf(logger.eventsOf('rate_limited')[0])['reason'],
+      'jira-burst-based',
+    );
+  });
+
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({
+      status: 429,
+      headers: { 'retry-after': '1', 'ratelimit-reason': 'jira-per-issue-on-write' },
+    });
+    const { request, clock } = harness({ retryAttempts: 1 });
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.equal(mock.requests.length, 2);
+    assert.match(
+      err.message,
+      /\(jira-per-issue-on-write\) and the retry budget is spent/,
+    );
+    assert.match(err.remediation ?? '', /This issue takes writes too fast/);
+  });
+});
+
+test('[CC-1449] an unknown RateLimit-Reason is neither logged nor echoed', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock.fallback({
+      status: 429,
+      headers: { 'retry-after': '1', 'ratelimit-reason': 'x-secret' },
+    });
+    const { request, clock, logger } = harness({ retryAttempts: 0 });
+
+    const err = await rejects(clock, request(GET_ISSUE));
+
+    assert.doesNotMatch(err.message, /x-secret/);
+    assert.equal(fieldsOf(logger.eventsOf('rate_limited')[0])['reason'], undefined);
+  });
+});
+
 test('a 429 that outlives the retry budget surfaces as rate_limited', async () => {
   await withFetch(async (mock: FetchMock) => {
     for (let i = 0; i < 4; i += 1)

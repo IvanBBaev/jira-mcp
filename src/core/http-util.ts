@@ -604,6 +604,85 @@ export function jitterMs(ms: number, fraction: number, rng: Rng): number {
 }
 
 /* ------------------------------------------------------------------------- *
+ * Rate-limit headers (D127)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The `RateLimit-Reason` values Jira Cloud documents for a 429. Closed on
+ * purpose: the value reaches logs and the model only after it matched this
+ * list, so an arbitrary header value never does (OBSERVABILITY.md §Never-log).
+ */
+export const RATE_LIMIT_REASONS = Object.freeze([
+  'jira-quota-global-based',
+  'jira-quota-tenant-based',
+  'jira-burst-based',
+  'jira-per-issue-on-write',
+] as const);
+
+/** One documented `RateLimit-Reason` value. */
+export type RateLimitReason = (typeof RATE_LIMIT_REASONS)[number];
+
+/**
+ * Reasons that mean an hourly points budget is spent. Waiting out the 60 s
+ * `Retry-After` cap cannot help, so these fail fast instead of burning the call
+ * budget on retries that are refused the same way.
+ */
+const QUOTA_REASONS: readonly RateLimitReason[] = Object.freeze([
+  'jira-quota-global-based',
+  'jira-quota-tenant-based',
+]);
+
+/** What the rate-limit headers of one response say. */
+export interface RateLimitInfo {
+  /** The documented reason, or `undefined` when absent or not on the list. */
+  readonly reason?: RateLimitReason;
+  /** `true` for a quota reason: no automatic retry can succeed. */
+  readonly quota: boolean;
+  /** `X-RateLimit-NearLimit: true` — under 20 % of the budget is left. */
+  readonly nearLimit: boolean;
+  /**
+   * When the limit lifts, epoch ms: `Retry-After` when it parses, otherwise
+   * `X-RateLimit-Reset` (an ISO 8601 instant). `undefined` when neither does.
+   */
+  readonly resetAtMs?: number;
+}
+
+/**
+ * Read Jira Cloud's rate-limit headers off one response.
+ *
+ * `headers` are lower-cased (as `core/http.ts` collects them); `nowMs` comes
+ * from the injected clock. Pure: no header is trusted beyond its documented
+ * shape — an unknown reason is dropped, a numeric `X-RateLimit-Reset` (whose
+ * unit is not documented) is ignored rather than guessed.
+ */
+export function parseRateLimit(
+  headers: Readonly<Record<string, string>>,
+  nowMs: number,
+): RateLimitInfo {
+  const rawReason = headers['ratelimit-reason']?.trim().toLowerCase();
+  const reason = RATE_LIMIT_REASONS.find((known) => known === rawReason);
+  const nearLimit = headers['x-ratelimit-nearlimit']?.trim().toLowerCase() === 'true';
+
+  let resetAtMs: number | undefined;
+  const retryAfterMs = parseRetryAfterMs(headers['retry-after'], nowMs);
+  if (retryAfterMs !== undefined) {
+    resetAtMs = nowMs + retryAfterMs;
+  } else {
+    const reset = headers['x-ratelimit-reset']?.trim() ?? '';
+    // An ISO instant always carries a date separator; a bare number does not.
+    const at = /^\d{4}-\d{2}-\d{2}T/.test(reset) ? Date.parse(reset) : NaN;
+    if (!Number.isNaN(at)) resetAtMs = Math.max(nowMs, at);
+  }
+
+  return {
+    ...(reason === undefined ? {} : { reason }),
+    quota: reason !== undefined && QUOTA_REASONS.includes(reason),
+    nearLimit,
+    ...(resetAtMs === undefined ? {} : { resetAtMs }),
+  };
+}
+
+/* ------------------------------------------------------------------------- *
  * Per-host semaphore
  * ------------------------------------------------------------------------- */
 

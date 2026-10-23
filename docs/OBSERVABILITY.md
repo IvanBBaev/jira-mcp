@@ -41,7 +41,7 @@
 | `http_request` | debug | method, pathTemplate |
 | `http_response` | debug | method, pathTemplate, status, durationMs, attempt |
 | `http_retry` | warn | method, pathTemplate, reason (`429` \| `5xx` \| `transport`), attempt, delayMs |
-| `rate_limited` | warn | retryAfterS (server value), waitS (capped value) |
+| `rate_limited` | warn | retryAfterS (server value), waitS (capped value; 0 when the call fails fast), reason? (`RateLimit-Reason`, documented values only — D127) |
 | `ambiguous_write` | error | method, pathTemplate |
 | `budget_exceeded` | error | budgetMs, elapsedMs |
 | `auth_failure` | error | status, pathTemplate |

@@ -696,6 +696,14 @@ adapter before a request exists rather than mapped to `leadUserName`.
     (cap-and-retry, matching donor `MAX_RETRY_AFTER_MS`), plus **+0–20 %
     jitter** from the injected RNG — synchronized agents must not stampede the
     same tenant when the window reopens;
+  - **except a spent quota (D127):** a 429 whose `RateLimit-Reason` is
+    `jira-quota-global-based` or `jira-quota-tenant-based` is an hourly
+    budget, not a burst — it is never retried; the call fails as
+    `rate_limited` after one request, naming the reason and the
+    `Retry-After` / `X-RateLimit-Reset` instant. `jira-burst-based` and
+    `jira-per-issue-on-write` follow the rule above; the per-issue one tells
+    the model to slow its writes to that issue. Unknown reason values are
+    dropped, never echoed;
   - `502/503/504` + transport errors: retried only for **GET** requests
     (`isIdempotent` in the donor is deliberately GET-only — Jira PUTs can carry
     non-idempotent `update` add/remove clauses, so PUT is NOT replayed), plus

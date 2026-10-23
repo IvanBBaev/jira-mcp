@@ -27,6 +27,7 @@ import {
   isReplayable,
   jitterMs,
   normalizeHost,
+  parseRateLimit,
   parseRetryAfterMs,
   shouldRetryStatus,
 } from './http-util.js';
@@ -611,4 +612,59 @@ test('acquiring with an already-aborted signal rejects instead of taking a slot'
     (error: Error) => error.name === 'AbortError',
   );
   assert.equal(pool.active('acme.atlassian.net'), 0);
+});
+
+test('[CC-1445] parseRateLimit keeps only the documented reasons and flags the quota ones', () => {
+  const quota = parseRateLimit({ 'ratelimit-reason': 'jira-quota-tenant-based' }, 0);
+  assert.equal(quota.reason, 'jira-quota-tenant-based');
+  assert.equal(quota.quota, true);
+  assert.equal(
+    parseRateLimit({ 'ratelimit-reason': ' JIRA-QUOTA-GLOBAL-BASED ' }, 0).quota,
+    true,
+  );
+
+  const burst = parseRateLimit({ 'ratelimit-reason': 'jira-burst-based' }, 0);
+  assert.equal(burst.reason, 'jira-burst-based');
+  assert.equal(burst.quota, false);
+  assert.equal(
+    parseRateLimit({ 'ratelimit-reason': 'jira-per-issue-on-write' }, 0).quota,
+    false,
+  );
+
+  // An unknown value never travels on: it could carry anything.
+  const unknown = parseRateLimit({ 'ratelimit-reason': 'Bearer secret' }, 0);
+  assert.equal(unknown.reason, undefined);
+  assert.equal(unknown.quota, false);
+  assert.deepEqual(parseRateLimit({}, 0), { quota: false, nearLimit: false });
+});
+
+test('[CC-1446] parseRateLimit reads NearLimit and the reset instant', () => {
+  assert.equal(parseRateLimit({ 'x-ratelimit-nearlimit': 'true' }, 0).nearLimit, true);
+  assert.equal(parseRateLimit({ 'x-ratelimit-nearlimit': 'TRUE ' }, 0).nearLimit, true);
+  assert.equal(parseRateLimit({ 'x-ratelimit-nearlimit': 'false' }, 0).nearLimit, false);
+
+  const now = Date.parse('2026-10-24T10:00:00Z');
+  // Retry-After wins over X-RateLimit-Reset.
+  assert.equal(
+    parseRateLimit(
+      { 'retry-after': '30', 'x-ratelimit-reset': '2026-10-24T11:00:00Z' },
+      now,
+    ).resetAtMs,
+    now + 30_000,
+  );
+  assert.equal(
+    parseRateLimit({ 'x-ratelimit-reset': '2026-10-24T11:00:00Z' }, now).resetAtMs,
+    Date.parse('2026-10-24T11:00:00Z'),
+  );
+  // A reset in the past is "now", never negative.
+  assert.equal(
+    parseRateLimit({ 'x-ratelimit-reset': '2026-10-24T09:00:00Z' }, now).resetAtMs,
+    now,
+  );
+  // A bare number has no documented unit and is not guessed at.
+  assert.equal(
+    parseRateLimit({ 'x-ratelimit-reset': '1761300000' }, now).resetAtMs,
+    undefined,
+  );
+  assert.equal(parseRateLimit({ 'x-ratelimit-reset': 'soon' }, now).resetAtMs, undefined);
 });

@@ -83,6 +83,7 @@ import {
   isRedirectStatus,
   isReplayable,
   jitterMs,
+  parseRateLimit,
   parseRetryAfterMs,
   shouldRetryStatus,
 } from './http-util.js';
@@ -1276,6 +1277,28 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
       if (status === 429) {
         const serverMs = parseRetryAfterMs(headers['retry-after'], clock.now());
+        const limit = parseRateLimit(headers, clock.now());
+        const resetAt =
+          limit.resetAtMs === undefined ? '' : new Date(limit.resetAtMs).toISOString();
+        if (limit.quota) {
+          // An hourly points quota is spent: a 60 s wait cannot help, and every
+          // retry would be refused the same way while eating the call budget,
+          // so this one fails at once with the instant it lifts (D127).
+          logger.emit('rate_limited', {
+            retryAfterS: serverMs === undefined ? undefined : Math.round(serverMs / 1000),
+            waitS: 0,
+            reason: limit.reason,
+          });
+          throw fail({
+            kind: 'rate_limited',
+            message: `Jira refused ${method} ${route}: the ${String(limit.reason)} rate-limit quota is spent${resetAt === '' ? '' : ` until ${resetAt}`}.`,
+            httpStatus: 429,
+            remediation:
+              resetAt === ''
+                ? 'Do not retry now: the quota is hourly. Tell the user, and try again later with fewer calls.'
+                : `Do not retry before ${resetAt}. Tell the user; when the quota lifts, make fewer, narrower calls.`,
+          });
+        }
         const cappedMs = serverMs === undefined ? undefined : capRetryAfterMs(serverMs);
         // A zero (or past-date) Retry-After would retry back to back with no
         // jitter, so it earns the same backoff as no header at all (CC-203).
@@ -1286,6 +1309,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         logger.emit('rate_limited', {
           retryAfterS: serverMs === undefined ? undefined : Math.round(serverMs / 1000),
           waitS: Math.round(waitMs / 1000),
+          reason: limit.reason,
         });
 
         if (attempt <= maxRetries) {
@@ -1305,10 +1329,12 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         }
         throw fail({
           kind: 'rate_limited',
-          message: `Jira rate limited ${method} ${route} and the retry budget is spent.`,
+          message: `Jira rate limited ${method} ${route}${limit.reason === undefined ? '' : ` (${limit.reason})`} and the retry budget is spent.`,
           httpStatus: 429,
           remediation:
-            'Wait before calling again, and reduce how many issues this call asks for.',
+            limit.reason === 'jira-per-issue-on-write'
+              ? 'This issue takes writes too fast: wait a few seconds before the next write to it, and batch field changes into one update.'
+              : 'Wait before calling again, and reduce how many issues this call asks for.',
         });
       }
 
