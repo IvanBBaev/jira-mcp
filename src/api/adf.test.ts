@@ -1247,9 +1247,10 @@ test('[CC-149] adfFromMarkdown: unclosed-opener floods at the size cap parse in 
     '*'.repeat(size),
   ];
   // Linear parses take ~25 ms bare; the bound is loose because coverage
-  // instrumentation and a parallel suite slow them 20x or more. The quadratic
-  // parser took ~10 s bare, so 2 s still tells the two apart.
-  const boundMs = 2_000;
+  // instrumentation and a parallel suite slow them 20x or more (one loaded
+  // c8 run measured 2.25 s). The quadratic parser took ~10 s bare, so 5 s
+  // still tells the two apart.
+  const boundMs = 5_000;
   for (const input of inputs) {
     const started = process.hrtime.bigint();
     const parsed = adfFromMarkdown(input);
