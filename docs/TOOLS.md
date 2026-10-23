@@ -40,6 +40,9 @@ there are any, §Prompts), paging, and the untrusted-content rule (CC-1422).
 - `ok: false` ⇒ `error` present, `data` absent; `ok: true` ⇒ `data` present.
 - Every result is mirrored as text **and** `structuredContent` (identical
   content) — clients that read only one still get everything.
+- Every tool declares this envelope as its `outputSchema` (D131): member names
+  and JSON types only, `ok` the one required member, `data` unconstrained
+  [test: src/mcp/output-schema.test.ts].
 - `hints`, when present, is a non-empty array drawn from the closed catalog
   below; a result with nothing to flag omits the key entirely (matching the
   frozen `ToolResult` type — never `"hints": []`). Codes are machine-stable

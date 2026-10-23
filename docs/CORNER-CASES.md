@@ -3270,3 +3270,15 @@ Prompts (D125):
 - **CC-1459** — the size hint never exceeds Claude Code's 500 000 ceiling.
 - **CC-1460** — over the protocol, the delete fixture lists with the prompt
   hint and every other entry has no `_meta` at the default budget.
+
+## Output schema (D131, 2026-10-24)
+
+- **CC-1461** — every envelope shape the renderer emits validates against the
+  advertised schema: success, failure, untrusted either way, budget and
+  item-too-large truncation, the floor without `data`, and `null` data.
+- **CC-1462** — the schema still rejects a non-envelope: no `ok`, a non-boolean
+  `ok`, `_untrusted: false`, `hints` that is not an array.
+- **CC-1463** — the schema stays a frozen, shallow object of at most 256
+  serialized bytes, since every listed tool repeats it.
+- **CC-1464** — over the protocol, every listed tool carries the schema, and
+  the SDK client's per-call validation passes for a success and a failure.

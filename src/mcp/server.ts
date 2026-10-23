@@ -66,6 +66,7 @@ import { createRegistry } from './registry.js';
 import { createReferenceCatalogue, serverInstructions } from './resources.js';
 import type { RenderedResult } from './result.js';
 import { clientHints, type ClientHintOptions } from './client-hints.js';
+import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import { toInputSchema } from './schema.js';
 import type { ConnectableServer } from './transport.js';
 import type { AnyToolSpec, PackageSpec, ToolResult } from './types.js';
@@ -140,6 +141,8 @@ export function toMcpTool(spec: AnyToolSpec, hints?: ClientHintOptions): Tool {
     // Converted and trimmed by `mcp/schema.ts` (D124), the one rendering the
     // per-tool reference resource shares.
     inputSchema: toInputSchema(spec),
+    // The envelope, identical for every tool (D131).
+    outputSchema: ENVELOPE_OUTPUT_SCHEMA,
     annotations: spec.annotations,
     ...(meta === undefined ? {} : { _meta: meta }),
   };

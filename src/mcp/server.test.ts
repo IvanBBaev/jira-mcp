@@ -30,6 +30,7 @@ import type { MemoryJournal } from '../core/fakes/memoryJournal.js';
 import { JiraError } from '../core/types.js';
 import type { Rng, Settings } from '../core/types.js';
 import { defineTool, toolInput, writeToolInput, z } from './define.js';
+import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import {
   createRecentWrites,
   currentRecentWrites,
@@ -378,6 +379,23 @@ test('tools/list mirrors the manifest, in manifest order', async () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+  });
+});
+
+test('[CC-1464] every listed tool declares the envelope as its outputSchema', async () => {
+  const { deps } = makeHarness();
+  await withSession(deps, async ({ client }) => {
+    const listed = await client.listTools();
+    for (const tool of listed.tools) {
+      assert.deepEqual(tool.outputSchema, ENVELOPE_OUTPUT_SCHEMA, tool.name);
+    }
+    // The SDK client validates structuredContent against it on every call; a
+    // failure must come back as a readable envelope, not a schema error.
+    assert.equal(envelopeOf(await callTool(client, 'jira_fx_ping')).ok, true);
+    assert.equal(
+      envelopeOf(await callTool(client, 'jira_fx_refuse', { issue: 'A-1' })).ok,
+      false,
+    );
   });
 });
 
