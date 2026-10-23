@@ -5,6 +5,8 @@ import { createFakeClock } from './fakes/fakeClock.js';
 import { createFakeJiraRequest, jiraErr, jiraOk } from './fakes/fakeJiraRequest.js';
 import {
   DEFAULT_META_CACHE_ENTRIES,
+  IDENTITY_CACHE_MAX_TTL_MS,
+  IDENTITY_CACHE_ROUTES,
   META_CACHE_ROUTES,
   createMetaCache,
   isMetaCacheable,
@@ -143,6 +145,11 @@ describe('createMetaCache — what is cacheable', () => {
       { method: 'GET', path: '/project/ABC' },
       { method: 'GET', path: '/project/search' },
       { method: 'GET', path: '/myself' },
+      {
+        method: 'GET',
+        path: '/user/assignable/search',
+        query: { query: 'ann', project: 'ABC' },
+      },
       {
         method: 'GET',
         path: '/mypermissions',
@@ -346,5 +353,54 @@ describe('createMetaCache — bounds', () => {
     assert.equal(cache.size(), 1);
     await jira({ method: 'GET', path: '/status' });
     assert.equal(fake.calls.length, 2, 'the newest entry survives');
+  });
+});
+
+describe('createMetaCache — identity lookups (D129)', () => {
+  const ANN: JiraRequestSpec = {
+    method: 'GET',
+    path: '/user/search',
+    query: { query: 'Ann', startAt: 0, maxResults: 50 },
+  };
+
+  it('[CC-1454] caches a user search per query, so plan and apply resolve a mention once', async () => {
+    const { fake, jira } = setup();
+    fake.on('GET /rest/api/3/user/search', jiraOk([{ accountId: 'a-1' }]));
+
+    await jira(ANN);
+    await jira(ANN);
+    await jira({ ...ANN, query: { ...ANN.query, query: 'Bob' } });
+
+    assert.equal(fake.calls.length, 2, 'Ann twice is one call; Bob is his own entry');
+    assert.deepEqual(IDENTITY_CACHE_ROUTES, ['/user/search']);
+  });
+
+  it('[CC-1455] an identity entry never outlives the five-minute ceiling, whatever the knob says', async () => {
+    const { clock, fake, jira } = setup({ ttlMs: 86_400_000 });
+    fake.on('GET /rest/api/3/user/search', jiraOk([]));
+    fake.on('GET /rest/api/3/field', jiraOk([]));
+
+    await jira(ANN);
+    await jira(FIELDS);
+    clock.advance(IDENTITY_CACHE_MAX_TTL_MS);
+    await jira(ANN);
+    await jira(FIELDS);
+
+    assert.deepEqual(
+      fake.calls.map((call) => call.path),
+      ['/user/search', '/field', '/user/search'],
+      'the identity entry expired at the ceiling; the catalogue kept its day',
+    );
+  });
+
+  it('[CC-1455] a knob below the ceiling applies to identities as it is', async () => {
+    const { clock, fake, jira } = setup();
+    fake.on('GET /rest/api/3/user/search', jiraOk([]));
+
+    await jira(ANN);
+    clock.advance(TTL_MS);
+    await jira(ANN);
+
+    assert.equal(fake.calls.length, 2);
   });
 });

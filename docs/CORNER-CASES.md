@@ -3248,3 +3248,12 @@ Prompts (D125):
   429 followed by a near-limit success reports both.
 - **CC-1453** — the doctor summary line names "near the rate limit" and the
   last 429 with its reason and reset.
+
+## Identity cache (D129, 2026-10-24)
+
+- **CC-1454** — a repeat `GET /user/search` with the same query is answered
+  from memory; a different query is its own entry; assignable-user search is
+  never cached.
+- **CC-1455** — an identity entry lives `min(JIRA_META_CACHE_TTL_S, 300 s)`:
+  a day-long knob still expires it at five minutes while the catalogues keep
+  their day, and a knob below the ceiling applies as it is.

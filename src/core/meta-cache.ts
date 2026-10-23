@@ -13,7 +13,8 @@
  * - anything but a bodiless `GET` — `POST /field` creates a custom field;
  * - routes outside the whitelist — transitions depend on the issue's state,
  *   projects on the caller's visibility, `/myself` and `/mypermissions` on
- *   the credential, and search results on the data;
+ *   the credential, assignable-user search on the project's permission
+ *   scheme, and search results on the data;
  * - failed requests — an error propagates and nothing is stored;
  * - a request whose signal is already aborted — it goes to the seam, which
  *   raises the caller's `aborted` error;
@@ -25,6 +26,13 @@
  * coalesced: a shared in-flight promise would hand the second caller the
  * first caller's signal and deadline, and MCP tool calls on one session are
  * sequential anyway.
+ *
+ * Identity lookups (D129). `GET /user/search` is cached too, because a
+ * mention costs one search at plan time and the same search again at apply
+ * (CC-111), and Jira prices identity calls above plain reads. People change
+ * faster than catalogues — an account is deactivated, a display name edited —
+ * so those entries live for `ttlMs` but never longer than
+ * {@link IDENTITY_CACHE_MAX_TTL_MS}, however high the operator set the knob.
  *
  * Observability: a hit is a tool call with no `http_request`/`http_response`
  * under its correlation id — no new log event, see OBSERVABILITY.md.
@@ -52,6 +60,15 @@ export const META_CACHE_ROUTES: readonly string[] = [
   '/issue/createmeta/{projectIdOrKey}/issuetypes',
   '/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
 ];
+
+/**
+ * Identity routes: cached like the catalogues, but never past
+ * {@link IDENTITY_CACHE_MAX_TTL_MS} (D129).
+ */
+export const IDENTITY_CACHE_ROUTES: readonly string[] = ['/user/search'];
+
+/** Ceiling on an identity entry's lifetime: five minutes (D129). */
+export const IDENTITY_CACHE_MAX_TTL_MS = 300_000;
 
 /** `maxEntries` default: a tenant has one field list and a handful of projects. */
 export const DEFAULT_META_CACHE_ENTRIES = 64;
@@ -83,7 +100,15 @@ interface Entry {
   readonly data: unknown;
 }
 
-const ROUTES = new Set(META_CACHE_ROUTES);
+const ROUTES = new Set([...META_CACHE_ROUTES, ...IDENTITY_CACHE_ROUTES]);
+const IDENTITY_ROUTES = new Set(IDENTITY_CACHE_ROUTES);
+
+/** How long an entry for `req` may live, given the configured `ttlMs`. */
+function ttlFor(req: JiraRequestSpec, ttlMs: number): number {
+  return IDENTITY_ROUTES.has(req.pathTemplate ?? req.path)
+    ? Math.min(ttlMs, IDENTITY_CACHE_MAX_TTL_MS)
+    : ttlMs;
+}
 
 /** Whether the decorator may answer `req` from memory. */
 export function isMetaCacheable(req: JiraRequestSpec): boolean {
@@ -164,7 +189,7 @@ export function createMetaCache(options: MetaCacheOptions): MetaCache {
       const startedAt = clock.now();
       const res = await inner<T>(req);
       remember(key, {
-        expiresAt: startedAt + ttlMs,
+        expiresAt: startedAt + ttlFor(req, ttlMs),
         status: res.status,
         headers: res.headers,
         data: structuredClone(res.data),

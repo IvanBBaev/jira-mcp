@@ -460,7 +460,8 @@ export interface Settings {
   /**
    * `JIRA_META_CACHE_TTL_S` (default 300). Seconds the field, status,
    * link-type and create-meta catalogues are served from memory before being
-   * fetched again; `0` disables the cache (D123).
+   * fetched again; `0` disables the cache (D123). User search shares it,
+   * capped at 300 s (D129).
    */
   readonly metaCacheTtlS: number;
   /**

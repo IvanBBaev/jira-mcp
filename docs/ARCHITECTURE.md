@@ -62,7 +62,8 @@ core  ←  api  ←  mcp  ←  tools
   - **`core/meta-cache.ts`** (D123) is a decorator on the request seam: a
     repeat bodiless `GET` on one of the metadata catalogue routes (fields,
     link types, statuses, create meta) is answered from memory for
-    `JIRA_META_CACHE_TTL_S`. The registry applies it once to the plain seam,
+    `JIRA_META_CACHE_TTL_S` — and `/user/search` too, capped at five
+    minutes because people change faster than catalogues (D129). The registry applies it once to the plain seam,
     under the gate seams and under the per-call profile wrapper, so the key
     sees the profile and a plan-mode read warms it. It knows routes, not
     tools, and never touches the network itself.

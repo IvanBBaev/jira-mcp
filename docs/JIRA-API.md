@@ -230,6 +230,10 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   server shows up after the TTL or a restart; set the TTL to `0` when that
   matters. `/issue/{key}/transitions` is never cached — it depends on the
   issue's state and the caller's permissions.
+- `GET /user/search` is cached by the same knob, never longer than 300 s
+  (D129): a mention resolved at plan time is resolved again at apply, and
+  identity calls are priced above plain reads. `/user/assignable/search` and
+  `/myself` are never cached.
 
 ## Users (GDPR mode)
 
