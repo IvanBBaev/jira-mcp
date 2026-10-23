@@ -687,6 +687,22 @@ test('planning a delete works without the opt-in and carries the before-state', 
   });
 });
 
+test('[CC-1460] tools/list carries the Claude Code hints only where they apply', async () => {
+  const { deps } = makeHarness();
+  await withSession(
+    { ...deps, packages: [...MANIFEST, ...DELETE_MANIFEST] },
+    async ({ client }) => {
+      const listed = await client.listTools();
+      const del = listed.tools.find((tool) => tool.name === 'jira_fx_delete');
+      assert.deepEqual(del?._meta, { 'anthropic/requiresUserInteraction': true });
+      // At the default budget no other entry grows a `_meta` at all.
+      for (const tool of listed.tools.filter((t) => t.name !== 'jira_fx_delete')) {
+        assert.equal(tool._meta, undefined, tool.name);
+      }
+    },
+  );
+});
+
 test('an apply is refused until JIRA_ALLOW_IRREVERSIBLE is on, then it goes through', async () => {
   for (const allowIrreversible of [false, true]) {
     const { deps, jira, journal } = makeHarness({

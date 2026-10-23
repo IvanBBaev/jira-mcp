@@ -65,6 +65,7 @@ import { createPromptCatalogue } from './prompts.js';
 import { createRegistry } from './registry.js';
 import { createReferenceCatalogue, serverInstructions } from './resources.js';
 import type { RenderedResult } from './result.js';
+import { clientHints, type ClientHintOptions } from './client-hints.js';
 import { toInputSchema } from './schema.js';
 import type { ConnectableServer } from './transport.js';
 import type { AnyToolSpec, PackageSpec, ToolResult } from './types.js';
@@ -126,8 +127,12 @@ export interface BuildServerDeps {
 // SDK adapters
 // ---------------------------------------------------------------------------
 
-/** Convert one frozen {@link AnyToolSpec} into the SDK's `tools/list` shape. */
-export function toMcpTool(spec: AnyToolSpec): Tool {
+/**
+ * Convert one frozen {@link AnyToolSpec} into the SDK's `tools/list` shape.
+ * With `hints`, the entry also carries the Claude Code `_meta` keys (D130).
+ */
+export function toMcpTool(spec: AnyToolSpec, hints?: ClientHintOptions): Tool {
+  const meta = hints === undefined ? undefined : clientHints(spec, hints);
   return {
     name: spec.name,
     title: spec.title,
@@ -136,6 +141,7 @@ export function toMcpTool(spec: AnyToolSpec): Tool {
     // per-tool reference resource shares.
     inputSchema: toInputSchema(spec),
     annotations: spec.annotations,
+    ...(meta === undefined ? {} : { _meta: meta }),
   };
 }
 
@@ -521,7 +527,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
   // Schemas are converted ONCE, here, not per `tools/list`: the manifest is
   // immutable, the conversion is pure, and a schema the SDK cannot render should
   // fail at startup rather than on a client's first request.
-  const listed: readonly Tool[] = registry.tools.map(toMcpTool);
+  const hints: ClientHintOptions = { maxResultChars: settings.maxResultChars };
+  const listed: readonly Tool[] = registry.tools.map((spec) => toMcpTool(spec, hints));
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...listed] }));
 

@@ -342,6 +342,11 @@ reason even though the package now covers more than issue-record deletes; its
 title generalized a second time and reads "Deletes and bulk changes
 (irreversible)" (CC-120, CC-126).
 
+Every tool in the package lists with Claude Code's
+`_meta["anthropic/requiresUserInteraction"]: true` (D130): that client prompts
+on each call, the plan-mode call included, whatever its permission mode, and
+dontAsk mode denies the tools.
+
 | Tool | Endpoint | Notes |
 |---|---|---|
 | `jira_delete_issue` | `DELETE /rest/api/3/issue/{issueIdOrKey}` | Input: `issue`, `deleteSubtasks?` (default **false**). With subtasks present and the flag false Jira refuses with 400 — deliberately not defaulted to true: a delete that silently takes a tree with it is the one mistake this tier exists to prevent. The plan's `before` carries up to 20 subtask keys plus `subtaskCount` and the flag itself (the flag is a query parameter and `planned` shows method/path/body only). Also destroys the issue's comments, worklogs and attachments. |

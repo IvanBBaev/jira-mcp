@@ -3257,3 +3257,16 @@ Prompts (D125):
 - **CC-1455** — an identity entry lives `min(JIRA_META_CACHE_TTL_S, 300 s)`:
   a day-long knob still expires it at five minutes while the catalogues keep
   their day, and a knob below the ceiling applies as it is.
+
+## Claude Code hints (D130, 2026-10-24)
+
+- **CC-1456** — only an irreversible-tier tool declares
+  `anthropic/requiresUserInteraction: true`; standard writes and reads carry no
+  hint.
+- **CC-1457** — at the default `JIRA_MAX_RESULT_CHARS` (and anywhere up to
+  45 904, where budget plus slack meets 50 000) no size hint is emitted.
+- **CC-1458** — a raised budget declares `anthropic/maxResultSizeChars` =
+  budget + 4 096 on every tool, irreversible ones keeping their prompt hint.
+- **CC-1459** — the size hint never exceeds Claude Code's 500 000 ceiling.
+- **CC-1460** — over the protocol, the delete fixture lists with the prompt
+  hint and every other entry has no `_meta` at the default budget.
