@@ -469,6 +469,12 @@ export interface Settings {
    * error; metadata listing needs no directory (D45).
    */
   readonly mediaDir?: string;
+  /**
+   * `JIRA_REPORT_DIR`. Directory `jira_portfolio_report` writes its Markdown
+   * reports into. Unset ⇒ that tool refuses with a `config` error;
+   * `jira_portfolio_analyze` needs no directory (D126).
+   */
+  readonly reportDir?: string;
 
   /** `JIRA_TRANSPORT` (default `stdio`). */
   readonly transport: TransportKind;

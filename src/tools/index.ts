@@ -56,6 +56,7 @@ import { issuesPackage } from './issues.js';
 import { issuesDeletePackage } from './issues-delete.js';
 import { issuesWritePackage } from './issues-write.js';
 import { metaPackage } from './meta.js';
+import { createPortfolioPackage } from './portfolio.js';
 import { searchPackage } from './search.js';
 import { usersPackage } from './users.js';
 
@@ -128,6 +129,11 @@ export interface PackagesDeps {
    * `kind: 'config'` naming the setting; the metadata tool still works.
    */
   readonly mediaDir?: string;
+  /**
+   * `JIRA_REPORT_DIR`. Absent ⇒ `jira_portfolio_report` refuses with
+   * `kind: 'config'`; `jira_portfolio_analyze` still works (D126).
+   */
+  readonly reportDir?: string;
 }
 
 /**
@@ -152,6 +158,7 @@ export function createPackages(
     metaPackage,
     usersPackage,
     agilePackage,
+    createPortfolioPackage({ reportDir: deps.reportDir }),
   ]);
 }
 

@@ -651,6 +651,7 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.deepEqual(settings.toolPackages, [DEFAULT_TOOL_PACKAGES]);
     assert.equal(settings.allowIrreversible, false);
     assert.equal(settings.mediaDir, undefined);
+    assert.equal(settings.reportDir, undefined);
   });
 
   it('pins the defaults to the CONFIGURATION.md table literals', () => {
@@ -683,6 +684,7 @@ describe('loadSettings — numeric and enum knobs', () => {
       JIRA_LOG_LEVEL: 'debug',
       JIRA_ALLOW_IRREVERSIBLE: 'true',
       JIRA_MEDIA_DIR: '/srv/jira-media',
+      JIRA_REPORT_DIR: '/srv/jira-reports',
     });
     assert.equal(report.ok, true);
     assert.equal(settings.requestTimeoutMs, 5000);
@@ -692,6 +694,7 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(settings.logLevel, 'debug');
     assert.equal(settings.allowIrreversible, true);
     assert.equal(settings.mediaDir, '/srv/jira-media');
+    assert.equal(settings.reportDir, '/srv/jira-reports');
   });
 
   it('[CC-184] expands ~ and resolves relative media and journal paths like JIRA_ENV_FILE', () => {
@@ -699,18 +702,26 @@ describe('loadSettings — numeric and enum knobs', () => {
       {
         ...VALID,
         JIRA_MEDIA_DIR: '~/jira-media',
+        JIRA_REPORT_DIR: '~/jira-reports',
         JIRA_JOURNAL_PATH: '~/jira/writes.jsonl',
       },
       PATHS,
     ).settings;
     assert.equal(tilde.mediaDir, '/home/tester/jira-media');
+    assert.equal(tilde.reportDir, '/home/tester/jira-reports');
     assert.equal(tilde.journalPath, '/home/tester/jira/writes.jsonl');
 
     const relative = load(
-      { ...VALID, JIRA_MEDIA_DIR: 'media', JIRA_JOURNAL_PATH: 'logs/writes.jsonl' },
+      {
+        ...VALID,
+        JIRA_MEDIA_DIR: 'media',
+        JIRA_REPORT_DIR: 'reports',
+        JIRA_JOURNAL_PATH: 'logs/writes.jsonl',
+      },
       PATHS,
     ).settings;
     assert.equal(relative.mediaDir, '/work/project/media');
+    assert.equal(relative.reportDir, '/work/project/reports');
     assert.equal(relative.journalPath, '/work/project/logs/writes.jsonl');
   });
 

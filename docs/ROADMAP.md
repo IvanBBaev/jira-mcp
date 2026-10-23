@@ -141,6 +141,11 @@ scope by being listed: a D-row lands with its implementation, as D122's,
 D123's and D124's did, and every other entry graduates the same way or
 stays here.
 
+A fourth item came from the owner directly on 2026-10-24 and shipped the
+same day as D126, after D125: the `portfolio` package, cross-board duplicate, overlap,
+reuse and dependency analysis with a Markdown/Mermaid report
+(IMPLEMENTATION-PLAN.md Phase 14).
+
 ### 1. Shipped as D124: a lighter `tools/list`, examples as resources
 
 Measured on `main` at `874afb6`: the 59 tool descriptions total 24,103

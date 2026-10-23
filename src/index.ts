@@ -329,7 +329,7 @@ async function serve(): Promise<void> {
         // call. `jira_capabilities` therefore always reports the current numbers.
         return { ...assembled.report, counters: telemetry.snapshot() };
       },
-      { mediaDir: settings.mediaDir },
+      { mediaDir: settings.mediaDir, reportDir: settings.reportDir },
     );
 
     // Gating is applied twice on purpose: `buildServer` needs the WHOLE manifest

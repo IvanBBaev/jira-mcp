@@ -367,6 +367,7 @@ export const PACKAGE_IDS = [
   'meta',
   'users',
   'agile',
+  'portfolio',
 ] as const;
 
 /**

@@ -809,6 +809,9 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   const mediaDirRaw = str('JIRA_MEDIA_DIR');
   const mediaDir =
     mediaDirRaw === undefined ? undefined : resolveConfigPath(mediaDirRaw, options);
+  const reportDirRaw = str('JIRA_REPORT_DIR');
+  const reportDir =
+    reportDirRaw === undefined ? undefined : resolveConfigPath(reportDirRaw, options);
 
   if (callBudgetMs < requestTimeoutMs) {
     add({
@@ -879,6 +882,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     maxPages,
     metaCacheTtlS,
     mediaDir,
+    reportDir,
     transport,
     httpPort,
     httpToken,

@@ -485,7 +485,7 @@ describe('the built server over stdio', () => {
     // The resolved host, normalised — not the raw JIRA_SITE spelling (CC-1020).
     assert.equal(report.data.site, 'https://example.atlassian.net');
     assert.equal(report.data.writeMode, 'plan');
-    assert.equal(report.data.packages.length, 10);
+    assert.equal(report.data.packages.length, 11);
 
     // The credentials the child was started with must not come back out of it.
     assert.ok(!JSON.stringify(called).includes('smoke-token-not-real'));

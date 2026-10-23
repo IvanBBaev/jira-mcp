@@ -106,7 +106,10 @@ core  ←  api  ←  mcp  ←  tools
   the rules that keep tenant-authored filenames inside one directory belong next
   to the only tools that move bytes. `references.ts` holds the package reference
   documents (JQL idioms, the markdown subset) that `search.ts` and
-  `issues-write.ts` attach through `PackageSpec.references`.
+  `issues-write.ts` attach through `PackageSpec.references`. The portfolio
+  package (D126) splits its pure analysis and rendering into
+  `portfolio-analysis.ts` and `portfolio-render.ts`, so `portfolio.ts` holds
+  only the sweep, the tools and its report store.
 
 Layering is enforced twice in `eslint.config.js` (copied from facebook-mcp):
 `import-x/no-restricted-paths` zones AND string-based `no-restricted-imports`
@@ -264,7 +267,10 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   store in `tools/attachments.ts` is the single place that resolves a path
   against it — sanitizing tenant-authored filenames, refusing symlinks that
   escape, and never overwriting. Unset, the two byte-moving tools refuse before
-  any request is made. The write journal (`core/journal.ts`) is the other
+  any request is made. The second tool-side directory is `JIRA_REPORT_DIR`
+  (D126): the report store in `tools/portfolio.ts` writes generated file
+  names only — never a name from Jira or the caller — exclusively and `0600`,
+  and reads nothing back. The write journal (`core/journal.ts`) is the other
   filesystem writer and is append-only.
 - **Taint**: any result field that can carry text authored inside Jira is marked
   by `mcp/taint.ts` as data rather than instructions, at one choke point rather

@@ -157,6 +157,12 @@
           "format": "filepath"
         },
         {
+          "name": "JIRA_REPORT_DIR",
+          "description": "Directory the portfolio report tool writes Markdown reports into. Unset: that tool refuses.",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
           "name": "JIRA_TRANSPORT",
           "description": "Transport to serve. stdio is the registered form; http is loopback-only.",
           "isRequired": false,

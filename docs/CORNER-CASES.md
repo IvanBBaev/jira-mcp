@@ -3166,3 +3166,55 @@ Prompts (D125):
   and append a clause.
 - **CC-1430** — every tool a shipped prompt requires is in the manifest and
   carries `readOnlyHint`, so no prompt reaches the write surface.
+
+## Portfolio analysis (D126, 2026-10-24)
+
+- **CC-1431** — issue rows normalise before any analysis: the hierarchy level
+  comes from the issue type's `subtask` flag, then `hierarchyLevel`, then the
+  type name; a link keeps its direction, relation phrase and the other side's
+  status category; the project falls back to the key prefix, and a row with no
+  key or summary is dropped.
+- **CC-1432** — a child whose parent is outside the sweep hangs under a stub
+  filed under the parent's project, and every project with swept issues gets a
+  hierarchy entry even when all of them are stubs' children. A parent cycle
+  surfaces each member exactly once instead of looping or vanishing.
+- **CC-1433** — pairs: two open issues across projects at or above
+  `duplicateSimilarity` are duplicates, between `similarity` and that
+  threshold overlaps; an open issue like a finished one elsewhere is a reuse
+  candidate and two finished issues are no finding. Same-project pairs only
+  with `includeSameProject`; an epic never pairs with a story; an existing
+  Duplicate link is reported as `linkedAs`. A summary under `MIN_TOKENS`
+  terms is never paired, and the duplicate threshold is clamped to never sit
+  below the loose one.
+- **CC-1434** — a cross-project block is reported once, from the waiting side;
+  a same-project block, or one whose waiting issue is done, is not a finding.
+- **CC-1435** — hotspots are case-folded (`Payments` and `payments` are one),
+  counted on open work only, and need two projects; the name shown is the first
+  spelling in key order.
+- **CC-1436** — each pair list stops at `MAX_PAIR_FINDINGS` and says so with
+  `findingsCapped`; a term on more than a quarter of a sweep of 20 or more
+  issues is ignored for pairing. Row order and repeated rows do not change the
+  result.
+- **CC-1437** — tenant text cannot break the report: a summary with quotes,
+  brackets, pipes, backticks or newlines stays inside its Mermaid label or table
+  cell, and the code fences stay balanced.
+- **CC-1438** — every section renders, an empty finding list says
+  "_None found._", an incomplete sweep is flagged at the top, and a hierarchy
+  diagram stops at `MAX_DIAGRAM_NODES` with a note naming how many issues are
+  only in the outline.
+- **CC-1439** — scope is validated before the wire: neither `projects` nor
+  `jql`, both, or `updatedWithinDays` with `jql` is a `validation` error with
+  nothing sent; project keys are upper-cased, de-duplicated and quoted.
+- **CC-1440** — the sweep honours `maxIssues` and the page cap; either cut is
+  `scope.partial: true` with a note.
+- **CC-1441** — a board lookup answered `permission` or `not_found` becomes a
+  note and the sweep goes on; `unsupported` stops the lookups after the first
+  project; any other failure (such as `auth`) fails the call.
+- **CC-1442** — `jira_portfolio_analyze` sweeps once, looks boards up once per
+  project, and brands its result untrusted.
+- **CC-1443** — without `JIRA_REPORT_DIR` the report tool is refused as
+  `config` before any Jira call (a bad scope still answers `validation`
+  first); with it, the file name comes from the clock and the result carries
+  the path and counts, never the document or Jira text.
+- **CC-1444** — the report store never overwrites (a clash gets `-1`, `-2`,
+  …), writes `0600`, and a missing directory is a `config` error.

@@ -2548,6 +2548,138 @@
           }
         }
       ]
+    },
+    {
+      "id": "portfolio",
+      "tools": [
+        {
+          "name": "jira_portfolio_analyze",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "minItems": 2,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includeDone": {
+                "type": "boolean"
+              },
+              "updatedWithinDays": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
+              },
+              "maxIssues": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "similarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "duplicateSimilarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "includeSameProject": {
+                "type": "boolean"
+              },
+              "includeBoards": {
+                "type": "boolean"
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_portfolio_report",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "minItems": 2,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includeDone": {
+                "type": "boolean"
+              },
+              "updatedWithinDays": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
+              },
+              "maxIssues": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "similarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "duplicateSimilarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "includeSameProject": {
+                "type": "boolean"
+              },
+              "includeBoards": {
+                "type": "boolean"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
     }
   ]
 }

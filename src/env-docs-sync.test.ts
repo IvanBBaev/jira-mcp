@@ -293,6 +293,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_MAX_PAGES', (s: Settings) => String(s.maxPages)],
   ['JIRA_META_CACHE_TTL_S', (s: Settings) => String(s.metaCacheTtlS)],
   ['JIRA_MEDIA_DIR', (s: Settings) => s.mediaDir],
+  ['JIRA_REPORT_DIR', (s: Settings) => s.reportDir],
   ['JIRA_TRANSPORT', (s: Settings) => s.transport],
   ['JIRA_HTTP_PORT', (s: Settings) => String(s.httpPort)],
   ['JIRA_HTTP_TOKEN', (s: Settings) => s.httpToken],

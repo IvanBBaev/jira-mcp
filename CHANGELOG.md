@@ -21,6 +21,14 @@ env var names — not internal refactors.
   (required `version`, optional `project`). A prompt is listed only when
   every tool it uses is registered; the `initialize` instructions name the
   listed prompts.
+- Package `portfolio` (D126), in the `all` profile: `jira_portfolio_analyze`
+  compares several projects or boards in one sweep and returns the epic/story
+  hierarchy per project, likely duplicate and overlapping open work across
+  boards, reuse candidates (open work resembling finished work elsewhere),
+  cross-project blockers and shared component/label hotspots, each finding with
+  the summary terms it rests on. `jira_portfolio_report` writes the same
+  analysis as a Markdown report with Mermaid diagrams and tables into the new
+  `JIRA_REPORT_DIR` setting and returns the file path. Neither changes Jira.
 - Reference resources (D124): the server advertises `resources` and serves
   `jira://reference/tools` (every tool by package, whether this configuration
   registered it, and the documents below), `jira://reference/tools/{name}`

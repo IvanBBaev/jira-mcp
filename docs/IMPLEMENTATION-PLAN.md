@@ -1,9 +1,9 @@
 # Implementation plan
 
 > Status: normative and implemented — this document and the code ship together;
-> drift is a bug. Phases 0–13 with their exits are the milestone truth for this
+> drift is a bug. Phases 0–14 with their exits are the milestone truth for this
 > project; a phase is done when its exit criteria hold, not when its tasks look
-> finished. Phases 0–12 are closed; Phase 13 is open (stages 13.1–13.7 done).
+> finished. Phases 0–12 and 14 are closed; Phase 13 is open (stages 13.1–13.7 done).
 
 > Parallel-execution overlay: `docs/WORK-PACKAGES.md` decomposes these phases
 > into agent-sized work packages (waves, file ownership, owner gates A–C). The
@@ -1361,6 +1361,30 @@ and the server still refuses to start on Data Center.
 Exit (13.1): `ctx.api` is the only path from a tool to an api-ring function
 that talks to Jira or speaks a wire body format; the Cloud manifest snapshot is
 byte-identical; gate green.
+
+## Phase 14 — Portfolio analysis (D126)
+
+One session on 2026-10-24, in a branch worktree; three modules with one owner
+each, all in the tools ring.
+
+- [x] `tools/portfolio-analysis.ts` — pure: row normalisation (CC-1431), the
+      per-project hierarchy with stubs and cycle safety (CC-1432), lexical
+      similarity over stemmed summary terms with a stop list and a common-term
+      cut-off, and the four finding families — duplicates/overlaps, reuse,
+      cross-project blockers, hotspots (CC-1433…CC-1436).
+- [x] `tools/portfolio-render.ts` — pure: the Markdown report with Mermaid
+      pie, findings map and per-project hierarchy diagrams, every table cell and
+      label escaped against tenant text (CC-1437, CC-1438).
+- [x] `tools/portfolio.ts` — the sweep over `/search/jql`, the board lookup
+      with soft failures, the two tools and the report store
+      (CC-1439…CC-1444); `JIRA_REPORT_DIR` in settings, `server.json` and
+      CONFIGURATION.md; package `portfolio` in `PACKAGE_IDS` and the manifest.
+
+Exit: 61 tools in 11 packages, the manifest snapshot and README regenerated
+deliberately, the site and TOOLS.md counts match the manifest, and `npm run
+check` is green. Not in that exit: proof against a real tenant — both tools are
+reads over endpoints already proven live (`/search/jql`, `/agile/1.0/board`),
+but neither has run live, so the proven count stays 40, now of 61.
 
 ## Risks
 

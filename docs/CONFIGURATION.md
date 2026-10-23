@@ -129,6 +129,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_MAX_PAGES` | `20` | Loop guard for `fetchAll`/`searchPages`. Integer in 1–1000. |
 | `JIRA_META_CACHE_TTL_S` | `300` | Seconds the metadata catalogues — fields, statuses, link types, create meta — are served from memory before being fetched again (D123). Transitions, projects, identity and permissions are never cached; a failed fetch is never cached; the cache is per profile and lives only in the process. `0` disables it. Integer in 0–86400. |
 | `JIRA_MEDIA_DIR` | — | Directory attachment downloads land in (and uploads are read from). Unset ⇒ the binary attachment tools refuse with a `config` error; metadata listing needs no directory (D45). On the Data Center preview it applies to the download only (D117); the upload is not served there. A leading `~` is expanded and a relative path is resolved against the cwd, as for `JIRA_ENV_FILE` (CC-184). |
+| `JIRA_REPORT_DIR` | — | Directory `jira_portfolio_report` writes its Markdown reports into (created `0600`, never overwritten — a clash gets a `-N` suffix). Unset ⇒ that tool refuses with a `config` error; `jira_portfolio_analyze` needs no directory (D126). Not served on the Data Center preview. A leading `~` is expanded and a relative path is resolved against the cwd, as for `JIRA_MEDIA_DIR`. |
 
 The ranges above are inclusive, and a value is plain decimal digits: `3e4`,
 `0x10` or `4.0` — or anything outside the range — is an `invalid_number`

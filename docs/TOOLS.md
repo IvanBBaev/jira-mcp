@@ -213,7 +213,8 @@ control that makes the risk visible.
   `jira_get_changelog`, `jira_get_worklogs`, `jira_get_sprint_issues` (its
   rows are the same issue projection `jira_search` returns), `jira_list_filters`,
   `jira_get_filter` and `jira_get_project` (project, component and version
-  descriptions, CC-146), `jira_list_sprints` (sprint goals, CC-176), and the
+  descriptions, CC-146), `jira_list_sprints` (sprint goals, CC-176),
+  `jira_portfolio_analyze` (summaries, labels and component names, D126), and the
   `jira_start_sprint` / `jira_close_sprint` echoes whenever the echoed sprint
   carries a goal, and the `jira_update_component` / `jira_update_version`
   echoes whenever the echoed record carries a description (CC-600) — a partial
@@ -455,13 +456,55 @@ descriptions, visibility-dependent), transitions, identity or permissions.
 | `jira_start_sprint` | `POST /rest/agile/1.0/sprint/{id}` | Write tier `standard`. Input: `sprintId`, `startDate`, `endDate` — **both required**, refused locally (naming the missing field) before any request. `future` → `active`. Partial update: never `PUT`, which nulls every field left out of the body (JIRA-API.md §Agile writes). |
 | `jira_close_sprint` | `POST /rest/agile/1.0/sprint/{id}` | Write tier `standard`, `destructiveHint: true`. Input: `sprintId`. `active` → `closed`: Jira stamps `completeDate` and moves every issue that is NOT done out of the sprint according to the board's configuration. A closed sprint cannot be reopened or edited through this API — there is no undo. |
 
+## Package `portfolio`
+
+Cross-board analysis (D126). Both tools run the same sweep — `POST
+/rest/api/3/search/jql` over `project in (…)` or the caller's own `jql`, paged
+by `nextPageToken` up to `maxIssues` (default 300, ceiling 1000) and the page
+cap, then one `GET /rest/agile/1.0/board?projectKeyOrId=` per project for the
+board names (`includeBoards: false` skips them; a permission or not-found
+answer becomes a note, `unsupported` stops the lookups, `auth` fails the call).
+The analysis is pure and local; neither tool changes Jira, and neither is served
+on the Data Center preview. Input: `projects` (2–10 keys) **or** `jql`, plus
+`includeDone?` (default true — reuse needs finished work), `updatedWithinDays?`
+(projects only), `maxIssues?`, `similarity?` (default 0.5), `duplicateSimilarity?`
+(default 0.75, never below `similarity`), `includeSameProject?` (default false),
+`includeBoards?`.
+
+What the analysis finds, per pair or project:
+
+- **hierarchy** — per project, epic → story → subtask from `parent`; a parent
+  outside the sweep is a stub, filed under the parent's project, and a parent
+  cycle still surfaces each member once.
+- **duplicates** — two open issues in different projects (or the same one, with
+  `includeSameProject`) whose summaries meet `duplicateSimilarity`; between
+  `similarity` and that threshold they are `overlap`. An existing Jira
+  "Duplicate" link is reported as `linkedAs`.
+- **reuse** — an open issue resembling a finished one elsewhere: build on it
+  rather than again.
+- **dependencies** — open cross-project blocks, seen from the waiting side.
+- **hotspots** — a component or label (case-folded) on open work in two or more
+  projects.
+
+Similarity is lexical: Jaccard over stemmed summary terms with stop words
+(including "add", "fix", "update") removed; a summary with fewer than two terms
+is never paired, a term on more than a quarter of a sweep of 20 or more
+issues is ignored, and every finding lists
+its shared terms so the model can judge it. Pair lists stop at 200 each
+(`findingsCapped: true`). Output is deterministic for the same issues.
+
+| Tool | Endpoint | Notes |
+|---|---|---|
+| `jira_portfolio_analyze` | sweep above | Returns `{scope, boards?, analysis}`. Summaries, labels and component names are tenant text: `_untrusted: true` + `untrusted_content` (§Untrusted content). `scope.partial` says when the page cap stopped the sweep before `maxIssues`. |
+| `jira_portfolio_report` | sweep above, then a local file | Same input plus `title?`. Writes a Markdown report — summary tables, a findings map and the per-project hierarchy as Mermaid diagrams (at most 120 nodes per diagram; the rest stay in the outline), and tables of every finding — into `JIRA_REPORT_DIR` as `portfolio-<UTC timestamp>.md`, `0600`, created exclusively (a clash gets `-N`, never an overwrite). Returns the path and the counts, not the document, so the result carries no Jira text and no untrusted brand. Annotated read-only with **`idempotentHint: false`**, like `jira_download_attachment`: a second call leaves a second file. No `JIRA_REPORT_DIR` ⇒ `config`, nothing requested. Tenant text is escaped for Mermaid labels and table cells. |
+
 ## Annotations reference
 
 | Tool class | readOnly | destructive | idempotent | openWorld |
 |---|---|---|---|---|
 | `jira_capabilities` (local only) | true | false | true | **false** |
 | all other reads | true | false | true | true |
-| `jira_download_attachment` | true | false | **false** | true |
+| `jira_download_attachment`, `jira_portfolio_report` | true | false | **false** | true |
 | create/comment/worklog/link, `jira_upload_attachment`, `jira_create_sprint`, `jira_start_sprint`, `jira_create_component`, `jira_create_version` | false | false | false | true |
 | `jira_update_issue`, `jira_update_comment`, `jira_close_sprint` | false | **true** | true | true |
 | `jira_delete_issue`, `jira_delete_comment`, `jira_delete_worklog`, `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`, `jira_bulk_delete_issues`, `jira_bulk_edit_issues` | false | **true** | **false** | true |
@@ -669,8 +712,9 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**59 tools / 10 packages** (core 3, search 4, issues 6, issues-write 8,
-issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 8). The
+**61 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
+issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 8,
+portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —
 never hand-maintain them in prose.
