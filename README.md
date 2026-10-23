@@ -237,6 +237,11 @@ contract, JQL idioms and the markdown subset the write tools accept. A client
 that reads resources gets the detail on demand; the tool descriptions stay
 short.
 
+It also serves **prompts** (MCP `prompts/list`): `jira_sprint_review`,
+`jira_standup`, `jira_triage_unassigned` and `jira_release_notes` are
+ready-made read-only workflows over the existing tools. A prompt is listed only
+when every tool it names is registered in your configuration.
+
 ## Data handling
 
 What leaves your machine, what is written to disk, what is redacted from logs,

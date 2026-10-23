@@ -95,8 +95,9 @@ core  ←  api  ←  mcp  ←  tools
 - **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
   `result.ts`, `taint.ts`, `transport.ts`, `transport-http.ts`, `write-mode.ts`,
   `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`, `schema.ts`
-  (the listed-schema trim) and `resources.ts` (the reference catalogue and the
-  server instructions, D124). No Jira endpoint knowledge: the one document the
+  (the listed-schema trim), `resources.ts` (the reference catalogue and the
+  server instructions, D124) and `prompts.ts` (`definePrompt` and the prompt
+  catalogue, D125). No Jira endpoint knowledge: the one document the
   mcp ring serves is the write-mode contract it owns.
 - **`src/tools/`** — one file per package, each exporting a `PackageSpec`
   (`searchPackage`, `issuesPackage`, …) that `index.ts` composes into
@@ -167,8 +168,10 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
   loses the `structuredContent` envelope.
 - JSON Schema derived from zod via the SDK's own `toJsonSchemaCompat`
   (`@modelcontextprotocol/sdk/server/zod-json-schema-compat.js`).
-- Capabilities: `{ tools: { listChanged: true }, resources: {}, logging: {} }`;
-  `instructions` come from `serverInstructions` (TOOLS.md §Reference resources).
+- Capabilities: `{ tools: { listChanged: true }, resources: {}, prompts: {}, logging: {} }`;
+  `instructions` come from `serverInstructions` (TOOLS.md §Reference resources);
+  prompts are listed only when every tool they name is registered (TOOLS.md
+  §Prompts).
 - Zod runtime usage quarantined to `src/mcp/define.ts`.
 
 ## Tool definition contract
@@ -187,9 +190,10 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
 - the spec is `Object.freeze`d.
 
 The ordered `PACKAGES: PackageSpec[]` manifest in `src/tools/index.ts` is the
-**single source of truth** consumed by exactly four readers: server registration
+**single source of truth** consumed by exactly five readers: server registration
 (`src/index.ts` → `mcp/registry.ts`), the reference catalogue
-(`mcp/resources.ts`, which also reads `PackageSpec.references`), the manifest
+(`mcp/resources.ts`, which also reads `PackageSpec.references`), the prompt
+catalogue (`mcp/prompts.ts`, which reads `PackageSpec.prompts`), the manifest
 snapshot test (`src/tools/index.test.ts`), and README generation
 (`scripts/generate-readme.mjs`). It does **not** generate the distribution
 manifests: `server.json` is hand-maintained and *checked* against

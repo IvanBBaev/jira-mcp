@@ -73,6 +73,7 @@ import {
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
+import { sprintReviewPrompt } from './prompts.js';
 
 // ---------------------------------------------------------------------------
 // 1. Shared plumbing
@@ -782,4 +783,5 @@ export const agilePackage: PackageSpec = {
     startSprintTool,
     closeSprintTool,
   ],
+  prompts: [sprintReviewPrompt],
 };

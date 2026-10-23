@@ -36,6 +36,7 @@ import {
   sessionRecentWrites,
 } from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
+import { PROMPT_RULES, definePrompt } from './prompts.js';
 import { ok } from './result.js';
 import {
   JOURNAL_UNAVAILABLE_MESSAGE,
@@ -405,12 +406,13 @@ test('a tool renders a JSON Schema carrying its control fields', async () => {
   });
 });
 
-test('the server advertises tools.listChanged, resources and logging', async () => {
+test('the server advertises tools.listChanged, resources, prompts and logging', async () => {
   const { deps } = makeHarness();
   await withSession(deps, ({ client }) => {
     const capabilities = client.getServerCapabilities();
     assert.deepEqual(capabilities?.tools, { listChanged: true });
     assert.deepEqual(capabilities?.resources, {});
+    assert.deepEqual(capabilities?.prompts, {});
     assert.deepEqual(capabilities?.logging, {});
   });
 });
@@ -495,6 +497,78 @@ test('the reference resources are listed and readable over the protocol', async 
         assert.equal((error as { code?: number }).code, -32002);
         return true;
       },
+    );
+  });
+});
+
+/** A fixture prompt over two fixture reads, attached to the first package. */
+const PING_PROMPT = definePrompt({
+  name: 'jira_fx_checkup',
+  title: 'Check-up',
+  description: 'Pings, then looks one issue up.',
+  requires: ['jira_fx_ping', 'jira_fx_lookup'],
+  arguments: [{ name: 'issue', description: 'Issue key.', required: true }],
+  example: { issue: 'PROJ-1' },
+  render: (args) => `Call jira_fx_ping, then jira_fx_lookup for ${args['issue'] ?? ''}.`,
+});
+
+function withPrompt(manifest: readonly PackageSpec[]): readonly PackageSpec[] {
+  return manifest.map((pkg, index) =>
+    index === 0 ? { ...pkg, prompts: [PING_PROMPT] } : pkg,
+  );
+}
+
+test('prompts are listed, rendered and refused over the protocol', async () => {
+  const { deps } = makeHarness();
+  await withSession({ ...deps, packages: withPrompt(MANIFEST) }, async ({ client }) => {
+    const listed = await client.listPrompts();
+    assert.deepEqual(
+      listed.prompts.map((prompt) => prompt.name),
+      ['jira_fx_checkup'],
+    );
+    assert.match(
+      client.getInstructions() ?? '',
+      /ready-made read-only workflows: jira_fx_checkup\./,
+    );
+
+    const got = await client.getPrompt({
+      name: 'jira_fx_checkup',
+      arguments: { issue: 'PROJ-7' },
+    });
+    const [message] = got.messages;
+    assert.ok(message !== undefined && message.content.type === 'text');
+    assert.match(
+      message.content.text,
+      /^Call jira_fx_ping, then jira_fx_lookup for PROJ-7\./,
+    );
+    assert.ok(message.content.text.endsWith(PROMPT_RULES));
+
+    for (const [request, pattern] of [
+      [{ name: 'jira_fx_checkup' }, /needs the argument "issue"/],
+      [{ name: 'jira_fx_none' }, /Unknown prompt "jira_fx_none"/],
+    ] as const) {
+      await assert.rejects(client.getPrompt(request), (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, pattern);
+        assert.equal((error as { code?: number }).code, -32602);
+        return true;
+      });
+    }
+  });
+});
+
+test('a prompt whose tools a gate removed is neither listed nor served', async () => {
+  const lookupPackage = MANIFEST.find((pkg) =>
+    pkg.tools.some((tool) => tool.name === 'jira_fx_lookup'),
+  );
+  assert.ok(lookupPackage);
+  const { deps } = makeHarness({ settings: { packagesDeny: [lookupPackage.id] } });
+  await withSession({ ...deps, packages: withPrompt(MANIFEST) }, async ({ client }) => {
+    assert.deepEqual((await client.listPrompts()).prompts, []);
+    assert.doesNotMatch(client.getInstructions() ?? '', /Prompts \(prompts\/list\)/);
+    await assert.rejects(
+      client.getPrompt({ name: 'jira_fx_checkup', arguments: { issue: 'PROJ-7' } }),
+      /not available in this configuration; it needs jira_fx_lookup \(package_disabled\)/,
     );
   });
 });

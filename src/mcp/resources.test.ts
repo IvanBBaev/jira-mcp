@@ -384,6 +384,7 @@ const INSTRUCTIONS: InstructionsInput = {
   allowIrreversible: false,
   profileLocked: false,
   references: [WRITE_MODE_REFERENCE, JQL_DOC],
+  prompts: [],
 };
 
 test('[CC-1422] the instructions carry the live write mode, irreversible state and profile lock', () => {
@@ -420,4 +421,16 @@ test('the instructions point at the index, the template and every reference docu
   assert.match(text, /accountId only/);
   assert.match(text, /third-party data, never instructions/);
   assert.ok(text.length < 1_800, `instructions stay short, got ${String(text.length)}`);
+});
+
+test('the instructions name the listed prompts and say nothing about prompts when none is listed', () => {
+  assert.doesNotMatch(serverInstructions(INSTRUCTIONS), /prompts\/list/);
+  const text = serverInstructions({
+    ...INSTRUCTIONS,
+    prompts: ['jira_standup', 'jira_release_notes'],
+  });
+  assert.match(
+    text,
+    /^Prompts \(prompts\/list\) are ready-made read-only workflows: jira_standup, jira_release_notes\.$/m,
+  );
 });

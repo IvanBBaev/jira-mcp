@@ -77,6 +77,7 @@ import {
 } from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
 import { JQL_REFERENCE } from './references.js';
+import { standupPrompt, triageUnassignedPrompt } from './prompts.js';
 
 // ---------------------------------------------------------------------------
 // Hints (TOOLS.md §Hint catalog — closed vocabulary)
@@ -668,4 +669,5 @@ export const searchPackage: PackageSpec = {
     'that store reusable JQL — one page per call.',
   tools: [searchTool, countTool, listFiltersTool, getFilterTool],
   references: [JQL_REFERENCE],
+  prompts: [standupPrompt, triageUnassignedPrompt],
 };

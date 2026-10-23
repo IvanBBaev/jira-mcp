@@ -31,6 +31,8 @@
 import type { JiraApi } from '../api/port.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
   ListResourceTemplatesRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
@@ -59,6 +61,7 @@ import {
   writtenIssueIds,
 } from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
+import { createPromptCatalogue } from './prompts.js';
 import { createRegistry } from './registry.js';
 import { createReferenceCatalogue, serverInstructions } from './resources.js';
 import type { RenderedResult } from './result.js';
@@ -459,6 +462,13 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     manifest: deps.packages,
     excludedTools: registry.excludedTools,
   });
+  // Ready-made workflows (D125), gated on the tools they name: a prompt whose
+  // steps call a tool this configuration lacks is not listed at all.
+  const prompts = createPromptCatalogue({
+    manifest: deps.packages,
+    registeredTools: new Set(registry.tools.map((tool) => tool.name)),
+    excludedTools: registry.excludedTools,
+  });
 
   const server = new Server(
     { name: deps.serverName, version: deps.version },
@@ -471,6 +481,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
         tools: { listChanged: true },
         // Static reference documents: no subscriptions, no list changes.
         resources: {},
+        // Fixed at startup like the tools; no list changes.
+        prompts: {},
         logging: {},
       },
       instructions: serverInstructions({
@@ -483,6 +495,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
         allowIrreversible: settings.allowIrreversible,
         profileLocked: settings.lockProfile,
         references: catalogue.references,
+        prompts: prompts.prompts.map((prompt) => prompt.name),
       }),
     },
   );
@@ -497,6 +510,12 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
   // JSON-RPC error a resource client expects. There is no envelope to wrap.
   server.setRequestHandler(ReadResourceRequestSchema, (request) =>
     catalogue.read(request.params.uri),
+  );
+  server.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: prompts.list() }));
+  // `get` throws `McpError` (InvalidParams) for an unknown or gated-out prompt
+  // and for a refused argument; prompts, like resources, have no envelope.
+  server.setRequestHandler(GetPromptRequestSchema, (request) =>
+    prompts.get(request.params.name, request.params.arguments),
   );
 
   // Schemas are converted ONCE, here, not per `tools/list`: the manifest is

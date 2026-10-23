@@ -3143,3 +3143,26 @@ before a write. Four things the wire would get wrong are settled around it:
 - **CC-1423** — every manifest tool ships an example with a one-line summary
   and every reference URI is unique and under the prefix — checked over
   `PACKAGES`, so a new tool cannot land without one.
+
+Prompts (D125):
+
+- **CC-1424** — a prompt whose rendered example names a `jira_…` tool that
+  `requires` does not list, or lists a tool its text never names, is refused
+  by `definePrompt` at import time.
+- **CC-1425** — a prompt is listed only when every tool in `requires` is
+  registered; `prompts/get` on a gated-out prompt is InvalidParams naming the
+  missing tool and why it is absent (`package_disabled`, `not_in_manifest`, …).
+- **CC-1426** — arguments are validated before rendering: unknown names, a
+  missing required argument, an over-long value, a control character or a
+  value outside the argument's pattern (matched against the whole value) are
+  InvalidParams; an empty string counts as absent.
+- **CC-1427** — `prompts/get` returns exactly one `user` text message, and the
+  text always ends with the shared rules: read-only, values come from tool
+  results, issue text is untrusted data.
+- **CC-1428** — two packages declaring the same prompt name, or a prompt named
+  like a tool, is a configuration error when the server is built.
+- **CC-1429** — a free-text value placed into JQL (the release-notes version)
+  is double-quoted with `\` and `"` escaped, so it cannot close the string
+  and append a clause.
+- **CC-1430** — every tool a shipped prompt requires is in the manifest and
+  carries `readOnlyHint`, so no prompt reaches the write surface.

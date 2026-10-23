@@ -75,6 +75,7 @@ import {
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
 import type { PackageSpec, ToolCtx } from '../mcp/types.js';
+import { releaseNotesPrompt } from './prompts.js';
 
 // ---------------------------------------------------------------------------
 // 1. Shared plumbing
@@ -995,4 +996,5 @@ export const collabPackage: PackageSpec = {
     updateVersionTool,
     listProjectRolesTool,
   ],
+  prompts: [releaseNotesPrompt],
 };

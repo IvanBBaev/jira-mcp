@@ -14,6 +14,13 @@ env var names — not internal refactors.
 
 ### Added
 
+- Prompts (D125): the server advertises `prompts` and serves four read-only
+  workflows on `prompts/list` — `jira_sprint_review` (optional `board`,
+  `sprint`), `jira_standup` (optional `project`, `since`),
+  `jira_triage_unassigned` (optional `project`) and `jira_release_notes`
+  (required `version`, optional `project`). A prompt is listed only when
+  every tool it uses is registered; the `initialize` instructions name the
+  listed prompts.
 - Reference resources (D124): the server advertises `resources` and serves
   `jira://reference/tools` (every tool by package, whether this configuration
   registered it, and the documents below), `jira://reference/tools/{name}`

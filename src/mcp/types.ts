@@ -417,6 +417,48 @@ export interface PackageSpec {
    * nothing about Jira; the mcp ring adds only the write-mode contract it owns.
    */
   readonly references?: readonly ReferenceDoc[];
+  /**
+   * Ready-made workflows this package contributes to `prompts/list` (D125): a
+   * fixed sequence over read tools, rendered from a few string arguments. A
+   * prompt is listed only when every tool it names is registered, whichever
+   * package those tools live in. Built with `definePrompt` (`mcp/prompts.ts`).
+   */
+  readonly prompts?: readonly PromptSpec[];
+}
+
+/** One argument of a {@link PromptSpec}. MCP prompt arguments are strings. */
+export interface PromptArgumentSpec {
+  /** Lowercase snake case. */
+  readonly name: string;
+  /** One line, shown by `prompts/list`. */
+  readonly description: string;
+  readonly required: boolean;
+  /** The whole value must match; checked before `render` ever sees it. */
+  readonly pattern?: RegExp;
+  /** Upper bound on the value's length; at most `PROMPT_ARG_MAX`, the default. */
+  readonly maxLength?: number;
+}
+
+/**
+ * A prompt as a package declares it (TOOLS.md §Prompts, D125). Pure: `render`
+ * turns validated arguments into the instruction text, with no I/O.
+ */
+export interface PromptSpec {
+  /** `jira_` + snake case, like a tool name — and never equal to one. */
+  readonly name: string;
+  readonly title: string;
+  /** One or two sentences: what the workflow produces. */
+  readonly description: string;
+  /** Every tool the text names, read-only each; the prompt is gated on them. */
+  readonly requires: readonly string[];
+  readonly arguments: readonly PromptArgumentSpec[];
+  /** Arguments `definePrompt` renders at import time to check `requires`. */
+  readonly example: Readonly<Record<string, string>>;
+  /**
+   * The workflow text. Receives only declared, validated arguments; an
+   * optional one the caller left out is absent.
+   */
+  render(args: Readonly<Record<string, string>>): string;
 }
 
 /**

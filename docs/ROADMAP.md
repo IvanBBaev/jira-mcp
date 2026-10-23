@@ -174,6 +174,8 @@ write-gate references it listed shipped with D124.
   sibling `servicenow-mcp` server does — sprint review, stand-up digest,
   release notes for a version, triage of the unassigned. Each is a fixed
   sequence over existing read tools, so it adds no write surface.
+  **Shipped (D125)**: all four, gated on the tools they name; TOOLS.md
+  §Prompts is the contract. Argument completions stay out.
 - **The plugin**: `.claude-plugin/` ships two manifests and nothing else. A
   skill or two inside it (a stand-up, a release-notes run) would make the
   Claude Code install useful on its first day.
