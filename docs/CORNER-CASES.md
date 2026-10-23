@@ -3236,3 +3236,15 @@ Prompts (D125):
   tells the model to slow down on that issue.
 - **CC-1449** — an unknown `RateLimit-Reason` reaches neither the error
   message nor the log.
+
+## Rate-limit headroom (D128, 2026-10-24)
+
+- **CC-1450** — a response that is neither a 429 nor near the limit leaves
+  `Counters.rateLimit` absent.
+- **CC-1451** — `nearLimit` follows the latest response; the last 429's
+  instant, reason and reset survive the successful responses after it, and a
+  later 429 replaces them whole.
+- **CC-1452** — `core/http.ts` feeds every response to the headroom: a burst
+  429 followed by a near-limit success reports both.
+- **CC-1453** — the doctor summary line names "near the rate limit" and the
+  last 429 with its reason and reset.

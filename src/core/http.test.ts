@@ -1395,6 +1395,27 @@ test('a 429 wait counts as both a retry and a rate-limit wait', async () => {
   });
 });
 
+test('CC-1452: every response feeds the rate-limit headroom', async () => {
+  await withFetch(async (mock: FetchMock) => {
+    mock
+      .enqueue({
+        status: 429,
+        headers: { 'retry-after': '2', 'ratelimit-reason': 'jira-burst-based' },
+      })
+      .enqueue({ json: { ok: true }, headers: { 'x-ratelimit-nearlimit': 'true' } });
+    const telemetry = createTelemetry();
+    const { request, clock } = harness({ telemetry });
+
+    await settle(clock, request(GET_ISSUE));
+
+    const headroom = telemetry.snapshot().rateLimit;
+    assert.equal(headroom?.nearLimit, true);
+    assert.equal(headroom?.lastReason, 'jira-burst-based');
+    assert.match(headroom?.lastLimitedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(headroom?.resetAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
 test('a failure is counted under its error kind', async () => {
   await withFetch(async (mock: FetchMock) => {
     mock.enqueue({ status: 404, json: { errorMessages: ['Issue does not exist'] } });

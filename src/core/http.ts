@@ -1249,6 +1249,14 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
       const result = outcome.result;
       const { status, headers } = result;
+      const limit = parseRateLimit(headers, clock.now());
+      telemetry?.recordRateLimit({
+        atMs: clock.now(),
+        limited: status === 429,
+        nearLimit: limit.nearLimit,
+        ...(limit.reason === undefined ? {} : { reason: limit.reason }),
+        ...(limit.resetAtMs === undefined ? {} : { resetAtMs: limit.resetAtMs }),
+      });
 
       if (isRedirectStatus(status)) {
         const location = headers['location'] ?? '';
@@ -1277,7 +1285,6 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
 
       if (status === 429) {
         const serverMs = parseRetryAfterMs(headers['retry-after'], clock.now());
-        const limit = parseRateLimit(headers, clock.now());
         const resetAt =
           limit.resetAtMs === undefined ? '' : new Date(limit.resetAtMs).toISOString();
         if (limit.quota) {

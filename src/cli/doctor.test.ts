@@ -1533,6 +1533,31 @@ test('the human summary renders the counters, retries and error kinds included',
   assert.match(out, /\d+ errors \(rate_limited \d+\)/);
 });
 
+test('CC-1453: the human summary names rate-limit pressure when Jira pushed back', async () => {
+  const r = rig();
+  const jira = healthy(r.jira);
+
+  await run({
+    ...r.options,
+    argv: [],
+    createRequest: (options) => async (spec) => {
+      options.telemetry?.recordRateLimit({
+        atMs: Date.parse('2026-10-24T10:00:00.000Z'),
+        limited: true,
+        nearLimit: true,
+        reason: 'jira-quota-tenant-based',
+        resetAtMs: Date.parse('2026-10-24T11:00:00.000Z'),
+      });
+      return await jira.fn(spec);
+    },
+  });
+
+  assert.match(
+    r.stdout(),
+    /near the rate limit, last rate-limited 2026-10-24T10:00:00\.000Z \(jira-quota-tenant-based\), resets 2026-10-24T11:00:00\.000Z\n/,
+  );
+});
+
 test('a summary with nothing to report keeps the counters line minimal', async () => {
   const r = rig();
 

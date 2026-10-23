@@ -155,6 +155,12 @@ waits, errors by kind) are kept and surfaced in two places only:
 anywhere — no OTel, no metrics endpoint, no phone-home; the counters die with
 the process.
 
+Next to them sits the rate-limit headroom (D128): `rateLimit.nearLimit` is
+whether the latest Jira response carried `X-RateLimit-NearLimit: true` (under
+20 % of the budget left), and `lastLimitedAt` / `lastReason` / `resetAt`
+describe the most recent 429. The field is absent until Jira has pushed back
+at least once.
+
 ## Metadata cache (D123)
 
 The field, link-type, status and create-meta catalogues are served from an

@@ -428,6 +428,13 @@ function renderCounters(counters: Counters): string {
       .join(', ');
     parts.push(`${unit(errorTotal, 'error', 'errors')} (${detail})`);
   }
+  const limit = counters.rateLimit;
+  if (limit?.nearLimit === true) parts.push('near the rate limit');
+  if (limit?.lastLimitedAt !== undefined) {
+    const reason = limit.lastReason === undefined ? '' : ` (${limit.lastReason})`;
+    const reset = limit.resetAt === undefined ? '' : `, resets ${limit.resetAt}`;
+    parts.push(`last rate-limited ${limit.lastLimitedAt}${reason}${reset}`);
+  }
   return `HTTP: ${parts.join(', ')}\n`;
 }
 

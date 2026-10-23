@@ -94,3 +94,43 @@ describe('createTelemetry', () => {
     assert.deepEqual(second.snapshot(), zeroCounters());
   });
 });
+
+describe('rate-limit headroom (D128)', () => {
+  const T0 = Date.parse('2026-10-24T10:00:00.000Z');
+
+  it('CC-1450: stays absent while Jira never pushed back', () => {
+    const telemetry = createTelemetry();
+    telemetry.recordRateLimit({ atMs: T0, limited: false, nearLimit: false });
+
+    assert.equal(telemetry.snapshot().rateLimit, undefined);
+  });
+
+  it('CC-1451: NearLimit follows the latest response, a 429 sticks until the next one', () => {
+    const telemetry = createTelemetry();
+    telemetry.recordRateLimit({ atMs: T0, limited: false, nearLimit: true });
+    assert.deepEqual(telemetry.snapshot().rateLimit, { nearLimit: true });
+
+    telemetry.recordRateLimit({
+      atMs: T0 + 1000,
+      limited: true,
+      nearLimit: true,
+      reason: 'jira-burst-based',
+      resetAtMs: T0 + 3000,
+    });
+    telemetry.recordRateLimit({ atMs: T0 + 4000, limited: false, nearLimit: false });
+
+    assert.deepEqual(telemetry.snapshot().rateLimit, {
+      nearLimit: false,
+      lastLimitedAt: '2026-10-24T10:00:01.000Z',
+      lastReason: 'jira-burst-based',
+      resetAt: '2026-10-24T10:00:03.000Z',
+    });
+
+    // A later 429 without a reason or reset replaces the earlier details whole.
+    telemetry.recordRateLimit({ atMs: T0 + 5000, limited: true, nearLimit: false });
+    assert.deepEqual(telemetry.snapshot().rateLimit, {
+      nearLimit: false,
+      lastLimitedAt: '2026-10-24T10:00:05.000Z',
+    });
+  });
+});
