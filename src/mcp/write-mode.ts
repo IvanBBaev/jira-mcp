@@ -46,11 +46,13 @@ import type {
   WriteMode,
 } from '../core/types.js';
 import { CONTROL_FIELD_NAMES } from './define.js';
-import { errorResultOf } from './errors.js';
+import { errorResult, errorResultOf } from './errors.js';
 import { ok } from './result.js';
 import type {
   AnyToolSpec,
   ControlFields,
+  PlanContext,
+  PlanFieldChange,
   PlanPayload,
   PlannedRequest,
   ToolResult,
@@ -253,6 +255,12 @@ export interface PlanBinding {
    * known once the handler has read the file again.
    */
   readonly payload?: string;
+  /**
+   * The entity's modification stamp when the plan was built (D132). An apply
+   * whose `planContext` reads a different one is refused as `stale`: the diff
+   * the plan showed no longer describes what the write would overwrite.
+   */
+  readonly version?: string;
 }
 
 /** Outcome of an apply's id check; `ok` is the only one that lets a write run. */
@@ -540,6 +548,24 @@ function createPayloadGuard(
   };
 }
 
+/** Rejects a mutation issued by a `planContext`; never leaves this module. */
+class ContextMutated extends Error {
+  constructor() {
+    super('planContext issued a mutation');
+    this.name = 'ContextMutated';
+  }
+}
+
+/**
+ * The seam a `planContext` reads through: reads pass, a mutation is refused
+ * without reaching the network. The context runs OUTSIDE the capture, so a
+ * write slipping in here would be a real write in plan mode.
+ */
+function readOnlySeam(inner: JiraRequestFn): JiraRequestFn {
+  return <T = unknown>(req: JiraRequestSpec): Promise<JiraResponse<T>> =>
+    isReadRequest(req) ? inner<T>(req) : Promise.reject(new ContextMutated());
+}
+
 function createPlanCapture(
   inner: JiraRequestFn,
   redact: ((value: unknown) => unknown) | undefined,
@@ -616,6 +642,8 @@ export interface WriteGateCall {
   readonly jira: JiraRequestFn;
   /** Run the handler against whichever seam the gate chooses. */
   invoke(jira: JiraRequestFn): Promise<ToolResult<unknown>>;
+  /** Run the tool's `planContext`, when it declares one (D132). */
+  context?(jira: JiraRequestFn): Promise<PlanContext>;
 }
 
 export interface WriteGate {
@@ -626,7 +654,8 @@ export interface WriteGate {
 }
 
 /** Every reason the gate refuses an apply. `ok` is not one of them. */
-export type GateRefusal = 'missing' | 'irreversible' | 'payload' | PlanConsumeOutcome;
+export type GateRefusal =
+  'missing' | 'irreversible' | 'payload' | 'stale' | PlanConsumeOutcome;
 
 function refusal(reason: GateRefusal): string {
   switch (reason) {
@@ -646,6 +675,12 @@ function refusal(reason: GateRefusal): string {
         'The file changed between the plan and this apply, so the plan_id no ' +
         'longer describes what would be uploaded. The plan_id is spent. Nothing ' +
         'was sent to Jira.'
+      );
+    case 'stale':
+      return (
+        'The issue changed in Jira after the plan was made, so the diff the plan ' +
+        'showed no longer describes what this write would overwrite. The plan_id ' +
+        'is spent. Nothing was sent to Jira.'
       );
     case 'evicted':
       return (
@@ -695,6 +730,28 @@ export interface IrreversiblePlanPayload extends PlanPayload {
   readonly before: unknown;
 }
 
+/**
+ * The plan of a write whose tool declares a `planContext` (D132): `PlanPayload`
+ * plus what each touched field holds now and would hold after the apply.
+ */
+export interface DiffPlanPayload extends PlanPayload {
+  readonly diff: readonly PlanFieldChange[];
+}
+
+/**
+ * The tool's plan context, or `undefined` when it has none or the read failed.
+ * In plan mode the diff is advisory — a failed read must not cost the caller
+ * the plan, and the handler has already proved the write is well-formed.
+ */
+async function readPlanContext(call: WriteGateCall): Promise<PlanContext | undefined> {
+  if (call.context === undefined) return undefined;
+  try {
+    return await call.context(readOnlySeam(call.jira));
+  } catch {
+    return undefined;
+  }
+}
+
 export function createWriteGate(deps: WriteGateDeps): WriteGate {
   const store = deps.store ?? createPlanStore(deps.rng);
 
@@ -717,23 +774,29 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       return handlerResult ?? writeGatedResult('missing');
     }
 
+    // Read only once the handler reached its write: a call it refused locally
+    // costs no extra request.
+    const context = await readPlanContext(call);
     const digest = capture.payload;
+    const version = context?.version;
     const planId = store.issue({
       tool: call.tool.name,
       fingerprint,
       ...(digest === undefined ? {} : { payload: digest }),
+      ...(version === undefined ? {} : { version }),
     });
+    const redact = (value: unknown): unknown =>
+      deps.redact === undefined ? value : deps.redact(value);
     const base: PlanPayload = { executed: false, planned, plan_id: planId };
     const noted = capture.before.noted;
-    const payload: PlanPayload | IrreversiblePlanPayload = noted
-      ? {
-          ...base,
-          before:
-            deps.redact === undefined
-              ? capture.before.value
-              : deps.redact(capture.before.value),
-        }
+    const withBefore: PlanPayload | IrreversiblePlanPayload = noted
+      ? { ...base, before: redact(capture.before.value) }
       : base;
+    const payload: PlanPayload | IrreversiblePlanPayload | DiffPlanPayload =
+      context === undefined
+        ? withBefore
+        : { ...withBefore, diff: redact(context.diff) as readonly PlanFieldChange[] };
+    const tenantText = noted || context !== undefined;
 
     return ok(payload, {
       hints: [
@@ -748,9 +811,10 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
           ),
         },
       ],
-      // A before-state is tenant-authored prose (summaries, comment bodies), so
-      // the plan envelope carries the D15 brand its tool would have carried.
-      ...(noted ? { untrusted: true } : {}),
+      // A before-state or a diff's `from` side is tenant-authored prose
+      // (summaries, comment bodies), so the plan envelope carries the D15 brand
+      // its read tool would have carried.
+      ...(tenantText ? { untrusted: true } : {}),
     });
   };
 
@@ -776,11 +840,27 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       const planId = call.control.plan_id;
       if (planId === undefined || planId === '') return writeGatedResult('missing');
 
+      // Read BEFORE the plan_id is consumed: a failed read is a transient
+      // failure the caller retries, and it must not burn the approved plan.
+      let live: PlanContext | undefined;
+      if (call.context !== undefined) {
+        try {
+          live = await call.context(readOnlySeam(call.jira));
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+
       const { outcome, issued } = store.claim(planId, {
         tool: call.tool.name,
         fingerprint: planFingerprint(call.tool.name, call.args, call.control.profile),
       });
       if (outcome !== 'ok') return writeGatedResult(outcome);
+      // A plan built without a stamp (its context read failed) has nothing to
+      // compare; one built with a stamp needs the same stamp now.
+      if (issued?.version !== undefined && live?.version !== issued.version) {
+        return writeGatedResult('stale');
+      }
 
       const expected = issued?.payload;
       if (expected === undefined) return call.invoke(call.jira);

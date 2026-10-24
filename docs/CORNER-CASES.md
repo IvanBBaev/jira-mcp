@@ -3282,3 +3282,33 @@ Prompts (D125):
   serialized bytes, since every listed tool repeats it.
 - **CC-1464** — over the protocol, every listed tool carries the schema, and
   the SDK client's per-call validation passes for a success and a failure.
+
+## Plan diff and stale plans (D132, 2026-10-24)
+
+- **CC-1465** — a plan for a tool with a plan context carries `data.diff`, is
+  `_untrusted`, and only the context read leaves the process.
+- **CC-1466** — an apply against an unchanged `updated` stamp writes once.
+- **CC-1467** — a stamp that moved between plan and apply is refused as
+  `write_gated`, sends no write, and spends the plan_id.
+- **CC-1468** — a failed context read in plan mode still issues the plan,
+  without a diff or taint; in apply mode the same failure is returned and the
+  plan_id stays outstanding.
+- **CC-1469** — a plan bound to no version applies without a stale check.
+- **CC-1470** — a plan context that issues a mutation is refused by the
+  read-only seam before the network; the plan is issued without a diff.
+- **CC-1471** — a handler that refuses locally costs no context read.
+- **CC-1472** — `compactValue` keeps scalars and turns absent values into null.
+- **CC-1473** — long text is cut at 200 characters, lists at 20 entries with a
+  "… N more" marker.
+- **CC-1474** — users compact to `{ accountId, displayName }`, options and
+  priorities to their name, issues to their key, ADF to its words.
+- **CC-1475** — `jira_update_issue` reports one row per touched system or
+  custom field and binds the `updated` stamp, in a single read.
+- **CC-1476** — `labelsAdd`/`labelsRemove` show the label list the apply would
+  leave.
+- **CC-1477** — `jira_transition_issue` names the target status, not the
+  transition id.
+- **CC-1478** — an unresolvable transition is described as the caller wrote it;
+  the handler still owns the refusal.
+- **CC-1479** — `jira_assign_issue` diffs the live assignee for both assign and
+  unassign.

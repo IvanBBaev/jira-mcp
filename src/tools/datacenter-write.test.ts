@@ -933,7 +933,11 @@ test('CC-320: a Data Center user-write plan carries the username dialect and sen
   });
   assert.equal(refused.structuredContent.ok, false, refused.text);
   assert.match(refused.text, /validation/);
-  assert.equal(jira.calls.length, 0);
+  // Only reads left the process: the D132 plan context reads the live assignee.
+  assert.deepEqual(
+    jira.calls.filter((call) => call.method !== 'GET'),
+    [],
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -111,7 +111,8 @@ core  ←  api  ←  mcp  ←  tools
   `issues-write.ts` attach through `PackageSpec.references`. The portfolio
   package (D126) splits its pure analysis and rendering into
   `portfolio-analysis.ts` and `portfolio-render.ts`, so `portfolio.ts` holds
-  only the sweep, the tools and its report store.
+  only the sweep, the tools and its report store. `plan-context.ts` holds the
+  plan-time field diff the issue writes declare as `planContext` (D132).
 
 Layering is enforced twice in `eslint.config.js` (copied from facebook-mcp):
 `import-x/no-restricted-paths` zones AND string-based `no-restricted-imports`

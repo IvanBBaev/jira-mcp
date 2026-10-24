@@ -13,10 +13,11 @@ import test from 'node:test';
 
 import { CLOUD_API } from '../api/port.js';
 import { createFakeClock } from '../core/fakes/fakeClock.js';
-import { createFakeJiraRequest, jiraOk } from '../core/fakes/fakeJiraRequest.js';
+import { createFakeJiraRequest, jiraErr, jiraOk } from '../core/fakes/fakeJiraRequest.js';
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { createFakeRedactor } from '../core/fakes/fakeRedactor.js';
 import { createRedactor } from '../core/redact.js';
+import { JiraError } from '../core/types.js';
 import type { ControlFields } from './types.js';
 import type { AnyToolSpec, PlannedRequest, ToolCtx, ToolResult } from './types.js';
 import type { JiraRequestFn, Rng } from '../core/types.js';
@@ -1403,4 +1404,233 @@ test('isPlanResult only fires for a successful envelope carrying the plan hint',
     true,
   );
   assert.equal(isPlanResult(writeGatedResult('missing')), false);
+});
+
+// ---------------------------------------------------------------------------
+// Plan context: diff and stale plans (D132)
+// ---------------------------------------------------------------------------
+
+/** A PUT whose plan context reads the live summary and `updated` stamp. */
+const editTool = defineTool({
+  name: 'jira_test_edit',
+  title: 'Test edit',
+  description: 'Overwrites a summary.',
+  package: 'issues-write',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  writeTier: 'standard',
+  input: writeToolInput({ summary: z.string() }),
+  async handler(args, ctx) {
+    await ctx.jira({
+      method: 'PUT',
+      path: '/issue/ABC-1',
+      pathTemplate: '/issue/{key}',
+      body: { fields: { summary: args.summary } },
+    });
+    return ok({ edited: true });
+  },
+});
+
+function editCallOf(
+  args: { summary: string },
+  control: ControlFields,
+  jira: JiraRequestFn,
+  context?: WriteGateCall['context'],
+): WriteGateCall {
+  return {
+    ...callOf(editTool, args, control, jira),
+    context:
+      context ??
+      (async (seam) => {
+        const live = await seam<{ fields: { summary: string; updated: string } }>({
+          method: 'GET',
+          path: '/issue/ABC-1',
+          pathTemplate: '/issue/{key}',
+        });
+        return {
+          diff: [{ field: 'summary', from: live.data.fields.summary, to: args.summary }],
+          version: live.data.fields.updated,
+        };
+      }),
+  };
+}
+
+const LIVE_ROUTE = 'GET /rest/api/3/issue/ABC-1';
+const PUT_ROUTE = 'PUT /rest/api/3/issue/ABC-1';
+
+function liveIssue(updated: string, summary = 'Old title'): ReturnType<typeof jiraOk> {
+  return jiraOk({ fields: { summary, updated } });
+}
+
+test('CC-1465: a plan carries the context diff, tainted, and sends nothing', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(LIVE_ROUTE, liveIssue('2026-10-24T10:00:00.000+0000'));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+
+  const planned = await gate.execute(editCallOf({ summary: 'New title' }, {}, fake.fn));
+
+  assert.equal(planned.ok, true);
+  assert.deepEqual((planned.data as { diff: unknown }).diff, [
+    { field: 'summary', from: 'Old title', to: 'New title' },
+  ]);
+  assert.equal(planned._untrusted, true, 'the diff echoes tenant data');
+  assert.deepEqual(fake.routes(), [LIVE_ROUTE], 'only the context read left the process');
+});
+
+test('CC-1466: an apply against an unchanged issue writes once', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(LIVE_ROUTE, liveIssue('2026-10-24T10:00:00.000+0000'));
+  fake.on(PUT_ROUTE, jiraOk(undefined, { status: 204 }));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const args = { summary: 'New title' };
+
+  const planId = planIdOf(await gate.execute(editCallOf(args, {}, fake.fn)));
+  const applied = await gate.execute(
+    editCallOf(args, { apply: true, plan_id: planId }, fake.fn),
+  );
+
+  assert.equal(applied.ok, true);
+  assert.deepEqual(fake.routes(), [LIVE_ROUTE, LIVE_ROUTE, PUT_ROUTE]);
+  assert.equal(gate.outstandingPlans, 0);
+});
+
+test('CC-1467: an issue changed after the plan is refused as stale and the plan is spent', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(LIVE_ROUTE, liveIssue('2026-10-24T10:00:00.000+0000'), 1);
+  fake.on(LIVE_ROUTE, liveIssue('2026-10-24T10:05:00.000+0000', 'Someone else'));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const args = { summary: 'New title' };
+
+  const planId = planIdOf(await gate.execute(editCallOf(args, {}, fake.fn)));
+  const refused = await gate.execute(
+    editCallOf(args, { apply: true, plan_id: planId }, fake.fn),
+  );
+
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error?.kind, 'write_gated');
+  assert.ok(refused.error?.message.includes('changed in Jira after the plan'));
+  assert.ok(refused.error?.message.includes('Nothing was sent to Jira'));
+  assert.deepEqual(fake.routes(), [LIVE_ROUTE, LIVE_ROUTE], 'no PUT');
+  assert.equal(gate.outstandingPlans, 0, 'a stale plan_id is burned');
+
+  const replay = await gate.execute(
+    editCallOf(args, { apply: true, plan_id: planId }, fake.fn),
+  );
+  assert.equal(replay.error?.kind, 'write_gated');
+  assert.ok(!fake.routes().includes(PUT_ROUTE));
+});
+
+test('CC-1468: a failed context read in plan mode still issues a plan, without a diff', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(
+    LIVE_ROUTE,
+    jiraErr(new JiraError({ kind: 'not_found', message: '404 from Jira.' })),
+  );
+  fake.on(PUT_ROUTE, jiraOk(undefined, { status: 204 }));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const args = { summary: 'New title' };
+
+  const planned = await gate.execute(editCallOf(args, {}, fake.fn));
+
+  assert.equal(planned.ok, true);
+  assert.equal(Object.hasOwn(planned.data as object, 'diff'), false);
+  assert.equal(planned._untrusted, undefined);
+
+  // No version was bound, so the apply skips the stale check — but it still
+  // reads the context, and that read failing is now an error.
+  const applied = await gate.execute(
+    editCallOf(args, { apply: true, plan_id: planIdOf(planned) }, fake.fn),
+  );
+  assert.equal(applied.ok, false);
+  assert.equal(applied.error?.kind, 'not_found');
+  assert.equal(gate.outstandingPlans, 1, 'a failed pre-read must not cost the plan_id');
+  assert.ok(!fake.routes().includes(PUT_ROUTE));
+});
+
+test('CC-1469: a plan bound to no version applies without a stale check', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(PUT_ROUTE, jiraOk(undefined, { status: 204 }));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const args = { summary: 'New title' };
+  let reads = 0;
+  const versionless: WriteGateCall['context'] = () => {
+    reads += 1;
+    return Promise.resolve({ diff: [] });
+  };
+
+  const planId = planIdOf(await gate.execute(editCallOf(args, {}, fake.fn, versionless)));
+  const applied = await gate.execute(
+    editCallOf(args, { apply: true, plan_id: planId }, fake.fn, versionless),
+  );
+
+  assert.equal(applied.ok, true);
+  assert.equal(reads, 2);
+  assert.deepEqual(fake.routes(), [PUT_ROUTE]);
+});
+
+test('CC-1470: a context that tries to write is refused before the network', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const sneaky: WriteGateCall['context'] = async (seam) => {
+    await seam({ method: 'DELETE', path: '/issue/ABC-1', pathTemplate: '/issue/{key}' });
+    return { diff: [] };
+  };
+
+  const planned = await gate.execute(editCallOf({ summary: 'x' }, {}, fake.fn, sneaky));
+
+  assert.equal(planned.ok, true, 'the write itself is still planned');
+  assert.equal(Object.hasOwn(planned.data as object, 'diff'), false);
+  assert.deepEqual(fake.calls, []);
+});
+
+test('CC-1471: a handler that refuses locally costs no context read', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  let reads = 0;
+  const call: WriteGateCall = {
+    ...callOf(writeTool, { summary: '' }, {}, fake.fn),
+    invoke: () => Promise.resolve(ok({ refused: true })),
+    context: () => {
+      reads += 1;
+      return Promise.resolve({ diff: [] });
+    },
+  };
+
+  const result = await gate.execute(call);
+
+  assert.deepEqual(result.data, { refused: true });
+  assert.equal(reads, 0, 'only a captured mutation earns the read');
+  assert.deepEqual(fake.calls, []);
 });

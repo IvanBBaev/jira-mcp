@@ -63,7 +63,15 @@ import {
   callBase,
   guarded,
 } from '../mcp/tool-helpers.js';
-import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
+import type {
+  Hint,
+  PackageSpec,
+  PlanContext,
+  PlanFieldChange,
+  ToolCtx,
+  ToolResult,
+} from '../mcp/types.js';
+import { fieldChange, issueContext, readIssueFields } from './plan-context.js';
 import { MARKDOWN_REFERENCE } from './references.js';
 
 // ---------------------------------------------------------------------------
@@ -596,7 +604,68 @@ export const updateIssueTool = defineTool({
       });
       return ok(updated, { hints: resolution.hints });
     }, fieldErrorHints),
+  planContext: async (args, ctx): Promise<PlanContext> => {
+    const touched = updatedSystemFields(args);
+    const custom = Object.keys(args.fields ?? {}).filter((id) => !touched.includes(id));
+    const read = await readIssueFields(ctx, args.issue, [...touched, ...custom]);
+    const now = read.fields;
+    const diff: PlanFieldChange[] = [
+      ...touched.map((field) =>
+        fieldChange(field, now[field], updateTarget(field, args, now[field])),
+      ),
+      ...custom.map((id) => fieldChange(id, now[id], args.fields?.[id])),
+    ];
+    return issueContext(diff, read);
+  },
 });
+
+type UpdateIssueArgs = z.infer<typeof updateIssueInput>;
+
+/** The system fields an update sets, under their Jira field ids (D132). */
+function updatedSystemFields(args: UpdateIssueArgs): string[] {
+  const labels =
+    args.labels !== undefined ||
+    args.labelsAdd !== undefined ||
+    args.labelsRemove !== undefined;
+  return [
+    ...(args.summary === undefined ? [] : ['summary']),
+    ...(args.description === undefined ? [] : ['description']),
+    ...(args.assigneeAccountId === undefined ? [] : ['assignee']),
+    ...(labels ? ['labels'] : []),
+    ...(args.priority === undefined ? [] : ['priority']),
+    ...(args.parent === undefined ? [] : ['parent']),
+  ];
+}
+
+/**
+ * What one system field would hold after the update. Incremental label edits
+ * are applied to the live list here, so the plan shows the list the apply
+ * would leave rather than the edit that produces it.
+ */
+function updateTarget(field: string, args: UpdateIssueArgs, current: unknown): unknown {
+  switch (field) {
+    case 'summary':
+      return args.summary;
+    case 'description':
+      return args.description;
+    case 'assignee':
+      return args.assigneeAccountId;
+    case 'priority':
+      return args.priority;
+    case 'parent':
+      return args.parent;
+    default: {
+      if (args.labels !== undefined) return args.labels;
+      const live = Array.isArray(current)
+        ? current.filter((label): label is string => typeof label === 'string')
+        : [];
+      const removed = new Set(args.labelsRemove ?? []);
+      const kept = live.filter((label) => !removed.has(label));
+      const added = (args.labelsAdd ?? []).filter((label) => !kept.includes(label));
+      return [...kept, ...added];
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // jira_transition_issue
@@ -678,6 +747,29 @@ export const transitionIssueTool = defineTool({
       });
       return ok(result, { hints: resolution.hints });
     }, transitionErrorHints),
+  planContext: async (args, ctx): Promise<PlanContext> => {
+    const custom = Object.keys(args.fields ?? {}).filter((id) => id !== 'status');
+    const [read, { transitions }] = await Promise.all([
+      readIssueFields(ctx, args.issue, ['status', ...custom]),
+      ctx.api.listTransitions({ ...callBase(ctx), issue: args.issue }),
+    ]);
+    // The handler reports an unresolvable transition with its own hints; the
+    // context only describes, so it falls back to the caller's wording.
+    let target: unknown = args.transition;
+    try {
+      const id = resolveTransitionId(transitions, args.transition);
+      target = transitions.find((entry) => entry.id === id)?.to?.name ?? target;
+    } catch {
+      // Described as given.
+    }
+    return issueContext(
+      [
+        fieldChange('status', read.fields['status'], target),
+        ...custom.map((id) => fieldChange(id, read.fields[id], args.fields?.[id])),
+      ],
+      read,
+    );
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -901,6 +993,11 @@ export const assignIssueTool = defineTool({
       });
       return ok(assigned);
     }),
+  planContext: async (args, ctx): Promise<PlanContext> => {
+    const read = await readIssueFields(ctx, args.issue, ['assignee']);
+    const to = args.unassign === true ? null : (args.accountId ?? args.username);
+    return issueContext([fieldChange('assignee', read.fields['assignee'], to)], read);
+  },
 });
 
 // ---------------------------------------------------------------------------

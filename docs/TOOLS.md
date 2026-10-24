@@ -155,6 +155,22 @@ re-resolves, so directory drift between plan and apply can change the body or
 turn the apply into a refusal — `plan_id` binds arguments, not resolved
 accountIds (CC-111). Normative gate contract: THREAT-MODEL.md.
 
+**Field diff and stale plans (D132).** `jira_update_issue`,
+`jira_transition_issue` and `jira_assign_issue` read the fields they touch
+once more while planning and add `data.diff: [{ field, from, to }]` — the live
+value next to the one the apply would set, compacted for display (a user as
+`{ accountId, displayName }`, an option or priority by name, rich text as a
+line of plain text of at most 200 characters, lists of at most 20 entries).
+Label edits show the list the apply would leave; a transition shows the target
+status name. The diff echoes tenant data, so such a plan is `_untrusted`. The
+same read binds the issue's `updated` stamp to the `plan_id`; apply reads it
+again before writing, and if it moved the apply is refused as `write_gated`
+("changed in Jira after the plan was made") and the id is spent — plan again.
+`updated` also moves on comments and automation, so the check errs towards
+refusing. Cost: one extra GET per plan and per apply (transition: two, the
+issue and its transitions). A failed read in plan mode only drops the diff; in
+apply mode it returns that error and leaves the `plan_id` unspent.
+
 ## Read shaping (normative)
 
 - Requested `fields` come back **verbatim** under the ids/names requested —

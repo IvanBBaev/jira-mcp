@@ -519,12 +519,16 @@ export function createRegistry(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
 
+    const planContext = spec.planContext?.bind(spec);
     return gate.execute({
       tool: spec,
       args: rest,
       control,
       jira,
       invoke: (seam: JiraRequestFn) => spec.handler(rest, ctx(seam)),
+      ...(planContext === undefined
+        ? {}
+        : { context: (seam: JiraRequestFn) => planContext(rest, ctx(seam)) }),
     });
   };
 

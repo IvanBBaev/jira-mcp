@@ -335,6 +335,32 @@ export interface ToolSpec<In = unknown, Out = unknown> {
    * {@link ToolHandler} for the standalone function type.
    */
   handler(args: In, ctx: ToolCtx): Promise<ToolResult<Out>>;
+  /**
+   * Reads what the write would change, for the plan/apply gate (D132). Optional
+   * and write-only: the gate calls it beside the handler — in plan mode to put a
+   * field diff in the plan, in apply mode to refuse a plan whose entity changed
+   * since. It must only READ; the gate hands it a seam that refuses mutations.
+   * Method-style for the same bivariance reason as `handler`.
+   */
+  planContext?(args: In, ctx: ToolCtx): Promise<PlanContext>;
+}
+
+/** One field a planned write would change: the live value and the new one. */
+export interface PlanFieldChange {
+  readonly field: string;
+  readonly from: unknown;
+  readonly to: unknown;
+}
+
+/** What {@link ToolSpec.planContext} reports about the entity a write targets. */
+export interface PlanContext {
+  /** Shown to the model in the plan as `data.diff`. */
+  readonly diff: readonly PlanFieldChange[];
+  /**
+   * The entity's modification stamp (an issue's `updated`). The plan binds it;
+   * an apply that reads a different one is refused as stale.
+   */
+  readonly version?: string;
 }
 
 /**
