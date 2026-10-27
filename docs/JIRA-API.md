@@ -255,6 +255,11 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   answers with the updated worklog. The server sends only the fields the
   caller named, plus the stored `visibility`; that an omitted field keeps its
   stored value is what Gate C claim C54 checks. Cloud only here.
+- Issue link delete (D143): `GET /issueLink/{linkId}` answers `{ id, type,
+  inwardIssue, outwardIssue }`, each end with `key` and a `fields` subset
+  (summary, status); `DELETE` on the same route answers 204 and removes the
+  link from both issues. The id is the one on an `issuelinks` entry. Cloud
+  only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

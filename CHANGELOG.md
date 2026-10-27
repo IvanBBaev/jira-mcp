@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_unlink_issues` (D143) in the `issues-delete` package: remove a link
+  between two issues by its id. Irreversible: the plan names the link type
+  and both issues before anything is deleted.
 - `jira_update_worklog` (D142) in the `issues-write` package: correct a
   worklog entry's duration, start or comment. Only the fields you name are
   sent, and the entry's visibility restriction is kept.

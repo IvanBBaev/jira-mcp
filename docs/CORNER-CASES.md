@@ -3450,3 +3450,15 @@ Prompts (D125):
   is given, reads it as `jira_add_worklog` does, refuses an impossible
   calendar date before any write, and its schema refuses an edit that names
   nothing or both duration forms.
+
+## Issue link delete (D143, 2026-10-27)
+
+- **CC-1526** — `getIssueLink` shapes the link type and both ends; an answer
+  without a string `id` or without either end is `unexpected_shape`.
+- **CC-1527** — `deleteIssueLink` sends `DELETE /issueLink/{linkId}` and
+  returns `{ linkId, deleted: true }`; a non-numeric id is a `validation`
+  error and never reaches the URL.
+- **CC-1528** — `jira_unlink_issues` plans with both ends named and their
+  summaries excerpted, applies only under the irreversible ceremony, and
+  sends no DELETE when the read fails (a 404 stays `not_found`) or the id is
+  refused locally.

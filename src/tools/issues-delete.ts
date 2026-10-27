@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // Package `issues-delete` — the irreversible surface (D45, WP-72, Phases 11–12).
 //
-// Eight tools that destroy data Jira cannot give back: an issue, a comment, a
-// worklog entry, a component, a version, a sprint, and — since Phase 12 — up
-// to a thousand issues at once, deleted or bulk-edited (Phase 11 added the
-// project-entity deletes; the package id predates all of them and stays for
-// deny-list compatibility, CC-120/CC-126). They are a PACKAGE of their own for
-// one reason — a deployment that wants none of this sets
+// Nine tools that destroy data Jira cannot give back: an issue, a comment, a
+// worklog entry, an issue link (D143), a component, a version, a sprint, and —
+// since Phase 12 — up to a thousand issues at once, deleted or bulk-edited
+// (Phase 11 added the project-entity deletes; the package id predates all of
+// them and stays for deny-list compatibility, CC-120/CC-126). They are a
+// PACKAGE of their own for one reason — a deployment that wants none of this sets
 // `JIRA_PACKAGES_DENY=issues-delete` and the whole surface stops existing,
 // without arguing about individual tool names.
 //
@@ -60,10 +60,13 @@ import type {
 } from '../api/collab.js';
 import type {
   DeleteCommentResult,
+  DeleteIssueLinkResult,
   DeleteIssueResult,
   DeleteWorklogResult,
   IssueComment,
   IssueDetail,
+  IssueLinkDetail,
+  LinkedIssueRef,
   IssueWorklog,
   JiraVisibility,
 } from '../api/issues.js';
@@ -180,6 +183,25 @@ interface WorklogBefore {
   readonly commentTruncated?: boolean;
   /** Present only when the entry is restricted to a role or group. */
   readonly visibility?: VisibilityBefore;
+}
+
+/** One end of an issue link — enough to recognise the issue, nothing more. */
+interface LinkEndBefore {
+  readonly key: string;
+  readonly summary?: string;
+  readonly status?: string;
+}
+
+interface IssueLinkBefore {
+  readonly kind: 'issueLink';
+  readonly id: string;
+  readonly linkType?: string;
+  /** The type's inward phrase ("is blocked by"), as Jira names it. */
+  readonly inward?: string;
+  /** The type's outward phrase ("blocks"), as Jira names it. */
+  readonly outward?: string;
+  readonly inwardIssue: LinkEndBefore;
+  readonly outwardIssue: LinkEndBefore;
 }
 
 interface ComponentBefore {
@@ -445,6 +467,26 @@ function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
   };
 }
 
+function linkEndBefore(issue: LinkedIssueRef): LinkEndBefore {
+  return {
+    key: issue.key,
+    ...(issue.summary === undefined ? {} : { summary: excerpt(issue.summary).text }),
+    ...(issue.status === undefined ? {} : { status: issue.status }),
+  };
+}
+
+function issueLinkBefore(link: IssueLinkDetail): IssueLinkBefore {
+  return {
+    kind: 'issueLink',
+    id: link.id,
+    ...(link.type.name === undefined ? {} : { linkType: link.type.name }),
+    ...(link.type.inward === undefined ? {} : { inward: link.type.inward }),
+    ...(link.type.outward === undefined ? {} : { outward: link.type.outward }),
+    inwardIssue: linkEndBefore(link.inwardIssue),
+    outwardIssue: linkEndBefore(link.outwardIssue),
+  };
+}
+
 /**
  * `lead` as one string: the display name, or the accountId when that is all.
  * The api ring drops a lead without an accountId and never keeps an empty
@@ -604,6 +646,10 @@ export interface DeletedComment extends DeleteCommentResult {
 
 export interface DeletedWorklog extends DeleteWorklogResult {
   readonly before: WorklogBefore;
+}
+
+export interface DeletedIssueLink extends DeleteIssueLinkResult {
+  readonly before: IssueLinkBefore;
 }
 
 export interface DeletedComponent extends DeleteComponentResult {
@@ -851,6 +897,49 @@ export const deleteWorklogTool = defineTool({
         issue: args.issue,
         worklogId: args.worklogId,
       });
+      return ok({ ...deleted, before }, { untrusted: true });
+    }),
+});
+
+// ---------------------------------------------------------------------------
+// jira_unlink_issues
+// ---------------------------------------------------------------------------
+
+const unlinkIssuesInput = writeToolInput({
+  linkId: z
+    .string()
+    .min(1)
+    .describe(
+      'Numeric issue link id, as jira_get_issue reports it in ' +
+        'fields.issuelinks[].id (request fields: ["issuelinks"]).',
+    ),
+});
+
+export const unlinkIssuesTool = defineTool({
+  name: 'jira_unlink_issues',
+  title: 'Unlink issues',
+  description:
+    'Remove one link between two issues. The link disappears from BOTH issues. ' +
+    'IRREVERSIBLE: Jira keeps no record of the removed link; jira_link_issues can ' +
+    'only create a new one in its place. Requires ' +
+    'JIRA_ALLOW_IRREVERSIBLE=true on top of the usual plan → apply; the plan works ' +
+    'without it and shows the link type and both issues.',
+  package: 'issues-delete',
+  annotations: DELETE_ANNOTATIONS,
+  writeTier: 'irreversible',
+  input: unlinkIssuesInput,
+  example: {
+    summary: 'Plan the removal of one issue link',
+    arguments: { linkId: '10200' },
+  },
+  handler: async (args, ctx): Promise<ToolResult<DeletedIssueLink>> =>
+    guarded(async () => {
+      const base = callBase(ctx);
+      const link = await ctx.api.getIssueLink({ ...base, linkId: args.linkId });
+      const before = issueLinkBefore(link);
+      noteBeforeState(ctx.jira, before);
+
+      const deleted = await ctx.api.deleteIssueLink({ ...base, linkId: args.linkId });
       return ok({ ...deleted, before }, { untrusted: true });
     }),
 });
@@ -1295,13 +1384,15 @@ export const issuesDeletePackage: PackageSpec = {
   id: 'issues-delete',
   title: 'Deletes and bulk changes (irreversible)',
   description:
-    'Irreversible deletions — an issue, a comment, a worklog entry, a component, ' +
+    'Irreversible deletions — an issue, a comment, a worklog entry, an issue link, ' +
+    'a component, ' +
     'a version, a sprint — and the bulk writes that delete or edit up to 1000 ' +
     'issues in one asynchronous operation.',
   tools: [
     deleteIssueTool,
     deleteCommentTool,
     deleteWorklogTool,
+    unlinkIssuesTool,
     deleteComponentTool,
     deleteVersionTool,
     deleteSprintTool,

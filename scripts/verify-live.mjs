@@ -1982,9 +1982,9 @@ async function writePhase(session, flags) {
       );
       if (linkType === undefined) skip('the site defines no issue link types');
       // A link needs a second issue, and the gate will not borrow somebody's real
-      // one: a link has no delete tool (WP-72), so the only way to leave the site
-      // as it was found is for BOTH ends to be issues this run created and the
-      // delete phase removes. Same summary as C17, so the residue inventory and
+      // one: C55 unlinks it only under --irreversible, so the only way to leave
+      // the site as it was found on every run is for BOTH ends to be issues this
+      // run created and the delete phase removes. Same summary as C17, so the residue inventory and
       // `--purge` recognise it without being taught anything new.
       const { applied: second } = await planAndApply(session, 'jira_create_issue', {
         project: flags.project,
@@ -2482,6 +2482,42 @@ async function deletePhase(session, flags) {
     return `created ${made.key}, bulk task COMPLETE, re-read is not_found`;
   });
 
+  await claim(
+    'C55',
+    'jira_unlink_issues removes the C39 link from both issues',
+    async () => {
+      const key = created.issueKey;
+      const second = created.issueKey2;
+      if (key === undefined || second === undefined) skip('no link from C39');
+      const read = dataOf(
+        await call(session, 'jira_get_issue', { issue: key, fields: ['issuelinks'] }),
+        'jira_get_issue',
+      );
+      const link = (read.fields?.issuelinks ?? []).find(
+        (row) => row.issue?.key === second,
+      );
+      if (link?.id === undefined) throw new Error(`${key} carries no link to ${second}`);
+      const { plan, applied } = await planAndApply(session, 'jira_unlink_issues', {
+        linkId: String(link.id),
+      });
+      const ends = [plan.before?.inwardIssue?.key, plan.before?.outwardIssue?.key];
+      if (!ends.includes(key) || !ends.includes(second)) {
+        throw new Error(`the plan did not name both ends: ${JSON.stringify(ends)}`);
+      }
+      if (applied.deleted !== true) throw new Error('apply did not report deleted:true');
+      for (const end of [key, second]) {
+        const after = dataOf(
+          await call(session, 'jira_get_issue', { issue: end, fields: ['issuelinks'] }),
+          'jira_get_issue',
+        );
+        if ((after.fields?.issuelinks ?? []).some((row) => row.id === link.id)) {
+          throw new Error(`${end} still carries link ${String(link.id)}`);
+        }
+      }
+      return `link ${String(link.id)} gone from ${key} and ${second}`;
+    },
+  );
+
   await claim('C26', 'deletes execute with the opt-in on', async () => {
     const key = created.issueKey;
     if (key === undefined) skip('no throwaway issue');
@@ -2498,8 +2534,8 @@ async function deletePhase(session, flags) {
         commentId: String(created.commentId),
       });
     }
-    // The link C39 made has no delete tool of its own (D73 again), so removing
-    // the issue at its far end is how the site gets back the shape it had.
+    // C55 removed the C39 link; the issue at its far end is still a throwaway,
+    // and removing it is how the site gets back the shape it had.
     const second = created.issueKey2;
     if (second !== undefined) {
       await planAndApply(session, 'jira_delete_issue', { issue: second });

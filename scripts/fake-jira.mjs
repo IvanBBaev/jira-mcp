@@ -2036,6 +2036,52 @@ function buildRoutes(server) {
       },
     ],
 
+    // D143: the link as its own resource — unlike an issue's `issuelinks`
+    // entry, it names BOTH ends, which is what the unlink plan shows.
+    [
+      'GET',
+      '/rest/api/3/issueLink/{linkId}',
+      (ctx) => {
+        const link = state.links.find((row) => row.id === ctx.params.linkId);
+        if (link === undefined) return notFound('Issue link');
+        const end = (key) => {
+          const issue = state.issues.get(key);
+          return {
+            id: issue.id,
+            key: issue.key,
+            self: `${origin()}/rest/api/3/issue/${issue.id}`,
+            fields: {
+              summary: issue.summary,
+              status: issue.status,
+              priority: issue.priority,
+              issuetype: { id: issue.issueType.id, name: issue.issueType.name },
+            },
+          };
+        };
+        return json(200, {
+          id: link.id,
+          self: `${origin()}/rest/api/3/issueLink/${link.id}`,
+          type: {
+            ...link.type,
+            self: `${origin()}/rest/api/3/issueLinkType/${link.type.id}`,
+          },
+          inwardIssue: end(link.inwardKey),
+          outwardIssue: end(link.outwardKey),
+        });
+      },
+    ],
+
+    [
+      'DELETE',
+      '/rest/api/3/issueLink/{linkId}',
+      (ctx) => {
+        const index = state.links.findIndex((row) => row.id === ctx.params.linkId);
+        if (index < 0) return notFound('Issue link');
+        state.links.splice(index, 1);
+        return noContent();
+      },
+    ],
+
     [
       'DELETE',
       '/rest/api/3/issue/{issueIdOrKey}',

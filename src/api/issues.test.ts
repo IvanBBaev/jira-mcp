@@ -34,6 +34,7 @@ import {
   MAX_SHAPE_DEPTH,
   ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
   ISSUE_COMMENT_PATH_TEMPLATE,
+  ISSUE_LINK_ITEM_PATH_TEMPLATE,
   ISSUE_LINK_PATH,
   ISSUE_PATH_TEMPLATE,
   ISSUE_REMOTE_LINK_PATH_TEMPLATE,
@@ -49,12 +50,15 @@ import {
   deleteComment,
   deleteCommentRequest,
   deleteIssue,
+  deleteIssueLink,
+  deleteIssueLinkRequest,
   deleteIssueRequest,
   deleteWorklog,
   deleteWorklogRequest,
   formatJiraTimestamp,
   getComment,
   getIssue,
+  getIssueLink,
   getWorklog,
   linkIssues,
   listChangelog,
@@ -2839,4 +2843,101 @@ test('CC-1524: an updated worklog answer without a string id is unexpected_shape
     updateWorklog({ jira: fake.fn, issue: KEY, worklogId: 40001, timeSpent: '1h' }),
     (error: unknown) => error instanceof JiraError && error.kind === 'unexpected_shape',
   );
+});
+
+// ---------------------------------------------------------------------------
+// D143 — issue link delete
+// ---------------------------------------------------------------------------
+
+/** `GET /issueLink/{id}` — both ends, under Jira's own names. // synthetic */
+const ISSUE_LINK_BODY = {
+  id: '10200',
+  self: 'https://example.atlassian.net/rest/api/3/issueLink/10200',
+  type: { id: '10000', name: 'Blocks', inward: 'is blocked by', outward: 'blocks' },
+  inwardIssue: {
+    id: '10001',
+    key: 'PROJ-1',
+    fields: { summary: 'Retry policy', status: { name: 'In Progress' } },
+  },
+  outwardIssue: {
+    id: '10002',
+    key: 'PROJ-2',
+    fields: { summary: 'Release', status: { name: 'To Do' } },
+  },
+};
+
+test('CC-1526: getIssueLink reads one link with both of its ends', async () => {
+  const fake = createFakeJiraRequest().on(
+    'GET /rest/api/3/issueLink/10200',
+    jiraOk(ISSUE_LINK_BODY),
+  );
+
+  const link = await getIssueLink({ jira: fake.fn, linkId: 10200 });
+
+  assert.equal(fake.lastRequest()?.pathTemplate, ISSUE_LINK_ITEM_PATH_TEMPLATE);
+  assert.deepEqual(link, {
+    id: '10200',
+    type: { id: '10000', name: 'Blocks', inward: 'is blocked by', outward: 'blocks' },
+    inwardIssue: {
+      id: '10001',
+      key: 'PROJ-1',
+      summary: 'Retry policy',
+      status: 'In Progress',
+    },
+    outwardIssue: { id: '10002', key: 'PROJ-2', summary: 'Release', status: 'To Do' },
+  });
+});
+
+test('CC-1526: a link body without an id or without both ends is an unexpected_shape', async () => {
+  const fake = createFakeJiraRequest()
+    .on('GET /rest/api/3/issueLink/1', jiraOk({ ...ISSUE_LINK_BODY, id: undefined }))
+    .on(
+      'GET /rest/api/3/issueLink/2',
+      jiraOk({ ...ISSUE_LINK_BODY, outwardIssue: undefined }),
+    );
+
+  await assert.rejects(
+    getIssueLink({ jira: fake.fn, linkId: '1' }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+  await assert.rejects(
+    getIssueLink({ jira: fake.fn, linkId: '2' }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+});
+
+test('CC-1527: deleteIssueLink addresses the link and echoes the receipt', async () => {
+  const fake = createFakeJiraRequest().on(
+    'DELETE /rest/api/3/issueLink/10200',
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  const deleted = await deleteIssueLink({ jira: fake.fn, linkId: ' 10200 ' });
+
+  assert.equal(fake.lastRequest()?.safe, undefined);
+  assert.deepEqual(deleted, { linkId: '10200', deleted: true });
+  assert.deepEqual(deleteIssueLinkRequest({ linkId: 10200 }), {
+    method: 'DELETE',
+    path: `${ISSUE_LINK_PATH}/10200`,
+    pathTemplate: ISSUE_LINK_ITEM_PATH_TEMPLATE,
+  });
+});
+
+test('CC-1527: a bad issue link id never reaches a URL', async () => {
+  const fake = createFakeJiraRequest(); // every route unprogrammed: a call would throw
+
+  for (const linkId of ['', '0', 'abc', '10200/../1', '-1']) {
+    await assert.rejects(deleteIssueLink({ jira: fake.fn, linkId }), (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'validation');
+      assert.match(error.remediation ?? '', /issuelinks/);
+      return true;
+    });
+    await assert.rejects(
+      getIssueLink({ jira: fake.fn, linkId }),
+      isJiraErrorOfKind('validation'),
+    );
+  }
+
+  assert.deepEqual(fake.calls, []);
 });

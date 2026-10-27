@@ -17,7 +17,7 @@
 // The gate is real here rather than faked: `createWriteGate` is what turns a
 // handler into a plan, and the whole point of this package is what the gate does
 // with `writeTier: 'irreversible'`. `mcp/write-mode.test.ts` proves the tier
-// rules in isolation; this file proves the eight tools are wired into them.
+// rules in isolation; this file proves the nine tools are wired into them.
 //
 // Response bodies are inline plain objects shaped after real Jira Cloud v3
 // payloads and marked `// synthetic`. The fake throws on a route nobody
@@ -51,6 +51,7 @@ import {
   deleteVersionTool,
   deleteWorklogTool,
   issuesDeletePackage,
+  unlinkIssuesTool,
 } from './issues-delete.js';
 
 const KEY = 'PROJ-1';
@@ -309,6 +310,7 @@ test('CC-120: the issues-delete package is the whole irreversible surface, and n
       'jira_delete_issue',
       'jira_delete_comment',
       'jira_delete_worklog',
+      'jira_unlink_issues',
       'jira_delete_component',
       'jira_delete_version',
       'jira_delete_sprint',
@@ -344,6 +346,9 @@ test('every delete tool warns about the opt-in and names an alternative', () => 
   assert.match(deleteComponentTool.description, /jira_update_component/);
   assert.match(deleteVersionTool.description, /jira_update_version/);
   assert.match(deleteSprintTool.description, /jira_close_sprint/);
+  // The link goes from both ends at once, and only a NEW link can replace it.
+  assert.match(unlinkIssuesTool.description, /BOTH issues/);
+  assert.match(unlinkIssuesTool.description, /jira_link_issues/);
   // The one delete whose issues survive: the model must know they only move.
   assert.match(deleteSprintTool.description, /backlog/);
   // The bulk writes name the poller: a 201 receipt alone never says "done".
@@ -2056,4 +2061,113 @@ test('[CC-861] a public comment carries no visibility key', async () => {
   );
 
   assert.equal('visibility' in before, false);
+});
+
+// ---------------------------------------------------------------------------
+// jira_unlink_issues (D143)
+// ---------------------------------------------------------------------------
+
+const LINK_ID = '10200';
+const LINK_ROUTE = `GET /rest/api/3/issueLink/${LINK_ID}`;
+const DELETE_LINK_ROUTE = `DELETE /rest/api/3/issueLink/${LINK_ID}`;
+
+/** `GET /issueLink/{id}`. // synthetic */
+const LINK_BODY = {
+  id: LINK_ID,
+  self: `https://example.atlassian.net/rest/api/3/issueLink/${LINK_ID}`,
+  type: { id: '10000', name: 'Blocks', inward: 'is blocked by', outward: 'blocks' },
+  inwardIssue: {
+    id: '10001',
+    key: KEY,
+    fields: {
+      summary: 'Retry policy',
+      status: { name: 'In Progress' },
+      priority: { name: 'High' },
+    },
+  },
+  outwardIssue: {
+    id: '10002',
+    key: 'PROJ-2',
+    fields: { summary: 'x'.repeat(900), status: { name: 'To Do' } },
+  },
+};
+
+test('CC-1528: the link plan names both ends; the receipt echoes the same snapshot', async () => {
+  const fake = createFakeJiraRequest()
+    .on(DELETE_LINK_ROUTE, NO_CONTENT)
+    .on(LINK_ROUTE, jiraOk(LINK_BODY));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    unlinkIssuesTool,
+    { linkId: LINK_ID },
+    fake,
+  );
+
+  assert.deepEqual((plan.data as { planned: unknown }).planned, {
+    method: 'DELETE',
+    path: `/issueLink/${LINK_ID}`,
+  });
+  const before = beforeOf(plan);
+  assert.deepEqual(before, {
+    kind: 'issueLink',
+    id: LINK_ID,
+    linkType: 'Blocks',
+    inward: 'is blocked by',
+    outward: 'blocks',
+    inwardIssue: { key: KEY, summary: 'Retry policy', status: 'In Progress' },
+    outwardIssue: { key: 'PROJ-2', summary: `${'x'.repeat(500)}…`, status: 'To Do' },
+  });
+  assert.deepEqual(applied.data, { linkId: LINK_ID, deleted: true, before });
+  assert.equal(applied._untrusted, true);
+  assert.deepEqual(fake.routes(), [LINK_ROUTE, LINK_ROUTE, DELETE_LINK_ROUTE]);
+});
+
+test('CC-1528: a missing link is the 404 of its read, and nothing is deleted', async () => {
+  const fake = createFakeJiraRequest().on(
+    LINK_ROUTE,
+    jiraErr(
+      new JiraError({
+        kind: 'not_found',
+        message: 'No issue link with id 10200 exists.',
+        retryable: false,
+        httpStatus: 404,
+      }),
+    ),
+  );
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(unlinkIssuesTool, { linkId: LINK_ID }, {}, fake.fn),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'not_found');
+  assert.deepEqual(fake.routes(), [LINK_ROUTE]);
+});
+
+test('CC-1528: a non-numeric link id never reaches the wire', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(unlinkIssuesTool, { linkId: 'PROJ-1' }, {}, fake.fn),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.deepEqual(fake.calls, []);
 });

@@ -1290,6 +1290,38 @@
           }
         },
         {
+          "name": "jira_unlink_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "linkId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["linkId"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_delete_component",
           "annotations": {
             "readOnlyHint": false,
