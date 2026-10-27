@@ -260,10 +260,9 @@ deletes as another, since they share the tier's receipts and gate claims.
   the model cannot answer; opt-in, refused on a client that cannot ask.
 - **Closing Gate C** (R03–R05) stays the most valuable open item and is not
   code: it is the sandbox account's permissions.
-- **A file output for large reads**, as the sibling server's
-  `format: "file"`: today `JIRA_MAX_RESULT_CHARS` truncates and the hint
-  tells the model to narrow; a file would let a thousand-row search be
-  handed to a script instead.
+- ~~**A file output for large reads**~~ — done (D152): `output: "file"` on
+  five reads writes the page to a JSONL file in `JIRA_MEDIA_DIR` and links
+  it as `jira://exports/{name}`.
 
 Not proposed, because already parked below or rejected in a D-row:
 Confluence, JSM, webhooks, a JQL builder, bulk move / transition / watch,

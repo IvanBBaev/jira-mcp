@@ -19,3 +19,6 @@ export { withFetch } from './with-fetch.js';
 
 export type { EnvOverrides } from './with-env.js';
 export { withEnv } from './with-env.js';
+
+export type { MemoryMedia } from './memory-media.js';
+export { createMemoryMedia } from './memory-media.js';

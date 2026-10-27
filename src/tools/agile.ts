@@ -64,7 +64,7 @@ import {
 } from '../api/agile.js';
 import type { JiraApi } from '../api/port.js';
 import type { PageStopReason } from '../api/shared.js';
-import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
+import { defineTool, outputArg, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import {
   DESTRUCTIVE_WRITE_ANNOTATIONS,
@@ -370,6 +370,7 @@ const getSprintIssuesInput = toolInput({
     ),
   startAt: startAtArg,
   maxResults: maxResultsArg,
+  output: outputArg,
 });
 
 /** One issue row, shaped exactly as `jira_search` shapes it. */
@@ -420,6 +421,7 @@ export const getSprintIssuesTool = defineTool<
   package: 'agile',
   annotations: READ_ANNOTATIONS,
   input: getSprintIssuesInput,
+  fileOutput: { rows: 'issues' },
   example: {
     summary: 'The unfinished issues of a sprint, two fields each',
     arguments: {

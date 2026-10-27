@@ -348,6 +348,13 @@ export interface ToolSpec<In = unknown, Out = unknown> {
    */
   readonly example?: ToolExample;
   /**
+   * Present on a large READ that can write its page to a file (D152): the
+   * input then declares `output` (`outputArg`), and `output: "file"` moves
+   * `data[rows]` into a JSONL file in JIRA_MEDIA_DIR. The registry does the
+   * moving; the handler never sees `output`.
+   */
+  readonly fileOutput?: FileOutputSpec;
+  /**
    * Declared method-style on purpose: method parameters are checked
    * bivariantly, which is what makes a concrete `ToolSpec<Args, Out>` assignable
    * to {@link AnyToolSpec} so the manifest can hold a heterogeneous list. See
@@ -362,6 +369,12 @@ export interface ToolSpec<In = unknown, Out = unknown> {
    * Method-style for the same bivariance reason as `handler`.
    */
   planContext?(args: In, ctx: ToolCtx): Promise<PlanContext>;
+}
+
+/** Where a {@link ToolSpec.fileOutput} tool keeps the rows it can export. */
+export interface FileOutputSpec {
+  /** The key of the row array in the tool's `data`. */
+  readonly rows: string;
 }
 
 /** One field a planned write would change: the live value and the new one. */

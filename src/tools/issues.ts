@@ -61,7 +61,7 @@ import type {
   TransitionsResult,
   WorklogsResult,
 } from '../api/issues.js';
-import { defineTool, toolInput, z } from '../mcp/define.js';
+import { defineTool, outputArg, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import { READ_ANNOTATIONS, callBase, guarded } from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolResult } from '../mcp/types.js';
@@ -285,6 +285,7 @@ const getCommentsInput = toolInput({
         'default is oldest first, which is rarely what a digest wants.',
     ),
   format: formatArg,
+  output: outputArg,
 });
 
 export const getCommentsTool = defineTool({
@@ -300,6 +301,7 @@ export const getCommentsTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getCommentsInput,
+  fileOutput: { rows: 'comments' },
   example: {
     summary: 'The newest ten comments on an issue, as markdown',
     arguments: {
@@ -364,6 +366,7 @@ const getChangelogInput = toolInput({
   issue: issueArg,
   startAt: startAtArg,
   maxResults: maxResultsArg,
+  output: outputArg,
 });
 
 export const getChangelogTool = defineTool({
@@ -379,6 +382,7 @@ export const getChangelogTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getChangelogInput,
+  fileOutput: { rows: 'histories' },
   example: {
     summary: "The first page of an issue's field history",
     arguments: { issue: 'PROJ-123', maxResults: 50 },
@@ -471,6 +475,7 @@ const getWorklogsInput = toolInput({
   issue: issueArg,
   startAt: startAtArg,
   maxResults: maxResultsArg,
+  output: outputArg,
 });
 
 export const getWorklogsTool = defineTool({
@@ -485,6 +490,7 @@ export const getWorklogsTool = defineTool({
   package: 'issues',
   annotations: READ_ANNOTATIONS,
   input: getWorklogsInput,
+  fileOutput: { rows: 'worklogs' },
   example: {
     summary: 'Time logged on an issue',
     arguments: { issue: 'PROJ-123' },

@@ -354,6 +354,7 @@ async function serve(): Promise<void> {
     });
 
     const { buildServer } = await import('./mcp/server.js');
+    const { createNodeMediaStore } = await import('./tools/attachments.js');
     const serverDeps = {
       settings,
       packages,
@@ -366,6 +367,11 @@ async function serve(): Promise<void> {
       rng,
       journal,
       api,
+      // Where `output: "file"` writes and exports are read from (D152).
+      media:
+        settings.mediaDir === undefined
+          ? undefined
+          : createNodeMediaStore(settings.mediaDir),
     };
 
     // WHICH transport is this file's one branch on `settings.transport` (D101).

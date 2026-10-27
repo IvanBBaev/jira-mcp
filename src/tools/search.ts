@@ -68,7 +68,7 @@ import {
 import type { ParsedJql, SearchIssue, SearchIssuesResult } from '../api/search.js';
 import type { PageStopReason } from '../api/shared.js';
 import type { ErrorRecord, JiraError } from '../core/types.js';
-import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
+import { defineTool, outputArg, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { errorResult, toErrorRecord } from '../mcp/errors.js';
 import { currentRecentWrites } from '../mcp/recent-writes.js';
 import { err, ok } from '../mcp/result.js';
@@ -355,6 +355,7 @@ const searchInput = toolInput({
       'Numeric issue ids (not keys) written moments ago, so the search index ' +
         `reconciles them before answering. At most ${MAX_RECONCILE_ISSUES}.`,
     ),
+  output: outputArg,
 });
 
 export const searchTool = defineTool({
@@ -370,6 +371,7 @@ export const searchTool = defineTool({
   package: 'search',
   annotations: READ_ANNOTATIONS,
   input: searchInput,
+  fileOutput: { rows: 'issues' },
   example: {
     summary: "The caller's open PROJ issues, most recently updated first",
     arguments: {

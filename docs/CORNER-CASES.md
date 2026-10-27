@@ -3661,3 +3661,29 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
 - **CC-1556** — over the protocol, a call with a `progressToken` that issues
   one GET receives exactly one notification; the same call without a token
   receives none.
+
+## File output (D152, 2026-10-27)
+
+- **CC-1558** — an export is named `jira-export-<tool>-<UTC stamp>-<8 hex>.jsonl`
+  from the injected Clock and Rng; the read pattern accepts that name and its
+  `-N` collision variant and nothing else (a path, another extension, a
+  foreign file).
+- **CC-1559** — JSONL is one row per line, newline-terminated; an empty page
+  is an empty file; the inline preview is cut at 2000 characters and flagged.
+- **CC-1560** — the rows are redacted before the write; `data[rows]` is
+  replaced by the descriptor while cursors, `hasMore` and the untrusted mark
+  stay; a failed result passes through; a tool that declares a row key it
+  does not return is a bug and throws.
+- **CC-1561** — the `resource_link` appears only for a successful envelope
+  carrying an export; `jira://exports/` reads only pattern-matching names
+  that exist, and answers not-found without a media directory.
+- **CC-1562** — `defineTool` refuses `fileOutput` on a write tool, without
+  the `output` argument, or with an empty row key, and refuses `output`
+  without `fileOutput`.
+- **CC-1563** — `output: "file"` without `JIRA_MEDIA_DIR` is a `config` error
+  and no request is sent.
+- **CC-1564** — the handler never sees `output`; `output: "inline"` behaves
+  as before; `output: "file"` writes the redacted rows to the store.
+- **CC-1565** — over the protocol the export arrives as a `resource_link`
+  content block and reads back through `resources/read`; the
+  `jira://exports/{name}` template is listed only with a media directory.

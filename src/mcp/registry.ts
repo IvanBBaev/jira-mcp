@@ -32,6 +32,7 @@
 // ---------------------------------------------------------------------------
 
 import { CLOUD_API } from '../api/port.js';
+import type { MediaStore } from '../api/attachments.js';
 import type { JiraApi } from '../api/port.js';
 import { isJiraError, toLogFields } from '../core/errors.js';
 import { newCorrelationId, runWithCid } from '../core/log.js';
@@ -50,6 +51,7 @@ import type {
   Settings,
 } from '../core/types.js';
 import { UNEXPECTED_THROW_KIND, errorResult, errorResultOf } from './errors.js';
+import { exportRows, noMediaDirError } from './exports.js';
 import { createProjectScope } from './project-scope.js';
 import { countRequests } from './progress.js';
 import { renderResult } from './result.js';
@@ -275,6 +277,8 @@ export interface RegistryDeps {
   readonly gate?: WriteGate | undefined;
   /** The api-ring adapter every tool call gets (D106); {@link CLOUD_API} when absent. */
   readonly api?: JiraApi | undefined;
+  /** JIRA_MEDIA_DIR, where `output: "file"` writes (D152); absent = not configured. */
+  readonly media?: MediaStore | undefined;
 }
 
 /** Per-call inputs the transport knows and the registry does not. */
@@ -493,7 +497,16 @@ export function createRegistry(
     const parsed = spec.input.safeParse(args);
     if (!parsed.success) return validationResult(spec.name, parsed.error.issues);
 
-    const { control, rest } = splitControlFields(parsed.data);
+    const { control, rest: allArgs } = splitControlFields(parsed.data);
+    // `output` belongs to the registry, not the tool (D152): stripped before
+    // the gate and the handler see the arguments, and refused up front when
+    // there is nowhere to write, so a doomed export never reaches Jira.
+    const { fileOutput } = spec;
+    const { output, ...withoutOutput } = allArgs;
+    const rest = fileOutput === undefined ? allArgs : withoutOutput;
+    const toFile = fileOutput !== undefined && output === 'file';
+    if (toFile && deps.media === undefined)
+      return errorResult(noMediaDirError(spec.name));
     if (control.profile !== undefined && settings.lockProfile) {
       return errorResultOf(
         'config',
@@ -542,7 +555,7 @@ export function createRegistry(
     });
 
     const planContext = spec.planContext?.bind(spec);
-    return gate.execute({
+    const result = await gate.execute({
       tool: spec,
       args: rest,
       control,
@@ -555,6 +568,13 @@ export function createRegistry(
       ...(planContext === undefined
         ? {}
         : { context: (seam: JiraRequestFn) => planContext(rest, ctx(seam)) }),
+    });
+    if (!toFile || fileOutput === undefined || deps.media === undefined) return result;
+    return exportRows(spec.name, fileOutput.rows, result, {
+      media: deps.media,
+      clock: deps.clock,
+      rng: deps.rng,
+      redact: (value: unknown) => deps.redactor.redact(value),
     });
   };
 

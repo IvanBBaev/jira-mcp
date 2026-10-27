@@ -32,7 +32,8 @@ import { createMemoryJournal } from '../core/fakes/memoryJournal.js';
 import type { MemoryJournal } from '../core/fakes/memoryJournal.js';
 import { JiraError } from '../core/types.js';
 import type { Rng, Settings } from '../core/types.js';
-import { defineTool, toolInput, writeToolInput, z } from './define.js';
+import { createMemoryMedia } from '../testing/memory-media.js';
+import { defineTool, outputArg, toolInput, writeToolInput, z } from './define.js';
 import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import {
   createRecentWrites,
@@ -1359,5 +1360,83 @@ test('[CC-1556] a progressToken gets one progress notification per Jira request;
     const plain = await callTool(client, 'jira_fx_lookup', { key: 'ABC-1' });
     assert.notEqual(plain.isError, true);
     assert.equal(seen.length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// File output (D152)
+// ---------------------------------------------------------------------------
+
+const rowsTool = defineTool({
+  name: 'jira_fx_rows',
+  title: 'Rows',
+  description: 'Returns a page of rows.',
+  package: 'search',
+  annotations: READ_ANNOTATIONS,
+  input: toolInput({ output: outputArg }),
+  fileOutput: { rows: 'rows' },
+  handler() {
+    return Promise.resolve(
+      ok({ rows: [{ key: 'A-1' }, { key: 'A-2' }], hasMore: false }),
+    );
+  },
+});
+
+const EXPORT_MANIFEST: readonly PackageSpec[] = [
+  { id: 'core', title: 'Core', description: 'The core package.', tools: [pingTool] },
+  {
+    id: 'search',
+    title: 'Search',
+    description: 'The search package.',
+    tools: [rowsTool],
+  },
+];
+
+test('[CC-1565] an export travels as a resource_link and reads back through resources/read', async () => {
+  const media = createMemoryMedia();
+  const { deps } = makeHarness();
+  await withSession({ ...deps, packages: EXPORT_MANIFEST, media }, async ({ client }) => {
+    const templates = await client.listResourceTemplates();
+    assert.ok(
+      templates.resourceTemplates.some(
+        (template) =>
+          template.uriTemplate === 'jira://exports/{name}' &&
+          template.mimeType === 'application/jsonl',
+      ),
+    );
+
+    const inline = await callTool(client, 'jira_fx_rows');
+    assert.equal(inline.content.length, 1);
+
+    const result = await callTool(client, 'jira_fx_rows', { output: 'file' });
+    const descriptor = dataOf(result)['export'] as {
+      uri: string;
+      name: string;
+      bytes: number;
+    };
+    assert.deepEqual(result.content[1], {
+      type: 'resource_link',
+      uri: descriptor.uri,
+      name: descriptor.name,
+      mimeType: 'application/jsonl',
+      size: descriptor.bytes,
+    });
+
+    const read = await client.readResource({ uri: descriptor.uri });
+    assert.equal(resourceText(read), '{"key":"A-1"}\n{"key":"A-2"}\n');
+    await assert.rejects(
+      client.readResource({ uri: 'jira://exports/notes.txt' }),
+      /Unknown export/,
+    );
+  });
+
+  // Without a media directory the template is not offered at all.
+  await withSession({ ...deps, packages: EXPORT_MANIFEST }, async ({ client }) => {
+    const templates = await client.listResourceTemplates();
+    assert.ok(
+      templates.resourceTemplates.every(
+        (t) => !t.uriTemplate.startsWith('jira://exports/'),
+      ),
+    );
   });
 });

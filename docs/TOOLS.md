@@ -218,6 +218,22 @@ apply mode it returns that error and leaves the `plan_id` unspent.
   `paging.partial` means *narrow the filter, or raise the cap the `note`
   names* — not *resume*.
 
+## File output
+
+Five large reads — `jira_search`, `jira_get_comments`, `jira_get_changelog`,
+`jira_get_worklogs` and `jira_get_sprint_issues` — take an optional
+`output`: `"inline"` (the default) or `"file"` (D152). With `"file"` the
+page's row array (`issues`, `comments`, `histories`, `worklogs`, `issues`)
+is redacted and written to `JIRA_MEDIA_DIR` as
+`jira-export-<tool>-<UTC stamp>-<8 hex>.jsonl`, one row per line, and `data`
+carries `output: "file"` and
+`export: {name, path, uri, mimeType, rows, bytes, preview, preview_truncated?}`
+in its place. Every other field — `nextPageToken`, `startAt`, `hasMore` —
+stays inline: one page per file, paging as usual. The result also carries a
+`resource_link` content block to `jira://exports/{name}`, which
+`resources/read` serves while `JIRA_MEDIA_DIR` is set. Without
+`JIRA_MEDIA_DIR`, `output: "file"` is a `config` error and nothing is sent.
+
 ## Untrusted content (normative)
 
 Jira free text is third-party input — Service Desk portals and mail handlers

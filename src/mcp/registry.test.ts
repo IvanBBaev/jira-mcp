@@ -21,7 +21,8 @@ import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { currentCid } from '../core/log.js';
 import { JiraError } from '../core/types.js';
 import type { JiraRequestSpec, LogEvent, Rng, Settings } from '../core/types.js';
-import { defineTool, toolInput, writeToolInput, z } from './define.js';
+import { createMemoryMedia } from '../testing/memory-media.js';
+import { defineTool, outputArg, toolInput, writeToolInput, z } from './define.js';
 import { PROFILE_PACKAGES, createRegistry, expandSelection } from './registry.js';
 import type { RegistryDeps } from './registry.js';
 import { ok } from './result.js';
@@ -1249,4 +1250,77 @@ test('[D400] without JIRA_PROJECTS the search JQL is sent unchanged', async () =
   h.jira.on('POST /rest/api/3/search/jql', jiraOk({ issues: [] }));
   await registry.call('jira_search', { jql: 'status = Done' });
   assert.deepEqual(h.jira.lastRequest()?.body, { jql: 'status = Done' });
+});
+
+// ---------------------------------------------------------------------------
+// File output (D152)
+// ---------------------------------------------------------------------------
+
+function exportingSearch(seen: Record<string, unknown>[]): AnyToolSpec {
+  return defineTool({
+    name: 'jira_search',
+    title: 'Search',
+    description: 'Searches issues.',
+    package: 'search',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    input: toolInput({ jql: z.string(), output: outputArg }),
+    fileOutput: { rows: 'issues' },
+    async handler(args, ctx) {
+      seen.push({ ...args });
+      const res = await ctx.jira<{ issues: readonly string[] }>({
+        method: 'POST',
+        path: '/search/jql',
+        body: { jql: args.jql },
+        safe: true,
+      });
+      return ok({ issues: res.data.issues, nextPageToken: 'n2' });
+    },
+  });
+}
+
+test('[CC-1563] output: "file" without JIRA_MEDIA_DIR is a config error before any request', async () => {
+  const seen: Record<string, unknown>[] = [];
+  const h = harness(settingsOf());
+  const registry = createRegistry([packageOf('search', [exportingSearch(seen)])], h.deps);
+
+  const refused = await registry.call('jira_search', { jql: 'x', output: 'file' });
+  assert.equal(refused.structuredContent.error?.kind, 'config');
+  assert.match(refused.structuredContent.error?.message ?? '', /JIRA_MEDIA_DIR/);
+  assert.deepEqual(h.jira.calls, []);
+  assert.deepEqual(seen, []);
+});
+
+test('[CC-1564] output: "file" moves the rows to the media store; the handler never sees output', async () => {
+  const seen: Record<string, unknown>[] = [];
+  const h = harness(settingsOf(), ['s3cret']);
+  const media = createMemoryMedia();
+  const registry = createRegistry([packageOf('search', [exportingSearch(seen)])], {
+    ...h.deps,
+    media,
+  });
+  h.jira.on('POST /rest/api/3/search/jql', jiraOk({ issues: ['ABC-1', 's3cret'] }));
+
+  const inline = await registry.call('jira_search', { jql: 'x', output: 'inline' });
+  assert.deepEqual((inline.structuredContent.data as { issues: unknown }).issues, [
+    'ABC-1',
+    FAKE_PLACEHOLDER,
+  ]);
+  assert.equal(media.files.size, 0);
+
+  const filed = await registry.call('jira_search', { jql: 'x', output: 'file' });
+  assert.equal(filed.structuredContent.ok, true);
+  const data = filed.structuredContent.data as Record<string, unknown>;
+  assert.equal('issues' in data, false);
+  assert.equal(data['nextPageToken'], 'n2');
+  const descriptor = data['export'] as { name: string; rows: number };
+  assert.equal(descriptor.rows, 2);
+  const written = new TextDecoder().decode(media.files.get(descriptor.name));
+  assert.equal(written, `"ABC-1"\n"${FAKE_PLACEHOLDER}"\n`);
+
+  assert.deepEqual(seen, [{ jql: 'x' }, { jql: 'x' }]);
 });

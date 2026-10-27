@@ -33,6 +33,13 @@ env var names — not internal refactors.
   `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
   CONFIGURATION.md gains a "Proxy and custom CA" section.
+- File output for large reads (D152): `jira_search`, `jira_get_comments`,
+  `jira_get_changelog`, `jira_get_worklogs` and `jira_get_sprint_issues`
+  take `output: "file"`, which writes the page's rows (redacted) to a JSONL
+  file in `JIRA_MEDIA_DIR` and returns its path, a short preview and a
+  `resource_link` to `jira://exports/{name}`. Cursors stay inline, so paging
+  works as before. Without `JIRA_MEDIA_DIR` the call is refused before
+  anything is sent to Jira.
 - Progress notifications (D151): a client that sends `_meta.progressToken`
   with a tool call receives `notifications/progress` — one step per Jira
   request completed, at most four a second. Nothing changes for clients that

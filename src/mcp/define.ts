@@ -106,6 +106,11 @@ export const PROFILE_DESCRIPTION =
   'Credential profile for this call; omit for the active one. Rejected under ' +
   'JIRA_LOCK_PROFILE.';
 
+/** `.describe()` text for `output`, on the reads that declare `fileOutput` (D152). */
+export const OUTPUT_DESCRIPTION =
+  'inline (default): rows in data. file: this page of rows goes to a JSONL file ' +
+  'in JIRA_MEDIA_DIR; returns its path, a resource link and a preview.';
+
 /** Normative `.describe()` text for `apply` (write tools only). */
 export const APPLY_DESCRIPTION =
   'true executes the write; omitted or false returns a plan. Executing also needs ' +
@@ -118,6 +123,12 @@ export const PLAN_ID_DESCRIPTION =
 
 /** The shared `profile` argument, identical on every tool. */
 export const profileArg = z.string().min(1).optional().describe(PROFILE_DESCRIPTION);
+
+/** The file-output switch (D152); only a tool that declares `fileOutput` takes it. */
+export const outputArg = z
+  .enum(['inline', 'file'])
+  .optional()
+  .describe(OUTPUT_DESCRIPTION);
 
 /** The `apply` gate flag, present on write tools only. */
 export const applyArg = z.boolean().optional().describe(APPLY_DESCRIPTION);
@@ -285,6 +296,26 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
           'read-only tool — build it with toolInput()',
       );
     }
+  }
+
+  const { fileOutput } = spec;
+  const declaresOutput = declaresKey(input, 'output', 'file');
+  if (fileOutput !== undefined) {
+    if (isWrite) throw specError(name, 'only a read-only tool can declare fileOutput');
+    if (typeof fileOutput.rows !== 'string' || fileOutput.rows === '') {
+      throw specError(name, 'fileOutput.rows must name the row array in data');
+    }
+    if (!declaresOutput) {
+      throw specError(
+        name,
+        'a tool that declares fileOutput must take the "output" argument — add outputArg',
+      );
+    }
+  } else if (declaresOutput) {
+    throw specError(
+      name,
+      'the input schema declares "output" but the tool does not declare fileOutput',
+    );
   }
 
   const { example } = spec;

@@ -10,6 +10,7 @@ import {
   TOOL_NAME_PATTERN,
   declaresKey,
   defineTool,
+  outputArg,
   profileArg,
   rejectsUnknownKeys,
   toolInput,
@@ -345,4 +346,44 @@ test('[CC-1418] the control-field descriptions stay within the per-schema budget
   assert.match(PROFILE_DESCRIPTION, /JIRA_LOCK_PROFILE/);
   assert.match(APPLY_DESCRIPTION, /JIRA_WRITE_MODE=apply/);
   assert.match(PLAN_ID_DESCRIPTION, /apply: true/);
+});
+
+test('[CC-1562] fileOutput is a read-only declaration that must come with the output argument', () => {
+  const tool = defineTool(
+    spec({
+      input: toolInput({ issue: z.string(), output: outputArg }),
+      fileOutput: { rows: 'comments' },
+    }),
+  );
+  assert.deepEqual(tool.fileOutput, { rows: 'comments' });
+
+  assertSpecError(
+    () => defineTool(spec({ fileOutput: { rows: 'comments' } })),
+    'must take the "output" argument',
+  );
+  assertSpecError(
+    () =>
+      defineTool(
+        spec({
+          input: toolInput({ issue: z.string(), output: outputArg }),
+          fileOutput: { rows: '' },
+        }),
+      ),
+    'fileOutput.rows must name',
+  );
+  assertSpecError(
+    () =>
+      defineTool(
+        writeSpec({
+          input: writeToolInput({ issue: z.string(), output: outputArg }),
+          fileOutput: { rows: 'comments' },
+        }),
+      ),
+    'only a read-only tool',
+  );
+  assertSpecError(
+    () =>
+      defineTool(spec({ input: toolInput({ issue: z.string(), output: outputArg }) })),
+    'does not declare fileOutput',
+  );
 });

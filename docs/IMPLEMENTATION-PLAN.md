@@ -1445,6 +1445,10 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] MCP progress notifications (D151) — a `progressToken` gets one
       throttled, monotonic update per settled Jira request, counted under
       the write gate (CC-1553…CC-1556).
+- [x] File output for large reads (D152) — `output: "file"` on five reads
+      writes the page's redacted rows to a JSONL file in `JIRA_MEDIA_DIR`,
+      returns a descriptor and a `resource_link`, and serves the file as
+      `jira://exports/{name}` (CC-1558…CC-1565).
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`
