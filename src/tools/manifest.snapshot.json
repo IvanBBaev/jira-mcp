@@ -1322,6 +1322,38 @@
           }
         },
         {
+          "name": "jira_delete_attachment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "attachmentId": {
+                "type": "string",
+                "pattern": "^[1-9]\\d*$"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["attachmentId"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_delete_component",
           "annotations": {
             "readOnlyHint": false,

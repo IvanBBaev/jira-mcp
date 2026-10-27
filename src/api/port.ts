@@ -52,7 +52,13 @@ import {
   moveIssuesToSprint,
   startSprint,
 } from './agile.js';
-import { downloadAttachment, listAttachments, uploadAttachment } from './attachments.js';
+import {
+  deleteAttachment,
+  downloadAttachment,
+  getAttachment,
+  listAttachments,
+  uploadAttachment,
+} from './attachments.js';
 import { getBulkStatus, submitBulkDelete, submitBulkEdit } from './bulk.js';
 import {
   addVote,
@@ -171,7 +177,9 @@ export interface JiraApi {
   readonly startSprint: typeof startSprint;
 
   // --- attachments ---
+  readonly deleteAttachment: typeof deleteAttachment;
   readonly downloadAttachment: typeof downloadAttachment;
+  readonly getAttachment: typeof getAttachment;
   readonly listAttachments: typeof listAttachments;
   readonly uploadAttachment: typeof uploadAttachment;
 
@@ -290,7 +298,9 @@ export const CLOUD_API: JiraApi = Object.freeze({
   moveIssuesToSprint,
   startSprint,
 
+  deleteAttachment,
   downloadAttachment,
+  getAttachment,
   listAttachments,
   uploadAttachment,
 

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Package `issues-delete` — the irreversible surface (D45, WP-72, Phases 11–12).
 //
-// Nine tools that destroy data Jira cannot give back: an issue, a comment, a
-// worklog entry, an issue link (D143), a component, a version, a sprint, and —
+// Ten tools that destroy data Jira cannot give back: an issue, a comment, a
+// worklog entry, an issue link (D143), an attachment (D144), a component, a version, a sprint, and —
 // since Phase 12 — up to a thousand issues at once, deleted or bulk-edited
 // (Phase 11 added the project-entity deletes; the package id predates all of
 // them and stays for deny-list compatibility, CC-120/CC-126). They are a
@@ -49,6 +49,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AgileSprint, DeleteSprintResult } from '../api/agile.js';
+import type { DeleteAttachmentResult, JiraAttachment } from '../api/attachments.js';
 import type { BulkEditAction, BulkSubmitResult } from '../api/bulk.js';
 import type {
   ComponentRelatedIssueCounts,
@@ -202,6 +203,17 @@ interface IssueLinkBefore {
   readonly outward?: string;
   readonly inwardIssue: LinkEndBefore;
   readonly outwardIssue: LinkEndBefore;
+}
+
+interface AttachmentBefore {
+  readonly kind: 'attachment';
+  readonly id: string;
+  /** Jira's filename — tenant text, excerpted like any other. */
+  readonly filename: string;
+  readonly size?: number;
+  readonly mimeType?: string;
+  readonly author?: UserBefore;
+  readonly created?: string;
 }
 
 interface ComponentBefore {
@@ -487,6 +499,19 @@ function issueLinkBefore(link: IssueLinkDetail): IssueLinkBefore {
   };
 }
 
+function attachmentBefore(attachment: JiraAttachment): AttachmentBefore {
+  const author = userBefore(attachment.author);
+  return {
+    kind: 'attachment',
+    id: attachment.id,
+    filename: excerpt(attachment.filename).text,
+    ...(attachment.size === undefined ? {} : { size: attachment.size }),
+    ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+    ...(author === undefined ? {} : { author }),
+    ...(attachment.created === undefined ? {} : { created: attachment.created }),
+  };
+}
+
 /**
  * `lead` as one string: the display name, or the accountId when that is all.
  * The api ring drops a lead without an accountId and never keeps an empty
@@ -650,6 +675,10 @@ export interface DeletedWorklog extends DeleteWorklogResult {
 
 export interface DeletedIssueLink extends DeleteIssueLinkResult {
   readonly before: IssueLinkBefore;
+}
+
+export interface DeletedAttachment extends DeleteAttachmentResult {
+  readonly before: AttachmentBefore;
 }
 
 export interface DeletedComponent extends DeleteComponentResult {
@@ -940,6 +969,51 @@ export const unlinkIssuesTool = defineTool({
       noteBeforeState(ctx.jira, before);
 
       const deleted = await ctx.api.deleteIssueLink({ ...base, linkId: args.linkId });
+      return ok({ ...deleted, before }, { untrusted: true });
+    }),
+});
+
+// ---------------------------------------------------------------------------
+// jira_delete_attachment
+// ---------------------------------------------------------------------------
+
+const deleteAttachmentInput = writeToolInput({
+  attachmentId: z
+    .string()
+    .regex(/^[1-9]\d*$/, 'An attachment id is a positive integer.')
+    .describe('Numeric attachment id, from jira_list_attachments.'),
+});
+
+export const deleteAttachmentTool = defineTool({
+  name: 'jira_delete_attachment',
+  title: 'Delete attachment',
+  description:
+    'Permanently delete one attachment from its issue. IRREVERSIBLE: the file is ' +
+    'gone from Jira and only a local copy (jira_download_attachment) survives. ' +
+    'Requires JIRA_ALLOW_IRREVERSIBLE=true on top of the usual plan → apply; the ' +
+    'plan works without it and shows the file that would be destroyed.',
+  package: 'issues-delete',
+  annotations: DELETE_ANNOTATIONS,
+  writeTier: 'irreversible',
+  input: deleteAttachmentInput,
+  example: {
+    summary: 'Plan the deletion of one attachment',
+    arguments: { attachmentId: '10001' },
+  },
+  handler: async (args, ctx): Promise<ToolResult<DeletedAttachment>> =>
+    guarded(async () => {
+      const base = callBase(ctx);
+      const attachment = await ctx.api.getAttachment({
+        ...base,
+        attachmentId: args.attachmentId,
+      });
+      const before = attachmentBefore(attachment);
+      noteBeforeState(ctx.jira, before);
+
+      const deleted = await ctx.api.deleteAttachment({
+        ...base,
+        attachmentId: args.attachmentId,
+      });
       return ok({ ...deleted, before }, { untrusted: true });
     }),
 });
@@ -1385,7 +1459,7 @@ export const issuesDeletePackage: PackageSpec = {
   title: 'Deletes and bulk changes (irreversible)',
   description:
     'Irreversible deletions — an issue, a comment, a worklog entry, an issue link, ' +
-    'a component, ' +
+    'an attachment, a component, ' +
     'a version, a sprint — and the bulk writes that delete or edit up to 1000 ' +
     'issues in one asynchronous operation.',
   tools: [
@@ -1393,6 +1467,7 @@ export const issuesDeletePackage: PackageSpec = {
     deleteCommentTool,
     deleteWorklogTool,
     unlinkIssuesTool,
+    deleteAttachmentTool,
     deleteComponentTool,
     deleteVersionTool,
     deleteSprintTool,

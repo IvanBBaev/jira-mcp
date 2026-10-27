@@ -3462,3 +3462,13 @@ Prompts (D125):
   summaries excerpted, applies only under the irreversible ceremony, and
   sends no DELETE when the read fails (a 404 stays `not_found`) or the id is
   refused locally.
+
+## Attachment delete (D144, 2026-10-27)
+
+- **CC-1529** — `deleteAttachment` sends `DELETE /attachment/{id}` and returns
+  `{ attachmentId, deleted: true }`; a non-numeric id is a `validation` error
+  naming `jira_list_attachments` and never reaches the URL.
+- **CC-1530** — `jira_delete_attachment` plans with the file's name, size,
+  media type, author and creation time and never the signed content URL,
+  sends no DELETE when the read fails (a 404 stays `not_found`), and its
+  schema refuses a non-numeric id.

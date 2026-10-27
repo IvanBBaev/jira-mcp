@@ -35,6 +35,8 @@ import {
   MAX_MEDIA_NAME_BYTES,
   MAX_MEDIA_NAME_CHARS,
   UPLOAD_FIELD_NAME,
+  deleteAttachment,
+  deleteAttachmentRequest,
   downloadAttachment,
   getAttachment,
   listAttachments,
@@ -802,4 +804,39 @@ test('uploadAttachment refuses a response that is not the array Jira documents',
   );
 
   assert.equal(err.kind, 'unexpected_shape');
+});
+
+// ---------------------------------------------------------------------------
+// deleteAttachment (D144)
+// ---------------------------------------------------------------------------
+
+test('[CC-1529] deleteAttachment addresses the attachment and echoes the receipt', async () => {
+  const jira = createFakeJiraRequest().on(
+    'DELETE /rest/api/3/attachment/10001',
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  const deleted = await deleteAttachment({ jira: jira.fn, attachmentId: ' 10001 ' });
+
+  assert.deepEqual(deleted, { attachmentId: '10001', deleted: true });
+  assert.equal(jira.calls.length, 1);
+  assert.deepEqual(deleteAttachmentRequest({ attachmentId: 10001 }), {
+    method: 'DELETE',
+    path: '/attachment/10001',
+    pathTemplate: ATTACHMENT_PATH_TEMPLATE,
+  });
+});
+
+test('[CC-1529] a bad attachment id never reaches a URL', async () => {
+  const jira = createFakeJiraRequest(); // every route unprogrammed: a call would throw
+
+  for (const attachmentId of ['', '0', 'abc', '10001/../1', '-1']) {
+    const err = asJiraError(
+      await caught(() => deleteAttachment({ jira: jira.fn, attachmentId })),
+    );
+    assert.equal(err.kind, 'validation');
+    assert.match(err.remediation ?? '', /jira_list_attachments/);
+  }
+
+  assert.deepEqual(jira.calls, []);
 });

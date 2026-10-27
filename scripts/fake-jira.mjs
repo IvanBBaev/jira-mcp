@@ -2489,6 +2489,18 @@ function buildRoutes(server) {
     ],
 
     [
+      'DELETE',
+      '/rest/api/3/attachment/{id}',
+      (ctx) => {
+        if (!state.attachments.delete(ctx.params.id)) return notFound('Attachment');
+        for (const issue of state.issues.values()) {
+          issue.attachmentIds = issue.attachmentIds.filter((id) => id !== ctx.params.id);
+        }
+        return noContent();
+      },
+    ],
+
+    [
       'GET',
       '/rest/api/3/attachment/content/{id}',
       (ctx) => {

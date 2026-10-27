@@ -260,6 +260,10 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   (summary, status); `DELETE` on the same route answers 204 and removes the
   link from both issues. The id is the one on an `issuelinks` entry. Cloud
   only here.
+- Attachment delete (D144): `DELETE /attachment/{id}` answers 204. It needs
+  the Delete All Attachments permission, or Delete Own Attachments for the
+  caller's own files. The before-state comes from `GET /attachment/{id}`, the
+  same read the download uses. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

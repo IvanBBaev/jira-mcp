@@ -32,14 +32,23 @@
 // Without a media directory the two byte-moving calls refuse with `kind=config`
 // naming `JIRA_MEDIA_DIR`; metadata listing works regardless.
 //
-// On Data Center (D117) the list and the download are served, the upload is
-// not: the bytes come from the attachment servlet
+// A fourth route, `DELETE /rest/api/3/attachment/{id}` (D144), backs the
+// irreversible `jira_delete_attachment`; it moves no bytes and needs no media
+// directory.
+//
+// On Data Center (D117) the list and the download are served, the upload and
+// the delete are not: the bytes come from the attachment servlet
 // (`/secure/attachment/{id}/{filename}`, {@link downloadAttachmentDataCenter}).
 // ---------------------------------------------------------------------------
 
 import { createJiraError } from '../core/errors.js';
 import { MAX_ATTACHMENT_BYTES, encodeSegment } from '../core/http-util.js';
-import type { JiraError, JiraRequestFn, JiraResponse } from '../core/types.js';
+import type {
+  JiraError,
+  JiraRequestFn,
+  JiraRequestSpec,
+  JiraResponse,
+} from '../core/types.js';
 import type { BudgetGuard } from './shared.js';
 import { shapeDataCenterUser } from './users.js';
 
@@ -824,4 +833,62 @@ function shapeError(what: string): JiraError {
     kind: 'unexpected_shape',
     reason: `Jira's attachment response could not be read: ${what}.`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// 9. Delete (D144)
+//
+// `DELETE /rest/api/3/attachment/{id}` answers 204. The tool reads the record
+// first with {@link getAttachment}, so the plan names the file being destroyed.
+// ---------------------------------------------------------------------------
+
+/** Options for {@link deleteAttachment}. */
+export type DeleteAttachmentOptions = AttachmentCallBase &
+  BudgetGuard & {
+    readonly attachmentId: string | number;
+  };
+
+/** What {@link deleteAttachment} returns: Jira's 204 carries no body. */
+export interface DeleteAttachmentResult {
+  readonly attachmentId: string;
+  readonly deleted: true;
+}
+
+export function deleteAttachmentRequest(input: {
+  readonly attachmentId: string | number;
+}): JiraRequestSpec {
+  const id = numericAttachmentId(input.attachmentId);
+  return {
+    method: 'DELETE',
+    path: `/attachment/${id}`,
+    pathTemplate: ATTACHMENT_PATH_TEMPLATE,
+  };
+}
+
+/** Delete one attachment by id. Needs Delete All Attachments or Delete Own. */
+export async function deleteAttachment(
+  options: DeleteAttachmentOptions,
+): Promise<DeleteAttachmentResult> {
+  const attachmentId = numericAttachmentId(options.attachmentId);
+  await options.jira({
+    ...deleteAttachmentRequest({ attachmentId }),
+    ...callExtras(options),
+  });
+  return { attachmentId, deleted: true };
+}
+
+/**
+ * The id as a path segment: a positive integer, or a `validation` error before
+ * anything is sent — a delete never reaches the wire with an id it cannot name.
+ */
+export function numericAttachmentId(value: string | number): string {
+  const text = typeof value === 'number' ? String(value) : value.trim();
+  if (!/^[1-9][0-9]*$/.test(text)) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `An attachment id must be a positive integer, received ${JSON.stringify(String(value))}.`,
+      remediation: 'Pass the numeric id from jira_list_attachments.',
+    });
+  }
+  return text;
 }

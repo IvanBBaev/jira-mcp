@@ -17,7 +17,7 @@
 // The gate is real here rather than faked: `createWriteGate` is what turns a
 // handler into a plan, and the whole point of this package is what the gate does
 // with `writeTier: 'irreversible'`. `mcp/write-mode.test.ts` proves the tier
-// rules in isolation; this file proves the nine tools are wired into them.
+// rules in isolation; this file proves the ten tools are wired into them.
 //
 // Response bodies are inline plain objects shaped after real Jira Cloud v3
 // payloads and marked `// synthetic`. The fake throws on a route nobody
@@ -44,6 +44,7 @@ import type { WriteGate } from '../mcp/write-mode.js';
 import {
   bulkDeleteIssuesTool,
   bulkEditIssuesTool,
+  deleteAttachmentTool,
   deleteCommentTool,
   deleteComponentTool,
   deleteIssueTool,
@@ -311,6 +312,7 @@ test('CC-120: the issues-delete package is the whole irreversible surface, and n
       'jira_delete_comment',
       'jira_delete_worklog',
       'jira_unlink_issues',
+      'jira_delete_attachment',
       'jira_delete_component',
       'jira_delete_version',
       'jira_delete_sprint',
@@ -349,6 +351,8 @@ test('every delete tool warns about the opt-in and names an alternative', () => 
   // The link goes from both ends at once, and only a NEW link can replace it.
   assert.match(unlinkIssuesTool.description, /BOTH issues/);
   assert.match(unlinkIssuesTool.description, /jira_link_issues/);
+  // Only a local copy outlives an attachment delete.
+  assert.match(deleteAttachmentTool.description, /jira_download_attachment/);
   // The one delete whose issues survive: the model must know they only move.
   assert.match(deleteSprintTool.description, /backlog/);
   // The bulk writes name the poller: a 201 receipt alone never says "done".
@@ -2170,4 +2174,107 @@ test('CC-1528: a non-numeric link id never reaches the wire', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.error?.kind, 'validation');
   assert.deepEqual(fake.calls, []);
+});
+
+// ---------------------------------------------------------------------------
+// jira_delete_attachment (D144)
+// ---------------------------------------------------------------------------
+
+const ATTACHMENT_ID = '10001';
+const ATTACHMENT_ROUTE = `GET /rest/api/3/attachment/${ATTACHMENT_ID}`;
+const DELETE_ATTACHMENT_ROUTE = `DELETE /rest/api/3/attachment/${ATTACHMENT_ID}`;
+
+/** `GET /attachment/{id}`. // synthetic */
+const ATTACHMENT_BODY = {
+  id: ATTACHMENT_ID,
+  self: `https://example.atlassian.net/rest/api/3/attachment/${ATTACHMENT_ID}`,
+  filename: 'design.pdf',
+  author: WIRE_USER,
+  created: '2026-08-01T09:00:00.000+0000',
+  size: 2048,
+  mimeType: 'application/pdf',
+  content: `https://example.atlassian.net/rest/api/3/attachment/content/${ATTACHMENT_ID}`,
+};
+
+test('CC-1530: the attachment plan names the file; the receipt echoes the same snapshot', async () => {
+  const fake = createFakeJiraRequest()
+    .on(DELETE_ATTACHMENT_ROUTE, NO_CONTENT)
+    .on(ATTACHMENT_ROUTE, jiraOk(ATTACHMENT_BODY));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    deleteAttachmentTool,
+    { attachmentId: ATTACHMENT_ID },
+    fake,
+  );
+
+  assert.deepEqual((plan.data as { planned: unknown }).planned, {
+    method: 'DELETE',
+    path: `/attachment/${ATTACHMENT_ID}`,
+  });
+  const before = beforeOf(plan);
+  assert.deepEqual(before, {
+    kind: 'attachment',
+    id: ATTACHMENT_ID,
+    filename: 'design.pdf',
+    size: 2048,
+    mimeType: 'application/pdf',
+    author: { accountId: ACCOUNT_ID, displayName: WIRE_USER.displayName },
+    created: '2026-08-01T09:00:00.000+0000',
+  });
+  // The signed content URL never reaches the plan (D41).
+  assert.equal(JSON.stringify(plan.data).includes('/attachment/content/'), false);
+  assert.deepEqual(applied.data, { attachmentId: ATTACHMENT_ID, deleted: true, before });
+  assert.equal(applied._untrusted, true);
+  assert.deepEqual(fake.routes(), [
+    ATTACHMENT_ROUTE,
+    ATTACHMENT_ROUTE,
+    DELETE_ATTACHMENT_ROUTE,
+  ]);
+});
+
+test('CC-1530: a missing attachment is the 404 of its read, and nothing is deleted', async () => {
+  const fake = createFakeJiraRequest().on(
+    ATTACHMENT_ROUTE,
+    jiraErr(
+      new JiraError({
+        kind: 'not_found',
+        message: 'No attachment with id 10001 exists.',
+        retryable: false,
+        httpStatus: 404,
+      }),
+    ),
+  );
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(deleteAttachmentTool, { attachmentId: ATTACHMENT_ID }, {}, fake.fn),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'not_found');
+  assert.deepEqual(fake.routes(), [ATTACHMENT_ROUTE]);
+});
+
+test('CC-1530: the schema refuses a non-numeric attachment id', () => {
+  for (const attachmentId of ['', '0', 'design.pdf', '10001/../1']) {
+    assert.equal(
+      deleteAttachmentTool.input.safeParse({ attachmentId }).success,
+      false,
+      attachmentId,
+    );
+  }
+  assert.equal(
+    deleteAttachmentTool.input.safeParse({ attachmentId: ATTACHMENT_ID }).success,
+    true,
+  );
 });

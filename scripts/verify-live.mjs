@@ -45,8 +45,9 @@
  *      or names the permission the tenant withheld.
  *   5. **Deletes come last**, and only against issues this run created: the
  *      D103 bulk claims (C42 edits the throwaways, C43 bulk-deletes a third
- *      issue made for that purpose) run first in the same child, then C26
- *      deletes the worklog, the comment and the throwaways themselves.
+ *      issue made for that purpose) run first in the same child, then C55
+ *      removes the C39 link, C56 the file C23 uploaded, and C26 deletes the
+ *      worklog, the comment and the throwaways themselves.
  *   6. **Every run ends with a residue inventory** (C32): the artifacts this
  *      gate's naming convention can still find on the site, each with the way to
  *      remove it. Nothing is guessed — the inventory is a read of the site.
@@ -1607,6 +1608,7 @@ const created = {
   commentId: undefined,
   worklogId: undefined,
   remoteLinkId: undefined,
+  attachmentId: undefined,
   sprintId: undefined,
   sprintName: undefined,
   boardId: undefined,
@@ -1845,9 +1847,12 @@ async function writePhase(session, flags) {
       await call(session, 'jira_list_attachments', { issue: key }),
       'jira_list_attachments',
     );
-    if (!(list.attachments ?? []).some((a) => a.filename === name)) {
+    const uploaded = (list.attachments ?? []).find((a) => a.filename === name);
+    if (uploaded === undefined) {
       throw new Error('upload reported success but the file is not on the issue');
     }
+    // C56 deletes this file again under --irreversible.
+    created.attachmentId = uploaded.id;
     return `${name} uploaded and observed on ${key}`;
   });
 
@@ -2515,6 +2520,32 @@ async function deletePhase(session, flags) {
         }
       }
       return `link ${String(link.id)} gone from ${key} and ${second}`;
+    },
+  );
+
+  await claim(
+    'C56',
+    'jira_delete_attachment removes the C23 upload from its issue',
+    async () => {
+      const key = created.issueKey;
+      const attachmentId = created.attachmentId;
+      if (key === undefined || attachmentId === undefined) skip('no upload from C23');
+      const { plan, applied } = await planAndApply(session, 'jira_delete_attachment', {
+        attachmentId: String(attachmentId),
+      });
+      if (plan.before?.id !== String(attachmentId)) {
+        throw new Error(`the plan did not name attachment ${String(attachmentId)}`);
+      }
+      if (applied.deleted !== true) throw new Error('apply did not report deleted:true');
+      const list = dataOf(
+        await call(session, 'jira_list_attachments', { issue: key }),
+        'jira_list_attachments',
+      );
+      if ((list.attachments ?? []).some((a) => a.id === String(attachmentId))) {
+        throw new Error(`${key} still carries attachment ${String(attachmentId)}`);
+      }
+      created.attachmentId = undefined;
+      return `${String(plan.before.filename)} gone from ${key}`;
     },
   );
 

@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_delete_attachment` (D144) in the `issues-delete` package: delete one
+  attachment by id. Irreversible: the plan names the file, its size and its
+  author before anything is deleted. Needs no `JIRA_MEDIA_DIR`.
 - `jira_unlink_issues` (D143) in the `issues-delete` package: remove a link
   between two issues by its id. Irreversible: the plan names the link type
   and both issues before anything is deleted.
