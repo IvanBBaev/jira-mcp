@@ -602,6 +602,36 @@ test('jira_list_versions omits the status parameter when no filter was given', a
   assert.equal(fake.lastRequest()?.query?.query, undefined);
 });
 
+test('CC-1542: jira_list_versions forwards issueCounts as expand=issuesstatus', async () => {
+  const fake = createFakeJiraRequest().on(
+    VERSIONS_ROUTE,
+    jiraOk(
+      page(
+        [
+          {
+            ...versionRow('10200', '1.4.0'),
+            issuesStatusForFixVersion: { unmapped: 0, toDo: 1, inProgress: 0, done: 4 },
+          },
+        ],
+        true,
+      ),
+    ),
+  );
+
+  const result = await listVersionsTool.handler(
+    { project: 'ABC', issueCounts: true },
+    createCtx(fake.fn),
+  );
+
+  assert.equal(fake.lastRequest()?.query?.expand, 'issuesstatus');
+  assert.deepEqual(dataOf(result).versions[0]?.issueStatus, {
+    toDo: 1,
+    inProgress: 0,
+    done: 4,
+    unmapped: 0,
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Version writes
 // ---------------------------------------------------------------------------

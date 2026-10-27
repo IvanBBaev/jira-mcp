@@ -11,7 +11,8 @@
 //   * components— `GET /project/{projectIdOrKey}/component`, `POST /component`,
 //                 `GET|PUT|DELETE /component/{id}`,
 //                 `GET /component/{id}/relatedIssueCounts`
-//   * versions  — `GET /project/{projectIdOrKey}/version`, `POST /version`,
+//   * versions  — `GET /project/{projectIdOrKey}/version` (optionally with
+//                 `expand=issuesstatus`, D148), `POST /version`,
 //                 `GET|PUT /version/{id}`, `GET /version/{id}/relatedIssueCounts`,
 //                 `POST /version/{id}/removeAndSwap`
 //   * roles     — `GET /project/{projectIdOrKey}/role[/{id}]`
@@ -281,6 +282,12 @@ export type ListVersionsOptions = CollabPagedBase &
     readonly query?: string;
     /** Restrict to these lifecycle states; omitted means every state. */
     readonly status?: readonly VersionStatus[];
+    /**
+     * Ask Jira for `expand=issuesstatus`, so each row carries
+     * {@link ProjectVersion.issueStatus} — counted in the same request, never
+     * one extra call per version (D148). Jira Cloud only.
+     */
+    readonly issueCounts?: boolean;
   };
 
 /** Options for {@link createVersion}. */
@@ -434,6 +441,22 @@ export interface ProjectVersion {
   readonly releaseDate?: string;
   /** Jira's own verdict: unreleased and past its `releaseDate`. */
   readonly overdue?: boolean;
+  /**
+   * Issues whose `fixVersion` names this version, counted by STATUS CATEGORY
+   * (D148). Present only when the read asked for it. A status category is not
+   * a resolution: `done` counts Done-category statuses, whatever the
+   * resolution field says.
+   */
+  readonly issueStatus?: VersionIssueStatus;
+}
+
+/** `issuesStatusForFixVersion`, allowlisted: the four counts and nothing else. */
+export interface VersionIssueStatus {
+  readonly toDo?: number;
+  readonly inProgress?: number;
+  readonly done?: number;
+  /** Issues in a status that belongs to no category. */
+  readonly unmapped?: number;
 }
 
 /** The result of a component write: what Jira stored, plus the status. */
@@ -643,6 +666,7 @@ export function listVersions(
           query: trimmed(options.query),
           status:
             status === undefined || status.length === 0 ? undefined : status.join(','),
+          ...(options.issueCounts === true ? { expand: 'issuesstatus' } : {}),
         },
       }),
       (response) => classicPage(response, 'version', mapVersion),
@@ -754,6 +778,17 @@ function versionStatus(version: ProjectVersion): VersionStatus {
 export async function listVersionsDataCenter(
   options: ListVersionsOptions,
 ): Promise<ClassicLoopResult<ProjectVersion>> {
+  if (options.issueCounts === true) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'Per-version issue counts are a Jira Cloud read (expand=issuesstatus); this ' +
+        'Data Center adapter does not offer them. Nothing was sent.',
+      remediation:
+        'Drop issueCounts, or count one version with jira_search and ' +
+        'JQL fixVersion = <id>.',
+    });
+  }
   const project = pathSegment(options.project, 'project key or id', PROJECT_REMEDIATION);
   const rows = await dataCenterArray(
     options,
@@ -1754,8 +1789,8 @@ function mapComponent(
 /**
  * The version allowlist. What is NOT here: `self`, `userStartDate` and
  * `userReleaseDate` (the same dates re-rendered in the CALLER's locale, which is
- * a formatting artefact, not data), `operations`, `issuesStatusForFixVersion`.
- * Built, never spread (D41).
+ * a formatting artefact, not data), `operations`. `issuesStatusForFixVersion`
+ * is reduced to its four counts (D148). Built, never spread (D41).
  */
 function mapVersion(entry: Record<string, unknown>): ProjectVersion {
   return compact({
@@ -1768,6 +1803,22 @@ function mapVersion(entry: Record<string, unknown>): ProjectVersion {
     startDate: readString(entry, 'startDate'),
     releaseDate: readString(entry, 'releaseDate'),
     overdue: readBoolean(entry, 'overdue'),
+    issueStatus: mapVersionIssueStatus(entry.issuesStatusForFixVersion),
+  });
+}
+
+/**
+ * The four status-category counts of `expand=issuesstatus`. Absent when Jira
+ * sent no object; a count Jira did not send is absent, not zero (CC-66).
+ */
+function mapVersionIssueStatus(value: unknown): VersionIssueStatus | undefined {
+  const record = asRecord(value);
+  if (record === undefined) return undefined;
+  return compact({
+    toDo: readNumber(record, 'toDo'),
+    inProgress: readNumber(record, 'inProgress'),
+    done: readNumber(record, 'done'),
+    unmapped: readNumber(record, 'unmapped'),
   });
 }
 

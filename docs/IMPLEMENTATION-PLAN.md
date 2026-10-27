@@ -1432,6 +1432,9 @@ Cloud only — the Data Center adapter stubs every new member.
       and `PUT /filter/{id}`, `standard` tier, name/JQL/description only and
       never a share; the update merges over a read and plans a diff
       (CC-1537…CC-1541); claim C59, plan mode only.
+- [x] `jira_list_versions` `issueCounts` (D148) — `expand=issuesstatus` on
+      the same request, four status-category counts per version; Data Center
+      refuses it (CC-1542, CC-1543); claim C60.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

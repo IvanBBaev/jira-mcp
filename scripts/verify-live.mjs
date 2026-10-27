@@ -1234,6 +1234,36 @@ async function readPhase(session, flags, credentials) {
     return `1 valid, 1 refused (${String(second.errors.length)} error)`;
   });
 
+  await claim('C60', 'jira_list_versions issueCounts carries status counts', async () => {
+    if (flags.project === undefined) skip('no --project');
+    const data = dataOf(
+      await call(session, 'jira_list_versions', {
+        project: flags.project,
+        issueCounts: true,
+      }),
+      'jira_list_versions',
+    );
+    const versions = data.versions ?? [];
+    if (versions.length === 0) skip('the project has no versions');
+    // `expand=issuesstatus` is a documented expand, but whether the paginated
+    // route honours it is exactly what this claim settles (D148).
+    const missing = versions.filter((version) => version.issueStatus === undefined);
+    if (missing.length > 0) {
+      throw new Error(
+        `${String(missing.length)} version(s) came back without issueStatus`,
+      );
+    }
+    const total = versions.reduce(
+      (sum, version) =>
+        sum +
+        (version.issueStatus.toDo ?? 0) +
+        (version.issueStatus.inProgress ?? 0) +
+        (version.issueStatus.done ?? 0),
+      0,
+    );
+    return `${String(versions.length)} version(s), ${String(total)} fix-version issue(s)`;
+  });
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

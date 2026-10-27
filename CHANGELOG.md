@@ -33,6 +33,9 @@ env var names — not internal refactors.
   `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
   CONFIGURATION.md gains a "Proxy and custom CA" section.
+- `jira_list_versions` takes `issueCounts` (D148): each version then reports
+  how many fix-version issues are to do, in progress and done, in the same
+  request. Jira Cloud only.
 - `JIRA_PROJECTS` (D400): a comma-separated list of project keys that scopes
   every tool. Searches are narrowed to those projects, anything addressed by
   key or id outside them is refused with a `permission` error (before a write

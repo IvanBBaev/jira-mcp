@@ -278,6 +278,11 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   answers the updated filter. Both are unsafe writes, never replayed. Whether
   a `PUT` without `sharePermissions` keeps the existing shares is not verified
   live, which is why this server reads first and never sends that key.
+- Version issue counts (D148): `GET /project/{id}/version?expand=issuesstatus`
+  adds `issuesStatusForFixVersion` (`unmapped`, `toDo`, `inProgress`, `done`)
+  to each row — fix-version issues by status category, in the same request.
+  Preferred over `GET /version/{id}/unresolvedIssueCount`, which costs one
+  call per version. Cloud only here; claim C60 checks the paginated route.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

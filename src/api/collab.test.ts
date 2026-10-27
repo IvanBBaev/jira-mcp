@@ -893,6 +893,51 @@ test('listVersions omits an empty status filter rather than sending an empty str
   assert.equal(jira.lastRequest()?.query?.status, undefined);
 });
 
+test('CC-1542: listVersions with issueCounts asks for expand=issuesstatus and keeps only the four counts', async () => {
+  const row = {
+    ...versionRow(1),
+    issuesStatusForFixVersion: {
+      unmapped: 0,
+      toDo: 3,
+      inProgress: 2,
+      done: 7,
+      self: `${SITE}/ignored`,
+    },
+  };
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk(page(0, [row], true)))
+    .enqueue(jiraOk(page(0, [versionRow(1)], true)));
+
+  const result = await listVersions({ jira: jira.fn, project: 'ABC', issueCounts: true });
+
+  assert.equal(jira.lastRequest()?.query?.expand, 'issuesstatus');
+  assert.deepEqual(at(result.items, 0).issueStatus, {
+    toDo: 3,
+    inProgress: 2,
+    done: 7,
+    unmapped: 0,
+  });
+
+  // Not asked: no expand on the wire and no issueStatus on the row.
+  const plain = await listVersions({ jira: jira.fn, project: 'ABC' });
+  assert.equal(jira.lastRequest()?.query?.expand, undefined);
+  assert.equal(at(plain.items, 0).issueStatus, undefined);
+});
+
+test('CC-1543: listVersions issueCounts on Data Center is a validation error before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() =>
+      listVersionsDataCenter({ jira: jira.fn, project: 'ABC', issueCounts: true }),
+    ),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /Nothing was sent/);
+  assert.deepEqual(jira.routes(), []);
+});
+
 test('listVersions rejects a row that is missing its name', async () => {
   const jira = createFakeJiraRequest().enqueue(jiraOk(page(0, [{ id: '10201' }], true)));
 

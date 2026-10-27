@@ -3572,6 +3572,16 @@ Prompts (D125):
 - **CC-3017** — Nobody is asked for a standard write, under `off`, on a
   `plan_id` mismatch, or while the irreversible tier is locked.
 
+## Version issue counts (D148, 2026-10-27)
+
+- **CC-1542** — `issueCounts: true` on `jira_list_versions` adds
+  `expand=issuesstatus` to the one page request and maps
+  `issuesStatusForFixVersion` to `issueStatus` with only `toDo`,
+  `inProgress`, `done` and `unmapped`; without the flag no `expand` is sent
+  and no row carries `issueStatus`.
+- **CC-1543** — the Data Center adapter refuses `issueCounts` as a
+  `validation` error with nothing sent, rather than answering rows without
+  counts that would read as "no issues".
 ## Project scope guard (D400, 2026-10-27)
 
 Placeholder ids — renumber once the parallel wave that owns the next free range lands.

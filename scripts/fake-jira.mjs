@@ -2326,9 +2326,25 @@ function buildRoutes(server) {
             row.key === ctx.params.projectIdOrKey || row.id === ctx.params.projectIdOrKey,
         );
         if (project === undefined) return notFound('Project');
+        // `expand=issuesstatus` (D148): the fake's issues carry no fixVersions,
+        // so every count is an honest zero.
+        const counts = String(ctx.query.expand ?? '')
+          .split(',')
+          .includes('issuesstatus');
         const rows = [...state.versions.values()]
           .filter((version) => String(version.projectId) === project.id)
-          .map((version) => wireVersion(version, origin()));
+          .map((version) => {
+            const row = wireVersion(version, origin());
+            if (counts) {
+              row.issuesStatusForFixVersion = {
+                unmapped: 0,
+                toDo: 0,
+                inProgress: 0,
+                done: 0,
+              };
+            }
+            return row;
+          });
         return json(200, page(rows, ctx.query));
       },
     ],
