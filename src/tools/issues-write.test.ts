@@ -45,6 +45,7 @@ import {
   transitionIssueTool,
   updateCommentTool,
   updateIssueTool,
+  updateWorklogTool,
 } from './issues-write.js';
 
 const KEY = 'PROJ-1';
@@ -207,6 +208,7 @@ const MINIMAL_ARGS: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
   jira_update_comment: { issue: KEY, commentId: COMMENT_ID, body: 'Corrected.' },
   jira_assign_issue: { issue: KEY, accountId: ACCOUNT_ID },
   jira_add_worklog: { issue: KEY, timeSpentSeconds: 3600 },
+  jira_update_worklog: { issue: KEY, worklogId: '40001', timeSpent: '45m' },
   jira_link_issues: { linkType: 'Blocks', inwardIssue: KEY, outwardIssue: OTHER_KEY },
   jira_add_remote_link: {
     issue: KEY,
@@ -232,7 +234,7 @@ function rejectsAsUnknown(tool: AnyToolSpec, input: Record<string, unknown>): bo
 // The package, its annotations and its schemas
 // ---------------------------------------------------------------------------
 
-test('the issues-write package exports exactly the nine documented write tools', () => {
+test('the issues-write package exports exactly the ten documented write tools', () => {
   assert.equal(issuesWritePackage.id, 'issues-write');
   assert.deepEqual(
     ALL_TOOLS.map((tool) => tool.name),
@@ -244,6 +246,7 @@ test('the issues-write package exports exactly the nine documented write tools',
       'jira_update_comment',
       'jira_assign_issue',
       'jira_add_worklog',
+      'jira_update_worklog',
       'jira_link_issues',
       'jira_add_remote_link',
     ],
@@ -259,10 +262,11 @@ test('every issues-write tool is plan-gated at the standard write tier', () => {
 });
 
 test('every issues-write tool carries the documented annotation quadruple', () => {
-  // TOOLS.md §Annotations reference. The two destructive tools are the two that
-  // replace rich text wholesale (CC-31): jira_update_issue on a field, and
-  // jira_update_comment on a comment body. Those two plus assign are the ones
-  // whose repeat lands on the same state, so they alone are idempotent.
+  // TOOLS.md §Annotations reference. The three destructive tools are the three
+  // that overwrite stored content (CC-31): jira_update_issue on a field,
+  // jira_update_comment on a comment body and jira_update_worklog on a worklog
+  // entry. Those three plus assign are the ones whose repeat lands on the same
+  // state, so they alone are idempotent.
   const expected: Readonly<Record<string, readonly [boolean, boolean]>> = {
     jira_create_issue: [false, false],
     jira_update_issue: [true, true],
@@ -271,6 +275,7 @@ test('every issues-write tool carries the documented annotation quadruple', () =
     jira_update_comment: [true, true],
     jira_assign_issue: [false, true],
     jira_add_worklog: [false, false],
+    jira_update_worklog: [true, true],
     jira_link_issues: [false, false],
     jira_add_remote_link: [false, false],
   };
@@ -1098,6 +1103,82 @@ test('CC-1521: a non-http url never reaches Jira', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// jira_update_worklog (D142)
+// ---------------------------------------------------------------------------
+
+const WORKLOG_ITEM_PATH = `/rest/api/3/issue/${KEY}/worklog/40001`;
+
+function editWorklogFake(): FakeJira {
+  return createFakeJiraRequest()
+    .on(MYSELF_ROUTE, jiraOk(MYSELF_BODY))
+    .on(`GET ${WORKLOG_ITEM_PATH}`, jiraOk(WORKLOG_BODY))
+    .on(`PUT ${WORKLOG_ITEM_PATH}`, jiraOk(WORKLOG_BODY));
+}
+
+test('CC-1525: jira_update_worklog sends only the named field and skips /myself without a start', async () => {
+  const fake = editWorklogFake();
+
+  const result = await updateWorklogTool.handler(
+    { issue: KEY, worklogId: '40001', timeSpent: '45m' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.routes(), [
+    `GET ${WORKLOG_ITEM_PATH}`,
+    `PUT ${WORKLOG_ITEM_PATH}`,
+  ]);
+  assert.deepEqual(lastBody(fake), { timeSpent: '45m' });
+});
+
+test("CC-1525: a new started is read in the user's Jira timezone, as on jira_add_worklog", async () => {
+  const fake = editWorklogFake();
+
+  const result = await updateWorklogTool.handler(
+    { issue: KEY, worklogId: 40001, started: '2026-08-07T15:30:00' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(fake.routes()[0], MYSELF_ROUTE);
+  assert.deepEqual(lastBody(fake), { started: STARTED_IST });
+});
+
+test('CC-1525: an edit that names no change, or two durations, is refused by the schema', () => {
+  assert.equal(
+    updateWorklogTool.input.safeParse({ issue: KEY, worklogId: '40001' }).success,
+    false,
+  );
+  assert.equal(
+    updateWorklogTool.input.safeParse({
+      issue: KEY,
+      worklogId: '40001',
+      timeSpent: '1h',
+      timeSpentSeconds: 3600,
+    }).success,
+    false,
+  );
+  assert.equal(
+    updateWorklogTool.input.safeParse({ issue: KEY, worklogId: '40001', comment: 'x' })
+      .success,
+    true,
+  );
+});
+
+test('CC-1525: an impossible started never reaches the write', async () => {
+  const fake = editWorklogFake();
+
+  const result = await updateWorklogTool.handler(
+    { issue: KEY, worklogId: '40001', started: '2026-02-30T09:00:00' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.deepEqual(fake.routes(), [MYSELF_ROUTE]);
+});
+
+// ---------------------------------------------------------------------------
 // format (CC-46 / D44)
 // ---------------------------------------------------------------------------
 
@@ -1115,6 +1196,7 @@ const RICH_TEXT_FIELDS: Readonly<Record<string, string>> = {
   jira_add_comment: 'body',
   jira_update_comment: 'body',
   jira_add_worklog: 'comment',
+  jira_update_worklog: 'comment',
   jira_link_issues: 'comment',
 };
 

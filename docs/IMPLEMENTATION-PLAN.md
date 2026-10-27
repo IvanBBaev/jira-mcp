@@ -1414,6 +1414,8 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_get_remote_links`, `jira_add_remote_link` (D141) —
       `GET`/`POST /issue/{key}/remotelink`, upsert by `globalId`, http(s)
       URLs only (CC-1518…CC-1521); claim C53.
+- [x] `jira_update_worklog` (D142) — `PUT /issue/{key}/worklog/{id}`, only
+      the named fields, stored visibility resent (CC-1522…CC-1525); claim C54.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

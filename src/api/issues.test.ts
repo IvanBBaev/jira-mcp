@@ -70,6 +70,8 @@ import {
   updateComment,
   updateCommentRequest,
   updateIssue,
+  updateWorklog,
+  updateWorklogRequest,
   utcOffsetMinutesForZone,
   type IssueLink,
 } from './issues.js';
@@ -2724,5 +2726,117 @@ test('CC-1519: only an absolute http(s) url is a remote link target', () => {
       }
     ).object.url,
     'http://intranet.local/x',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Worklog edit (D142)
+// ---------------------------------------------------------------------------
+
+const WORKLOG_ITEM = `/rest/api/3/issue/${KEY}/worklog/40001`;
+const EDITED_WORKLOG = {
+  id: '40001',
+  issueId: '10001',
+  started: '2026-08-07T15:30:00.000+0530',
+  timeSpent: '2h 30m',
+  timeSpentSeconds: 9000,
+}; // synthetic
+
+test('CC-1522: a worklog edit sends only the fields it names', () => {
+  const durationOnly = updateWorklogRequest({
+    issue: KEY,
+    worklogId: 40001,
+    timeSpent: ' 45m ',
+  });
+  assert.equal(durationOnly.method, 'PUT');
+  assert.equal(durationOnly.path, `/issue/${KEY}/worklog/40001`);
+  assert.equal(durationOnly.pathTemplate, ISSUE_WORKLOG_ITEM_PATH_TEMPLATE);
+  assert.deepEqual(durationOnly.body, { timeSpent: '45m' });
+
+  const commentOnly = updateWorklogRequest({
+    issue: KEY,
+    worklogId: '40001',
+    comment: 'Re-scoped.',
+  });
+  assert.deepEqual(Object.keys(commentOnly.body as object), ['comment']);
+
+  const startOnly = updateWorklogRequest({
+    issue: KEY,
+    worklogId: 40001,
+    startedAt: Date.UTC(2026, 7, 7, 10, 0, 0),
+    utcOffsetMinutes: 330,
+  });
+  assert.deepEqual(startOnly.body, { started: '2026-08-07T15:30:00.000+0530' });
+});
+
+test('CC-1523: a worklog edit with nothing to change, two durations or an offset-less start is refused before the wire', () => {
+  for (const [input, pattern] of [
+    [{ issue: KEY, worklogId: 40001 }, /at least one change/],
+    [
+      { issue: KEY, worklogId: 40001, timeSpent: '1h', timeSpentSeconds: 60 },
+      /exactly one/,
+    ],
+    [{ issue: KEY, worklogId: 40001, startedAt: 0 }, /utcOffsetMinutes/],
+    [{ issue: KEY, worklogId: 'abc', timeSpent: '1h' }, /positive integer/],
+  ] as const) {
+    assert.throws(
+      () => updateWorklogRequest(input),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'validation' &&
+        pattern.test(error.message),
+      JSON.stringify(input),
+    );
+  }
+});
+
+test('CC-1523: an invalid edit is refused before the stored entry is read', async () => {
+  const fake = createFakeJiraRequest();
+  await assert.rejects(
+    updateWorklog({ jira: fake.fn, issue: KEY, worklogId: 40001 }),
+    (error: unknown) => error instanceof JiraError && error.kind === 'validation',
+  );
+  assert.equal(fake.calls.length, 0);
+});
+
+test('CC-1524: updateWorklog resends the stored visibility and answers with the updated entry', async () => {
+  const visibility = { type: 'role', value: 'Developers' };
+  const fake = createFakeJiraRequest()
+    .on(`GET ${WORKLOG_ITEM}`, jiraOk({ ...EDITED_WORKLOG, visibility }))
+    .on(
+      `PUT ${WORKLOG_ITEM}`,
+      jiraOk({ ...EDITED_WORKLOG, timeSpent: '45m', timeSpentSeconds: 2700, visibility }),
+    );
+
+  const worklog = await updateWorklog({
+    jira: fake.fn,
+    issue: KEY,
+    worklogId: 40001,
+    timeSpentSeconds: 2700,
+  });
+
+  assert.deepEqual(fake.lastRequest()?.body, { timeSpentSeconds: 2700, visibility });
+  assert.equal(worklog.timeSpentSeconds, 2700);
+  assertNeverSafe(fake.calls.filter((call) => call.method === 'PUT'));
+});
+
+test('CC-1524: an unrestricted entry is edited without a visibility key', async () => {
+  const fake = createFakeJiraRequest()
+    .on(`GET ${WORKLOG_ITEM}`, jiraOk(EDITED_WORKLOG))
+    .on(`PUT ${WORKLOG_ITEM}`, jiraOk(EDITED_WORKLOG));
+
+  await updateWorklog({ jira: fake.fn, issue: KEY, worklogId: 40001, comment: 'x' });
+
+  assert.equal('visibility' in (fake.lastRequest()?.body as object), false);
+});
+
+test('CC-1524: an updated worklog answer without a string id is unexpected_shape', async () => {
+  const fake = createFakeJiraRequest()
+    .on(`GET ${WORKLOG_ITEM}`, jiraOk(EDITED_WORKLOG))
+    .on(`PUT ${WORKLOG_ITEM}`, jiraOk({ id: 40001 }));
+
+  await assert.rejects(
+    updateWorklog({ jira: fake.fn, issue: KEY, worklogId: 40001, timeSpent: '1h' }),
+    (error: unknown) => error instanceof JiraError && error.kind === 'unexpected_shape',
   );
 });

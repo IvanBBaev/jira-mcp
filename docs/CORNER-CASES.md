@@ -3433,3 +3433,20 @@ Prompts (D125):
   branded untrusted.
 - **CC-1521** — `jira_add_remote_link` echoes what was sent, unbranded; a
   refused `url` is a `validation` error with no request made.
+
+## Worklog edit (D142, 2026-10-27)
+
+- **CC-1522** — `updateWorklogRequest` sends only the fields named: a
+  duration (one form), `started` with an explicit offset, a comment as ADF.
+  Nothing named is never sent as an empty PUT.
+- **CC-1523** — an edit with no change, with both duration forms, with a
+  start but no offset, or with a non-numeric id is a `validation` error raised
+  before the stored entry is read.
+- **CC-1524** — `updateWorklog` reads the entry first and resends its
+  `visibility`, so an edit cannot widen who sees it; an unrestricted entry is
+  edited without a `visibility` key. An answer without a string `id` is
+  `unexpected_shape`.
+- **CC-1525** — `jira_update_worklog` fetches `/myself` only when `started`
+  is given, reads it as `jira_add_worklog` does, refuses an impossible
+  calendar date before any write, and its schema refuses an edit that names
+  nothing or both duration forms.

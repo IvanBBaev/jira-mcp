@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_update_worklog` (D142) in the `issues-write` package: correct a
+  worklog entry's duration, start or comment. Only the fields you name are
+  sent, and the entry's visibility restriction is kept.
 - `jira_get_remote_links` (D141) in the `issues` package and
   `jira_add_remote_link` in `issues-write`: read the web links on an issue,
   and attach one — a pull request, a Confluence page. A `globalId` makes the

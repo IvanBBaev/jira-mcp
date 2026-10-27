@@ -249,6 +249,12 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   (201) or, when the body's `globalId` matches a link already on the issue,
   updates that link (200); both answer `{ id, self }`. Jira stores any URL
   string; the server accepts only absolute `http`/`https`. Cloud only here.
+- Worklog edit (D142): `PUT /issue/{issueIdOrKey}/worklog/{id}` takes the
+  worklog fields — `timeSpent` or `timeSpentSeconds`, `started` (explicit
+  offset, never `Z`, as on the POST), `comment` (ADF), `visibility` — and
+  answers with the updated worklog. The server sends only the fields the
+  caller named, plus the stored `visibility`; that an omitted field keeps its
+  stored value is what Gate C claim C54 checks. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

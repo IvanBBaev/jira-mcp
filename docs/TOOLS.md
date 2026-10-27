@@ -315,6 +315,7 @@ to run it.
 | `jira_update_comment` | `PUT .../comment/{id}` | Input: `issue`, `commentId` (numeric id from `jira_get_comments`), `body` (text → ADF, or raw ADF), `visibility?`. **Replace semantics**: `body` overwrites the whole comment — CC-31's hazard on a comment, so the description tells the model to read the comment first and resend the complete text. A `commentId` that is not a positive integer is refused before anything is sent (D22). CC-510: Jira makes a comment public when the `PUT` has no `visibility`, so an omitted `visibility` reads the comment first and resends the restriction it carries; `visibility: null` makes it public on purpose. |
 | `jira_assign_issue` | `PUT .../assignee` | Input: `issue`, and exactly one of `accountId` (Cloud), `username` (Data Center, D111) or `unassign: true` (sends null). `username` on Cloud is refused before any request (use `jira_search_users`). Idempotent. |
 | `jira_add_worklog` | `POST .../worklog` | Input: `issue`, `timeSpentSeconds` OR `timeSpent` (e.g. "2h 30m"), `started?` (default: now), `comment?`. `started` is always sent with an explicit offset taken from the authenticated user's Jira timezone, not the host's (D16; `Z` is rejected by Jira — CC-23). |
+| `jira_update_worklog` | `PUT .../worklog/{id}` | Input: `issue`, `worklogId`, and at least one of `timeSpentSeconds` OR `timeSpent`, `started?`, `comment?` (`format`, `resolveMentions` as on `jira_add_worklog`). Only the named fields are sent; `started` is read and rendered exactly as on `jira_add_worklog`, and `/myself` is fetched only when it is given. A new `comment` replaces the stored one outright. The entry is read first and its `visibility` resent, so an edit never widens who sees it. Returns the updated worklog. `destructiveHint: true`, idempotent (D142, CC-1522…CC-1525). Cloud only. |
 | `jira_link_issues` | `POST /rest/api/3/issueLink` | Input: `linkType` (name), `inwardIssue`, `outwardIssue`, `comment?`. Link type names discoverable via `jira_list_link_types` (meta). |
 | `jira_add_remote_link` | `POST .../remotelink` | Input: `issue`, `url` (absolute http/https only, refused locally otherwise), `title`, `summary?`, `relationship?`, `globalId?`. A `globalId` matching a link on the issue replaces it (Jira answers 200, `data.created: false`) instead of adding a second; without one every call adds a link. Returns `{ issue, id, url, title, globalId?, created }` (D141, CC-1519, CC-1521). Cloud only. |
 
@@ -545,7 +546,7 @@ its shared terms so the model can judge it. Pair lists stop at 200 each
 | all other reads | true | false | true | true |
 | `jira_download_attachment`, `jira_portfolio_report` | true | false | **false** | true |
 | create/comment/worklog/link, `jira_upload_attachment`, `jira_create_sprint`, `jira_start_sprint`, `jira_create_component`, `jira_create_version` | false | false | false | true |
-| `jira_update_issue`, `jira_update_comment`, `jira_close_sprint` | false | **true** | true | true |
+| `jira_update_issue`, `jira_update_comment`, `jira_update_worklog`, `jira_close_sprint` | false | **true** | true | true |
 | `jira_delete_issue`, `jira_delete_comment`, `jira_delete_worklog`, `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`, `jira_bulk_delete_issues`, `jira_bulk_edit_issues` | false | **true** | **false** | true |
 | assign/transition/move | false | false | true* | true |
 | watcher/vote add+remove, `jira_update_component`, `jira_update_version`, `jira_update_sprint`, `jira_rank_issues`, `jira_set_estimate` | false | false | true | true |
@@ -555,10 +556,11 @@ the target state equals current — annotated `idempotentHint: false` for
 transition to be safe.
 
 `jira_capabilities` touches no external system, so `openWorldHint: false`;
-everything else queries a live tenant. Three standard-tier writes carry
-`destructiveHint: true`. `jira_update_issue` and `jira_update_comment` can
-silently destroy existing content (field replace semantics on labels and rich
-text; whole-body replacement on a comment), and `jira_close_sprint` ends a
+everything else queries a live tenant. Four standard-tier writes carry
+`destructiveHint: true`. `jira_update_issue`, `jira_update_comment` and
+`jira_update_worklog` can silently destroy existing content (field replace
+semantics on labels and rich text; whole-body replacement on a comment; the
+logged duration, start or comment of a worklog entry), and `jira_close_sprint` ends a
 sprint for good — Jira stamps `completeDate`, the sprint can never be reopened
 through this API, and every unfinished issue is moved out of it by board
 configuration. None of them deletes a record; the annotation exists to make
@@ -751,7 +753,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**73 tools / 11 packages** (core 3, search 4, issues 7, issues-write 9,
+**74 tools / 11 packages** (core 3, search 4, issues 7, issues-write 10,
 issues-delete 8, attachments 3, collab 12, meta 11, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the

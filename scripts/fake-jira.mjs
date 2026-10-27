@@ -2061,6 +2061,41 @@ function buildRoutes(server) {
     ],
 
     [
+      'PUT',
+      '/rest/api/3/issue/{issueIdOrKey}/worklog/{id}',
+      (ctx) => {
+        const issue = issueOf(ctx.params);
+        if (issue === undefined) return notFound('Issue');
+        const worklog = issue.worklogs.find((row) => row.id === ctx.params.id);
+        if (worklog === undefined) return notFound('Worklog');
+        const started = ctx.body?.started;
+        if (typeof started === 'string' && started.endsWith('Z')) {
+          return jiraError(400, [], {
+            started:
+              'Date value ' +
+              started +
+              ' is invalid. The format must be yyyy-MM-ddTHH:mm:ss.SSSZZ.',
+          });
+        }
+        // Only the named fields change, which is what D142 assumes and C54
+        // checks against a real tenant.
+        if (ctx.body?.comment !== undefined) worklog.comment = ctx.body.comment;
+        if (typeof started === 'string') worklog.started = started;
+        if (typeof ctx.body?.timeSpentSeconds === 'number') {
+          worklog.timeSpentSeconds = ctx.body.timeSpentSeconds;
+          worklog.timeSpent = `${String(Math.round(ctx.body.timeSpentSeconds / 60))}m`;
+        }
+        if (typeof ctx.body?.timeSpent === 'string') {
+          worklog.timeSpent = ctx.body.timeSpent;
+          const minutes = /^(\d+)m$/.exec(ctx.body.timeSpent);
+          if (minutes !== null) worklog.timeSpentSeconds = Number(minutes[1]) * 60;
+        }
+        worklog.updated = now();
+        return json(200, wireWorklog(state, issue, worklog, origin()));
+      },
+    ],
+
+    [
       'DELETE',
       '/rest/api/3/issue/{issueIdOrKey}/worklog/{id}',
       (ctx) => {

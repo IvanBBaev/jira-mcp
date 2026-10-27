@@ -983,6 +983,84 @@
           }
         },
         {
+          "name": "jira_update_worklog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklogId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                ]
+              },
+              "timeSpentSeconds": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "timeSpent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "started": {
+                "type": "string",
+                "pattern": "^(\\d{4}-\\d{2}-\\d{2})[T ]((?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?(?:\\.\\d{1,3})?)(Z|[+-]\\d{2}:?\\d{2})?$"
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "worklogId"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_link_issues",
           "annotations": {
             "readOnlyHint": false,

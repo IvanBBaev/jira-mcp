@@ -1124,6 +1124,144 @@ export const addWorklogTool = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// jira_update_worklog
+// ---------------------------------------------------------------------------
+
+/**
+ * D142 — the edit names only what changes. Each field keeps `jira_add_worklog`'s
+ * grammar (one duration form, the same `started` reading, the same comment
+ * conventions), and an edit that names nothing is refused here rather than
+ * planned as a no-op PUT.
+ */
+const updateWorklogInput = writeToolInput({
+  issue: issueArg,
+  worklogId: z
+    .union([z.string().min(1), z.number().int().positive()])
+    .describe(
+      'Numeric worklog id, as jira_get_worklogs reports it in data.worklogs[].id.',
+    ),
+  timeSpentSeconds: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('New duration in seconds. Mutually exclusive with timeSpent.'),
+  timeSpent: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('New duration as a Jira string, e.g. "2h 30m".'),
+  started: z
+    .string()
+    .regex(
+      WORKLOG_STARTED_PATTERN,
+      'Expected YYYY-MM-DDTHH:mm[:ss[.sss]] with optional offset.',
+    )
+    .optional()
+    .describe(
+      'New start. Without an offset the value is read in the authenticated ' +
+        "user's Jira timezone.",
+    ),
+  comment: richTextArg
+    .optional()
+    .describe('New worklog comment; text or ADF. Replaces the stored one outright.'),
+  format: writeFormatArg,
+  resolveMentions: resolveMentionsArg,
+}).superRefine((value, ctx) => {
+  refuseFormatOnRawAdf(ctx, value.format, 'comment', value.comment);
+  refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
+  if (value.timeSpentSeconds !== undefined && value.timeSpent !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['timeSpentSeconds'],
+      message:
+        'timeSpentSeconds and timeSpent are mutually exclusive — pass at most one.',
+    });
+  }
+  if (
+    value.timeSpentSeconds === undefined &&
+    value.timeSpent === undefined &&
+    value.started === undefined &&
+    value.comment === undefined
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['worklogId'],
+      message:
+        'A worklog edit needs at least one change: timeSpentSeconds or timeSpent, ' +
+        'started, or comment.',
+    });
+  }
+});
+
+export const updateWorklogTool = defineTool({
+  name: 'jira_update_worklog',
+  title: 'Update worklog',
+  description:
+    'Edit one existing worklog entry. Name only what changes — a duration ' +
+    '(timeSpentSeconds or timeSpent, at most one), started, or comment — and only ' +
+    'those fields are sent. A new comment replaces the stored one outright. started ' +
+    "reads like jira_add_worklog's. worklogId is the numeric id from " +
+    "jira_get_worklogs. The entry's visibility restriction is read back and kept.",
+  package: 'issues-write',
+  annotations: DESTRUCTIVE_WRITE_ANNOTATIONS,
+  writeTier: 'standard',
+  input: updateWorklogInput,
+  example: {
+    summary: 'Correct the duration of a worklog entry',
+    arguments: { issue: 'PROJ-123', worklogId: '10100', timeSpent: '45m' },
+  },
+  handler: async (args, ctx): Promise<ToolResult<IssueWorklog>> =>
+    guarded(async () => {
+      const base = callBase(ctx);
+      const resolution = await resolveCallMentions(
+        ctx,
+        args.comment,
+        args.format,
+        args.resolveMentions,
+      );
+      let started: { startedAt: number; utcOffsetMinutes: number } | undefined;
+      if (args.started !== undefined) {
+        // D16, as in jira_add_worklog: the offset is the user's, fetched.
+        const myself = await ctx.api.getMyself(base);
+        const instant = startedInstant(
+          args.started,
+          myself.user.timeZone ?? hostTimeZone(),
+          ctx.clock.now(),
+        );
+        if (instant === undefined) {
+          return errorResultOf(
+            'validation',
+            'started is not a real calendar instant, so the worklog was not edited.',
+            {
+              remediation:
+                'Pass started as YYYY-MM-DDTHH:mm:ss (optionally with .sss and an ' +
+                'offset), naming a date that exists.',
+            },
+          );
+        }
+        started = { startedAt: instant.epochMs, utcOffsetMinutes: instant.offsetMinutes };
+      }
+
+      const worklog = await ctx.api.updateWorklog({
+        ...base,
+        issue: args.issue,
+        worklogId: args.worklogId,
+        timeSpentSeconds: args.timeSpentSeconds,
+        timeSpent: args.timeSpent,
+        ...started,
+        comment: optionalRichText(
+          ctx.api,
+          args.comment,
+          args.format,
+          resolution.mentions,
+        ),
+      });
+      return ok(worklog, { hints: resolution.hints });
+    }),
+});
+
+// ---------------------------------------------------------------------------
 // jira_link_issues
 // ---------------------------------------------------------------------------
 
@@ -1278,6 +1416,7 @@ export const issuesWritePackage: PackageSpec = {
     updateCommentTool,
     assignIssueTool,
     addWorklogTool,
+    updateWorklogTool,
     linkIssuesTool,
     addRemoteLinkTool,
   ],

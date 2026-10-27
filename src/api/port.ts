@@ -98,6 +98,7 @@ import {
   transitionIssue,
   updateComment,
   updateIssue,
+  updateWorklog,
 } from './issues.js';
 import {
   getCreateMeta,
@@ -223,6 +224,7 @@ export interface JiraApi {
   readonly transitionIssue: typeof transitionIssue;
   readonly updateComment: typeof updateComment;
   readonly updateIssue: typeof updateIssue;
+  readonly updateWorklog: typeof updateWorklog;
 
   // --- meta ---
   readonly getCreateMeta: typeof getCreateMeta;
@@ -335,6 +337,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   transitionIssue,
   updateComment,
   updateIssue,
+  updateWorklog,
 
   getCreateMeta,
   getProject,

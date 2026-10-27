@@ -1743,6 +1743,38 @@ async function writePhase(session, flags) {
     },
   );
 
+  await claim('C54', 'a worklog edit changes only the fields it names', async () => {
+    const key = created.issueKey;
+    const worklogId = created.worklogId;
+    if (key === undefined || worklogId === undefined) skip('no worklog from C20');
+    // Comment only: the 1m C20 logged must survive an edit that never named it.
+    const commented = await planAndApply(session, 'jira_update_worklog', {
+      issue: key,
+      worklogId: String(worklogId),
+      comment: 'Gate C edited this worklog.',
+    });
+    if (commented.applied.timeSpentSeconds !== 60) {
+      throw new Error(
+        `a comment-only edit changed the duration to ${String(commented.applied.timeSpentSeconds)}s`,
+      );
+    }
+    // Duration only: the comment just written must survive.
+    const timed = await planAndApply(session, 'jira_update_worklog', {
+      issue: key,
+      worklogId: String(worklogId),
+      timeSpent: '2m',
+    });
+    if (timed.applied.timeSpentSeconds !== 120) {
+      throw new Error(
+        `the duration edit stored ${String(timed.applied.timeSpentSeconds)}s`,
+      );
+    }
+    if (!/edited this worklog/.test(String(timed.applied.comment ?? ''))) {
+      throw new Error('a duration-only edit dropped the comment');
+    }
+    return `worklog ${String(worklogId)} edited field by field; the other field survived`;
+  });
+
   await claim('C21', 'watcher add is ACCEPTED with the bare string body', async () => {
     const key = created.issueKey;
     if (key === undefined) skip('no throwaway issue');
