@@ -374,6 +374,17 @@ const served: Partial<JiraApi> = {
     refuseMarkdown(options.format);
     return getIssue({ ...options, jira: onV2(options.jira), deployment: 'datacenter' });
   },
+  // Jira Data Center has no `POST /issue/bulkfetch` this server relies on
+  // (D149): refused up front so `issues: [...]` never half-works there.
+  getIssuesBulk: () => {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'issues: [...] reads through POST /issue/bulkfetch, which this server uses on Jira Cloud only. Nothing was sent.',
+      remediation:
+        'Read one issue per call with issue, or use jira_search with a key in (...) JQL.',
+    });
+  },
   listComments: (options) => {
     refuseMarkdown(options.format);
     return listComments({

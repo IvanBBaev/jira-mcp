@@ -283,6 +283,11 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   to each row — fix-version issues by status category, in the same request.
   Preferred over `GET /version/{id}/unresolvedIssueCount`, which costs one
   call per version. Cloud only here; claim C60 checks the paginated route.
+- Bulk issue read (D149): `POST /issue/bulkfetch` with
+  `{issueIdsOrKeys, fields?, expand?, properties?}` (arrays, not CSV) returns
+  `{issues, issueErrors}` — one request for up to 100 refs; refs Jira cannot
+  serve are reported, not fatal. The cap and the `issueErrors` shape are from
+  memory, unverified; claim C61 checks a batch with one absent key. Cloud only.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

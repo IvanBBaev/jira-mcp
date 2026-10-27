@@ -44,11 +44,16 @@
 // ---------------------------------------------------------------------------
 
 import type { BulkStatusResult } from '../api/bulk.js';
-import { DEFAULT_COMMENT_ORDER_BY, MAX_PAGE_SIZE } from '../api/issues.js';
+import {
+  DEFAULT_COMMENT_ORDER_BY,
+  MAX_BULK_ISSUES,
+  MAX_PAGE_SIZE,
+} from '../api/issues.js';
 import type {
   ChangelogResult,
   CommentsResult,
   IssueDetail,
+  IssuesBulkResult,
   RemoteLinksResult,
   TransitionsResult,
   WorklogsResult,
@@ -146,7 +151,19 @@ const formatArg = z
 // ---------------------------------------------------------------------------
 
 const getIssueInput = toolInput({
-  issue: issueArg,
+  issue: issueArg
+    .optional()
+    .describe('Issue key (PROJ-123) or numeric issue id. Pass this or issues, not both.'),
+  issues: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(MAX_BULK_ISSUES)
+    .optional()
+    .describe(
+      `Up to ${String(MAX_BULK_ISSUES)} issue keys or ids read in ONE request ` +
+        '(Cloud only). Returns data.issues plus data.errors and data.unmatched ' +
+        'for the refs Jira could not serve. Pass this or issue, not both.',
+    ),
   fields: z
     // Entries are trimmed so a blank one is refused here instead of reaching
     // the api layer, which would drop it, widen the read to every navigable
@@ -179,6 +196,14 @@ const getIssueInput = toolInput({
     ),
   format: formatArg,
 }).superRefine((value, ctx) => {
+  // Exactly one target: silently preferring one would hide a caller mistake.
+  if ((value.issue === undefined) === (value.issues === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['issue'],
+      message: 'Pass exactly one of issue (one key) or issues (up to 100 keys).',
+    });
+  }
   // Both answer "how do I want the rich text?" and they answer it differently.
   // Refusing is the honest move: silently letting one win would make the reply
   // depend on an ordering the caller cannot see.
@@ -197,7 +222,8 @@ export const getIssueTool = defineTool({
   name: 'jira_get_issue',
   title: 'Get issue',
   description:
-    'Read one issue by key or id. Name the fields you need — omitting fields returns ' +
+    'Read one issue by key or id, or up to 100 in one request with issues: [...]. ' +
+    'Name the fields you need — omitting fields returns ' +
     "Jira's whole navigable set and burns the result budget. Rich text is flattened to " +
     'plain text; raw: true returns the ADF trees instead (only this tool can), format: ' +
     '"markdown" renders them as markdown. expand: ["changelog"] adds the recent ' +
@@ -214,21 +240,26 @@ export const getIssueTool = defineTool({
       format: 'markdown',
     },
   },
-  handler: async (args, ctx): Promise<ToolResult<IssueDetail>> =>
+  handler: async (args, ctx): Promise<ToolResult<IssueDetail | IssuesBulkResult>> =>
     guarded(async () => {
-      const issue = await ctx.api.getIssue({
+      const shared = {
         ...callBase(ctx),
-        issue: args.issue,
         fields: args.fields,
         expand: args.expand,
         properties: args.properties,
         raw: args.raw,
         format: args.format,
-      });
+      };
       const hints: Hint[] =
         args.fields === undefined || args.fields.length === 0
           ? [FIELDS_DEFAULTED_HINT]
           : [];
+      if (args.issues !== undefined) {
+        const bulk = await ctx.api.getIssuesBulk({ ...shared, issues: args.issues });
+        return ok<IssueDetail | IssuesBulkResult>(bulk, { untrusted: true, hints });
+      }
+      // The schema guarantees exactly one target, so `issue` is set here.
+      const issue = await ctx.api.getIssue({ ...shared, issue: args.issue ?? '' });
       return ok(issue, { untrusted: true, hints });
     }),
 });

@@ -369,6 +369,15 @@
                 "type": "string",
                 "minLength": 1
               },
+              "issues": {
+                "minItems": 1,
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
               "fields": {
                 "type": "array",
                 "items": {
@@ -402,7 +411,6 @@
                 "minLength": 1
               }
             },
-            "required": ["issue"],
             "additionalProperties": false
           }
         },

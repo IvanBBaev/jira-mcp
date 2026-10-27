@@ -127,7 +127,7 @@ One issue and its comments, available transitions, change history, worklogs and 
 
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
-| `jira_get_issue` | Get issue | read-only | Read one issue by key or id. Name the fields you need — omitting fields returns Jira's whole navigable set and burns the result budget. |
+| `jira_get_issue` | Get issue | read-only | Read one issue by key or id, or up to 100 in one request with issues: [...]. Name the fields you need — omitting fields returns Jira's whole navigable set and burns the result budget. |
 | `jira_get_comments` | Get comments | read-only | List the comments on an issue, newest first by default (orderBy -created; Jira's own default is oldest first). |
 | `jira_get_transitions` | Get transitions | read-only | List the workflow transitions available from this issue's CURRENT status: id, name and target status. |
 | `jira_get_changelog` | Get changelog | read-only | Read an issue's change history — field, from → to, author, created. |

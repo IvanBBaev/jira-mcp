@@ -1695,6 +1695,38 @@ function buildRoutes(server) {
     ],
 
     [
+      'POST',
+      '/rest/api/3/issue/bulkfetch',
+      (ctx) => {
+        const refs = Array.isArray(ctx.body?.issueIdsOrKeys)
+          ? ctx.body.issueIdsOrKeys
+          : [];
+        const fields = Array.isArray(ctx.body?.fields) ? ctx.body.fields : undefined;
+        const expand = Array.isArray(ctx.body?.expand) ? ctx.body.expand : undefined;
+        const issues = [];
+        const issueErrors = [];
+        for (const [index, ref] of refs.entries()) {
+          const issue = issueOf({ issueIdOrKey: String(ref) });
+          if (issue === undefined) {
+            issueErrors.push({
+              status: 404,
+              failedElementNumber: index,
+              elementErrors: {
+                errorMessages: [
+                  'Issue does not exist or you do not have permission to see it.',
+                ],
+                errors: {},
+              },
+            });
+          } else {
+            issues.push(wireIssue(state, issue, origin(), { fields, expand }));
+          }
+        }
+        return json(200, { issues, issueErrors });
+      },
+    ],
+
+    [
       'GET',
       '/rest/api/3/issue/{issueIdOrKey}/comment',
       (ctx) => {

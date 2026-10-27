@@ -33,6 +33,10 @@ env var names — not internal refactors.
   `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
   CONFIGURATION.md gains a "Proxy and custom CA" section.
+- `jira_get_issue` takes `issues` (D149): up to 100 issue keys or ids read
+  in one request, each shaped exactly like a single read; keys Jira could not
+  serve are listed in `data.unmatched` and `data.errors` instead of failing
+  the call. Jira Cloud only.
 - `jira_list_versions` takes `issueCounts` (D148): each version then reports
   how many fix-version issues are to do, in progress and done, in the same
   request. Jira Cloud only.

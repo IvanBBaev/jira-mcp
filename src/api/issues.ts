@@ -74,6 +74,9 @@ import type { JiraUser, ShapedUser } from './users.js';
 /** The issue collection — `POST` here creates. Relative to the `v3` root. */
 export const ISSUE_COLLECTION_PATH = '/issue';
 
+/** The bulk read endpoint (D149) — Cloud only. */
+export const ISSUE_BULKFETCH_PATH = '/issue/bulkfetch';
+
 /** Issue links live outside the issue resource (JIRA-API.md §Issue links). */
 export const ISSUE_LINK_PATH = '/issueLink';
 
@@ -378,6 +381,46 @@ export interface GetIssueBase extends IssueRequestBase {
 
 export type GetIssueOptions = GetIssueBase & BudgetGuard;
 
+/** Most issues one `POST /issue/bulkfetch` accepts (D149). */
+export const MAX_BULK_ISSUES = 100;
+
+export interface GetIssuesBulkBase extends Omit<GetIssueBase, 'issue'> {
+  /** Issue keys or numeric ids, 1–{@link MAX_BULK_ISSUES} after de-duplication. */
+  readonly issues: readonly string[];
+}
+
+export type GetIssuesBulkOptions = GetIssuesBulkBase & BudgetGuard;
+
+/** One issue of a bulk read: {@link IssueDetail} without the per-call echoes. */
+export type IssueRecord = Omit<IssueDetail, 'raw' | 'fieldsRequested' | 'expand'>;
+
+/**
+ * One entry of `issueErrors`. Jira's shape for it is not verified against a
+ * live tenant (D149), so every member is read defensively and only the
+ * messages are guaranteed — an empty list when Jira sent none.
+ */
+export interface IssueBulkError {
+  readonly status?: number;
+  readonly failedElementNumber?: number;
+  readonly messages: readonly string[];
+}
+
+export interface IssuesBulkResult {
+  readonly issues: readonly IssueRecord[];
+  readonly errors: readonly IssueBulkError[];
+  /** The de-duplicated refs that were sent, in request order. */
+  readonly requested: readonly string[];
+  /**
+   * Requested refs no returned issue answers to by its current key or id.
+   * A moved issue comes back under its NEW key and lands here too — check
+   * `issues` before reading an entry as "gone" (CC-1546).
+   */
+  readonly unmatched: readonly string[];
+  readonly raw: boolean;
+  readonly fieldsRequested?: readonly string[];
+  readonly expand: readonly string[];
+}
+
 export interface ListCommentsBase extends ClassicListBase {
   /** `-created` (default), `created`, `-updated`, `updated`. */
   readonly orderBy?: string;
@@ -444,9 +487,93 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
     },
   });
 
-  const data = requireRecord(response.data, 'issue');
-  const id = requireString(data.id, 'issue.id');
-  const key = requireString(data.key, 'issue.key');
+  return {
+    ...shapeIssueRecord(requireRecord(response.data, 'issue'), 'issue', raw, options),
+    raw,
+    ...(fields.length === 0 ? {} : { fieldsRequested: fields }),
+    expand,
+  };
+}
+
+/**
+ * Read up to {@link MAX_BULK_ISSUES} issues in one call —
+ * `POST /rest/api/3/issue/bulkfetch` (D149). Each issue is shaped exactly like
+ * {@link getIssue}; the refs Jira could not serve come back in `errors` and
+ * `unmatched` instead of failing the whole read. Cloud only.
+ */
+export async function getIssuesBulk(
+  options: GetIssuesBulkOptions,
+): Promise<IssuesBulkResult> {
+  const requested = [
+    ...new Set(
+      options.issues.map((issue) =>
+        requireText(issue, 'issue key or id', ISSUE_REMEDIATION),
+      ),
+    ),
+  ];
+  if (requested.length === 0 || requested.length > MAX_BULK_ISSUES) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        `A bulk issue read takes 1 to ${String(MAX_BULK_ISSUES)} distinct keys or ids, ` +
+        `received ${String(requested.length)}. Nothing was sent.`,
+      remediation: `Split the keys into batches of at most ${String(MAX_BULK_ISSUES)}.`,
+    });
+  }
+  const fields = normalizeList(options.fields);
+  const expand = normalizeList(
+    typeof options.expand === 'string' ? options.expand.split(',') : options.expand,
+  );
+  const properties = normalizeList(options.properties);
+  const raw = options.raw === true;
+
+  const response = await send(options, {
+    method: 'POST',
+    path: ISSUE_BULKFETCH_PATH,
+    body: {
+      issueIdsOrKeys: requested,
+      ...(fields.length === 0 ? {} : { fields }),
+      ...(expand.length === 0 ? {} : { expand }),
+      ...(properties.length === 0 ? {} : { properties }),
+    },
+  });
+
+  const data = requireRecord(response.data, 'bulk issue read');
+  const issues = (Array.isArray(data.issues) ? data.issues : []).map((entry, index) =>
+    shapeIssueRecord(
+      requireRecord(entry, `issues[${String(index)}]`),
+      `issues[${String(index)}]`,
+      raw,
+      options,
+    ),
+  );
+  const answered = new Set<string>();
+  for (const issue of issues) {
+    answered.add(issue.id);
+    answered.add(issue.key.toUpperCase());
+  }
+  return {
+    issues,
+    errors: (Array.isArray(data.issueErrors) ? data.issueErrors : []).map(
+      mapBulkIssueError,
+    ),
+    requested,
+    unmatched: requested.filter((ref) => !answered.has(ref.toUpperCase())),
+    raw,
+    ...(fields.length === 0 ? {} : { fieldsRequested: fields }),
+    expand,
+  };
+}
+
+/** The shaped body of one issue bean — shared by the single and bulk reads. */
+function shapeIssueRecord(
+  data: Record<string, unknown>,
+  what: string,
+  raw: boolean,
+  options: Pick<GetIssueBase, 'format' | 'deployment'>,
+): IssueRecord {
+  const id = requireString(data.id, `${what}.id`);
+  const key = requireString(data.key, `${what}.key`);
   const changelog = shapeChangelogBlock(data.changelog, options.deployment);
   const props = asRecord(data.properties);
   const extras: Record<string, unknown> = {};
@@ -463,9 +590,35 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
     ...(changelog === undefined ? {} : { changelog }),
     ...(props === undefined ? {} : { properties: props }),
     ...(Object.keys(expanded).length === 0 ? {} : { expanded }),
-    raw,
-    ...(fields.length === 0 ? {} : { fieldsRequested: fields }),
-    expand,
+  };
+}
+
+/**
+ * One `issueErrors` entry, allowlisted (D41): the status, the failed element
+ * number and every message string found in `elementErrors` — never the entry
+ * itself, whose shape is unverified (D149).
+ */
+function mapBulkIssueError(value: unknown): IssueBulkError {
+  const entry = asRecord(value) ?? {};
+  const element = asRecord(entry.elementErrors) ?? entry;
+  const messages: string[] = [];
+  if (Array.isArray(element.errorMessages)) {
+    for (const message of element.errorMessages) {
+      if (typeof message === 'string') messages.push(message);
+    }
+  }
+  const errors = asRecord(element.errors);
+  if (errors !== undefined) {
+    for (const [name, message] of Object.entries(errors)) {
+      if (typeof message === 'string') messages.push(`${name}: ${message}`);
+    }
+  }
+  return {
+    ...(typeof entry.status === 'number' ? { status: entry.status } : {}),
+    ...(typeof entry.failedElementNumber === 'number'
+      ? { failedElementNumber: entry.failedElementNumber }
+      : {}),
+    messages,
   };
 }
 

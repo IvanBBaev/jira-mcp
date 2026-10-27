@@ -3582,6 +3582,24 @@ Prompts (D125):
 - **CC-1543** — the Data Center adapter refuses `issueCounts` as a
   `validation` error with nothing sent, rather than answering rows without
   counts that would read as "no issues".
+
+## Bulk issue read (D149, 2026-10-27)
+
+- **CC-1544** — `issues: [...]` on `jira_get_issue` sends one
+  `POST /issue/bulkfetch` with the trimmed, de-duplicated refs and the
+  `fields`/`expand` lists as arrays, and shapes every returned issue exactly
+  as `getIssue` would; `raw`, `fieldsRequested` and `expand` are echoed once.
+- **CC-1545** — zero refs, more than 100 distinct refs, or a blank ref is a
+  `validation` error with nothing sent; duplicates collapse before the cap.
+- **CC-1546** — a ref is matched by current key (any case) or id; one no
+  returned issue answers to is listed in `unmatched` — including a moved
+  issue that came back under its new key. `issueErrors` entries keep only
+  status, failed element number and message strings.
+- **CC-1547** — the schema takes exactly one of `issue` or `issues` (1–100
+  entries); neither or both is refused before the handler runs.
+- **CC-1548** — the Data Center adapter refuses `issues` as a `validation`
+  error with nothing sent.
+
 ## Project scope guard (D400, 2026-10-27)
 
 Placeholder ids — renumber once the parallel wave that owns the next free range lands.

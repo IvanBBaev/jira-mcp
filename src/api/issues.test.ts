@@ -30,6 +30,8 @@ import {
   AMBIGUOUS_TRANSITION,
   DEFAULT_COMMENT_ORDER_BY,
   ISSUE_ASSIGNEE_PATH_TEMPLATE,
+  ISSUE_BULKFETCH_PATH,
+  MAX_BULK_ISSUES,
   MAX_PAGE_SIZE,
   MAX_SHAPE_DEPTH,
   ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
@@ -62,6 +64,7 @@ import {
   getComment,
   getIssue,
   getIssueLink,
+  getIssuesBulk,
   getRemoteLink,
   getWorklog,
   linkIssues,
@@ -3032,4 +3035,127 @@ test('CC-1532: a bad remote link id never reaches a URL', async () => {
   }
 
   assert.deepEqual(fake.calls, []);
+});
+
+// ---------------------------------------------------------------------------
+// getIssuesBulk (D149)
+// ---------------------------------------------------------------------------
+
+const BULK_ROUTE = 'POST /rest/api/3/issue/bulkfetch';
+
+test('[CC-1544] getIssuesBulk sends one POST and shapes every issue like getIssue', async () => {
+  const fake = createFakeJiraRequest().on(
+    BULK_ROUTE,
+    jiraOk({ issues: [issueWithEverything()], issueErrors: [] }),
+  );
+
+  const result = await getIssuesBulk({
+    jira: fake.fn,
+    issues: [KEY, ` ${KEY} `, 'PROJ-2'],
+    fields: ['summary', 'description', ' '],
+    expand: ['changelog'],
+  });
+
+  const request = fake.lastRequest();
+  assert.equal(request?.method, 'POST');
+  assert.equal(request?.path, ISSUE_BULKFETCH_PATH);
+  // Refs are trimmed and de-duplicated; the lists travel as arrays, not CSV.
+  assert.deepEqual(request?.body, {
+    issueIdsOrKeys: [KEY, 'PROJ-2'],
+    fields: ['summary', 'description'],
+    expand: ['changelog'],
+  });
+  assert.equal(fake.calls.length, 1);
+
+  const single = await getIssue({
+    jira: createFakeJiraRequest().on(ISSUE_ROUTE, jiraOk(issueWithEverything())).fn,
+    issue: KEY,
+    fields: ['summary', 'description'],
+    expand: ['changelog'],
+  });
+  const { raw, fieldsRequested, expand, ...record } = single;
+  assert.deepEqual(result.issues, [record]);
+  assert.equal(result.raw, raw);
+  assert.deepEqual(result.fieldsRequested, fieldsRequested);
+  assert.deepEqual(result.expand, expand);
+  assert.deepEqual(result.requested, [KEY, 'PROJ-2']);
+  assert.deepEqual(result.unmatched, ['PROJ-2']);
+  assert.deepEqual(result.errors, []);
+});
+
+test('[CC-1545] getIssuesBulk refuses an empty or over-long ref list before sending', async () => {
+  const fake = createFakeJiraRequest();
+  const tooMany = Array.from(
+    { length: MAX_BULK_ISSUES + 1 },
+    (_, i) => `PROJ-${String(i + 1)}`,
+  );
+
+  await assert.rejects(
+    getIssuesBulk({ jira: fake.fn, issues: [] }),
+    isJiraErrorOfKind('validation'),
+  );
+  await assert.rejects(
+    getIssuesBulk({ jira: fake.fn, issues: tooMany }),
+    isJiraErrorOfKind('validation'),
+  );
+  await assert.rejects(
+    getIssuesBulk({ jira: fake.fn, issues: [KEY, '  '] }),
+    isJiraErrorOfKind('validation'),
+  );
+  assert.equal(fake.calls.length, 0);
+
+  // Duplicates collapse before the cap is counted.
+  const dupes = createFakeJiraRequest().on(BULK_ROUTE, jiraOk({ issues: [] }));
+  const result = await getIssuesBulk({
+    jira: dupes.fn,
+    issues: [...tooMany.slice(0, MAX_BULK_ISSUES), KEY],
+  });
+  assert.equal(result.requested.length, MAX_BULK_ISSUES);
+});
+
+test('[CC-1546] getIssuesBulk matches refs by key (any case) or id and keeps issueErrors as messages', async () => {
+  const fake = createFakeJiraRequest().on(
+    BULK_ROUTE,
+    jiraOk({
+      issues: [
+        { id: '10001', key: 'PROJ-1', fields: {} },
+        { id: '10002', key: 'NEW-7', fields: {} },
+      ],
+      issueErrors: [
+        {
+          status: 404,
+          failedElementNumber: 2,
+          elementErrors: {
+            errorMessages: [
+              'Issue does not exist or you do not have permission to see it.',
+            ],
+            errors: { issueIdsOrKeys: 'GONE-9' },
+            email: 'someone@example.com',
+          },
+        },
+        'not a record',
+      ],
+    }),
+  );
+
+  const result = await getIssuesBulk({
+    jira: fake.fn,
+    issues: ['proj-1', '10002', 'OLD-7', 'GONE-9'],
+  });
+
+  // OLD-7 moved to NEW-7: it was served, but under its new key (CC-1546).
+  assert.deepEqual(result.unmatched, ['OLD-7', 'GONE-9']);
+  assert.deepEqual(result.errors, [
+    {
+      status: 404,
+      failedElementNumber: 2,
+      messages: [
+        'Issue does not exist or you do not have permission to see it.',
+        'issueIdsOrKeys: GONE-9',
+      ],
+    },
+    { messages: [] },
+  ]);
+  // Absent fields stay absent rather than defaulting (D41).
+  assert.equal('fieldsRequested' in result, false);
 });

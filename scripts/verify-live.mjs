@@ -1264,6 +1264,30 @@ async function readPhase(session, flags, credentials) {
     return `${String(versions.length)} version(s), ${String(total)} fix-version issue(s)`;
   });
 
+  await claim('C61', 'jira_get_issue issues reads a batch in one call', async () => {
+    const key = flags.issue ?? found.issueKey;
+    if (key === undefined) skip('no issue available — pass --issue');
+    // A ref that cannot exist: the bulk read must report it, not fail (D149).
+    const absent = `${key.split('-')[0] ?? 'X'}-999999999`;
+    const data = dataOf(
+      await call(session, 'jira_get_issue', {
+        issues: [key, absent],
+        fields: ['summary'],
+      }),
+      'jira_get_issue (issues)',
+    );
+    const issues = data.issues ?? [];
+    if (!issues.some((issue) => issue.key === key || issue.id === key)) {
+      throw new Error(
+        `${key} was not among the ${String(issues.length)} issue(s) returned`,
+      );
+    }
+    if (!(data.unmatched ?? []).includes(absent)) {
+      throw new Error(`${absent} was not reported in data.unmatched`);
+    }
+    return `${String(issues.length)} issue(s), ${String((data.errors ?? []).length)} issueError(s)`;
+  });
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

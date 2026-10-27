@@ -2137,3 +2137,11 @@ test('[CC-365] jira_get_create_meta on Cloud is untouched — v3, no root, `issu
   assert.equal(result.error?.kind, 'not_found');
   assert.doesNotMatch(String(result.error?.remediation), /8\.4/);
 });
+
+test('[CC-1548] jira_get_issue refuses issues: [...] on Data Center before sending', async () => {
+  const jira = createFakeJiraRequest();
+  const result = await run(getIssueTool, { issues: ['ABC-1', 'ABC-2'] }, ctxOf(jira));
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(String(result.error?.message), /Cloud only/);
+  assert.equal(jira.calls.length, 0);
+});

@@ -1435,6 +1435,9 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_list_versions` `issueCounts` (D148) — `expand=issuesstatus` on
       the same request, four status-category counts per version; Data Center
       refuses it (CC-1542, CC-1543); claim C60.
+- [x] `jira_get_issue` `issues: [...]` (D149) — up to 100 issues through
+      `POST /issue/bulkfetch`, shaped like a single read, misses in
+      `errors`/`unmatched`; Data Center refuses it (CC-1544…CC-1548); claim C61.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`
