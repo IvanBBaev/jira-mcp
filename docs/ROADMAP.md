@@ -196,7 +196,7 @@ Reads:
 - **Backlog read**, `GET /rest/agile/1.0/board/{boardId}/backlog`. O-4
   deferred it and was resolved by default into D26; nothing has shipped it
   since, so `jira_move_to_backlog` exists without the read that would show
-  what it moved.
+  what it moved. Shipped as `jira_get_backlog` (D134).
 - **Priorities, resolutions and labels** — `GET /rest/api/3/priority`,
   `/resolution` and `/label`. `jira_create_issue` takes a priority by name
   and the model has no list to pick from. All three are immutable

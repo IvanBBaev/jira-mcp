@@ -2454,6 +2454,44 @@ function buildRoutes(server) {
 
     [
       'GET',
+      '/rest/agile/1.0/board/{boardId}/backlog',
+      (ctx) => {
+        // D134: the board's project issues that sit in no active or future
+        // sprint — the same envelope and field handling as the sprint read.
+        const boardId = Number(ctx.params.boardId);
+        const board = state.boards.find((row) => row.id === boardId);
+        if (board === undefined) return notFound('Board');
+        const open = new Set(
+          state.sprints
+            .filter((sprint) => sprint.state !== 'closed')
+            .map((sprint) => sprint.id),
+        );
+        const fields =
+          ctx.query.fields === undefined
+            ? undefined
+            : String(ctx.query.fields).split(',');
+        const rows = [...state.issues.values()]
+          .filter(
+            (issue) =>
+              !issue.deleted &&
+              issue.projectKey === board.location.projectKey &&
+              !open.has(issue.sprintId),
+          )
+          .map((issue) => wireIssue(state, issue, origin(), { fields }));
+        const startAt = Number(ctx.query.startAt ?? 0);
+        const maxResults = Number(ctx.query.maxResults ?? 50);
+        return json(200, {
+          expand: 'schema,names',
+          startAt,
+          maxResults,
+          total: rows.length,
+          issues: rows.slice(startAt, startAt + maxResults),
+        });
+      },
+    ],
+
+    [
+      'GET',
       '/rest/agile/1.0/board/{boardId}/sprint',
       (ctx) => {
         const boardId = Number(ctx.params.boardId);

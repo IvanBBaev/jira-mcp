@@ -48,6 +48,7 @@ import {
   deleteSprintRequest,
   getBoardConfiguration,
   getSprint,
+  listBacklogIssues,
   listBoards,
   listSprintIssues,
   listSprints,
@@ -1655,4 +1656,90 @@ test('CC-1483: a 404 on a board configuration is that board, not the root', asyn
 
   // An id-bearing route: the board can be gone, so no root probe rewrite.
   assert.equal(error.kind, 'not_found');
+});
+
+// ---------------------------------------------------------------------------
+// Backlog (D134)
+// ---------------------------------------------------------------------------
+
+const BACKLOG_ROUTE = 'GET /rest/agile/1.0/board/7/backlog';
+
+test('CC-1485: listBacklogIssues reads the board backlog with the default fields', async () => {
+  const jira = createFakeJiraRequest().on(
+    BACKLOG_ROUTE,
+    jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-9', '10009')])),
+  );
+
+  const result = await listBacklogIssues({ jira: jira.fn, boardId: 7 });
+
+  const request = jira.lastRequest();
+  assert.equal(request?.method, 'GET');
+  assert.equal(request?.root, 'agile');
+  assert.equal(request?.pathTemplate, '/board/{boardId}/backlog');
+  assert.equal(request?.safe, undefined, 'a GET needs no safe flag');
+  assert.equal(request?.query?.fields, DEFAULT_SPRINT_ISSUE_FIELDS.join(','));
+  assert.equal(request?.query?.jql, undefined);
+  assert.equal(result.fieldsDefaulted, true);
+  assert.deepEqual(
+    result.items.map((issue) => issue.key),
+    ['ABC-9'],
+  );
+});
+
+test("CC-1485: listBacklogIssues sends the caller's fields, JQL and offset", async () => {
+  const jira = createFakeJiraRequest().on(
+    BACKLOG_ROUTE,
+    jiraOk(issuesPage(20, 10, 21, [issueRow('ABC-30', '10030')])),
+  );
+
+  const result = await listBacklogIssues({
+    jira: jira.fn,
+    boardId: '7',
+    fields: [' summary ', 'customfield_10016'],
+    jql: ' issuetype = Bug ',
+    startAt: 20,
+    pageSize: 10,
+    maxPages: 1,
+  });
+
+  assert.deepEqual(queryOf(jira.lastRequest()), {
+    startAt: 20,
+    maxResults: 10,
+    fields: 'summary,customfield_10016',
+    jql: 'issuetype = Bug',
+  });
+  assert.equal(result.fieldsDefaulted, false);
+  assert.equal(result.stopReason, 'exhausted');
+});
+
+test('CC-1486: listBacklogIssues rejects a board id that is not one, before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() => listBacklogIssues({ jira: jira.fn, boardId: 'ABC board' })),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.equal(jira.calls.length, 0);
+});
+
+test('CC-1487: a backlog refusal (kanban without a backlog) passes through', async () => {
+  const jira = createFakeJiraRequest().on(
+    BACKLOG_ROUTE,
+    jiraErr(
+      createJiraError({
+        kind: 'validation',
+        reason: 'Jira refused GET /rest/agile/1.0/board/7/backlog (400).',
+        httpStatus: 400,
+        remediation: 'Enable the backlog on this board.',
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => listBacklogIssues({ jira: jira.fn, boardId: 7 })),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.equal(error.httpStatus, 400);
 });

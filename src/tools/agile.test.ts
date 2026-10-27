@@ -41,6 +41,7 @@ import {
   agilePackage,
   closeSprintTool,
   createSprintTool,
+  getBacklogTool,
   getBoardConfigTool,
   getSprintIssuesTool,
   listBoardsTool,
@@ -467,6 +468,69 @@ test('jira_get_sprint_issues forwards extra jql untouched', async () => {
   assert.equal(fake.lastRequest()?.query?.jql, 'status != Done');
   // An empty page is still content-bearing by type, so the brand stays.
   assert.equal(result._untrusted, true);
+});
+
+// ---------------------------------------------------------------------------
+// `jira_get_backlog` (D134)
+// ---------------------------------------------------------------------------
+
+const BOARD_BACKLOG_ROUTE = 'GET /rest/agile/1.0/board/17/backlog';
+
+test('CC-1488: jira_get_backlog pages a board backlog like the sprint read', async () => {
+  const fake = createFakeJiraRequest().on(
+    BOARD_BACKLOG_ROUTE,
+    // synthetic — GET /rest/agile/1.0/board/{boardId}/backlog
+    jiraOk({
+      startAt: 0,
+      maxResults: 2,
+      total: 5,
+      issues: [
+        { id: '10007', key: 'ABC-7', fields: { summary: 'Top of the backlog' } },
+        { id: '10008', key: 'ABC-8', fields: { summary: 'Next one' } },
+      ],
+    }),
+  );
+
+  const result = await getBacklogTool.handler(
+    { boardId: 17, fields: ['summary'], jql: 'issuetype = Bug', maxResults: 2 },
+    createCtx(fake.fn),
+  );
+  const data = dataOf(result);
+
+  assert.deepEqual(fake.routes(), [BOARD_BACKLOG_ROUTE]);
+  assert.equal(fake.lastRequest()?.query?.jql, 'issuetype = Bug');
+  assert.deepEqual(
+    data.issues.map((row) => row.key),
+    ['ABC-7', 'ABC-8'],
+  );
+  assert.equal(data.boardId, 17);
+  assert.equal(data.count, 2);
+  assert.equal(data.paging.partial, true);
+  assert.equal(data.paging.nextStartAt, 2);
+  // Issue summaries are tenant prose: branded like the sprint read (CC-35).
+  assert.equal(result._untrusted, true);
+  assert.ok(!hintCodes(result).includes('truncated'));
+});
+
+test('CC-1488: jira_get_backlog defaults the fields and says so', async () => {
+  const fake = createFakeJiraRequest().on(
+    BOARD_BACKLOG_ROUTE,
+    jiraOk({ startAt: 0, maxResults: 50, total: 0, issues: [] }),
+  );
+
+  const result = await getBacklogTool.handler({ boardId: 17 }, createCtx(fake.fn));
+
+  assert.deepEqual(dataOf(result).fields, DEFAULT_SPRINT_ISSUE_FIELDS);
+  assert.ok(hintCodes(result).includes('fields_defaulted'));
+});
+
+test('jira_get_backlog refuses a blank jql and a non-integer board id', () => {
+  assert.equal(getBacklogTool.input.safeParse({ boardId: 17, jql: '  ' }).success, false);
+  assert.equal(getBacklogTool.input.safeParse({ boardId: 'ABC' }).success, false);
+  assert.equal(
+    getBacklogTool.input.safeParse({ boardId: 17, sprintId: 4 }).success,
+    false,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -929,12 +993,13 @@ test('agile ids are positive integers and batches are non-empty (D22)', () => {
   );
 });
 
-test('the four reads carry the read quadruple and no write tier', () => {
+test('the five reads carry the read quadruple and no write tier', () => {
   for (const tool of [
     listBoardsTool,
     getBoardConfigTool,
     listSprintsTool,
     getSprintIssuesTool,
+    getBacklogTool,
   ]) {
     assert.deepEqual(
       tool.annotations,
@@ -1009,7 +1074,7 @@ test('the sprint tools spell out the consequences a caller cannot see', () => {
   assert.match(startSprintTool.description, /Both startDate and\s+endDate are required/);
 });
 
-test('the agile package exports its nine tools in TOOLS.md order', () => {
+test('the agile package exports its ten tools in TOOLS.md order', () => {
   assert.equal(agilePackage.id, 'agile');
   assert.deepEqual(
     agilePackage.tools.map((tool) => tool.name),
@@ -1018,6 +1083,7 @@ test('the agile package exports its nine tools in TOOLS.md order', () => {
       'jira_get_board_config',
       'jira_list_sprints',
       'jira_get_sprint_issues',
+      'jira_get_backlog',
       'jira_move_to_sprint',
       'jira_move_to_backlog',
       'jira_create_sprint',

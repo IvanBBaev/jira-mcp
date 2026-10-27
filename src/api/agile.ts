@@ -19,9 +19,6 @@
 // (D50/CC-48) — the `agile` tool package itself still deletes nothing.
 // Deliberately absent:
 //
-//   * backlog read — deferred by O-4 (DECISIONS.md). The documented v1
-//     approximation is the JQL `sprint is EMPTY AND statusCategory != Done`
-//     through the search package, not an endpoint here;
 //   * the board-scoped backlog move (`POST /backlog/{boardId}/issue`, which
 //     exists only to RANK while moving): the ranked move needs a rank
 //     vocabulary no tool asks for.
@@ -338,7 +335,16 @@ export type DeleteSprintOptions = AgileBase & DeleteSprintInput & BudgetGuard;
 /** The two states this ring can drive a sprint into (`future` is the start). */
 export type SprintLifecycleState = Extract<SprintState, 'active' | 'closed'>;
 
-/** What {@link listSprintIssues} returns on top of the loop metadata. */
+/** Options for {@link listBacklogIssues} (D134). */
+export type ListBacklogIssuesOptions = AgilePagedBase & {
+  readonly boardId: number | string;
+  /** As {@link ListSprintIssuesOptions.fields}: empty or absent injects the default set. */
+  readonly fields?: readonly string[];
+  /** Extra JQL, ANDed by Jira with "issue is in this board's backlog". */
+  readonly jql?: string;
+} & BudgetGuard;
+
+/** What {@link listSprintIssues} and {@link listBacklogIssues} return on top of the loop metadata. */
 export interface SprintIssuesResult extends ClassicLoopResult<AgileIssue> {
   /** The field ids actually sent — the caller's list, or the default set. */
   readonly fields: readonly string[];
@@ -478,12 +484,38 @@ export async function listSprintIssues(
   options: ListSprintIssuesOptions,
 ): Promise<SprintIssuesResult> {
   const sprintId = agileId(options.sprintId, 'sprintId');
+  return listIssuePage(options, `/sprint/${sprintId}/issue`, '/sprint/{sprintId}/issue');
+}
+
+/**
+ * Read one page of a board's backlog — `GET /rest/agile/1.0/board/{boardId}/
+ * backlog` (D134): the issues of the board's filter that sit in no active or
+ * future sprint, in board rank order. Same pagination dialect, same CC-03
+ * field default and same raw `fields` bags as {@link listSprintIssues}. A
+ * kanban board answers too when its backlog is enabled; otherwise Jira refuses
+ * with a 400, which passes through as `validation`.
+ */
+export async function listBacklogIssues(
+  options: ListBacklogIssuesOptions,
+): Promise<SprintIssuesResult> {
+  const boardId = agileId(options.boardId, 'boardId');
+  return listIssuePage(options, `/board/${boardId}/backlog`, '/board/{boardId}/backlog');
+}
+
+/** The issue page shared by the sprint and backlog reads. */
+async function listIssuePage(
+  options: AgilePagedBase &
+    BudgetGuard & { readonly fields?: readonly string[]; readonly jql?: string },
+  path: string,
+  pathTemplate: string,
+): Promise<SprintIssuesResult> {
   const requested = (options.fields ?? [])
     .map((field) => field.trim())
     .filter((field) => field.length > 0);
   const fieldsDefaulted = requested.length === 0;
   const fields = fieldsDefaulted ? DEFAULT_SPRINT_ISSUE_FIELDS : requested;
   const jql = options.jql?.trim();
+  const endpoint = `GET ${pathTemplate}`;
 
   const page = await agileCall({ rootProbe: false }, () =>
     runClassic<AgileIssue>(
@@ -491,16 +523,15 @@ export async function listSprintIssues(
       (cursor) => ({
         method: 'GET',
         root: 'agile',
-        path: `/sprint/${sprintId}/issue`,
-        pathTemplate: '/sprint/{sprintId}/issue',
+        path,
+        pathTemplate,
         query: {
           ...pageQuery(cursor),
           fields: fields.join(','),
           ...(jql === undefined || jql.length === 0 ? {} : { jql }),
         },
       }),
-      (response) =>
-        readCollection(response, 'GET /sprint/{sprintId}/issue', 'issues', narrowIssue),
+      (response) => readCollection(response, endpoint, 'issues', narrowIssue),
     ),
   );
 

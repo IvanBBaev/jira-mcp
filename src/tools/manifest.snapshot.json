@@ -2376,6 +2376,51 @@
           }
         },
         {
+          "name": "jira_get_backlog",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "fields": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["boardId"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_move_to_sprint",
           "annotations": {
             "readOnlyHint": false,

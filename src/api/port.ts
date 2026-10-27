@@ -43,6 +43,7 @@ import {
   getSprint,
   listBoards,
   listSprintIssues,
+  listBacklogIssues,
   listSprints,
   moveIssuesToBacklog,
   moveIssuesToSprint,
@@ -147,6 +148,7 @@ export interface JiraApi {
   readonly getSprint: typeof getSprint;
   readonly listBoards: typeof listBoards;
   readonly listSprintIssues: typeof listSprintIssues;
+  readonly listBacklogIssues: typeof listBacklogIssues;
   readonly listSprints: typeof listSprints;
   readonly moveIssuesToBacklog: typeof moveIssuesToBacklog;
   readonly moveIssuesToSprint: typeof moveIssuesToSprint;
@@ -253,6 +255,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   getSprint,
   listBoards,
   listSprintIssues,
+  listBacklogIssues,
   listSprints,
   moveIssuesToBacklog,
   moveIssuesToSprint,

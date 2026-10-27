@@ -462,6 +462,16 @@ retries under the normal policy.
   view the board, which needs Browse projects on its filter's projects; an
   invisible board is **404**. A plain read, retried under the normal policy.
 
+## Board backlog (D134)
+
+- `GET /rest/agile/1.0/board/{boardId}/backlog` — the issues the board's filter
+  (and kanban sub-query) selects that are in no active or future sprint, in
+  rank order. Query: `startAt`, `maxResults` (≤ 50), `jql`, `fields`,
+  `validateQuery`, `expand`. Answers **200** with the sprint-issue envelope
+  `{ startAt, maxResults, total, issues[] }`. A kanban board whose backlog is
+  disabled answers **400**. Permission: view the board. A plain read, retried
+  under the normal policy.
+
 ## Agile writes (sprints and the backlog)
 
 Verified against the Cloud reference on 2026-08-13:

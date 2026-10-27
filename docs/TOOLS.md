@@ -230,7 +230,8 @@ control that makes the risk visible.
 - A **content-bearing read** is any tool whose result can contain Jira-authored
   free text: `jira_get_issue`, `jira_search`, `jira_get_comments`,
   `jira_get_changelog`, `jira_get_worklogs`, `jira_get_sprint_issues` (its
-  rows are the same issue projection `jira_search` returns), `jira_list_filters`,
+  rows are the same issue projection `jira_search` returns), `jira_get_backlog`
+  (the same rows, D134), `jira_list_filters`,
   `jira_get_filter` and `jira_get_project` (project, component and version
   descriptions, CC-146), `jira_list_sprints` (sprint goals, CC-176),
   `jira_portfolio_analyze` (summaries, labels and component names, D126), and the
@@ -280,8 +281,8 @@ The `jira_search` description carries the JQL idioms a model otherwise
 brute-forces into dozens of calls: `sprint in openSprints()`, `issue in
 (KEY-1, KEY-2)` for batch fetch, `updated >= -1d` for digests,
 `assignee = currentUser()`, `statusCategory != Done`, and the backlog
-approximation `sprint is EMPTY AND statusCategory != Done` (no backlog
-endpoint in v1). Quoting rule: values with spaces need double quotes.
+approximation `sprint is EMPTY AND statusCategory != Done` (across projects;
+one board's backlog in rank order is `jira_get_backlog`). Quoting rule: values with spaces need double quotes.
 
 The filter pair is the "run the escalations filter" path: `jira_list_filters`
 finds the stored JQL, `jira_search` executes it. Keeping execution in a
@@ -475,6 +476,7 @@ descriptions, visibility-dependent), transitions, identity or permissions.
 | `jira_get_board_config` | `GET /rest/agile/1.0/board/{id}/configuration` | D133. Input: `boardId`. Output `{ board }`: `filterId`, `subQuery?`, `projectKey?`/`projectId?` (project boards only), `columns[]` with `statusIds` and `min?`/`max?`, `constraintType?`, `estimation?` (`fieldId` is the story-point field on most Scrum boards) and `rankFieldId?`. Not content-bearing. Cloud only. |
 | `jira_list_sprints` | `GET /rest/agile/1.0/board/{id}/sprint` | `state?` (active/future/closed). Content-bearing (sprint goals are board-user prose): `_untrusted: true` + `untrusted_content` (§Untrusted content, CC-176). |
 | `jira_get_sprint_issues` | `GET /rest/agile/1.0/sprint/{id}/issue` | `fields?`, `jql?` filter; flattened like `jira_search`. |
+| `jira_get_backlog` | `GET /rest/agile/1.0/board/{id}/backlog` | D134. Input: `boardId`, `fields?`, `jql?`, `startAt?`, `maxResults?`. The issues of the board's filter in no active or future sprint, in board rank order; rows flattened like `jira_search`, CC-03 field default. Content-bearing: `_untrusted: true`. A kanban board without a backlog answers 400 (`validation`). Cloud only. |
 | `jira_move_to_sprint` | `POST /rest/agile/1.0/sprint/{id}/issue` | Write tier `standard`. Input: `sprintId`, `issues` (≤ 50 keys). Ranking is unchanged — issues land at the bottom of the sprint. An over-cap batch is refused locally with nothing sent (D22). |
 | `jira_move_to_backlog` | `POST /rest/agile/1.0/backlog/issue` | Write tier `standard`. Input: `issues` (≤ 50 keys) — **no board id**: Jira defines the call as "remove the future and active sprints from these issues", so the board follows from the project. The board-scoped `POST /rest/agile/1.0/backlog/{boardId}/issue` (which exists only to RANK while moving) is deliberately not exposed. Same D22 cap refusal. |
 | `jira_create_sprint` | `POST /rest/agile/1.0/sprint` | Write tier `standard`. Input: `name`, `originBoardId` (a Scrum board — Kanban boards have no sprints), `goal?`, `startDate?`, `endDate?`. Creates in state `future`: planning is not starting. Output: the created sprint, whose `id` every other sprint tool takes. |
@@ -737,8 +739,8 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**62 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
-issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 8,
+**63 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
+issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 10,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —

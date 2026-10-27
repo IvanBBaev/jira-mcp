@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_get_backlog` (D134) in the `agile` package: one page of a board's
+  backlog in rank order, rows shaped like `jira_search`, with `fields`, `jql`
+  and `startAt` as on `jira_get_sprint_issues`.
 - `jira_get_board_config` (D133) in the `agile` package: a board's filter id,
   columns with the status ids each one holds, column constraint, estimation
   field (the story-point field on most Scrum boards) and rank field.

@@ -1238,6 +1238,33 @@ async function readPhase(session, flags, credentials) {
     );
   });
 
+  await claim('C46', 'jira_get_backlog reads a board backlog', async () => {
+    // D134. The first scrum board, since a kanban board answers 400 unless its
+    // backlog is enabled. An empty backlog is a site property, so the claim
+    // is the board echo and the paging block, not a row count.
+    const boards = dataOrSkip(
+      await call(session, 'jira_list_boards', { type: 'scrum' }),
+      'jira_list_boards',
+      ['unsupported'],
+    );
+    const board = (boards.boards ?? [])[0];
+    if (board === undefined) skip('no scrum board on the site');
+    const data = dataOf(
+      await call(session, 'jira_get_backlog', {
+        boardId: board.id,
+        fields: ['summary', 'status'],
+        maxResults: 10,
+      }),
+      'jira_get_backlog',
+    );
+    if (data.boardId !== board.id) {
+      throw new Error(`asked for board ${String(board.id)}, got ${String(data.boardId)}`);
+    }
+    if (data.paging === undefined)
+      throw new Error('the backlog page has no paging block');
+    return `board ${String(board.id)}: ${String(data.count)} backlog issue(s)`;
+  });
+
   await claim('C12', 'saved filters read', async () => {
     const data = dataOf(
       await call(session, 'jira_list_filters', {}),

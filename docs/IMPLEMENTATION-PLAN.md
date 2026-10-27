@@ -1395,7 +1395,8 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_get_board_config` (D133) — `GET /board/{id}/configuration`,
       narrowed to filter, columns with status ids, estimation and rank field
       (CC-1480…CC-1484); claim C45.
-- [ ] `jira_get_backlog` — `GET /board/{id}/backlog`.
+- [x] `jira_get_backlog` (D134) — `GET /board/{id}/backlog`, sharing the
+      sprint read's page loop and row shape (CC-1485…CC-1488); claim C46.
 - [ ] `jira_update_sprint` — partial `POST /sprint/{id}`, never `PUT`.
 - [ ] `jira_rank_issues` — `PUT /issue/rank`, ≤ 50 issues, per-issue 207
       failures reported, never replayed.

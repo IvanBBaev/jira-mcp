@@ -3325,3 +3325,16 @@ Prompts (D125):
 - **CC-1483** — an unknown or invisible board stays `not_found`.
 - **CC-1484** — `jira_get_board_config` returns `{ board }` without the
   untrusted brand.
+
+## Board backlog (D134, 2026-10-27)
+
+- **CC-1485** — the backlog read sends the CC-03 default fields when none were
+  named, and the caller's fields, JQL and offset trimmed but otherwise
+  unchanged.
+- **CC-1486** — a `boardId` that is not a Jira id is refused before any
+  request.
+- **CC-1487** — a backlog refusal (a kanban board without a backlog, 400)
+  passes through as `validation`.
+- **CC-1488** — `jira_get_backlog` returns the search-shaped rows with the
+  board echo and the paging block, branded untrusted, and raises
+  `fields_defaulted` when it chose the fields.
