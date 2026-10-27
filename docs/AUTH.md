@@ -431,10 +431,16 @@ shows the complete picture):
 11. oauth token store — local, and therefore included under `--offline`: auth
     mode, whether a client id is configured, the store path and its file mode,
     the cloudId, the access-token horizon, and whether a refresh token is
-    present. Nothing is printed that could reconstruct a token.
+    present. Nothing is printed that could reconstruct a token;
+12. network — local: a set `HTTPS_PROXY`/`HTTP_PROXY` that Node's `fetch` will
+    bypass (no `NODE_USE_ENV_PROXY`), a Node too old to honour it, a
+    `NO_PROXY` exempting the site, an unreadable (fail) or non-PEM (warn)
+    `NODE_EXTRA_CA_CERTS`, and `NODE_TLS_REJECT_UNAUTHORIZED=0` (warn). Proxy
+    credentials are never printed (D300; CONFIGURATION.md §"Proxy and custom
+    CA").
 
 (D84 widened the probe list when it numbered ten; probe 11 arrives with Phase 8,
-D91. The ledger row is history and stays as written — this list is the
+D91, probe 12 with D300. The ledger row is history and stays as written — this list is the
 normative one.)
 
 Contract (D11 in DECISIONS.md):
@@ -444,7 +450,7 @@ Contract (D11 in DECISIONS.md):
 - Exit codes: `0` all probes green (warnings allowed), `1` at least one probe
   failed, `2` usage/config error prevented probing at all.
 - `--json`: single machine-readable report object on stdout (for CI/cron).
-- `--offline`: local probes only (1–3, 8–11) — no network; pairs with startup's
+- `--offline`: local probes only (1–3, 8–12) — no network; pairs with startup's
   offline-only rule (OBSERVABILITY.md).
 - Prompts (`doctor --save`) only on a TTY; non-interactive runs fail with a
   message instead of hanging. `--save` writes the three top-level variables,

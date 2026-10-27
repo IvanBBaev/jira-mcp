@@ -1437,6 +1437,20 @@ Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`
 passing offline. Not in that exit: proof against a real tenant.
 
+## Phase 16 — v2 wave 5: auth and network (D300…)
+
+One session from 2026-10-27, in a branch worktree; one commit per item.
+
+- [x] Proxy and custom CA (D300) — CONFIGURATION.md section and doctor probe
+      12 `network`, local: env proxy honoured, `NO_PROXY` vs site, CA bundle
+      readable and PEM, TLS checks on (CC-3000…CC-3003).
+- [ ] Scoped API tokens through the API gateway.
+- [ ] OAuth 2.0 client-credentials grant (service accounts).
+- [ ] Elicitation confirm for irreversible applies.
+
+Exit: `npm run check` green; doctor and CONFIGURATION.md agree on every
+variable the server reads or depends on.
+
 ## v2 wave 6 — project scope guard (D400)
 
 Phase number left open: waves 4 and 5 run in parallel and take the next

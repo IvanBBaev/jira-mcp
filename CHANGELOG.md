@@ -14,6 +14,12 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira-mcp-ai doctor` gains a local `network` probe (D300): it warns when
+  `HTTPS_PROXY` is set but Node's `fetch` will bypass it (set
+  `NODE_USE_ENV_PROXY=1`), when `NO_PROXY` exempts the site, when
+  `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
+  `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
+  CONFIGURATION.md gains a "Proxy and custom CA" section.
 - `JIRA_PROJECTS` (D400): a comma-separated list of project keys that scopes
   every tool. Searches are narrowed to those projects, anything addressed by
   key or id outside them is refused with a `permission` error (before a write

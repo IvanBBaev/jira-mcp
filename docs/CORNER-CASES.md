@@ -3516,6 +3516,18 @@ Prompts (D125):
 - **CC-1541** — `jira_update_filter` plans a diff of only the named fields
   and binds the name/JQL/description trio as its version, so a filter edited
   between plan and apply is refused as stale.
+- **CC-3000** — doctor's `network` probe warns when `HTTPS_PROXY`/`HTTP_PROXY`
+  is set without `NODE_USE_ENV_PROXY=1` or `--use-env-proxy`, because `fetch`
+  then goes direct; with either it reports the proxy as ok. Proxy credentials
+  are stripped before the URL is printed.
+- **CC-3001** — the probe says "upgrade Node" instead when this Node cannot
+  honour the env proxy, and reports info, not a warning, when `NO_PROXY`
+  exempts the site host.
+- **CC-3002** — an unreadable `NODE_EXTRA_CA_CERTS` fails the probe (exit 1);
+  a readable file with no `-----BEGIN CERTIFICATE-----` warns that Node
+  ignores it.
+- **CC-3003** — `NODE_TLS_REJECT_UNAUTHORIZED=0` warns and points at
+  `NODE_EXTRA_CA_CERTS`.
 
 ## Project scope guard (D400, 2026-10-27)
 

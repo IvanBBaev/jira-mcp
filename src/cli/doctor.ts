@@ -269,6 +269,12 @@ export interface DoctorOptions {
   readonly authRequest?: AuthRequestFn;
   readonly fs?: DoctorFsHost;
   readonly prompt?: DoctorPrompt;
+  /**
+   * Whether this Node can route `fetch` through `HTTPS_PROXY` (the
+   * `--use-env-proxy` flag, Node 22.21+/24.5+). Defaults to feature-detecting
+   * it from `process.allowedNodeEnvironmentFlags`; tests pin it.
+   */
+  readonly envProxySupported?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,12 +490,14 @@ interface DoctorContext {
   readonly request?: JiraRequestFn;
   /** One read of the token store. Absent in basic mode: nothing consults it. */
   readonly oauth?: OAuthStoreSnapshot;
+  /** Whether this Node honours `NODE_USE_ENV_PROXY` (see `DoctorOptions`). */
+  readonly envProxySupported: boolean;
 }
 
 interface Probe {
   readonly id: string;
   readonly title: string;
-  /** Network probes are the ones `--offline` skips (AUTH.md: local are 1–3, 8–11). */
+  /** Network probes are the ones `--offline` skips (AUTH.md: local are 1–3, 8–12). */
   readonly network: boolean;
   run(ctx: DoctorContext): readonly DoctorFinding[] | Promise<readonly DoctorFinding[]>;
 }
@@ -1334,7 +1342,124 @@ const PROBES: readonly Probe[] = [
     network: false,
     run: oauthStoreFindings,
   },
+  {
+    id: 'network',
+    title: 'network',
+    // Local: it reads the environment the process was started with. Whether the
+    // proxy itself answers is the identity probe's question.
+    network: false,
+    run: networkFindings,
+  },
 ];
+
+const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'] as const;
+
+/** A proxy URL without its userinfo, so a proxy password never reaches the report. */
+function withoutCredentials(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (url.username === '' && url.password === '') return raw;
+    url.username = '';
+    url.password = '';
+    return `${url.toString().replace(/\/$/, '')} (credentials hidden)`;
+  } catch {
+    return '<unparseable URL>';
+  }
+}
+
+/** Whether `NO_PROXY` exempts `hostname`, by undici's matching rules (suffix, `*`). */
+function noProxyMatches(noProxy: string, hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return noProxy
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase().replace(/:\d+$/, ''))
+    .filter((entry) => entry !== '')
+    .some((entry) => {
+      if (entry === '*') return true;
+      const bare = entry.replace(/^\*?\./, '');
+      return host === bare || host.endsWith(`.${bare}`);
+    });
+}
+
+function envProxyEnabled(env: NodeJS.ProcessEnv): boolean {
+  if (env['NODE_USE_ENV_PROXY'] === '1') return true;
+  return (env['NODE_OPTIONS'] ?? '').split(/\s+/).includes('--use-env-proxy');
+}
+
+/** Probe 12: what the environment does to this process's outbound HTTPS. */
+function networkFindings(ctx: DoctorContext): readonly DoctorFinding[] {
+  const { env } = ctx;
+  const findings: DoctorFinding[] = [];
+
+  const proxyVar = PROXY_VARS.find((name) => (env[name] ?? '') !== '');
+  if (proxyVar !== undefined) {
+    const shown = withoutCredentials(env[proxyVar] ?? '');
+    const hostname =
+      ctx.host === undefined ? undefined : new URL(ctx.host.origin).hostname;
+    const noProxy = env['NO_PROXY'] ?? env['no_proxy'] ?? '';
+    if (hostname !== undefined && noProxyMatches(noProxy, hostname)) {
+      findings.push({
+        status: 'info',
+        text: `${proxyVar}=${shown} is set, but NO_PROXY exempts ${hostname}; requests go direct`,
+      });
+    } else if (envProxyEnabled(env)) {
+      findings.push(
+        ctx.envProxySupported
+          ? { status: 'ok', text: `requests go through ${proxyVar}=${shown}` }
+          : {
+              status: 'warn',
+              text: `${proxyVar}=${shown} is set and env-proxy is requested, but this Node (${process.version}) cannot route fetch through a proxy`,
+              remediation:
+                'Upgrade to Node 22.21+ or 24.5+, which support NODE_USE_ENV_PROXY.',
+            },
+      );
+    } else {
+      findings.push({
+        status: 'warn',
+        text: `${proxyVar}=${shown} is set, but Node's fetch ignores it; requests go direct`,
+        remediation: ctx.envProxySupported
+          ? 'Set NODE_USE_ENV_PROXY=1 in the server env (docs/CONFIGURATION.md §"Proxy and custom CA").'
+          : 'Upgrade to Node 22.21+ or 24.5+ and set NODE_USE_ENV_PROXY=1.',
+      });
+    }
+  }
+
+  const caPath = env['NODE_EXTRA_CA_CERTS'];
+  if (caPath !== undefined && caPath !== '') {
+    const pem = ctx.fs.readText(caPath);
+    if (pem === undefined) {
+      findings.push({
+        status: 'fail',
+        text: `NODE_EXTRA_CA_CERTS=${quote(caPath)} cannot be read`,
+        remediation: 'Point NODE_EXTRA_CA_CERTS at a readable PEM bundle, or unset it.',
+      });
+    } else if (!pem.includes('-----BEGIN CERTIFICATE-----')) {
+      findings.push({
+        status: 'warn',
+        text: `NODE_EXTRA_CA_CERTS=${quote(caPath)} holds no PEM certificate; Node ignores it`,
+        remediation: 'Export the corporate root CA as PEM (-----BEGIN CERTIFICATE-----).',
+      });
+    } else {
+      findings.push({ status: 'ok', text: `extra CA bundle: ${quote(caPath)}` });
+    }
+  }
+
+  if (env['NODE_TLS_REJECT_UNAUTHORIZED'] === '0') {
+    findings.push({
+      status: 'warn',
+      text: 'NODE_TLS_REJECT_UNAUTHORIZED=0 disables certificate checks; the API token is exposed to any interceptor',
+      remediation: 'Unset it and trust the proxy CA with NODE_EXTRA_CA_CERTS instead.',
+    });
+  }
+
+  if (findings.length === 0) {
+    findings.push({
+      status: 'info',
+      text: 'no proxy and no custom CA configured; direct TLS',
+    });
+  }
+  return findings;
+}
 
 // ---------------------------------------------------------------------------
 // `--save`
@@ -1433,7 +1558,7 @@ export function createReadlinePrompt(
  *
  * Ordering: parse arguments, load settings once (never throwing — the report is
  * the point), register every secret with the redactor before a single byte is
- * written, then run all eleven probes and print. `--save` short-circuits the probes
+ * written, then run all twelve probes and print. `--save` short-circuits the probes
  * on purpose: the values it writes reach the file, not this process's
  * environment, so probing after it would verify the OLD configuration.
  */
@@ -1630,6 +1755,9 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
     findingsFor: (probeId) => routed.get(probeId) ?? [],
     ...(request === undefined ? {} : { request }),
     ...(snapshot === undefined ? {} : { oauth: snapshot }),
+    envProxySupported:
+      options.envProxySupported ??
+      process.allowedNodeEnvironmentFlags.has('--use-env-proxy'),
   };
 
   if (!flags.json) {

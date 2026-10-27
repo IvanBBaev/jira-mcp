@@ -145,6 +145,7 @@ function rig(setup: RigOptions = {}): Rig {
     stdout: (text) => outChunks.push(text),
     stderr: (text) => errChunks.push(text),
     isTTY: false,
+    envProxySupported: true,
     ...setup.extra,
   };
 
@@ -250,7 +251,7 @@ test('CC-79: omitting argv means no options, not a second read of process.argv',
   const out = r.stdout();
   assert.equal(code, EXIT_OK, out);
   assert.doesNotMatch(r.stderr(), /Unexpected argument/);
-  assert.match(out, /11 probes: /);
+  assert.match(out, /12 probes: /);
 });
 
 test('with nothing injected the report goes to the real stdout and usage to the real stderr', async () => {
@@ -320,7 +321,7 @@ test('a healthy site passes every probe: exit 0', async () => {
   assert.match(out, /\[ ok \] deployment: Jira Cloud \(version 1001\.0\.0-SNAPSHOT\)/);
   assert.match(out, /\[ ok \] search: search\/jql returned 1 issue/);
   assert.match(out, /\[ ok \] agile: 1 board visible/);
-  assert.match(out, /11 probes: /);
+  assert.match(out, /12 probes: /);
   assert.deepEqual(r.jira.routes(), [
     'GET /rest/api/3/myself',
     'GET /rest/api/3/serverInfo',
@@ -630,6 +631,125 @@ test('journal: a world-readable journal warns and prints the exact chmod', async
   assert.match(out, new RegExp(`\\[ ok \\] journal: appendable: "${path}"`));
   assert.match(out, /\[warn] journal: mode 0644 is readable beyond the owner/);
   assert.match(out, new RegExp(`→ chmod 600 ${path}`));
+});
+
+test('CC-3000: network: a proxy without NODE_USE_ENV_PROXY warns that fetch goes direct', async () => {
+  const r = rig({ env: baseEnv({ HTTPS_PROXY: 'http://alice:s3cret@proxy.corp:3128' }) });
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  // Node's built-in fetch ignores HTTPS_PROXY unless asked; a silent bypass is
+  // the classic "works on my laptop, times out behind the firewall".
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    /\[warn] network: HTTPS_PROXY=http:\/\/proxy\.corp:3128 \(credentials hidden\) is set, but Node's fetch ignores it/,
+  );
+  assert.match(out, /→ Set NODE_USE_ENV_PROXY=1/);
+  assert.doesNotMatch(out, /s3cret/, 'a proxy password never reaches the report');
+});
+
+test('CC-3000: network: NODE_USE_ENV_PROXY=1 or --use-env-proxy routes through the proxy', async () => {
+  const variants: readonly Readonly<Record<string, string>>[] = [
+    { NODE_USE_ENV_PROXY: '1' },
+    { NODE_OPTIONS: '--max-old-space-size=512 --use-env-proxy' },
+  ];
+  for (const extra of variants) {
+    const r = rig({ env: baseEnv({ https_proxy: 'http://proxy.corp:3128', ...extra }) });
+    const code = await run({ ...r.options, argv: ['--offline'] });
+
+    const out = r.stdout();
+    assert.equal(code, EXIT_OK, out);
+    assert.match(
+      out,
+      /\[ ok \] network: requests go through https_proxy=http:\/\/proxy\.corp:3128/,
+    );
+  }
+});
+
+test('CC-3001: network: a Node without --use-env-proxy says to upgrade instead', async () => {
+  const r = rig({
+    env: baseEnv({ HTTPS_PROXY: 'http://proxy.corp:3128', NODE_USE_ENV_PROXY: '1' }),
+    extra: { envProxySupported: false },
+  });
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(out, /\[warn] network: .*cannot route fetch through a proxy/);
+  assert.match(out, /→ Upgrade to Node 22\.21\+ or 24\.5\+/);
+});
+
+test('CC-3001: network: NO_PROXY covering the site host means requests go direct', async () => {
+  const r = rig({
+    env: baseEnv({
+      HTTPS_PROXY: 'http://proxy.corp:3128',
+      NO_PROXY: 'localhost, .atlassian.net',
+    }),
+  });
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    /\[info] network: .*NO_PROXY exempts acme\.atlassian\.net; requests go direct/,
+  );
+  assert.doesNotMatch(out, /\[warn] network/);
+});
+
+test('CC-3002: network: an unreadable NODE_EXTRA_CA_CERTS fails the probe', async () => {
+  const r = rig({ env: baseEnv({ NODE_EXTRA_CA_CERTS: '/etc/corp/root.pem' }) });
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_PROBE_FAILED, out);
+  assert.match(
+    out,
+    /\[FAIL] network: NODE_EXTRA_CA_CERTS="\/etc\/corp\/root\.pem" cannot be read/,
+  );
+});
+
+test('CC-3002: network: a CA file without a PEM certificate warns; a PEM one is ok', async () => {
+  const pemPath = '/etc/corp/root.pem';
+  const derPath = '/etc/corp/root.der';
+  const texts = {
+    [pemPath]: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+    [derPath]: '0\u0082\u0003',
+  };
+
+  const der = rig({ env: baseEnv({ NODE_EXTRA_CA_CERTS: derPath }), texts });
+  assert.equal(await run({ ...der.options, argv: ['--offline'] }), EXIT_OK);
+  assert.match(der.stdout(), /\[warn] network: .*holds no PEM certificate/);
+
+  const pem = rig({ env: baseEnv({ NODE_EXTRA_CA_CERTS: pemPath }), texts });
+  assert.equal(await run({ ...pem.options, argv: ['--offline'] }), EXIT_OK);
+  assert.match(
+    pem.stdout(),
+    /\[ ok \] network: extra CA bundle: "\/etc\/corp\/root\.pem"/,
+  );
+});
+
+test('CC-3003: network: NODE_TLS_REJECT_UNAUTHORIZED=0 warns and points at NODE_EXTRA_CA_CERTS', async () => {
+  const r = rig({ env: baseEnv({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }) });
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    /\[warn] network: NODE_TLS_REJECT_UNAUTHORIZED=0 disables certificate checks/,
+  );
+  assert.match(out, /→ Unset it and trust the proxy CA with NODE_EXTRA_CA_CERTS/);
+});
+
+test('network: with no proxy and no CA the probe is a quiet info line', async () => {
+  const r = rig();
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(out, /\[info] network: no proxy and no custom CA configured; direct TLS/);
 });
 
 test('a near-expiry token warns on stdout and emits the log event with cid "-"', async () => {
@@ -1179,7 +1299,7 @@ test('a damaged store is reported as damaged, and the rest of the report survive
   // "The file is broken" and "you are not logged in" are different problems, so
   // the missing-grant line must NOT also appear.
   assert.doesNotMatch(out, /no authorization is stored/);
-  assert.match(out, /11 probes: /, 'the other probes still ran');
+  assert.match(out, /12 probes: /, 'the other probes still ran');
 });
 
 test('a grant belonging to another OAuth client is called out before it 401s', async () => {
@@ -1314,7 +1434,7 @@ test('--json emits one parseable report and nothing else', async () => {
   assert.equal(report.offline, false);
   assert.equal(report.ts, START_MS);
   assert.equal(report.host, 'https://acme.atlassian.net');
-  assert.equal(report.probes.length, 11);
+  assert.equal(report.probes.length, 12);
   assert.deepEqual(
     report.probes.map((probe) => probe.id),
     [
@@ -1329,6 +1449,7 @@ test('--json emits one parseable report and nothing else', async () => {
       'token-expiry',
       'gating',
       'oauth',
+      'network',
     ],
   );
   const identity = report.probes.find((probe) => probe.id === 'identity');
@@ -1377,7 +1498,7 @@ test('CC-78: --json stays parseable when a secret also occurs inside JSON syntax
   assert.equal(code, EXIT_OK, text);
   assert.equal(report.ok, true, 'booleans survive redaction');
   assert.equal(report.exitCode, EXIT_OK);
-  assert.equal(report.probes.length, 11);
+  assert.equal(report.probes.length, 12);
   // The document is valid and unreadable, which is the honest outcome: every
   // string carrying the needle is blanked, ids included, so the probe can only
   // be found by position. The collision itself is reported — as a warning on
@@ -1415,7 +1536,7 @@ test('the --json report is redacted too', async () => {
 
   assert.equal(r.stdout().includes(TOKEN), false);
   const report = JSON.parse(r.stdout()) as DoctorReport;
-  assert.equal(report.probes.length, 11);
+  assert.equal(report.probes.length, 12);
 });
 
 // ---------------------------------------------------------------------------

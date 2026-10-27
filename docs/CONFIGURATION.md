@@ -136,6 +136,37 @@ The ranges above are inclusive, and a value is plain decimal digits: `3e4`,
 `0x10` or `4.0` — or anything outside the range — is an `invalid_number`
 startup error, never a silent clamp (CC-141).
 
+## Proxy and custom CA
+
+The server reads no proxy or TLS variable of its own: these are Node's, and
+they reach every request because only `core/http.ts` talks to the network, over
+Node's built-in `fetch` (D300).
+
+| Variable | Default | Description |
+|---|---|---|
+| `HTTPS_PROXY` / `HTTP_PROXY` | — | Proxy URL (`http://[user:pass@]host:port`). **Ignored by Node's `fetch` unless `NODE_USE_ENV_PROXY=1` is also set** — without it requests go direct, which behind a firewall shows up as a timeout. Lower-case spellings are read too. |
+| `NODE_USE_ENV_PROXY` | — | `1` makes `fetch` honour `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` (Node 22.21+ and 24.5+; `NODE_OPTIONS=--use-env-proxy` is equivalent). Node prints one experimental warning on stderr; stdout stays clean. |
+| `NO_PROXY` | — | Comma-separated hosts that bypass the proxy (suffix match, `*` for all). |
+| `NODE_EXTRA_CA_CERTS` | — | Path to a PEM bundle with the corporate root CA, for a TLS-inspecting proxy. Read once at process start, so it belongs in the client's `env` block, not the env file. |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | — | Never set it to `0`: that accepts any certificate, so the API token goes to whoever intercepts. Use `NODE_EXTRA_CA_CERTS`. |
+
+Set these in the MCP client's `env` block (they are read by Node before the
+env file is loaded). Behind a TLS-inspecting proxy the usual pair is:
+
+```json
+"env": {
+  "HTTPS_PROXY": "http://proxy.corp.example:3128",
+  "NODE_USE_ENV_PROXY": "1",
+  "NODE_EXTRA_CA_CERTS": "/etc/ssl/corp-root.pem"
+}
+```
+
+`jira-mcp-ai doctor` checks the combination locally (probe 12, `network`, also
+under `--offline`): a proxy that `fetch` will bypass, a Node too old to honour
+it, a `NO_PROXY` that exempts the site, an unreadable or non-PEM CA bundle, and
+disabled certificate checks. Whether the proxy actually answers is the identity
+probe's question.
+
 ## Transport
 
 | Variable | Default | Description |
