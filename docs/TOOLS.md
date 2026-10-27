@@ -249,7 +249,8 @@ control that makes the risk visible.
   `jira_get_remote_links`
   (link titles and summaries, D141), `jira_get_sprint_issues` (its
   rows are the same issue projection `jira_search` returns), `jira_get_backlog`
-  (the same rows, D134), `jira_list_filters`,
+  (the same rows, D134), `jira_sprint_summary` (issue summaries in its rows,
+  D155), `jira_list_filters`,
   `jira_get_filter` and `jira_get_project` (project, component and version
   descriptions, CC-146), `jira_list_sprints` (sprint goals, CC-176),
   `jira_portfolio_analyze` (summaries, labels and component names, D126), and the
@@ -519,6 +520,7 @@ descriptions, visibility-dependent), labels (D139), transitions, identity or per
 | `jira_update_sprint` | `POST /rest/agile/1.0/sprint/{id}` | Write tier `standard`, idempotent (D135). Input: `sprintId` plus at least one of `name?`, `goal?` (`""` clears), `startDate?`, `endDate?` (verbatim ISO-8601 with an offset). A **partial** update: only named fields are sent, never the full-replace `PUT`; the state is not an input. An empty edit, an empty name or an empty date is refused locally with nothing sent (D22). Jira refuses edits to a closed sprint (400 → `validation`). Output `{sprintId, updated, status, sprint?}`; an echo carrying a goal is `_untrusted`. |
 | `jira_rank_issues` | `PUT /rest/agile/1.0/issue/rank` | Write tier `standard`, idempotent (D136). Input: `issues` (1–50 keys or ids, kept in order) and exactly one of `rankBeforeIssue?` / `rankAfterIssue?`, plus `rankCustomFieldId?` (from `jira_get_board_config`). No anchor, two anchors, an anchor inside the batch or over 50 issues is refused locally with nothing sent (D22). Output `{issues, outcome, failed, status}`: `all` on a 204; `partial` on a 207 naming refused issues in `failed` (`{issue, status, errors}`); `unknown` on an unreadable 207. Never replayed. A result whose `failed` carries Jira's error text is `_untrusted`. |
 | `jira_set_estimate` | `PUT /rest/agile/1.0/issue/{issueIdOrKey}/estimation?boardId=` | Write tier `standard`, idempotent (D137). Input: `issue`, `boardId`, `value` (story points as a non-negative number, or a duration string such as `1d 4h`). Writes whichever field the board estimates with — no custom field id needed (`jira_get_board_config` names it). The value is sent as a string; an empty issue, a negative or empty value or a non-numeric board id is refused locally with nothing sent (D22). Jira refuses an issue off the board or a board with no estimation field (400 → `validation`). Output `{issue, boardId, sent, status, fieldId?, value?}`. |
+| `jira_sprint_summary` | composite: `GET /rest/agile/1.0/sprint/{id}`, `GET .../board/{id}/configuration`, `GET .../sprint/{id}/issue`, `GET /rest/api/3/field`, `POST /rest/api/3/changelog/bulkfetch` | D155, read, Cloud only. Input: `sprintId`, `boardId?` (default the sprint's `originBoardId`; its field estimate is what gets summed), `scopeChanges?` (default true; false skips the field and changelog reads). Output `{sprint, boardId?, estimationField?, issues, estimates?, committed?, completion, scopeChanges, rows, partial, notes}`: counts (and estimate sums, with `unestimated`) by status category as `done`/`inProgress`/`toDo`/`unknown`; `scopeChanges.added` lists issues whose Sprint field gained this sprint after `startDate`; `committed` is all minus added, present only when both reads completed. At most 500 issues and 5 changelog pages — beyond that `partial: true` with an `INCOMPLETE` note. Statuses are current, not as at the close; removed issues are not counted (both stated in `notes`). |
 
 ## Package `portfolio`
 
@@ -794,8 +796,8 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**81 tools / 11 packages** (core 3, search 7, issues 8, issues-write 10,
-issues-delete 11, attachments 3, collab 12, meta 11, users 1, agile 13,
+**82 tools / 11 packages** (core 3, search 7, issues 8, issues-write 10,
+issues-delete 11, attachments 3, collab 12, meta 11, users 1, agile 14,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —

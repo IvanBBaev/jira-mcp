@@ -3304,6 +3304,37 @@
             "required": ["issue", "boardId", "value"],
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_sprint_summary",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "scopeChanges": {
+                "type": "boolean"
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
         }
       ]
     },

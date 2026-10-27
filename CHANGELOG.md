@@ -14,6 +14,11 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_sprint_summary` (D155, agile): one sprint in one call — issue counts
+  and story points by status category, completion, the issues added after
+  the start and the committed scope. A stand-in for the velocity / sprint
+  report, which has no public API. Statuses are current; issues removed from
+  the sprint are not counted. Jira Cloud only.
 - `JIRA_IRREVERSIBLE_CONFIRM=elicit` (D303): every irreversible apply (the
   deletes and the bulk delete/edit pair) also asks you through the client's
   MCP form elicitation and runs only when you tick yes. A client without

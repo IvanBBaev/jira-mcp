@@ -1457,6 +1457,11 @@ Cloud only — the Data Center adapter stubs every new member.
       prompt-argument values and tool names for the reference template from
       the manifest alone; live values are stage B, not built
       (CC-1569…CC-1573).
+- [x] `jira_sprint_summary` (D155) — composite agile read: counts and
+      estimate sums by status category, completion, issues added after the
+      start (Sprint-field history via the bulk changelog), committed scope;
+      bounded at 500 issues and 5 changelog pages; Cloud only
+      (CC-1574…CC-1579); claim C63.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

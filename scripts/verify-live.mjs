@@ -1404,6 +1404,43 @@ async function readPhase(session, flags, credentials) {
     );
   });
 
+  await claim('C63', 'jira_sprint_summary summarises the first sprint', async () => {
+    // D155. The first sprint of the first scrum board. The claim is the shape —
+    // totals that add up and a scope-change block that says whether it ran —
+    // not any particular count, which is a site property.
+    const boards = dataOrSkip(
+      await call(session, 'jira_list_boards', { type: 'scrum' }),
+      'jira_list_boards',
+      ['unsupported'],
+    );
+    const board = (boards.boards ?? [])[0];
+    if (board === undefined) skip('no scrum board on the site');
+    const sprints = dataOf(
+      await call(session, 'jira_list_sprints', { boardId: board.id }),
+      'jira_list_sprints',
+    );
+    const sprint = (sprints.sprints ?? [])[0];
+    if (sprint === undefined) skip(`board ${String(board.id)} has no sprint`);
+    const data = dataOf(
+      await call(session, 'jira_sprint_summary', { sprintId: sprint.id }),
+      'jira_sprint_summary',
+    );
+    const issues = data.issues ?? {};
+    const sum = issues.done + issues.inProgress + issues.toDo + issues.unknown;
+    if (sum !== issues.total) {
+      throw new Error(
+        `category counts add up to ${String(sum)}, not ${String(issues.total)}`,
+      );
+    }
+    if (typeof data.scopeChanges?.checked !== 'boolean') {
+      throw new Error('data.scopeChanges.checked was not a boolean');
+    }
+    return (
+      `sprint ${String(sprint.id)}: ${String(issues.total)} issue(s), ` +
+      `${String((data.scopeChanges.added ?? []).length)} added after start`
+    );
+  });
+
   await claim('C46', 'jira_get_backlog reads a board backlog', async () => {
     // D134. The first scrum board, since a kanban board answers 400 unless its
     // backlog is enabled. An empty backlog is a site property, so the claim

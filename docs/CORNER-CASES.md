@@ -3689,6 +3689,29 @@ Prompts (D125):
 - **CC-1573** — over the protocol the server advertises `completions: {}`,
   answers both kinds of ref, and refuses an unknown prompt.
 
+## Sprint summary (D155, 2026-10-28)
+
+- **CC-1574** — a started sprint: counts and estimate sums by status category
+  (`unestimated` counts issues without a value), completion ratios to three
+  places, the issue whose Sprint field gained the sprint after `startDate`
+  listed under `scopeChanges.added` and flagged on its row, and `committed` as
+  all minus added. The changelog asks only for the Sprint field (found by its
+  `gh-sprint` custom type), for every issue the sprint lists.
+- **CC-1575** — a sprint without a `startDate`, or `scopeChanges: false`,
+  reads neither the field catalog nor the changelog; `scopeChanges.checked`
+  is false with the reason, and `committed` is absent.
+- **CC-1576** — a board that does not estimate with a field yields counts only
+  (no `estimates`, no estimate ratio) and a note; a sprint with no board and
+  no `boardId` skips the configuration read and says to pass one.
+- **CC-1577** — a sprint past the issue cap is `partial: true` with an
+  `INCOMPLETE: only the first N issues of M` note, and `committed` is absent.
+- **CC-1578** — "added after start" is the LAST Sprint-field change after
+  `startDate` whose `to` ids hold the sprint and whose `from` ids do not; a
+  change before the start, an undated history, another field, or staying in
+  the sprint while another is added never counts.
+- **CC-1579** — the tool is a read in `agile` and is not on the Data Center
+  allowlist.
+
 ## Project scope guard (D400, 2026-10-27)
 
 Placeholder ids — renumber once the parallel wave that owns the next free range lands.

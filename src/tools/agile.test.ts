@@ -1077,7 +1077,7 @@ test('the sprint tools spell out the consequences a caller cannot see', () => {
   assert.match(startSprintTool.description, /Both startDate and\s+endDate are required/);
 });
 
-test('the agile package exports its thirteen tools in TOOLS.md order', () => {
+test('the agile package exports its fourteen tools in TOOLS.md order', () => {
   assert.equal(agilePackage.id, 'agile');
   assert.deepEqual(
     agilePackage.tools.map((tool) => tool.name),
@@ -1095,6 +1095,7 @@ test('the agile package exports its thirteen tools in TOOLS.md order', () => {
       'jira_update_sprint',
       'jira_rank_issues',
       'jira_set_estimate',
+      'jira_sprint_summary',
     ],
   );
   for (const tool of agilePackage.tools) {
