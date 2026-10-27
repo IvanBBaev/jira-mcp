@@ -50,6 +50,7 @@ import {
   getSprint,
   listBacklogIssues,
   updateSprint,
+  rankIssues,
   listBoards,
   listSprintIssues,
   listSprints,
@@ -1839,4 +1840,137 @@ test("CC-1491: an edit to a closed sprint passes Jira's 400 through, with no ech
   );
   const result = await updateSprint({ jira: silent.fn, sprintId: 42, name: 'Renamed' });
   assert.deepEqual(result, { sprintId: 42, updated: ['name'], status: 204 });
+});
+
+// ---------------------------------------------------------------------------
+// Rank (D136)
+// ---------------------------------------------------------------------------
+
+const RANK_ROUTE = 'PUT /rest/agile/1.0/issue/rank';
+
+test('CC-1493: rankIssues sends one anchor, keeps the order and reads a 204 as all ranked', async () => {
+  const jira = createFakeJiraRequest().on(RANK_ROUTE, jiraOk('', { status: 204 }));
+
+  const result = await rankIssues({
+    jira: jira.fn,
+    issues: [' SHOP-412 ', 'SHOP-415'],
+    rankBeforeIssue: 'SHOP-398',
+    rankCustomFieldId: 10019,
+  });
+
+  const request = jira.lastRequest();
+  assert.equal(request?.method, 'PUT');
+  assert.equal(request?.root, 'agile');
+  assert.deepEqual(request?.body, {
+    issues: ['SHOP-412', 'SHOP-415'],
+    rankBeforeIssue: 'SHOP-398',
+    rankCustomFieldId: 10019,
+  });
+  assert.equal(request?.safe, undefined);
+  assert.deepEqual(result, {
+    issues: ['SHOP-412', 'SHOP-415'],
+    outcome: 'all',
+    failed: [],
+    status: 204,
+  });
+});
+
+test('CC-1494: rankIssues refuses no anchor, two anchors, a self-anchor and 51 issues, before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const none = asJiraError(
+    await caught(() => rankIssues({ jira: jira.fn, issues: ['A-1'] })),
+  );
+  assert.equal(none.kind, 'validation');
+  assert.match(none.message, /exactly one of rankBeforeIssue or rankAfterIssue/);
+
+  const both = asJiraError(
+    await caught(() =>
+      rankIssues({
+        jira: jira.fn,
+        issues: ['A-1'],
+        rankBeforeIssue: 'A-2',
+        rankAfterIssue: 'A-3',
+      }),
+    ),
+  );
+  assert.match(both.message, /exactly one/);
+
+  const self = asJiraError(
+    await caught(() =>
+      rankIssues({ jira: jira.fn, issues: ['A-1', 'A-2'], rankAfterIssue: ' A-2 ' }),
+    ),
+  );
+  assert.match(self.message, /relative to itself/);
+  assert.match(self.message, /Nothing was sent/);
+
+  const many = Array.from(
+    { length: MAX_MOVE_ISSUES + 1 },
+    (_, index) => `A-${String(index + 10)}`,
+  );
+  const capped = asJiraError(
+    await caught(() =>
+      rankIssues({ jira: jira.fn, issues: many, rankAfterIssue: 'A-1' }),
+    ),
+  );
+  assert.match(capped.message, /per rank call/);
+
+  assert.equal(jira.calls.length, 0);
+});
+
+test('CC-1495: a 207 names the issues Jira refused and is never resent', async () => {
+  const jira = createFakeJiraRequest().on(
+    RANK_ROUTE,
+    jiraOk(
+      {
+        entries: [
+          { issueId: 10412, issueKey: 'SHOP-412', status: 200 },
+          {
+            issueId: 10415,
+            issueKey: 'SHOP-415',
+            status: 403,
+            errors: ['No rank permission'],
+          },
+          { issueId: 10416 },
+        ],
+      },
+      { status: 207 },
+    ),
+  );
+
+  const result = await rankIssues({
+    jira: jira.fn,
+    issues: ['SHOP-412', 'SHOP-415', 'SHOP-416'],
+    rankAfterIssue: 'SHOP-398',
+  });
+
+  assert.equal(jira.calls.length, 1);
+  assert.equal(result.outcome, 'partial');
+  assert.equal(result.status, 207);
+  assert.deepEqual(result.failed, [
+    { issue: 'SHOP-415', status: 403, errors: ['No rank permission'] },
+    { issue: '10416', status: 0, errors: [] },
+  ]);
+});
+
+test('CC-1496: an unreadable 207 is reported as unknown, an all-green one as all', async () => {
+  const garbled = createFakeJiraRequest().on(RANK_ROUTE, jiraOk('', { status: 207 }));
+  const unknown = await rankIssues({
+    jira: garbled.fn,
+    issues: ['A-1'],
+    rankAfterIssue: 'A-2',
+  });
+  assert.equal(unknown.outcome, 'unknown');
+  assert.deepEqual(unknown.failed, []);
+
+  const green = createFakeJiraRequest().on(
+    RANK_ROUTE,
+    jiraOk({ entries: [{ issueKey: 'A-1', status: 200 }] }, { status: 207 }),
+  );
+  const all = await rankIssues({
+    jira: green.fn,
+    issues: ['A-1'],
+    rankAfterIssue: 'A-2',
+  });
+  assert.equal(all.outcome, 'all');
 });

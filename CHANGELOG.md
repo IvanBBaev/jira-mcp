@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_rank_issues` (D136) in the `agile` package: ranks up to 50 issues
+  directly before or after another, and names the issues Jira refused when it
+  ranks only some of them.
 - `jira_update_sprint` (D135) in the `agile` package: edits a sprint's name,
   goal or dates through the partial update, leaving the state to the
   lifecycle tools.

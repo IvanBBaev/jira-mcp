@@ -3350,3 +3350,19 @@ Prompts (D125):
   an applied edit whose echo is unreadable still succeeds, without `sprint`.
 - **CC-1492** — `jira_update_sprint` is an idempotent `standard` write whose
   schema has no `state`, and a goal-bearing echo is branded untrusted.
+
+## Rank (D136, 2026-10-27)
+
+- **CC-1493** — `rankIssues` sends `PUT /issue/rank` with the trimmed issues in
+  their given order, one anchor and the optional rank field id, with no `safe`
+  flag; a 204 is `outcome: all`.
+- **CC-1494** — no anchor, both anchors, an anchor inside the batch, or more
+  than 50 issues is refused before any request ("Nothing was sent.").
+- **CC-1495** — a 207 returns its non-2xx entries in `failed` (an entry with no
+  status counts as failed, keyed by id when it has no key), `outcome: partial`,
+  after exactly one request.
+- **CC-1496** — a 207 with no readable `entries` is `outcome: unknown`; a 207
+  whose entries are all 2xx is `outcome: all`.
+- **CC-1497** — `jira_rank_issues` is an idempotent `standard` write; a failure
+  entry carrying Jira's error text brands the result untrusted, a clean 204
+  does not.

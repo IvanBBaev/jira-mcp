@@ -14,7 +14,8 @@
 // backlog, walk a sprint through its lifecycle — create, start, close (WP-61) —
 // and, since Phase 11 (D102), delete one. Since D133 it also reads one board's
 // configuration (columns, filter, estimation and rank fields), since D134 its
-// backlog, and since D135 it edits a sprint's name, goal and window. The delete PRIMITIVE lives here
+// backlog, since D135 it edits a sprint's name, goal and window, and since
+// D136 it ranks issues before or after another. The delete PRIMITIVE lives here
 // because this module owns the agile root, but the TOOL that calls it belongs
 // to the irreversible `issues-delete` package behind JIRA_ALLOW_IRREVERSIBLE
 // (D50/CC-48) — the `agile` tool package itself still deletes nothing.
@@ -319,6 +320,18 @@ export type UpdateSprintOptions = AgileBase & {
   readonly endDate?: string;
 } & BudgetGuard;
 
+/** Options for {@link rankIssues} (D136): exactly one anchor. */
+export type RankIssuesOptions = AgileBase & {
+  /** Issue keys or ids, 1…{@link MAX_MOVE_ISSUES}, kept in this order. */
+  readonly issues: readonly string[];
+  /** Place the issues directly before this one. */
+  readonly rankBeforeIssue?: string;
+  /** Place the issues directly after this one. */
+  readonly rankAfterIssue?: string;
+  /** The rank field to write; Jira defaults to the site's global Rank field. */
+  readonly rankCustomFieldId?: number;
+} & BudgetGuard;
+
 /** Options for {@link closeSprint}. */
 export type CloseSprintOptions = AgileBase & {
   readonly sprintId: number | string;
@@ -402,6 +415,25 @@ export interface SprintStateResult {
    * without an id is worthless, so it narrows strictly.
    */
   readonly sprint?: AgileSprint;
+}
+
+/** One issue Jira did not rank, from a 207 entry (D136). */
+export interface RankFailure {
+  readonly issue: string;
+  readonly status: number;
+  readonly errors: readonly string[];
+}
+
+/**
+ * What {@link rankIssues} returns. `outcome` is `all` on a 204, `partial` when a
+ * 207 names failures, and `unknown` when a 207 body could not be read — the
+ * write still happened in part, so it is reported, not retried.
+ */
+export interface RankIssuesResult {
+  readonly issues: readonly string[];
+  readonly outcome: 'all' | 'partial' | 'unknown';
+  readonly failed: readonly RankFailure[];
+  readonly status: number;
 }
 
 /** What {@link updateSprint} returns (D135). */
@@ -840,6 +872,102 @@ function sprintEditBody(options: UpdateSprintOptions): Record<string, string> {
 }
 
 /**
+ * Rank issues before or after another issue (D136).
+ * `PUT /rest/agile/1.0/issue/rank` with `{ issues, rankBeforeIssue |
+ * rankAfterIssue, rankCustomFieldId? }`. The issues keep their given order.
+ *
+ * Jira answers 204 when every issue moved and **207** when only some did, with
+ * one entry per issue. The 207 is a success status, so nothing here throws on
+ * it: the entries that failed are returned, and the write is never resent — a
+ * replay would re-rank the issues that already moved. The cap and the
+ * "nothing was sent" refusal are the moves' own (D22).
+ */
+export async function rankIssues(options: RankIssuesOptions): Promise<RankIssuesResult> {
+  const issues = normalizeIssueKeys(options.issues, 'rank');
+  const anchor = rankAnchor(options, issues);
+  const spec: JiraRequestSpec = {
+    method: 'PUT',
+    root: 'agile',
+    path: '/issue/rank',
+    body: {
+      issues,
+      ...anchor,
+      ...(options.rankCustomFieldId === undefined
+        ? {}
+        : { rankCustomFieldId: options.rankCustomFieldId }),
+    },
+    ...writeControls(options),
+  };
+
+  const response = await agileCall({ rootProbe: false }, () => options.jira(spec));
+  if (response.status !== 207) {
+    return { issues, outcome: 'all', failed: [], status: response.status };
+  }
+  const failed = rankFailures(response.data);
+  if (failed === undefined) {
+    return { issues, outcome: 'unknown', failed: [], status: response.status };
+  }
+  return {
+    issues,
+    outcome: failed.length === 0 ? 'all' : 'partial',
+    failed,
+    status: response.status,
+  };
+}
+
+/** Exactly one anchor, and not one of the issues being ranked. */
+function rankAnchor(
+  options: RankIssuesOptions,
+  issues: readonly string[],
+): { readonly rankBeforeIssue: string } | { readonly rankAfterIssue: string } {
+  const before = trimmedOrUndefined(options.rankBeforeIssue);
+  const after = trimmedOrUndefined(options.rankAfterIssue);
+  if ((before === undefined) === (after === undefined)) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'rankIssues needs exactly one of rankBeforeIssue or rankAfterIssue. Nothing was sent.',
+      remediation: 'Name the issue to rank before, or the one to rank after — not both.',
+    });
+  }
+  const anchor = before ?? after ?? '';
+  if (issues.includes(anchor)) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `rankIssues cannot rank ${anchor} relative to itself. Nothing was sent.`,
+      remediation: 'Pick an anchor issue that is not in the batch.',
+    });
+  }
+  return before === undefined ? { rankAfterIssue: anchor } : { rankBeforeIssue: anchor };
+}
+
+/**
+ * The failed entries of a 207, or `undefined` when the body has no readable
+ * `entries` array. An entry without a status is counted as failed: claiming it
+ * moved would be the one wrong answer.
+ */
+function rankFailures(value: unknown): RankFailure[] | undefined {
+  if (!isRecord(value) || !Array.isArray(value.entries)) return undefined;
+  const failed: RankFailure[] = [];
+  for (const entry of value.entries) {
+    if (!isRecord(entry)) continue;
+    const status = typeof entry.status === 'number' ? entry.status : 0;
+    if (status >= 200 && status < 300) continue;
+    const issue =
+      typeof entry.issueKey === 'string'
+        ? entry.issueKey
+        : typeof entry.issueId === 'number' || typeof entry.issueId === 'string'
+          ? String(entry.issueId)
+          : 'unknown';
+    const errors = Array.isArray(entry.errors)
+      ? entry.errors.filter((error): error is string => typeof error === 'string')
+      : [];
+    failed.push({ issue, status, errors });
+  }
+  return failed;
+}
+
+/**
  * Close a sprint: partial update to `state: 'closed'`.
  *
  * Jira requires the sprint to be `active`, sets `completeDate` to the time of the
@@ -1017,12 +1145,13 @@ function agileId(value: number | string, name: string): string {
 }
 
 /** Which move a batch is being validated for — only the wording differs. */
-type MoveTarget = 'sprint' | 'backlog';
+type MoveTarget = 'sprint' | 'backlog' | 'rank';
 
 /** The api function each target names in its own refusal. */
 const MOVE_CALLERS: Readonly<Record<MoveTarget, string>> = Object.freeze({
   sprint: 'moveIssuesToSprint',
   backlog: 'moveIssuesToBacklog',
+  rank: 'rankIssues',
 });
 
 /**

@@ -267,17 +267,17 @@ describe('the tool manifest', () => {
     assert.ok(names.every((name) => name.startsWith('jira_')));
   });
 
-  test('holds 64 tools — 31 writes behind the gate, 8 of them irreversible', () => {
+  test('holds 65 tools — 32 writes behind the gate, 8 of them irreversible', () => {
     // Phase 12 grew the surface from 55 to 58: the two bulk writes joined
     // `issues-delete` (D103), taking that package from 6 tools to 8 and the
     // write surface from 28 to 30, and the safe queue read joined `issues`.
     // D122 added the permission check to `core`, 58 to 59, and D126 the two
     // `portfolio` reads, 59 to 61, and D133 the board configuration read, 61
-    // to 62, D134 the backlog read, 62 to 63, and D135 the sprint edit, 63 to 64 and 30 to 31 writes. A drift in any of
+    // to 62, D134 the backlog read, 62 to 63, D135 the sprint edit, 63 to 64 and 30 to 31 writes, and D136 the rank, 64 to 65 and 31 to 32 writes. A drift in any of
     // these numbers is a surface change someone has to have meant.
     const tools = PACKAGES.flatMap((pkg) => pkg.tools);
-    assert.equal(tools.length, 64);
-    assert.equal(tools.filter((tool) => tool.writeTier !== undefined).length, 31);
+    assert.equal(tools.length, 65);
+    assert.equal(tools.filter((tool) => tool.writeTier !== undefined).length, 32);
 
     const deletes = PACKAGES.find((pkg) => pkg.id === 'issues-delete');
     assert.ok(deletes);

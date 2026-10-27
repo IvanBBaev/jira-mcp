@@ -2559,7 +2559,8 @@ function buildRoutes(server) {
       },
     ],
 
-    // The five agile WRITE routes (the delete joined with D102). They validate
+    // The six agile WRITE routes (the delete joined with D102, the rank with
+    // D136). They validate
     // rather than shrug, because a
     // lenient fake turns the rehearsal into a tautology: a route that accepts
     // anything cannot catch the client sending the wrong thing, which is the
@@ -2605,6 +2606,41 @@ function buildRoutes(server) {
         }
         for (const issue of resolved) issue.sprintId = sprintId;
         return noContent();
+      },
+    ],
+
+    [
+      'PUT',
+      '/rest/agile/1.0/issue/rank',
+      (ctx) => {
+        // D136. Exactly one anchor, as the client promises; an issue the fake
+        // cannot find comes back as a 207 entry, which is how Jira reports a
+        // partial rank — never as a whole-request failure.
+        const issues = ctx.body?.issues;
+        if (!Array.isArray(issues) || issues.length === 0) {
+          return jiraError(400, [], { issues: 'issues must be a non-empty array.' });
+        }
+        if (issues.length > 50) {
+          return jiraError(400, ['Maximum number of issues in a request is 50.']);
+        }
+        const before = ctx.body?.rankBeforeIssue;
+        const after = ctx.body?.rankAfterIssue;
+        if ((before === undefined) === (after === undefined)) {
+          return jiraError(400, [
+            'Exactly one of rankBeforeIssue or rankAfterIssue is required.',
+          ]);
+        }
+        if (findIssue(String(before ?? after)) === undefined) {
+          return jiraError(400, ['The rank anchor issue does not exist.']);
+        }
+        const entries = issues.map((wanted) => {
+          const issue = findIssue(String(wanted));
+          return issue === undefined
+            ? { issueKey: String(wanted), status: 404, errors: ['Issue does not exist.'] }
+            : { issueId: Number(issue.id), issueKey: issue.key, status: 200 };
+        });
+        if (entries.every((entry) => entry.status === 200)) return noContent();
+        return json(207, { entries });
       },
     ],
 

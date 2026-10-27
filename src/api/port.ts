@@ -38,6 +38,7 @@ import { adfFromMarkdown, extractMentions } from './adf.js';
 import {
   closeSprint,
   updateSprint,
+  rankIssues,
   createSprint,
   deleteSprint,
   getBoardConfiguration,
@@ -144,6 +145,7 @@ export interface JiraApi {
   // --- agile ---
   readonly closeSprint: typeof closeSprint;
   readonly updateSprint: typeof updateSprint;
+  readonly rankIssues: typeof rankIssues;
   readonly createSprint: typeof createSprint;
   readonly deleteSprint: typeof deleteSprint;
   readonly getBoardConfiguration: typeof getBoardConfiguration;
@@ -252,6 +254,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
 
   closeSprint,
   updateSprint,
+  rankIssues,
   createSprint,
   deleteSprint,
   getBoardConfiguration,

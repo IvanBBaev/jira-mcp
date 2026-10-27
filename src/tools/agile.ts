@@ -3,9 +3,9 @@
 // `agile`, WP-34).
 //
 // Five reads over the Jira Software (Agile) root (the board configuration since
-// D133, the backlog since D134) and six writes: the two moves
+// D133, the backlog since D134) and seven writes: the two moves
 // (into a sprint, out to the backlog), the sprint lifecycle — create, start,
-// close (WP-61) — and the sprint edit (D135). The root is a different API from `/rest/api/3`: a different base
+// close (WP-61) — the sprint edit (D135) and the rank (D136). The root is a different API from `/rest/api/3`: a different base
 // path, its own pagination dialect, and its own way of not existing — a site
 // without Jira Software answers 403/404 on `/board`. That last translation
 // (CC-34) belongs to `api/agile.ts` (`asAgileError`), which is the only layer
@@ -58,6 +58,7 @@ import {
   type AgileIssue,
   type AgileSprint,
   type BoardConfiguration,
+  type RankFailure,
   type SprintLifecycleState,
 } from '../api/agile.js';
 import type { JiraApi } from '../api/port.js';
@@ -943,6 +944,91 @@ export const updateSprintTool = defineTool<
 });
 
 // ---------------------------------------------------------------------------
+// 11b. `jira_rank_issues` (D136)
+// ---------------------------------------------------------------------------
+
+const rankIssuesInput = writeToolInput({
+  issues: z
+    .array(z.string().min(1))
+    .min(1)
+    // Not `.max(...)`, for the same reason as the moves: the api refusal says
+    // nothing was sent.
+    .describe(
+      `Issue keys or ids to rank, in the order they should end up; at most ` +
+        `${String(MAX_MOVE_ISSUES)} per call.`,
+    ),
+  rankBeforeIssue: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Place the issues directly above this issue. Give this or rankAfterIssue.'),
+  rankAfterIssue: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Place the issues directly below this issue. Give this or rankBeforeIssue.',
+    ),
+  rankCustomFieldId: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Rank field id from jira_get_board_config's rankFieldId; omit for the default.",
+    ),
+});
+
+/** Result of {@link rankIssuesTool}. */
+interface RankIssuesData {
+  readonly issues: readonly string[];
+  /** `partial` and `unknown` mean some issues may not have moved — read `failed`. */
+  readonly outcome: 'all' | 'partial' | 'unknown';
+  readonly failed: readonly RankFailure[];
+  readonly status: number;
+}
+
+export const rankIssuesTool = defineTool<z.infer<typeof rankIssuesInput>, RankIssuesData>(
+  {
+    name: 'jira_rank_issues',
+    title: 'Rank issues',
+    description:
+      'Moves issues directly above or below another issue in the board order, keeping ' +
+      'their given order. Give exactly one of rankBeforeIssue or rankAfterIssue. Jira can ' +
+      'rank some issues and refuse others: outcome is then partial and failed names them ' +
+      'with the reason. Fix those and rank only them — do not resend the whole batch.',
+    package: 'agile',
+    annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+    writeTier: 'standard',
+    input: rankIssuesInput,
+    example: {
+      summary: 'Pull two issues to the top, above the current first one',
+      arguments: { issues: ['SHOP-412', 'SHOP-415'], rankBeforeIssue: 'SHOP-398' },
+    },
+    handler(args, ctx) {
+      return guarded(async () => {
+        const result = await ctx.api.rankIssues({
+          ...callBase(ctx),
+          issues: args.issues,
+          rankBeforeIssue: args.rankBeforeIssue,
+          rankAfterIssue: args.rankAfterIssue,
+          rankCustomFieldId: args.rankCustomFieldId,
+        });
+        const data: RankIssuesData = {
+          issues: result.issues,
+          outcome: result.outcome,
+          failed: result.failed,
+          status: result.status,
+        };
+        // Jira's per-issue error strings can echo field values.
+        const untrusted = result.failed.some((failure) => failure.errors.length > 0);
+        return ok<RankIssuesData>(data, untrusted ? { untrusted } : {});
+      });
+    },
+  },
+);
+
+// ---------------------------------------------------------------------------
 // 12. The package
 // ---------------------------------------------------------------------------
 
@@ -970,6 +1056,7 @@ export const agilePackage: PackageSpec = {
     startSprintTool,
     closeSprintTool,
     updateSprintTool,
+    rankIssuesTool,
   ],
   prompts: [sprintReviewPrompt],
 };

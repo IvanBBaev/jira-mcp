@@ -2125,6 +2125,37 @@ async function agileWriteClaims(session) {
   );
 
   await claim(
+    'C48',
+    'jira_rank_issues ranks one throwaway issue above the other',
+    async () => {
+      const key = created.issueKey;
+      const anchor = created.issueKey2;
+      if (key === undefined || anchor === undefined) skip('needs both throwaway issues');
+      // The rank lives on the agile root: no throwaway sprint means no board or
+      // no Jira Software, and C27 already said which.
+      if (created.sprintId === undefined) skip('no agile board — see C27');
+      // A project on no board has no rank to write: Jira refuses, which is the
+      // site's shape rather than a client failure.
+      const { plan, applied } = await planAndApplyOrSkip(
+        session,
+        'jira_rank_issues',
+        { issues: [key], rankBeforeIssue: anchor },
+        ['validation'],
+      );
+      const body = plan.planned?.body ?? {};
+      if (body.rankBeforeIssue !== anchor || 'rankAfterIssue' in body) {
+        throw new Error(`planned body ${JSON.stringify(body)} did not carry one anchor`);
+      }
+      if (applied.outcome !== 'all') {
+        throw new Error(
+          `rank reported ${String(applied.outcome)}: ${JSON.stringify(applied.failed)}`,
+        );
+      }
+      return `${key} ranked above ${anchor} (HTTP ${String(applied.status)})`;
+    },
+  );
+
+  await claim(
     'C29',
     'jira_start_sprint moves the sprint from future to active',
     async () => {

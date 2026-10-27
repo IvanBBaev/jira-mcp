@@ -216,7 +216,7 @@ Writes, standard tier:
   Shipped as `jira_update_sprint` (D135).
 - **`jira_rank_issues`**, `PUT /rest/agile/1.0/issue/rank`:
   `jira_move_to_sprint` says in its own description that ranking is
-  unchanged.
+  unchanged. Shipped as `jira_rank_issues` (D136).
 - **`jira_update_worklog`**, `PUT …/worklog/{id}`: add and delete exist.
 - **`jira_add_remote_link`**, `POST …/remotelink`: a web link to a pull
   request or a Confluence page — the one Confluence-shaped need that does

@@ -2662,6 +2662,54 @@
             "required": ["sprintId"],
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_rank_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "rankBeforeIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rankAfterIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rankCustomFieldId": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
         }
       ]
     },

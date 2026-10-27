@@ -519,6 +519,12 @@ and `https://developer.atlassian.com/cloud/jira/software/rest/api-group-backlog/
   `name`, `goal`, `startDate`, `endDate` and no `state` — the same partial
   update as start and close. A closed sprint answers **400**; an active one
   accepts a new `endDate` and `goal`.
+- **Rank (D136).** `PUT /rest/agile/1.0/issue/rank` with `{issues,
+  rankBeforeIssue | rankAfterIssue, rankCustomFieldId?}`, at most 50 issues,
+  which keep their given order. **204** when every issue moved; **207** when
+  only some did, with `entries: [{issueId, issueKey, status, errors}]` — a
+  success status, so the client reads the entries rather than throwing, and
+  never resends.
 
 ## Watchers, votes, components, versions and roles
 

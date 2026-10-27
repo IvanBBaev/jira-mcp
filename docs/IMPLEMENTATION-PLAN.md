@@ -1399,8 +1399,8 @@ Cloud only — the Data Center adapter stubs every new member.
       sprint read's page loop and row shape (CC-1485…CC-1488); claim C46.
 - [x] `jira_update_sprint` (D135) — partial `POST /sprint/{id}`, never `PUT`
       (CC-1489…CC-1492); claim C47.
-- [ ] `jira_rank_issues` — `PUT /issue/rank`, ≤ 50 issues, per-issue 207
-      failures reported, never replayed.
+- [x] `jira_rank_issues` (D136) — `PUT /issue/rank`, ≤ 50 issues, per-issue
+      207 failures reported, never replayed (CC-1493…CC-1497); claim C48.
 - [ ] `jira_set_estimate` — `PUT /issue/{key}/estimation?boardId=`.
 - [ ] `jira_list_priorities`, `jira_list_resolutions`,
       `jira_list_issue_types` — catalogue reads in the metadata cache.

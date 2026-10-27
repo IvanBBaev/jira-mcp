@@ -238,7 +238,8 @@ control that makes the risk visible.
   `jira_start_sprint` / `jira_close_sprint` / `jira_update_sprint` echoes whenever the echoed sprint
   carries a goal, and the `jira_update_component` / `jira_update_version`
   echoes whenever the echoed record carries a description (CC-600) — a partial
-  update echoes the whole record, so a rename still returns tenant prose. Metadata-only tools (fields, statuses, projects, boards,
+  update echoes the whole record, so a rename still returns tenant prose; and
+  `jira_rank_issues` whenever a refused entry carries Jira's error text (D136). Metadata-only tools (fields, statuses, projects, boards,
   capabilities) are not content-bearing — board and sprint *names* are free
   text but issue/comment class content is the branded category. The filter pair is branded despite being catalogue-shaped: a saved
   filter's name, description and stored **JQL** are written by tenant users,
@@ -483,6 +484,7 @@ descriptions, visibility-dependent), transitions, identity or permissions.
 | `jira_start_sprint` | `POST /rest/agile/1.0/sprint/{id}` | Write tier `standard`. Input: `sprintId`, `startDate`, `endDate` — **both required**, refused locally (naming the missing field) before any request. `future` → `active`. Partial update: never `PUT`, which nulls every field left out of the body (JIRA-API.md §Agile writes). |
 | `jira_close_sprint` | `POST /rest/agile/1.0/sprint/{id}` | Write tier `standard`, `destructiveHint: true`. Input: `sprintId`. `active` → `closed`: Jira stamps `completeDate` and moves every issue that is NOT done out of the sprint according to the board's configuration. A closed sprint cannot be reopened or edited through this API — there is no undo. |
 | `jira_update_sprint` | `POST /rest/agile/1.0/sprint/{id}` | Write tier `standard`, idempotent (D135). Input: `sprintId` plus at least one of `name?`, `goal?` (`""` clears), `startDate?`, `endDate?` (verbatim ISO-8601 with an offset). A **partial** update: only named fields are sent, never the full-replace `PUT`; the state is not an input. An empty edit, an empty name or an empty date is refused locally with nothing sent (D22). Jira refuses edits to a closed sprint (400 → `validation`). Output `{sprintId, updated, status, sprint?}`; an echo carrying a goal is `_untrusted`. |
+| `jira_rank_issues` | `PUT /rest/agile/1.0/issue/rank` | Write tier `standard`, idempotent (D136). Input: `issues` (1–50 keys or ids, kept in order) and exactly one of `rankBeforeIssue?` / `rankAfterIssue?`, plus `rankCustomFieldId?` (from `jira_get_board_config`). No anchor, two anchors, an anchor inside the batch or over 50 issues is refused locally with nothing sent (D22). Output `{issues, outcome, failed, status}`: `all` on a 204; `partial` on a 207 naming refused issues in `failed` (`{issue, status, errors}`); `unknown` on an unreadable 207. Never replayed. A result whose `failed` carries Jira's error text is `_untrusted`. |
 
 ## Package `portfolio`
 
@@ -537,7 +539,7 @@ its shared terms so the model can judge it. Pair lists stop at 200 each
 | `jira_update_issue`, `jira_update_comment`, `jira_close_sprint` | false | **true** | true | true |
 | `jira_delete_issue`, `jira_delete_comment`, `jira_delete_worklog`, `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`, `jira_bulk_delete_issues`, `jira_bulk_edit_issues` | false | **true** | **false** | true |
 | assign/transition/move | false | false | true* | true |
-| watcher/vote add+remove, `jira_update_component`, `jira_update_version`, `jira_update_sprint` | false | false | true | true |
+| watcher/vote add+remove, `jira_update_component`, `jira_update_version`, `jira_update_sprint`, `jira_rank_issues` | false | false | true | true |
 
 \* update with absolute values is idempotent; transition is idempotent only if
 the target state equals current — annotated `idempotentHint: false` for
@@ -740,8 +742,8 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**64 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
-issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 11,
+**65 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
+issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 12,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —

@@ -41,6 +41,7 @@ import {
   agilePackage,
   closeSprintTool,
   updateSprintTool,
+  rankIssuesTool,
   createSprintTool,
   getBacklogTool,
   getBoardConfigTool,
@@ -1075,7 +1076,7 @@ test('the sprint tools spell out the consequences a caller cannot see', () => {
   assert.match(startSprintTool.description, /Both startDate and\s+endDate are required/);
 });
 
-test('the agile package exports its eleven tools in TOOLS.md order', () => {
+test('the agile package exports its twelve tools in TOOLS.md order', () => {
   assert.equal(agilePackage.id, 'agile');
   assert.deepEqual(
     agilePackage.tools.map((tool) => tool.name),
@@ -1091,6 +1092,7 @@ test('the agile package exports its eleven tools in TOOLS.md order', () => {
       'jira_start_sprint',
       'jira_close_sprint',
       'jira_update_sprint',
+      'jira_rank_issues',
     ],
   );
   for (const tool of agilePackage.tools) {
@@ -1137,4 +1139,60 @@ test('CC-1492: jira_update_sprint is an idempotent standard write that never tak
     false,
   );
   assert.match(updateSprintTool.description, /never changes the state/);
+});
+
+// ---------------------------------------------------------------------------
+// `jira_rank_issues` (D136)
+// ---------------------------------------------------------------------------
+
+test("CC-1497: jira_rank_issues reports a partial rank and brands Jira's error text", async () => {
+  const fake = createFakeJiraRequest().on(
+    'PUT /rest/agile/1.0/issue/rank',
+    jiraOk(
+      {
+        entries: [
+          { issueKey: 'SHOP-412', status: 200 },
+          { issueKey: 'SHOP-415', status: 403, errors: ['No rank permission'] },
+        ],
+      },
+      { status: 207 },
+    ),
+  );
+
+  const result = await rankIssuesTool.handler(
+    { issues: ['SHOP-412', 'SHOP-415'], rankBeforeIssue: 'SHOP-398' },
+    createCtx(fake.fn),
+  );
+  const data = dataOf(result);
+
+  assert.equal(data.outcome, 'partial');
+  assert.deepEqual(data.failed, [
+    { issue: 'SHOP-415', status: 403, errors: ['No rank permission'] },
+  ]);
+  assert.equal(result._untrusted, true);
+});
+
+test('CC-1497: jira_rank_issues is an idempotent standard write', async () => {
+  assert.deepEqual(rankIssuesTool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  });
+  assert.equal(rankIssuesTool.writeTier, 'standard');
+  assert.equal(
+    rankIssuesTool.input.safeParse({ issues: [], rankAfterIssue: 'A-1' }).success,
+    false,
+  );
+
+  const fake = createFakeJiraRequest().on(
+    'PUT /rest/agile/1.0/issue/rank',
+    jiraOk('', { status: 204 }),
+  );
+  const clean = await rankIssuesTool.handler(
+    { issues: ['A-1'], rankAfterIssue: 'A-2' },
+    createCtx(fake.fn),
+  );
+  assert.equal(dataOf(clean).outcome, 'all');
+  assert.equal(clean._untrusted, undefined);
 });
