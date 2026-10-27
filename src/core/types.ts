@@ -436,6 +436,12 @@ export interface Settings {
   readonly packagesDeny: readonly string[];
   /** `JIRA_PACKAGES_READONLY`. Packages whose write-tier tools are dropped. */
   readonly packagesReadonly: readonly string[];
+  /**
+   * `JIRA_PROJECTS` (D400): the project keys every call is confined to,
+   * upper-cased and de-duplicated. Empty or absent means no scope guard;
+   * `loadSettings` always sets it, hand-built test settings may omit it.
+   */
+  readonly projects?: readonly string[];
   /** `JIRA_WRITE_MODE` (default `plan`). */
   readonly writeMode: WriteMode;
   /**

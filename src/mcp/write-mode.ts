@@ -569,6 +569,7 @@ function readOnlySeam(inner: JiraRequestFn): JiraRequestFn {
 function createPlanCapture(
   inner: JiraRequestFn,
   redact: ((value: unknown) => unknown) | undefined,
+  preflight?: (req: JiraRequestSpec) => Promise<void>,
 ): PlanCapture {
   let planned: PlannedUpload | undefined;
   let payload: string | undefined;
@@ -578,6 +579,15 @@ function createPlanCapture(
     req: JiraRequestSpec,
   ): Promise<JiraResponse<T>> => {
     if (isReadRequest(req)) return inner<T>(req);
+    // A mutation the preflight refuses (the JIRA_PROJECTS scope, D400) is
+    // never recorded: the handler sees the refusal, as it would on apply.
+    if (planned === undefined && preflight !== undefined) {
+      return preflight(req).then(() => capture<T>(req));
+    }
+    return capture<T>(req);
+  };
+
+  const capture = <T = unknown>(req: JiraRequestSpec): Promise<JiraResponse<T>> => {
     // Keep the FIRST mutation: a handler that swallowed the unwind and tried a
     // second write must not be able to rewrite the plan the model approved.
     if (planned === undefined) {
@@ -644,6 +654,12 @@ export interface WriteGateCall {
   invoke(jira: JiraRequestFn): Promise<ToolResult<unknown>>;
   /** Run the tool's `planContext`, when it declares one (D132). */
   context?(jira: JiraRequestFn): Promise<PlanContext>;
+  /**
+   * Admit a mutation before plan mode records it — the JIRA_PROJECTS scope
+   * guard (D400). A rejection reaches the handler as the write's failure, so
+   * no plan is issued for a write the apply would refuse.
+   */
+  preflight?(req: JiraRequestSpec): Promise<void>;
 }
 
 export interface WriteGate {
@@ -759,7 +775,7 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
     // Taken before the handler runs, as apply takes it, so a handler that
     // normalises its arguments in place cannot make plan and apply disagree (CC-552).
     const fingerprint = planFingerprint(call.tool.name, call.args, call.control.profile);
-    const capture = createPlanCapture(call.jira, deps.redact);
+    const capture = createPlanCapture(call.jira, deps.redact, call.preflight?.bind(call));
     let handlerResult: ToolResult<unknown> | undefined;
     try {
       handlerResult = await call.invoke(capture.jira);

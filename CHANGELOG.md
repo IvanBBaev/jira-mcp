@@ -14,6 +14,11 @@ env var names — not internal refactors.
 
 ### Added
 
+- `JIRA_PROJECTS` (D400): a comma-separated list of project keys that scopes
+  every tool. Searches are narrowed to those projects, anything addressed by
+  key or id outside them is refused with a `permission` error (before a write
+  plan is made), and project and board lists are filtered. Attachments by id
+  are refused while a scope is set. Unset keeps today's behaviour.
 - `jira_create_filter` and `jira_update_filter` (D147) in the `search`
   package: save JQL as a new private filter, and change a filter's name, JQL
   or description. Sharing is never sent or changed; the update plan shows a

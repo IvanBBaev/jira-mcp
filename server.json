@@ -87,6 +87,12 @@
           "format": "string"
         },
         {
+          "name": "JIRA_PROJECTS",
+          "description": "Comma list of project keys every tool call is confined to. Unset: no scope.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "JIRA_WRITE_MODE",
           "description": "plan: write tools describe the change. apply: they execute when the call passes apply.",
           "isRequired": false,

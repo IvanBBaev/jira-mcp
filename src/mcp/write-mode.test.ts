@@ -1634,3 +1634,53 @@ test('CC-1471: a handler that refuses locally costs no context read', async () =
   assert.equal(reads, 0, 'only a captured mutation earns the read');
   assert.deepEqual(fake.calls, []);
 });
+
+// ---------------------------------------------------------------------------
+// Preflight (the JIRA_PROJECTS scope guard, D400)
+// ---------------------------------------------------------------------------
+
+test('CC-4003: [D400] a plan-mode mutation the preflight refuses issues no plan', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const seen: string[] = [];
+  // The refusal reaches the handler as its write's failure, as on apply.
+  await assert.rejects(
+    gate.execute({
+      ...callOf(writeTool, { summary: 's' }, {}, fake.fn),
+      preflight: (req) => {
+        seen.push(`${req.method} ${req.path}`);
+        return Promise.reject(
+          new JiraError({
+            kind: 'permission',
+            message: 'outside the scope',
+            retryable: false,
+          }),
+        );
+      },
+    }),
+    (error: unknown) => error instanceof JiraError && error.kind === 'permission',
+  );
+  assert.deepEqual(seen, ['POST /issue']);
+  assert.equal(gate.outstandingPlans, 0);
+  assert.equal(fake.calls.length, 0);
+});
+
+test('[D400] a plan-mode mutation the preflight admits is planned as before', async () => {
+  const fake = createFakeJiraRequest();
+  const gate = createWriteGate({
+    writeMode: 'plan',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const result = await gate.execute({
+    ...callOf(writeTool, { summary: 's' }, {}, fake.fn),
+    preflight: () => Promise.resolve(),
+  });
+  assert.equal(result.ok, true);
+  planIdOf(result);
+  assert.equal(fake.calls.length, 0);
+});

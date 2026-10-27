@@ -50,6 +50,7 @@ import type {
   Settings,
 } from '../core/types.js';
 import { UNEXPECTED_THROW_KIND, errorResult, errorResultOf } from './errors.js';
+import { createProjectScope } from './project-scope.js';
 import { renderResult } from './result.js';
 import type { RenderedResult } from './result.js';
 import { PACKAGE_IDS, PACKAGE_PROFILES } from './types.js';
@@ -501,10 +502,23 @@ export function createRegistry(
       );
     }
 
-    const jira =
+    const profiled =
       control.profile === undefined
         ? cachedJira
         : withProfile(cachedJira, control.profile);
+    // The JIRA_PROJECTS scope guard (D400): built per call so its resolution
+    // memo never outlives the call, and placed under the gate so the gate's
+    // own seams wrap it unchanged.
+    const scopeKeys = settings.projects ?? [];
+    const scope =
+      scopeKeys.length === 0
+        ? undefined
+        : createProjectScope({
+            keys: scopeKeys,
+            inner: profiled,
+            deployment: settings.deployment,
+          });
+    const jira = scope === undefined ? profiled : scope.jira;
     const ctx = (seam: JiraRequestFn): ToolCtx => ({
       jira: seam,
       api,
@@ -526,6 +540,7 @@ export function createRegistry(
       control,
       jira,
       invoke: (seam: JiraRequestFn) => spec.handler(rest, ctx(seam)),
+      ...(scope === undefined ? {} : { preflight: scope.check }),
       ...(planContext === undefined
         ? {}
         : { context: (seam: JiraRequestFn) => planContext(rest, ctx(seam)) }),

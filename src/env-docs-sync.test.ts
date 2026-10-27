@@ -283,6 +283,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_TOOL_PACKAGES', (s: Settings) => list(s.toolPackages)],
   ['JIRA_PACKAGES_DENY', (s: Settings) => list(s.packagesDeny)],
   ['JIRA_PACKAGES_READONLY', (s: Settings) => list(s.packagesReadonly)],
+  ['JIRA_PROJECTS', (s: Settings) => list(s.projects ?? [])],
   ['JIRA_WRITE_MODE', (s: Settings) => s.writeMode],
   ['JIRA_ALLOW_IRREVERSIBLE', (s: Settings) => String(s.allowIrreversible)],
   ['JIRA_REQUEST_TIMEOUT_MS', (s: Settings) => String(s.requestTimeoutMs)],

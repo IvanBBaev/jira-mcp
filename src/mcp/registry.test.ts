@@ -1220,3 +1220,32 @@ test('[CC-1414] the plan call warms the cache the apply call then reads from', a
   assert.equal(fieldRequests(h), 1, 'the apply call read the catalogue from memory');
   assert.deepEqual(h.jira.routes(), ['GET /rest/api/3/field', 'POST /rest/api/3/issue']);
 });
+
+// ---------------------------------------------------------------------------
+// The JIRA_PROJECTS scope guard (D400)
+// ---------------------------------------------------------------------------
+
+test('CC-4003: [D400] JIRA_PROJECTS confines reads and refuses a plan for an unscoped write', async () => {
+  const h = harness(settingsOf({ projects: ['ABC'] }));
+  const registry = createRegistry(MANIFEST, h.deps);
+  h.jira.on('POST /rest/api/3/search/jql', jiraOk({ issues: [] }));
+
+  const search = await registry.call('jira_search', { jql: 'status = Done' });
+  assert.equal(search.structuredContent.ok, true);
+  assert.deepEqual(h.jira.lastRequest()?.body, {
+    jql: 'project in ("ABC") AND (status = Done)',
+  });
+
+  // The test tool's create names no project: refused at plan time, no plan.
+  const create = await registry.call('jira_create_issue', { summary: 'x' });
+  assert.equal(create.structuredContent.error?.kind, 'permission');
+  assert.equal(h.jira.calls.length, 1);
+});
+
+test('[D400] without JIRA_PROJECTS the search JQL is sent unchanged', async () => {
+  const h = harness(settingsOf());
+  const registry = createRegistry(MANIFEST, h.deps);
+  h.jira.on('POST /rest/api/3/search/jql', jiraOk({ issues: [] }));
+  await registry.call('jira_search', { jql: 'status = Done' });
+  assert.deepEqual(h.jira.lastRequest()?.body, { jql: 'status = Done' });
+});

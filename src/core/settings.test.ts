@@ -1161,3 +1161,23 @@ describe('loadSettings — the Data Center preview gate (D106)', () => {
     assert.ok(codes(report).includes('auth_mode_deployment'));
   });
 });
+
+describe('loadSettings — JIRA_PROJECTS scope (D400)', () => {
+  it('is empty when unset', () => {
+    const { settings } = load({ ...VALID });
+    assert.deepEqual(settings.projects, []);
+  });
+
+  it('CC-4000: upper-cases, trims and de-duplicates the keys', () => {
+    const { settings, report } = load({ ...VALID, JIRA_PROJECTS: ' abc, DEF ,,abc' });
+    assert.deepEqual(report.findings, []);
+    assert.deepEqual(settings.projects, ['ABC', 'DEF']);
+  });
+
+  it('CC-4000: refuses a value that is not a project key', () => {
+    const { settings, report } = load({ ...VALID, JIRA_PROJECTS: 'ABC,1XY,a b' });
+    assert.deepEqual(codes(report), ['invalid_project_key', 'invalid_project_key']);
+    assert.equal(report.ok, false);
+    assert.deepEqual(settings.projects, ['ABC']);
+  });
+});
