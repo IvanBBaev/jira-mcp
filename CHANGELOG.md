@@ -33,6 +33,10 @@ env var names — not internal refactors.
   `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
   CONFIGURATION.md gains a "Proxy and custom CA" section.
+- Argument completion (D154): the server advertises `completions`.
+  `completion/complete` offers the `action` values of `jira_bulk_preflight`
+  and every tool name for `jira://reference/tools/{name}`. Nothing is fetched
+  from Jira to complete a value.
 - Six prompts (D153): `jira_issue_brief`, `jira_worklog_summary`,
   `jira_epic_progress`, `jira_my_work`, `jira_blocked_report` and
   `jira_bulk_preflight` — read-only workflows over the existing tools, listed

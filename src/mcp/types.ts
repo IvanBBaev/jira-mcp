@@ -496,6 +496,11 @@ export interface PromptArgumentSpec {
   readonly pattern?: RegExp;
   /** Upper bound on the value's length; at most `PROMPT_ARG_MAX`, the default. */
   readonly maxLength?: number;
+  /**
+   * A closed set of values, offered by `completion/complete` (D154). Each one
+   * must pass the argument's own pattern and length, checked at import time.
+   */
+  readonly values?: readonly string[];
 }
 
 /**

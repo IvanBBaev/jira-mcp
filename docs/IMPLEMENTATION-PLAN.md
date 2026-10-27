@@ -1453,6 +1453,10 @@ Cloud only — the Data Center adapter stubs every new member.
       (issues), `jira_epic_progress`, `jira_my_work`, `jira_blocked_report`,
       `jira_bulk_preflight` (search); read-only, gated on their tools
       (CC-1566…CC-1568).
+- [x] Completions, stage A (D154) — `completion/complete` answers closed
+      prompt-argument values and tool names for the reference template from
+      the manifest alone; live values are stage B, not built
+      (CC-1569…CC-1573).
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

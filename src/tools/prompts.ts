@@ -257,8 +257,9 @@ const ISSUE_KEY_PATTERN = /[A-Z][A-Z0-9_]{1,49}-[1-9][0-9]{0,17}/;
 /** The look-back window `jira_worklog_summary` uses when the caller gives none. */
 export const WORKLOG_DEFAULT_SINCE = '-1w';
 
-/** What `jira_bulk_preflight` can be asked to prepare for. */
-const BULK_ACTION_PATTERN = /(?:edit|transition|delete)/;
+/** What `jira_bulk_preflight` can be asked to prepare for — also its completions (D154). */
+const BULK_ACTIONS = ['edit', 'transition', 'delete'] as const;
+const BULK_ACTION_PATTERN = new RegExp(BULK_ACTIONS.join('|'));
 
 /** The permission each bulk action needs on every matching issue. */
 const BULK_PERMISSION: Readonly<Record<string, string>> = {
@@ -493,6 +494,7 @@ export const bulkPreflightPrompt: PromptSpec = definePrompt({
       description: 'What the change would do: edit, transition or delete. Default edit.',
       required: false,
       pattern: BULK_ACTION_PATTERN,
+      values: BULK_ACTIONS,
       maxLength: 10,
     },
   ],

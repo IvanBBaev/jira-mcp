@@ -90,6 +90,26 @@ function checkArgument(prompt: string, arg: PromptArgumentSpec): void {
       `argument "${arg.name}" maxLength must be an integer in 1..${String(PROMPT_ARG_MAX)}`,
     );
   }
+  const { values } = arg;
+  if (values === undefined) return;
+  if (values.length === 0)
+    throw specError(prompt, `argument "${arg.name}" has empty values`);
+  if (new Set(values).size !== values.length) {
+    throw specError(prompt, `argument "${arg.name}" lists a value twice`);
+  }
+  for (const value of values) {
+    const fits =
+      value !== '' &&
+      value.length <= max &&
+      !CONTROL_CHARACTER.test(value) &&
+      (arg.pattern === undefined || wholeMatch(arg.pattern, value));
+    if (!fits) {
+      throw specError(
+        prompt,
+        `argument "${arg.name}" offers the value "${value}", which it would refuse`,
+      );
+    }
+  }
 }
 
 /**

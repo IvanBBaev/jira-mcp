@@ -697,6 +697,14 @@ Rules:
   never instructions (CC-1427).
 - A package declares its prompts through `PackageSpec.prompts`; the texts live
   in the tools ring (`tools/prompts.ts`), the mechanics in the mcp ring.
+- Completions (D154): an argument may declare `values`, a closed set that
+  `completion/complete` offers by case-insensitive prefix; `definePrompt`
+  refuses values the argument itself would refuse (CC-1569). Today only
+  `jira_bulk_preflight`'s `action` declares them. The same request completes
+  `name` in `jira://reference/tools/{name}` to every manifest tool name
+  (CC-1571). Every other argument, issue keys and export names included,
+  completes to nothing; nothing is fetched from Jira. At most 100 values,
+  with `total` and `hasMore` (CC-1572).
 
 ## Jira Data Center (preview)
 

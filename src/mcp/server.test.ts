@@ -590,6 +590,30 @@ test('prompts are listed, rendered and refused over the protocol', async () => {
   });
 });
 
+test('[CC-1573] completion/complete is advertised and answers over the protocol', async () => {
+  const { deps } = makeHarness();
+  await withSession({ ...deps, packages: withPrompt(MANIFEST) }, async ({ client }) => {
+    assert.deepEqual(client.getServerCapabilities()?.completions, {});
+    const tools = await client.complete({
+      ref: { type: 'ref/resource', uri: 'jira://reference/tools/{name}' },
+      argument: { name: 'name', value: 'jira_fx_l' },
+    });
+    assert.deepEqual(tools.completion.values, ['jira_fx_lookup']);
+    const issue = await client.complete({
+      ref: { type: 'ref/prompt', name: 'jira_fx_checkup' },
+      argument: { name: 'issue', value: 'PR' },
+    });
+    assert.deepEqual(issue.completion.values, []);
+    await assert.rejects(
+      client.complete({
+        ref: { type: 'ref/prompt', name: 'jira_fx_none' },
+        argument: { name: 'issue', value: '' },
+      }),
+      /Unknown prompt "jira_fx_none"/,
+    );
+  });
+});
+
 test('a prompt whose tools a gate removed is neither listed nor served', async () => {
   const lookupPackage = MANIFEST.find((pkg) =>
     pkg.tools.some((tool) => tool.name === 'jira_fx_lookup'),

@@ -3699,3 +3699,19 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   refuses an unknown action, and never names a write tool.
 - **CC-1568** — `jira_worklog_summary` looks back `-1w` unless told otherwise;
   `jira_my_work` without a project has no project clause.
+
+## Completions, stage A (D154, 2026-10-27)
+
+- **CC-1569** — `definePrompt` refuses argument `values` that are empty,
+  repeated, empty strings, longer than the argument allows or outside its
+  pattern; a valid set loads.
+- **CC-1570** — a prompt argument with `values` completes to them by
+  case-insensitive prefix in declared order; a free-text argument completes
+  to nothing; an undeclared argument or an unknown prompt is `-32602`.
+- **CC-1571** — the tool reference template completes `name` to the sorted,
+  de-duplicated manifest tool names; another argument and the export template
+  complete to nothing; an unknown template is `-32602`.
+- **CC-1572** — more than 100 matches are cut to 100 with the full `total`
+  and `hasMore: true`.
+- **CC-1573** — over the protocol the server advertises `completions: {}`,
+  answers both kinds of ref, and refuses an unknown prompt.

@@ -329,3 +329,30 @@ test('[CC-1428] a prompt name declared twice or shared with a tool fails the bui
     isConfigError(/a tool already has that name/),
   );
 });
+
+test('[CC-1569] a prompt argument offers only values it would accept', () => {
+  const withValues = (values: readonly string[]): Partial<PromptSpec> => ({
+    arguments: [
+      ...spec().arguments,
+      {
+        name: 'mode',
+        description: 'x',
+        required: false,
+        pattern: /a|bb/,
+        maxLength: 2,
+        values,
+      },
+    ],
+  });
+  assert.doesNotThrow(() => definePrompt(spec(withValues(['a', 'bb']))));
+  const cases: readonly [readonly string[], RegExp][] = [
+    [[], /"mode" has empty values/],
+    [['a', 'a'], /"mode" lists a value twice/],
+    [['c'], /"mode" offers the value "c", which it would refuse/],
+    [['bbb'], /offers the value "bbb"/],
+    [[''], /offers the value ""/],
+  ];
+  for (const [values, pattern] of cases) {
+    assert.throws(() => definePrompt(spec(withValues(values))), isConfigError(pattern));
+  }
+});

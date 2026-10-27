@@ -32,6 +32,7 @@ import type { MediaStore } from '../api/attachments.js';
 import type { JiraApi } from '../api/port.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
+  CompleteRequestSchema,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListResourceTemplatesRequestSchema,
@@ -69,6 +70,7 @@ import {
   isExportUri,
   readExport,
 } from './exports.js';
+import { createCompleter } from './completions.js';
 import { createProgressSink } from './progress.js';
 import { createPromptCatalogue } from './prompts.js';
 import { createRegistry } from './registry.js';
@@ -532,6 +534,12 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     registeredTools: new Set(registry.tools.map((tool) => tool.name)),
     excludedTools: registry.excludedTools,
   });
+  // Argument completion (D154), stage A: closed sets from the manifest only —
+  // no Jira call ever runs on behalf of a keystroke.
+  const completer = createCompleter({
+    prompts: prompts.prompts,
+    toolNames: deps.packages.flatMap((pkg) => pkg.tools.map((tool) => tool.name)),
+  });
 
   const server = new Server(
     { name: deps.serverName, version: deps.version },
@@ -546,6 +554,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
         resources: {},
         // Fixed at startup like the tools; no list changes.
         prompts: {},
+        // Pure completions over the manifest (D154); see `completions.ts`.
+        completions: {},
         logging: {},
       },
       instructions: serverInstructions({
@@ -598,6 +608,9 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
   // and for a refused argument; prompts, like resources, have no envelope.
   server.setRequestHandler(GetPromptRequestSchema, (request) =>
     prompts.get(request.params.name, request.params.arguments),
+  );
+  server.setRequestHandler(CompleteRequestSchema, (request) =>
+    completer.complete(request.params),
   );
 
   // Schemas are converted ONCE, here, not per `tools/list`: the manifest is
