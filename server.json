@@ -114,6 +114,14 @@
           "format": "boolean"
         },
         {
+          "name": "JIRA_IRREVERSIBLE_CONFIRM",
+          "description": "elicit: an irreversible apply also asks the human through MCP form elicitation and runs only on an explicit yes. A client without elicitation is refused.",
+          "isRequired": false,
+          "default": "off",
+          "choices": ["off", "elicit"],
+          "format": "string"
+        },
+        {
           "name": "JIRA_REQUEST_TIMEOUT_MS",
           "description": "Per-request timeout in milliseconds.",
           "isRequired": false,

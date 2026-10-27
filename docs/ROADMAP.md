@@ -255,6 +255,9 @@ deletes as another, since they share the tier's receipts and gate claims.
   through the gateway; doctor explains the 401/403 a scoped token produces.
 - **Service accounts**: shipped as D302 — `JIRA_OAUTH_GRANT=client_credentials`
   mints the token in memory; no login, no token file.
+- **Human confirmation for irreversible applies**: shipped as D303 —
+  `JIRA_IRREVERSIBLE_CONFIRM=elicit` asks through MCP form elicitation, which
+  the model cannot answer; opt-in, refused on a client that cannot ask.
 - **Closing Gate C** (R03–R05) stays the most valuable open item and is not
   code: it is the sandbox account's permissions.
 - **A file output for large reads**, as the sibling server's

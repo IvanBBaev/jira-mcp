@@ -121,6 +121,9 @@ into a refusal: \`plan_id\` binds the arguments, not the resolved accountIds.
 Deletes and the bulk operations carry \`writeTier: "irreversible"\`. Their plan
 additionally shows a \`before\` snapshot of what would be destroyed, and their
 apply additionally needs the operator opt-in \`JIRA_ALLOW_IRREVERSIBLE=true\`.
+If the server runs with \`JIRA_IRREVERSIBLE_CONFIRM=elicit\`, the apply also asks
+the human through the client and runs only on a yes; a declined confirmation
+spends the plan_id, so plan again rather than retrying.
 Prefer the reversible alternative each tool's description names (close instead
 of delete, archive instead of delete).
 

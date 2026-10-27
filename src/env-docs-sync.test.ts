@@ -288,6 +288,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_PROJECTS', (s: Settings) => list(s.projects ?? [])],
   ['JIRA_WRITE_MODE', (s: Settings) => s.writeMode],
   ['JIRA_ALLOW_IRREVERSIBLE', (s: Settings) => String(s.allowIrreversible)],
+  ['JIRA_IRREVERSIBLE_CONFIRM', (s: Settings) => s.irreversibleConfirm],
   ['JIRA_REQUEST_TIMEOUT_MS', (s: Settings) => String(s.requestTimeoutMs)],
   ['JIRA_CALL_BUDGET_MS', (s: Settings) => String(s.callBudgetMs)],
   ['JIRA_HOST_CONCURRENCY', (s: Settings) => String(s.hostConcurrency)],

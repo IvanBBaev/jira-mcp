@@ -15,8 +15,11 @@ import test from 'node:test';
 
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type {
   CallToolResult,
+  ElicitRequest,
+  ElicitResult,
   ReadResourceResult,
 } from '@modelcontextprotocol/sdk/types.js';
 
@@ -75,6 +78,7 @@ const BASE_SETTINGS: Settings = {
   packagesReadonly: [],
   writeMode: 'plan',
   allowIrreversible: false,
+  irreversibleConfirm: 'off',
   requestTimeoutMs: 30_000,
   callBudgetMs: 120_000,
   hostConcurrency: 4,
@@ -286,12 +290,21 @@ interface Session {
   close(): Promise<void>;
 }
 
+/** Answers the server's elicitation requests; its presence declares the capability. */
+type Elicitor = (request: ElicitRequest) => ElicitResult;
+
 /** Connect an SDK client to a freshly built server over a linked in-memory pair. */
-async function connect(deps: BuildServerDeps): Promise<Session> {
+async function connect(deps: BuildServerDeps, elicit?: Elicitor): Promise<Session> {
   const server = buildServer(deps);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: 'jira-mcp-test', version: '0.0.0' });
+  const client = new Client(
+    { name: 'jira-mcp-test', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: { form: {} } } },
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler(ElicitRequestSchema, (request) => elicit(request));
+  }
   await client.connect(clientTransport);
   return {
     client,
@@ -306,8 +319,9 @@ async function connect(deps: BuildServerDeps): Promise<Session> {
 async function withSession(
   deps: BuildServerDeps,
   fn: (s: Session) => Promise<void> | void,
+  elicit?: Elicitor,
 ): Promise<void> {
-  const session = await connect(deps);
+  const session = await connect(deps, elicit);
   try {
     await fn(session);
   } finally {
@@ -755,6 +769,67 @@ test('an apply is refused until JIRA_ALLOW_IRREVERSIBLE is on, then it goes thro
       assert.equal(journal.entries[0]?.tool, 'jira_fx_delete');
       assert.equal(journal.entries[0]?.httpStatus, 204);
     });
+  }
+});
+
+test('[CC-3013] JIRA_IRREVERSIBLE_CONFIRM=elicit asks the client and honours the answer', async () => {
+  for (const answer of ['accept', 'decline', 'unsupported'] as const) {
+    const { deps, jira, journal } = makeHarness({
+      journaling: true,
+      settings: {
+        writeMode: 'apply',
+        allowIrreversible: true,
+        irreversibleConfirm: 'elicit',
+      },
+    });
+    jira.on('GET /rest/api/3/issue/ABC-5', jiraOk({ fields: { summary: 'Doomed' } }));
+    jira.on('DELETE /rest/api/3/issue/ABC-5', jiraOk(undefined, { status: 204 }));
+    const asked: ElicitRequest[] = [];
+    const elicit: Elicitor | undefined =
+      answer === 'unsupported'
+        ? undefined
+        : (request) => {
+            asked.push(request);
+            return answer === 'accept'
+              ? { action: 'accept', content: { confirm: true } }
+              : { action: 'decline' };
+          };
+
+    await withSession(
+      { ...deps, packages: DELETE_MANIFEST },
+      async ({ client }) => {
+        const args = { issue: 'ABC-5' };
+        const planId = await planIdFor(client, 'jira_fx_delete', args);
+        const result = await callTool(client, 'jira_fx_delete', {
+          ...args,
+          apply: true,
+          plan_id: planId,
+        });
+
+        if (answer === 'accept') {
+          assert.deepEqual(dataOf(result), { deleted: 'ABC-5' });
+          assert.equal(asked.length, 1);
+          const params = asked[0]?.params as { message: string; mode?: string };
+          assert.equal(params.mode, 'form');
+          assert.match(params.message, /IRREVERSIBLE jira_fx_delete/);
+          assert.match(params.message, /Doomed/);
+          assert.equal(journal.entries.length, 1);
+          return;
+        }
+
+        const error = envelopeOf(result).error;
+        assert.equal(error?.kind, 'write_gated');
+        assert.ok(!jira.routes().includes('DELETE /rest/api/3/issue/ABC-5'));
+        assert.equal(journal.entries.length, 0);
+        if (answer === 'unsupported') {
+          assert.match(error?.message ?? '', /does not support form elicitation/);
+        } else {
+          assert.equal(asked.length, 1);
+          assert.match(error?.message ?? '', /not given/);
+        }
+      },
+      elicit,
+    );
   }
 });
 

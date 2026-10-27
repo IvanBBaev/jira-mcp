@@ -30,6 +30,15 @@
 // allowed — a plan is a read plus a description — so a model can always find out
 // what a delete would cost before anyone decides to allow it.
 //
+// CONFIRMATION (D303). Under `JIRA_IRREVERSIBLE_CONFIRM=elicit` an irreversible
+// apply that passed every check above also asks the human at the client, via an
+// MCP elicitation, before the handler runs. It is a third lock, not a
+// replacement: the plan_id still binds the arguments and the env opt-in still
+// arms the tier. The question is asked AFTER the plan_id is claimed, so a
+// decline spends the plan and two applies racing on one id cannot both prompt;
+// a client that cannot be asked is refused BEFORE the claim, because that is
+// the operator's to fix and must not cost the caller the plan.
+//
 // Layering: `core ← api ← mcp ← tools`. No zod, no SDK.
 // ---------------------------------------------------------------------------
 
@@ -42,6 +51,7 @@ import type {
   JiraResponse,
   QueryParams,
   QueryValue,
+  IrreversibleConfirm,
   Rng,
   WriteMode,
 } from '../core/types.js';
@@ -79,6 +89,17 @@ export const REPLAN_REMEDIATION =
 
 /** The environment variable that unlocks the irreversible tier (D45). */
 export const IRREVERSIBLE_ENV_VAR = 'JIRA_ALLOW_IRREVERSIBLE';
+
+/** The environment variable that adds the human confirmation (D303). */
+export const CONFIRM_ENV_VAR = 'JIRA_IRREVERSIBLE_CONFIRM';
+
+/** Remediation when the client cannot be asked: a client or operator change. */
+export const CONFIRM_UNAVAILABLE_REMEDIATION =
+  'Use an MCP client that supports form elicitation, or have the operator ' +
+  `restart the server with ${CONFIRM_ENV_VAR}=off. The plan_id was not consumed.`;
+
+/** Longest excerpt of the `before` snapshot a confirmation message quotes. */
+export const CONFIRM_BEFORE_MAX_CHARS = 600;
 
 /**
  * Remediation for the one refusal a re-plan cannot fix: the operator has to
@@ -261,6 +282,12 @@ export interface PlanBinding {
    * the plan showed no longer describes what the write would overwrite.
    */
   readonly version?: string;
+  /**
+   * What the confirmation question quotes (D303): composed when the plan is
+   * built, from the planned request and its `before` snapshot, so the human is
+   * asked about what the model was shown, not about a fresh read.
+   */
+  readonly summary?: string;
 }
 
 /** Outcome of an apply's id check; `ok` is the only one that lets a write run. */
@@ -641,6 +668,30 @@ export interface WriteGateDeps {
   readonly redact?: ((value: unknown) => unknown) | undefined;
   /** Injectable for tests; one store per gate otherwise. */
   readonly store?: PlanStore | undefined;
+  /** `JIRA_IRREVERSIBLE_CONFIRM` (D303). Absent means `off`. */
+  readonly irreversibleConfirm?: IrreversibleConfirm | undefined;
+  /** How the question reaches a human; the server binds it to elicitation. */
+  readonly confirmer?: IrreversibleConfirmer | undefined;
+}
+
+/** One confirmation question: the tool and what it is about to destroy. */
+export interface ConfirmRequest {
+  readonly tool: string;
+  readonly message: string;
+}
+
+/**
+ * The human-in-the-loop seam (D303). Kept SDK-free so the gate stays testable
+ * without a client; `mcp/server.ts` implements it with `elicitInput`.
+ */
+export interface IrreversibleConfirmer {
+  /** Whether the connected client can be asked at all. */
+  available(): boolean;
+  /**
+   * Ask. `true` only for an explicit yes; a decline, a cancel, a malformed
+   * answer and a failed request are all `false` (or a throw), never a yes.
+   */
+  ask(request: ConfirmRequest): Promise<boolean>;
 }
 
 export interface WriteGateCall {
@@ -671,7 +722,13 @@ export interface WriteGate {
 
 /** Every reason the gate refuses an apply. `ok` is not one of them. */
 export type GateRefusal =
-  'missing' | 'irreversible' | 'payload' | 'stale' | PlanConsumeOutcome;
+  | 'missing'
+  | 'irreversible'
+  | 'confirm_unavailable'
+  | 'declined'
+  | 'payload'
+  | 'stale'
+  | PlanConsumeOutcome;
 
 function refusal(reason: GateRefusal): string {
   switch (reason) {
@@ -685,6 +742,19 @@ function refusal(reason: GateRefusal): string {
         'This tool is in the irreversible tier: it destroys data that Jira cannot ' +
         `give back, and this server was started without ${IRREVERSIBLE_ENV_VAR}=true. ` +
         'The plan_id was NOT consumed. Nothing was sent to Jira.'
+      );
+    case 'confirm_unavailable':
+      return (
+        'This tool is in the irreversible tier and this server asks a human to ' +
+        `confirm every such apply (${CONFIRM_ENV_VAR}=elicit), but the connected ` +
+        'client does not support form elicitation, so nobody can be asked. The ' +
+        'plan_id was NOT consumed. Nothing was sent to Jira.'
+      );
+    case 'declined':
+      return (
+        'The confirmation was not given: the human declined or cancelled it, or ' +
+        'the question could not be delivered. The plan_id is spent. Nothing was ' +
+        'sent to Jira.'
       );
     case 'payload':
       return (
@@ -725,7 +795,11 @@ export function writeGatedResult(reason: GateRefusal): ToolResult<never> {
     // Re-planning cannot fix a server that is not allowed to delete; that one
     // refusal points at the operator instead.
     remediation:
-      reason === 'irreversible' ? IRREVERSIBLE_REMEDIATION : REPLAN_REMEDIATION,
+      reason === 'irreversible'
+        ? IRREVERSIBLE_REMEDIATION
+        : reason === 'confirm_unavailable'
+          ? CONFIRM_UNAVAILABLE_REMEDIATION
+          : REPLAN_REMEDIATION,
   });
 }
 
@@ -768,8 +842,36 @@ async function readPlanContext(call: WriteGateCall): Promise<PlanContext | undef
   }
 }
 
+/**
+ * The confirmation question (D303): the request that would run and an excerpt
+ * of what it destroys. Built from REDACTED values, and capped, because an
+ * elicitation message is shown verbatim and a client may log it.
+ */
+export function confirmSummary(
+  toolName: string,
+  planned: PlannedRequest,
+  before: { readonly noted: boolean; readonly value: unknown },
+): string {
+  const head =
+    `Confirm IRREVERSIBLE ${toolName}: ${planned.method} ${planned.path}. ` +
+    'Jira cannot undo this.';
+  if (!before.noted) return head;
+  let text: string;
+  try {
+    text = JSON.stringify(before.value) ?? 'null';
+  } catch {
+    text = String(before.value);
+  }
+  const excerpt =
+    text.length > CONFIRM_BEFORE_MAX_CHARS
+      ? `${text.slice(0, CONFIRM_BEFORE_MAX_CHARS)}…`
+      : text;
+  return `${head} It destroys: ${excerpt}`;
+}
+
 export function createWriteGate(deps: WriteGateDeps): WriteGate {
   const store = deps.store ?? createPlanStore(deps.rng);
+  const confirming = deps.irreversibleConfirm === 'elicit';
 
   const plan = async (call: WriteGateCall): Promise<ToolResult<unknown>> => {
     // Taken before the handler runs, as apply takes it, so a handler that
@@ -795,14 +897,22 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
     const context = await readPlanContext(call);
     const digest = capture.payload;
     const version = context?.version;
+    const redact = (value: unknown): unknown =>
+      deps.redact === undefined ? value : deps.redact(value);
+    const summary =
+      confirming && call.tool.writeTier === 'irreversible'
+        ? confirmSummary(call.tool.name, planned, {
+            noted: capture.before.noted,
+            value: redact(capture.before.value),
+          })
+        : undefined;
     const planId = store.issue({
       tool: call.tool.name,
       fingerprint,
       ...(digest === undefined ? {} : { payload: digest }),
       ...(version === undefined ? {} : { version }),
+      ...(summary === undefined ? {} : { summary }),
     });
-    const redact = (value: unknown): unknown =>
-      deps.redact === undefined ? value : deps.redact(value);
     const base: PlanPayload = { executed: false, planned, plan_id: planId };
     const noted = capture.before.noted;
     const withBefore: PlanPayload | IrreversiblePlanPayload = noted
@@ -856,6 +966,13 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       const planId = call.control.plan_id;
       if (planId === undefined || planId === '') return writeGatedResult('missing');
 
+      const mustConfirm = confirming && call.tool.writeTier === 'irreversible';
+      // Before the claim, like the tier check: a client that cannot be asked is
+      // not the caller's fault, and the plan must survive a client switch.
+      if (mustConfirm && deps.confirmer?.available() !== true) {
+        return writeGatedResult('confirm_unavailable');
+      }
+
       // Read BEFORE the plan_id is consumed: a failed read is a transient
       // failure the caller retries, and it must not burn the approved plan.
       let live: PlanContext | undefined;
@@ -876,6 +993,24 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       // compare; one built with a stamp needs the same stamp now.
       if (issued?.version !== undefined && live?.version !== issued.version) {
         return writeGatedResult('stale');
+      }
+
+      // After the claim: the plan is spent whatever the human answers, so a
+      // decline cannot be retried into a yes on the same id (D303).
+      if (mustConfirm) {
+        let confirmed: boolean;
+        try {
+          confirmed =
+            (await deps.confirmer?.ask({
+              tool: call.tool.name,
+              message:
+                issued?.summary ??
+                `Confirm IRREVERSIBLE ${call.tool.name}. Jira cannot undo this.`,
+            })) === true;
+        } catch {
+          confirmed = false;
+        }
+        if (!confirmed) return writeGatedResult('declined');
       }
 
       const expected = issued?.payload;

@@ -38,6 +38,7 @@ import {
 import {
   AUTH_MODES,
   DEPLOYMENTS,
+  IRREVERSIBLE_CONFIRMS,
   JiraError,
   LOG_LEVELS,
   OAUTH_GRANTS,
@@ -46,6 +47,7 @@ import {
   type AuthMode,
   type Clock,
   type HostRef,
+  type IrreversibleConfirm,
   type JiraDeployment,
   type LogLevel,
   type OAuthGrant,
@@ -63,6 +65,8 @@ import {
 export const DEFAULT_TOOL_PACKAGES = 'all';
 /** `JIRA_WRITE_MODE` default: writes describe instead of executing. */
 export const DEFAULT_WRITE_MODE: WriteMode = 'plan';
+/** `JIRA_IRREVERSIBLE_CONFIRM` default: no elicitation, the D45 gate alone. */
+export const DEFAULT_IRREVERSIBLE_CONFIRM: IrreversibleConfirm = 'off';
 /** `JIRA_REQUEST_TIMEOUT_MS` default. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 /** `JIRA_CALL_BUDGET_MS` default. */
@@ -884,6 +888,11 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
 
   const writeMode = enumOf<WriteMode>('JIRA_WRITE_MODE', WRITE_MODES, DEFAULT_WRITE_MODE);
   const allowIrreversible = bool('JIRA_ALLOW_IRREVERSIBLE', false);
+  const irreversibleConfirm = enumOf<IrreversibleConfirm>(
+    'JIRA_IRREVERSIBLE_CONFIRM',
+    IRREVERSIBLE_CONFIRMS,
+    DEFAULT_IRREVERSIBLE_CONFIRM,
+  );
 
   // --- HTTP behaviour ------------------------------------------------------
   const requestTimeoutMs = int(
@@ -978,6 +987,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     projects,
     writeMode,
     allowIrreversible,
+    irreversibleConfirm,
     requestTimeoutMs,
     callBudgetMs,
     hostConcurrency,

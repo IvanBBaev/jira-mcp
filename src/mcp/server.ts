@@ -70,7 +70,11 @@ import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import { toInputSchema } from './schema.js';
 import type { ConnectableServer } from './transport.js';
 import type { AnyToolSpec, PackageSpec, ToolResult } from './types.js';
-import { createWriteGate, planFingerprint } from './write-mode.js';
+import {
+  createWriteGate,
+  planFingerprint,
+  type IrreversibleConfirmer,
+} from './write-mode.js';
 import type { WriteGate, WriteGateCall } from './write-mode.js';
 
 // ---------------------------------------------------------------------------
@@ -434,11 +438,40 @@ function wasApplied(result: {
 export function buildServer(deps: BuildServerDeps): ConnectableServer {
   const { settings } = deps;
 
+  // Bound late: the gate is built before the SDK server it asks through, and
+  // is only ever called once a client has connected (D303).
+  const bound: { server?: Server } = {};
+  const confirmer: IrreversibleConfirmer = {
+    available: () =>
+      bound.server?.getClientCapabilities()?.elicitation?.form !== undefined,
+    ask: async (request) => {
+      if (bound.server === undefined) return false;
+      const answer = await bound.server.elicitInput({
+        mode: 'form',
+        message: request.message,
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            confirm: {
+              type: 'boolean',
+              title: `Run ${request.tool}`,
+              description: 'Tick to destroy it. Jira cannot undo this.',
+            },
+          },
+          required: ['confirm'],
+        },
+      });
+      return answer.action === 'accept' && answer.content?.['confirm'] === true;
+    },
+  };
+
   const baseGate =
     deps.gate ??
     createWriteGate({
       writeMode: settings.writeMode,
       allowIrreversible: settings.allowIrreversible,
+      irreversibleConfirm: settings.irreversibleConfirm,
+      confirmer,
       rng: deps.rng,
       redact: (value: unknown) => deps.redactor.redact(value),
     });
@@ -508,6 +541,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
       }),
     },
   );
+
+  bound.server = server;
 
   server.setRequestHandler(ListResourcesRequestSchema, () => ({
     resources: [...catalogue.resources],

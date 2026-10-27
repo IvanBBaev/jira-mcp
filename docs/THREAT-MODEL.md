@@ -208,6 +208,16 @@ the exposure is this document's.
   reaches the network and the caller's single-use id is not burned (CC-60). The
   operator flips the variable and restarts, and the plan the model was shown is
   still the plan.
+- **Optional third gate: a human confirmation per irreversible apply
+  (`JIRA_IRREVERSIBLE_CONFIRM=elicit`, D303).** The question travels from the
+  server to the client's UI through MCP form elicitation, so — unlike the
+  confirm token D56 rejected — the model cannot answer it. It is checked
+  before any network read: a client that does not declare form elicitation is
+  refused and the plan is kept. It is asked after the claim and the stale
+  check, quoting the request and the plan's redacted before-state; anything
+  but an explicit yes (decline, cancel, a failed delivery) refuses the call
+  and spends the plan (CC-3013…CC-3017). Residual risk: a client that
+  auto-accepts elicitations collapses this gate into the other two.
 - **A delete plan carries a before-state snapshot** of what the apply would
   destroy (D57): the entity as it exists right now, read by the handler through
   the same seam, allowlisted field by field rather than echoed off the wire,

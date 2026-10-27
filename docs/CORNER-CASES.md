@@ -3556,6 +3556,21 @@ Prompts (D125):
 - **CC-3012** — `login` refuses the client-credentials grant before it
   opens a socket; doctor reads no token store for it and reports no expiry
   horizon.
+- **CC-3013** — Under `JIRA_IRREVERSIBLE_CONFIRM=elicit` an irreversible
+  apply asks exactly once, after the stale check, and the question quotes the
+  tool, method, path and the plan's before-state; `accept` with
+  `confirm: true` runs the call (D303).
+- **CC-3014** — A declined or cancelled confirmation answers `declined` and
+  spends the plan: a retry with the same `plan_id` is unknown and nobody is
+  asked again.
+- **CC-3015** — A client that does not declare form elicitation, or a gate
+  with no confirmer at all, is refused as `confirm_unavailable` before any
+  network read, and the plan stays outstanding.
+- **CC-3016** — A confirmation that throws (the client errors or the
+  question cannot be delivered) counts as a decline: the call does not run
+  and the plan is spent.
+- **CC-3017** — Nobody is asked for a standard write, under `off`, on a
+  `plan_id` mismatch, or while the irreversible tier is locked.
 
 ## Project scope guard (D400, 2026-10-27)
 

@@ -14,6 +14,10 @@ env var names — not internal refactors.
 
 ### Added
 
+- `JIRA_IRREVERSIBLE_CONFIRM=elicit` (D303): every irreversible apply (the
+  deletes and the bulk delete/edit pair) also asks you through the client's
+  MCP form elicitation and runs only when you tick yes. A client without
+  elicitation support is refused with the plan kept. Default `off`.
 - OAuth 2.0 client credentials for Atlassian service accounts (D302): with
   `JIRA_AUTH_MODE=oauth`, set `JIRA_OAUTH_GRANT=client_credentials` and
   `JIRA_OAUTH_CLOUD_ID`, and the server mints its own token from the client

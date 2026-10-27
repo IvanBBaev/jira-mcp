@@ -248,6 +248,18 @@ export const WRITE_MODES = ['plan', 'apply'] as const;
  */
 export type WriteMode = (typeof WRITE_MODES)[number];
 
+/** Value space of `JIRA_IRREVERSIBLE_CONFIRM` (default `off`, D303). */
+export const IRREVERSIBLE_CONFIRMS = ['off', 'elicit'] as const;
+
+/**
+ * Whether an irreversible apply also asks the human at the client: `elicit`
+ * sends an MCP elicitation after the plan_id checks out and before anything is
+ * destroyed; `off` leaves the tier to the plan_id and `JIRA_ALLOW_IRREVERSIBLE`.
+ *
+ * Produced by: `core/settings.ts`. Consumed by: `mcp/write-mode.ts`.
+ */
+export type IrreversibleConfirm = (typeof IRREVERSIBLE_CONFIRMS)[number];
+
 /** Value space of `JIRA_TRANSPORT` (default `stdio`). */
 export const TRANSPORT_KINDS = ['stdio', 'http'] as const;
 
@@ -482,6 +494,11 @@ export interface Settings {
    * `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier.
    */
   readonly allowIrreversible: boolean;
+  /**
+   * `JIRA_IRREVERSIBLE_CONFIRM` (default `off`, D303). `elicit` adds a human
+   * confirmation, asked through the client, to every irreversible apply.
+   */
+  readonly irreversibleConfirm: IrreversibleConfirm;
 
   /** `JIRA_REQUEST_TIMEOUT_MS` (default 30000). */
   readonly requestTimeoutMs: number;

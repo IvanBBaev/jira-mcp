@@ -1018,6 +1018,7 @@ const DC_SETTINGS: Settings = {
   packagesReadonly: [],
   writeMode: 'plan',
   allowIrreversible: false,
+  irreversibleConfirm: 'off',
   requestTimeoutMs: 30_000,
   callBudgetMs: 120_000,
   hostConcurrency: 4,

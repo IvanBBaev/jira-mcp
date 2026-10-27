@@ -1450,7 +1450,10 @@ One session from 2026-10-27, in a branch worktree; one commit per item.
 - [x] OAuth 2.0 client-credentials grant (D302) — `JIRA_OAUTH_GRANT=client_credentials`
       mints a service-account token in memory at `JIRA_OAUTH_CLOUD_ID`; no
       login, file or profiles; doctor and login aware (CC-3008…CC-3012).
-- [ ] Elicitation confirm for irreversible applies.
+- [x] Elicitation confirm for irreversible applies (D303) —
+      `JIRA_IRREVERSIBLE_CONFIRM=elicit` asks the human through MCP form
+      elicitation after the stale check; no elicitation is refused with the
+      plan kept, a decline spends it (CC-3013…CC-3017).
 
 Exit: `npm run check` green; doctor and CONFIGURATION.md agree on every
 variable the server reads or depends on.

@@ -24,12 +24,15 @@ import type { JiraRequestFn, Rng } from '../core/types.js';
 import { defineTool, toolInput, writeToolInput, z } from './define.js';
 import { ok } from './result.js';
 import {
+  CONFIRM_BEFORE_MAX_CHARS,
+  CONFIRM_ENV_VAR,
   IRREVERSIBLE_ENV_VAR,
   MAX_EVICTED_TOMBSTONES,
   MAX_OUTSTANDING_PLANS,
   PLAN_ID_PATTERN,
   PLAN_NOTICE_LINE,
   createPlanStore,
+  confirmSummary,
   createWriteGate,
   isPlanResult,
   newPlanId,
@@ -38,7 +41,11 @@ import {
   splitControlFields,
   writeGatedResult,
 } from './write-mode.js';
-import type { WriteGateCall } from './write-mode.js';
+import type {
+  ConfirmRequest,
+  IrreversibleConfirmer,
+  WriteGateCall,
+} from './write-mode.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1378,6 +1385,225 @@ test('the standard tier is untouched by the irreversible switch', async () => {
     assert.deepEqual(applied.data, { created: 'ABC-9' });
     assert.deepEqual(fake.routes(), ['POST /rest/api/3/issue']);
   }
+});
+
+// ---------------------------------------------------------------------------
+// The gate — human confirmation of an irreversible apply (D303)
+// ---------------------------------------------------------------------------
+
+/** A scripted confirmer that records every question it is asked. */
+function scriptedConfirmer(
+  answer: boolean | Error,
+  available = true,
+): IrreversibleConfirmer & { readonly asked: ConfirmRequest[] } {
+  const asked: ConfirmRequest[] = [];
+  return {
+    asked,
+    available: () => available,
+    ask: (request) => {
+      asked.push(request);
+      return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+    },
+  };
+}
+
+function confirmingGate(confirmer: IrreversibleConfirmer | undefined) {
+  return createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    irreversibleConfirm: 'elicit',
+    confirmer,
+    rng: countingRng(),
+  });
+}
+
+test('[CC-3013] a confirmed irreversible apply asks once, quoting the plan, then deletes', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on('GET /rest/api/3/issue/ABC-1', jiraOk({ summary: 'Old title' }));
+  fake.on('DELETE /rest/api/3/issue/ABC-1', jiraOk(undefined, { status: 204 }));
+  const confirmer = scriptedConfirmer(true);
+  const gate = confirmingGate(confirmer);
+  const args = { key: 'ABC-1' };
+
+  const planId = planIdOf(await gate.execute(callOf(deleteTool, args, {}, fake.fn)));
+  assert.equal(confirmer.asked.length, 0, 'planning never asks');
+
+  const applied = await gate.execute(
+    callOf(deleteTool, args, { apply: true, plan_id: planId }, fake.fn),
+  );
+
+  assert.equal(applied.ok, true);
+  assert.equal(confirmer.asked.length, 1);
+  const message = confirmer.asked[0]?.message ?? '';
+  assert.equal(confirmer.asked[0]?.tool, 'jira_test_delete');
+  assert.match(message, /IRREVERSIBLE jira_test_delete: DELETE \/issue\/ABC-1\./);
+  assert.match(
+    message,
+    /Old title/,
+    'the question quotes the before-state the plan showed',
+  );
+  assert.deepEqual(fake.routes(), [
+    'GET /rest/api/3/issue/ABC-1',
+    'GET /rest/api/3/issue/ABC-1',
+    'DELETE /rest/api/3/issue/ABC-1',
+  ]);
+});
+
+test('[CC-3014] a declined confirmation sends nothing and spends the plan', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on('GET /rest/api/3/issue/ABC-1', jiraOk({ summary: 'Old title' }));
+  const confirmer = scriptedConfirmer(false);
+  const gate = confirmingGate(confirmer);
+  const args = { key: 'ABC-1' };
+
+  const planId = planIdOf(await gate.execute(callOf(deleteTool, args, {}, fake.fn)));
+  fake.reset();
+
+  const refused = await gate.execute(
+    callOf(deleteTool, args, { apply: true, plan_id: planId }, fake.fn),
+  );
+
+  assert.equal(refused.error?.kind, 'write_gated');
+  assert.match(refused.error?.message ?? '', /not given/);
+  assert.match(refused.error?.message ?? '', /plan_id is spent/);
+  assert.deepEqual(fake.calls, [], 'refused before the handler ran');
+  assert.equal(gate.outstandingPlans, 0);
+
+  const retry = await gate.execute(
+    callOf(deleteTool, args, { apply: true, plan_id: planId }, fake.fn),
+  );
+  assert.match(
+    retry.error?.message ?? '',
+    /unknown/,
+    'a decline cannot be retried into a yes',
+  );
+  assert.equal(confirmer.asked.length, 1, 'the spent id is refused without asking again');
+});
+
+test('[CC-3015] a client that cannot be asked is refused before the plan is spent', async () => {
+  for (const confirmer of [scriptedConfirmer(true, false), undefined]) {
+    const fake = createFakeJiraRequest();
+    fake.on('GET /rest/api/3/issue/ABC-1', jiraOk({ summary: 'Old title' }));
+    const gate = confirmingGate(confirmer);
+    const args = { key: 'ABC-1' };
+
+    const planId = planIdOf(await gate.execute(callOf(deleteTool, args, {}, fake.fn)));
+    fake.reset();
+
+    const refused = await gate.execute(
+      callOf(deleteTool, args, { apply: true, plan_id: planId }, fake.fn),
+    );
+
+    assert.equal(refused.error?.kind, 'write_gated');
+    assert.match(refused.error?.message ?? '', /does not support form elicitation/);
+    assert.ok(refused.error?.remediation?.includes(CONFIRM_ENV_VAR));
+    assert.deepEqual(fake.calls, []);
+    assert.equal(gate.outstandingPlans, 1, 'the plan survives a client switch');
+    assert.equal(confirmer?.asked.length ?? 0, 0);
+  }
+});
+
+test('[CC-3016] a confirmation request that fails counts as a decline', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on('GET /rest/api/3/issue/ABC-1', jiraOk({ summary: 'Old title' }));
+  const gate = confirmingGate(scriptedConfirmer(new Error('client went away')));
+  const args = { key: 'ABC-1' };
+
+  const planId = planIdOf(await gate.execute(callOf(deleteTool, args, {}, fake.fn)));
+  fake.reset();
+
+  const refused = await gate.execute(
+    callOf(deleteTool, args, { apply: true, plan_id: planId }, fake.fn),
+  );
+
+  assert.equal(refused.error?.kind, 'write_gated');
+  assert.match(refused.error?.message ?? '', /could not be delivered/);
+  assert.deepEqual(fake.calls, []);
+  assert.equal(gate.outstandingPlans, 0);
+});
+
+test('[CC-3017] nobody is asked for a standard write, under off, or for a plan that fails its checks', async () => {
+  const never: IrreversibleConfirmer = {
+    available: () => true,
+    ask: () => Promise.reject(new Error('must not be asked')),
+  };
+
+  // A standard-tier write under elicit.
+  const standard = createFakeJiraRequest();
+  standard.on('POST /rest/api/3/issue', jiraOk({ key: 'ABC-9' }));
+  const gate = confirmingGate(never);
+  const planId = planIdOf(
+    await gate.execute(callOf(writeTool, { summary: 'S' }, {}, standard.fn)),
+  );
+  const created = await gate.execute(
+    callOf(writeTool, { summary: 'S' }, { apply: true, plan_id: planId }, standard.fn),
+  );
+  assert.equal(created.ok, true);
+
+  // An irreversible write under off.
+  const fake = createFakeJiraRequest();
+  fake.on('GET /rest/api/3/issue/ABC-1', jiraOk({ summary: 'Old title' }));
+  fake.on('DELETE /rest/api/3/issue/ABC-1', jiraOk(undefined, { status: 204 }));
+  const off = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    irreversibleConfirm: 'off',
+    confirmer: never,
+    rng: countingRng(),
+  });
+  const offId = planIdOf(
+    await off.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn)),
+  );
+  const deleted = await off.execute(
+    callOf(deleteTool, { key: 'ABC-1' }, { apply: true, plan_id: offId }, fake.fn),
+  );
+  assert.equal(deleted.ok, true);
+
+  // A mismatched apply under elicit: refused by the plan_id, never asked.
+  const elicit = confirmingGate(never);
+  const id = planIdOf(
+    await elicit.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn)),
+  );
+  const mismatch = await elicit.execute(
+    callOf(deleteTool, { key: 'ABC-2' }, { apply: true, plan_id: id }, fake.fn),
+  );
+  assert.equal(mismatch.error?.kind, 'write_gated');
+  assert.match(mismatch.error?.message ?? '', /arguments changed/);
+
+  // Without the opt-in the tier refusal still comes first.
+  const locked = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    irreversibleConfirm: 'elicit',
+    confirmer: never,
+    rng: countingRng(),
+  });
+  const lockedId = planIdOf(
+    await locked.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn)),
+  );
+  const tier = await locked.execute(
+    callOf(deleteTool, { key: 'ABC-1' }, { apply: true, plan_id: lockedId }, fake.fn),
+  );
+  assert.ok(tier.error?.message.includes(IRREVERSIBLE_ENV_VAR));
+});
+
+test('confirmSummary caps the before excerpt and omits it when nothing was noted', () => {
+  const planned = { method: 'DELETE', path: '/rest/api/3/issue/ABC-1' } as const;
+  const bare = confirmSummary('jira_x', planned, { noted: false, value: undefined });
+  assert.equal(
+    bare,
+    'Confirm IRREVERSIBLE jira_x: DELETE /rest/api/3/issue/ABC-1. Jira cannot undo this.',
+  );
+
+  const long = confirmSummary('jira_x', planned, {
+    noted: true,
+    value: 'y'.repeat(5000),
+  });
+  assert.ok(long.startsWith(`${bare} It destroys: "`));
+  assert.ok(long.endsWith('…'));
+  assert.ok(
+    long.length <= bare.length + ' It destroys: '.length + CONFIRM_BEFORE_MAX_CHARS + 1,
+  );
 });
 
 test('CC-62: noteBeforeState is a no-op outside plan mode and keeps the first snapshot', async () => {

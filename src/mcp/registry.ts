@@ -385,6 +385,9 @@ export function createRegistry(
     createWriteGate({
       writeMode: settings.writeMode,
       allowIrreversible: settings.allowIrreversible,
+      // No confirmer here: a registry built without a server has no client to
+      // ask, so under `elicit` an irreversible apply fails closed (D303).
+      irreversibleConfirm: settings.irreversibleConfirm,
       rng: deps.rng,
       redact: (value: unknown) => deps.redactor.redact(value),
     });
