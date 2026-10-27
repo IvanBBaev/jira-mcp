@@ -49,6 +49,12 @@
           "format": "string"
         },
         {
+          "name": "JIRA_CLOUD_ID",
+          "description": "Cloud id of JIRA_SITE (from <site>/_edge/tenant_info). Routes a scoped API token through api.atlassian.com/ex/jira/<cloudId>.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "JIRA_ALLOWED_HOSTS",
           "description": "Comma list of extra allowed hosts. Exact host or anchored regex; no suffix matching.",
           "isRequired": false,

@@ -44,7 +44,7 @@ import {
   type EnvLockOptions,
 } from '../core/env-lock.js';
 import { toJiraError } from '../core/errors.js';
-import { isCanonicalCloudHost, resolveHost } from '../core/host.js';
+import { gatewayHost, isCanonicalCloudHost, resolveHost } from '../core/host.js';
 import {
   createAuthRequest,
   createJiraRequest,
@@ -480,6 +480,8 @@ interface DoctorContext {
   readonly settings: Settings;
   readonly loaded: LoadSettingsResult;
   readonly host?: HostRef;
+  /** The gateway route basic auth uses when `JIRA_CLOUD_ID` is set (D301). */
+  readonly gateway?: HostRef;
   readonly envFile: EnvFileResult;
   readonly envFileHost: EnvFileHost;
   readonly fs: DoctorFsHost;
@@ -521,6 +523,7 @@ const HOST_CODES: ReadonlySet<string> = new Set([
 function probeOfFinding(finding: StartupFinding): string {
   if (finding.code.startsWith('env_file_')) return 'env-file';
   if (HOST_CODES.has(finding.code)) return 'host';
+  if (finding.field === 'JIRA_CLOUD_ID') return 'host';
   if (finding.field === 'JIRA_TOKEN_EXPIRES') return 'token-expiry';
   // A missing client id and a store with no grant are the same problem from two
   // sides, so they belong under one heading. Routing by prefix rather than by
@@ -534,6 +537,44 @@ function fromStartupFinding(finding: StartupFinding): DoctorFinding {
   return {
     status: finding.severity === 'error' ? 'fail' : 'warn',
     text: finding.message,
+  };
+}
+
+/**
+ * A failed `/myself`, with the scoped-token advice basic auth needs (D301).
+ *
+ * A scoped API token sent to the site answers 401 exactly like a wrong token,
+ * and startup cannot tell the two apart without a network call — so the hint
+ * lives here, where the failure is observed: no `JIRA_CLOUD_ID` on a canonical
+ * site → name the variable and where its value comes from (CC-3007); with one,
+ * a 401 means the token is not a scoped one, and a 403 means it lacks a scope.
+ */
+function identityFailure(ctx: DoctorContext, error: unknown): DoctorFinding {
+  const finding = fromError(error, 'fail', ctx.redactor);
+  if (ctx.settings.authMode !== 'basic') return finding;
+  const { kind } = toJiraError(error, { redactor: ctx.redactor });
+  let hint: string | undefined;
+  if (ctx.gateway === undefined) {
+    const host = ctx.host;
+    if (
+      kind === 'auth' &&
+      host !== undefined &&
+      isCanonicalCloudHost(new URL(host.origin).hostname)
+    ) {
+      hint = `If JIRA_API_TOKEN is a scoped API token, it is accepted only through the Atlassian gateway: set JIRA_CLOUD_ID to the "cloudId" of ${host.origin}/_edge/tenant_info.`;
+    }
+  } else if (kind === 'auth') {
+    hint =
+      'The gateway accepts scoped API tokens only. A classic (unscoped) token goes direct: unset JIRA_CLOUD_ID. Otherwise check that JIRA_CLOUD_ID is the cloudId of JIRA_SITE.';
+  } else if (kind === 'permission') {
+    hint =
+      'A scoped API token carries only the scopes picked when it was created; /myself needs read:jira-user. Create a token with the scopes the enabled tools need (AUTH.md §Scoped API tokens).';
+  }
+  if (hint === undefined) return finding;
+  return {
+    ...finding,
+    remediation:
+      finding.remediation === undefined ? hint : `${finding.remediation} ${hint}`,
   };
 }
 
@@ -957,6 +998,14 @@ const PROBES: readonly Probe[] = [
               : `allowed by JIRA_ALLOWED_HOSTS (${unit(ctx.settings.allowedHosts.length, 'entry', 'entries')})`
           }`,
         },
+        ...(ctx.gateway === undefined
+          ? []
+          : [
+              {
+                status: 'info' as const,
+                text: `requests go through ${ctx.gateway.origin}${ctx.gateway.pathPrefix} (JIRA_CLOUD_ID: the scoped API token route)`,
+              },
+            ]),
         ...problems,
       ];
     },
@@ -1020,7 +1069,12 @@ const PROBES: readonly Probe[] = [
     network: true,
     async run(ctx) {
       if (ctx.settings.deployment === 'datacenter') return dataCenterIdentity(ctx);
-      const response = await ctx.request?.({ method: 'GET', path: '/myself' });
+      let response: Awaited<ReturnType<JiraRequestFn>> | undefined;
+      try {
+        response = await ctx.request?.({ method: 'GET', path: '/myself' });
+      } catch (error) {
+        return [identityFailure(ctx, error)];
+      }
       const data: unknown = response?.data;
       const accountId = readString(data, 'accountId');
       const displayName = readString(data, 'displayName');
@@ -1630,6 +1684,11 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
   // resolver applies, from the same module (`core/credentials.ts`).
   const credentials = effectiveCredentials(loaded.settings);
   const host = loaded.host;
+  // The same rule as `profileHost` (D301): the gateway serves the top-level site.
+  const gateway =
+    loaded.settings.cloudId !== undefined && credentials.site === loaded.settings.site
+      ? gatewayHost(loaded.settings.oauth.gatewayOrigin, loaded.settings.cloudId)
+      : undefined;
   const oauthSettings = loaded.settings.oauth;
   const oauthMode = loaded.settings.authMode === 'oauth';
   // Read once, even offline: the store is a local file, and probes 9 and 11 must
@@ -1706,7 +1765,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
   ) {
     source = {
       kind: 'basic',
-      host,
+      host: gateway ?? host,
       email: credentials.email,
       apiToken: credentials.apiToken,
     };
@@ -1748,6 +1807,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
     settings: loaded.settings,
     loaded,
     ...(host === undefined ? {} : { host }),
+    ...(gateway === undefined ? {} : { gateway }),
     envFile: describeEnvFile(loaded.envFile, envOptions, envFileHost),
     envFileHost,
     fs,

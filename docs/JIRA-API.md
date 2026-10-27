@@ -57,7 +57,8 @@ AUTH.md. This section owns only the wire.
 | Authorization (browser) | `https://auth.atlassian.com/authorize` |
 | Token exchange **and** refresh (one URL) | `https://auth.atlassian.com/oauth/token` |
 | Accessible resources (cloudId discovery) | `https://api.atlassian.com/oauth/token/accessible-resources` |
-| API gateway | `https://api.atlassian.com/ex/jira/{cloudid}/{api}` |
+| API gateway | `https://api.atlassian.com/ex/jira/{cloudid}/{api}` — also the only route for a scoped API token over Basic (D301) |
+| Site cloud id (scoped tokens) | `https://<site>.atlassian.net/_edge/tenant_info` → `"cloudId"`; read by the operator, never by the server |
 
 Both origins are overridable (`JIRA_OAUTH_AUTH_ORIGIN`,
 `JIRA_OAUTH_GATEWAY_ORIGIN` — CONFIGURATION.md) so the offline test fake is

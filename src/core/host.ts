@@ -538,7 +538,7 @@ export function gatewayHost(gatewayOrigin: string, cloudId: string): HostRef {
       kind: 'config',
       message: `The Jira cloudId ${JSON.stringify(cloudId)} is not a plain identifier (letters, digits and hyphens only), so no request URL was built from it.`,
       remediation:
-        'Set JIRA_OAUTH_CLOUD_ID to the id that `jira-mcp-ai login` printed, or unset it and let the login discover the site.',
+        'Set JIRA_OAUTH_CLOUD_ID to the id that `jira-mcp-ai login` printed (or unset it and let the login discover the site); for a scoped API token, set JIRA_CLOUD_ID to the "cloudId" of https://<your-site>/_edge/tenant_info.',
     });
   }
 

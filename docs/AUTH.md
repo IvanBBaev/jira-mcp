@@ -37,10 +37,35 @@ want a grant that is scoped rather than one that inherits the whole account
 - The token inherits the user's permissions — the server can never do more than
   the human account can. This is a feature (no privilege escalation) and a
   documentation duty (permission errors often masquerade as 404, see JIRA-API.md).
-- Scoped API tokens (Atlassian's newer granular-scope tokens) work identically
-  over Basic auth; if used, `read:jira-work` + `write:jira-work` (+
-  `read:jira-user`) cover the v1 surface. Doctor reports 401/403 per probe so a
-  missing scope is visible immediately.
+- Scoped API tokens (Atlassian's newer granular-scope tokens) are still Basic
+  auth, but Atlassian accepts them **only through the API gateway**, never on
+  the site URL — see §Scoped API tokens below (D301).
+
+### Scoped API tokens
+
+A scoped token sent to `https://<site>.atlassian.net` answers 401, exactly like
+a wrong token. To use one, set `JIRA_CLOUD_ID` to the site's cloud id — the
+`"cloudId"` field of `https://<site>.atlassian.net/_edge/tenant_info` — and
+keep `JIRA_EMAIL`/`JIRA_API_TOKEN` as they are (D301):
+
+- The top-level site's requests then go to
+  `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/...` with the same
+  Basic header, and `api.atlassian.com` joins the egress allowlist. Nothing
+  else does: the OAuth auth origin never sees a Basic credential.
+- A profile that only overrides the email or token rides the same gateway
+  route. A profile with **its own site** goes direct — the cloud id names one
+  tenant, so it is never used to sign calls to another (CC-3006). A scoped
+  token for a second site is not supported yet.
+- The id is not discovered at startup, because startup makes no network calls.
+  Doctor's identity probe catches the mistake instead: a 401 on a canonical
+  site without `JIRA_CLOUD_ID` names the variable and the `tenant_info` URL; a
+  401 through the gateway says the token is a classic one (unset the
+  variable); a 403 names the missing scope (CC-3007).
+- Scopes: `read:jira-work` + `write:jira-work` + `read:jira-user` cover the
+  core surface; the agile tools need the `jira-software` scopes as well. A
+  token only carries what was picked when it was created.
+- `JIRA_CLOUD_ID` is basic-on-Cloud only; under `oauth`, `pat` or a Data
+  Center deployment it is reported as ignored (`cloud_id_ignored`, CC-3005).
 
 ## OAuth 2.0 (3LO)
 

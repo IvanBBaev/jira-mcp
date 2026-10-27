@@ -2444,3 +2444,81 @@ test('CC-262: --save is refused under pat — it writes an API token nothing sig
   assert.match(r.stderr(), /JIRA_AUTH_MODE=pat/);
   assert.match(r.stderr(), /JIRA_PAT/);
 });
+
+const SCOPED_CLOUD_ID = '11111111-2222-3333-4444-555555555555';
+
+test('[CC-3004] JIRA_CLOUD_ID sends the basic credentials through the gateway', async () => {
+  const r = rig({ env: baseEnv({ JIRA_CLOUD_ID: SCOPED_CLOUD_ID }) });
+  const jira = healthy(r.jira);
+  let sentTo: unknown;
+
+  const code = await run({
+    ...r.options,
+    argv: [],
+    createRequest: (options) => {
+      sentTo =
+        typeof options.credentials === 'function' ? undefined : options.credentials.host;
+      return jira.fn;
+    },
+  });
+
+  const out = r.stdout();
+  assert.equal(code, 0, out);
+  assert.deepEqual(sentTo, {
+    origin: 'https://api.atlassian.com',
+    pathPrefix: `/ex/jira/${SCOPED_CLOUD_ID}`,
+  });
+  assert.match(
+    out,
+    new RegExp(
+      `\\[info\\] host: requests go through https://api\\.atlassian\\.com/ex/jira/${SCOPED_CLOUD_ID} \\(JIRA_CLOUD_ID`,
+    ),
+  );
+});
+
+test('[CC-3007] a 401 without JIRA_CLOUD_ID points a scoped token at tenant_info', async () => {
+  const r = rig();
+  healthy(r.jira);
+  r.jira.enqueue(
+    jiraErr(
+      createJiraError({ kind: 'auth', reason: 'Rejected (401).', httpStatus: 401 }),
+    ),
+  );
+
+  const code = await run({ ...r.options, argv: [], jiraRequest: r.jira.fn });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_PROBE_FAILED, out);
+  assert.match(
+    out,
+    /→ .*set JIRA_CLOUD_ID to the "cloudId" of https:\/\/acme\.atlassian\.net\/_edge\/tenant_info/,
+  );
+});
+
+test('[CC-3007] through the gateway, 401 says classic token and 403 says missing scope', async () => {
+  const cases = [
+    { kind: 'auth', httpStatus: 401, hint: /unset JIRA_CLOUD_ID/ },
+    { kind: 'permission', httpStatus: 403, hint: /needs read:jira-user/ },
+  ] as const;
+  for (const { kind, httpStatus, hint } of cases) {
+    const r = rig({ env: baseEnv({ JIRA_CLOUD_ID: SCOPED_CLOUD_ID }) });
+    healthy(r.jira);
+    r.jira.enqueue(jiraErr(createJiraError({ kind, reason: 'No.', httpStatus })));
+
+    await run({ ...r.options, argv: [], jiraRequest: r.jira.fn });
+
+    const out = r.stdout();
+    assert.match(out, hint, out);
+    assert.doesNotMatch(out, /_edge\/tenant_info/);
+  }
+});
+
+test('[CC-3005] an ignored JIRA_CLOUD_ID is reported under the host probe', async () => {
+  const r = rig({
+    env: baseEnv({ JIRA_CLOUD_ID: SCOPED_CLOUD_ID, JIRA_AUTH_MODE: 'pat' }),
+  });
+
+  await run({ ...r.options, argv: ['--offline'] });
+
+  assert.match(r.stdout(), /\[warn\] host: JIRA_CLOUD_ID routes a scoped API token/);
+});

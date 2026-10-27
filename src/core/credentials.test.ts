@@ -231,6 +231,45 @@ describe('buildCredentialResolver', () => {
     assert.equal(b.host.origin, 'https://example.atlassian.net');
   });
 
+  it('[CC-3004] routes the top-level site through the gateway when one is given', () => {
+    const gateway: HostRef = {
+      origin: 'https://api.atlassian.com',
+      pathPrefix: '/ex/jira/cloud-1',
+    };
+    const settings = settingsOf({
+      profiles: { tok: { name: 'tok', apiToken: 'other-token' } },
+      lockProfile: false,
+    });
+    const resolve = buildCredentialResolver({
+      settings,
+      host: DEFAULT_HOST,
+      gateway,
+      resolveHost: fakeResolveHost,
+    });
+
+    assert.deepEqual(resolve().host, gateway);
+    // A profile that only swaps the token still talks to the same tenant.
+    assert.deepEqual(resolve('tok').host, gateway);
+  });
+
+  it('[CC-3006] a profile with its own site goes direct, not through the gateway', () => {
+    const settings = settingsOf({
+      allowedHosts: ['other.atlassian.net', 'api.atlassian.com'],
+      profiles: { eu: { name: 'eu', site: 'other.atlassian.net' } },
+    });
+    const resolve = buildCredentialResolver({
+      settings,
+      host: DEFAULT_HOST,
+      gateway: { origin: 'https://api.atlassian.com', pathPrefix: '/ex/jira/cloud-1' },
+      resolveHost: fakeResolveHost,
+    });
+
+    assert.deepEqual(resolve('eu').host, {
+      origin: 'https://other.atlassian.net',
+      pathPrefix: '',
+    });
+  });
+
   it('refuses a profile site the allowlist rejects', () => {
     const settings = settingsOf({
       profiles: { eu: { name: 'eu', site: 'evil.example.com' } },

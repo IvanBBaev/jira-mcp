@@ -14,6 +14,11 @@ env var names — not internal refactors.
 
 ### Added
 
+- Scoped API tokens (D301): set `JIRA_CLOUD_ID` (the `cloudId` from
+  `https://<site>/_edge/tenant_info`) and basic auth goes through
+  `api.atlassian.com/ex/jira/<cloudId>`, the only route Atlassian accepts a
+  scoped token on. Doctor now explains a 401 that a scoped token gets on the
+  site URL, and a 403 for a missing scope.
 - `jira-mcp-ai doctor` gains a local `network` probe (D300): it warns when
   `HTTPS_PROXY` is set but Node's `fetch` will bypass it (set
   `NODE_USE_ENV_PROXY=1`), when `NO_PROXY` exempts the site, when

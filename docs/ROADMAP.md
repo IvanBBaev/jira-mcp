@@ -251,6 +251,8 @@ deletes as another, since they share the tier's receipts and gate claims.
 - **Proxy and custom CA**: shipped as D300 — a CONFIGURATION.md section and
   doctor's local `network` probe; Node's `fetch` does the proxying
   (`NODE_USE_ENV_PROXY=1`), no `undici` dependency.
+- **Scoped API tokens**: shipped as D301 — `JIRA_CLOUD_ID` sends basic auth
+  through the gateway; doctor explains the 401/403 a scoped token produces.
 - **Closing Gate C** (R03–R05) stays the most valuable open item and is not
   code: it is the sandbox account's permissions.
 - **A file output for large reads**, as the sibling server's

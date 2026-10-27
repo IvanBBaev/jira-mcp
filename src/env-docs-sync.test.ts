@@ -260,6 +260,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_EMAIL', (s: Settings) => s.email],
   ['JIRA_API_TOKEN', (s: Settings) => s.apiToken],
   ['JIRA_TOKEN_EXPIRES', (s: Settings) => s.tokenExpires],
+  ['JIRA_CLOUD_ID', (s: Settings) => s.cloudId],
   ['JIRA_AUTH_MODE', (s: Settings) => s.authMode],
   ['JIRA_DEPLOYMENT', (s: Settings) => s.deployment],
   ['JIRA_PAT', (s: Settings) => s.pat],

@@ -1181,3 +1181,35 @@ describe('loadSettings — JIRA_PROJECTS scope (D400)', () => {
     assert.deepEqual(settings.projects, ['ABC']);
   });
 });
+
+describe('loadSettings — JIRA_CLOUD_ID (D301)', () => {
+  const CLOUD_ID = '11111111-2222-3333-4444-555555555555';
+
+  it('[CC-3004] basic mode with a cloud id allowlists the gateway host and nothing else', () => {
+    const { settings, report } = load({ ...VALID, JIRA_CLOUD_ID: CLOUD_ID });
+    assert.deepEqual(report.findings, []);
+    assert.equal(settings.cloudId, CLOUD_ID);
+    assert.deepEqual(settings.allowedHosts, ['api.atlassian.com']);
+    assert.equal(load({ ...VALID }).settings.cloudId, undefined);
+  });
+
+  it('[CC-3005] refuses a malformed cloud id and keeps it out of Settings', () => {
+    const { settings, report } = load({
+      ...VALID,
+      JIRA_CLOUD_ID: 'https://mycompany.atlassian.net',
+    });
+    assert.deepEqual(codes(report), ['invalid_cloud_id']);
+    assert.equal(report.errors[0]?.field, 'JIRA_CLOUD_ID');
+    assert.match(report.errors[0]?.message ?? '', /_edge\/tenant_info/);
+    assert.equal(settings.cloudId, undefined);
+    assert.deepEqual(settings.allowedHosts, []);
+  });
+
+  it('[CC-3005] reports a cloud id outside basic-on-cloud as ignored', () => {
+    const { settings, report } = load({ ...VALID_OAUTH, JIRA_CLOUD_ID: CLOUD_ID });
+    assert.deepEqual(codes(report), ['cloud_id_ignored']);
+    assert.equal(report.findings[0]?.severity, 'warning');
+    assert.match(report.findings[0]?.message ?? '', /JIRA_OAUTH_CLOUD_ID/);
+    assert.equal(settings.cloudId, undefined);
+  });
+});

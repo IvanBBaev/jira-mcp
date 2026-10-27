@@ -399,6 +399,13 @@ export interface Settings {
   /** `JIRA_OAUTH_*`. Meaningful only when `authMode` is `oauth`. */
   readonly oauth: OAuthSettings;
   /**
+   * `JIRA_CLOUD_ID` (D301). Set only in basic mode on a cloud deployment: the
+   * top-level site's requests then go through the gateway
+   * (`<oauth.gatewayOrigin>/ex/jira/<cloudId>`), which is the only route a
+   * scoped API token is accepted on. Profiles with their own site go direct.
+   */
+  readonly cloudId?: string;
+  /**
    * `JIRA_DEPLOYMENT` (default `cloud`). `datacenter` is a startup error unless
    * {@link Settings.datacenterPreview} is set (D106).
    */

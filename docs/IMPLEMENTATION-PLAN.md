@@ -1444,7 +1444,9 @@ One session from 2026-10-27, in a branch worktree; one commit per item.
 - [x] Proxy and custom CA (D300) — CONFIGURATION.md section and doctor probe
       12 `network`, local: env proxy honoured, `NO_PROXY` vs site, CA bundle
       readable and PEM, TLS checks on (CC-3000…CC-3003).
-- [ ] Scoped API tokens through the API gateway.
+- [x] Scoped API tokens (D301) — `JIRA_CLOUD_ID` routes basic auth through
+      `<gateway>/ex/jira/<cloudId>` for the top-level site; doctor hints on
+      401/403 (CC-3004…CC-3007).
 - [ ] OAuth 2.0 client-credentials grant (service accounts).
 - [ ] Elicitation confirm for irreversible applies.
 

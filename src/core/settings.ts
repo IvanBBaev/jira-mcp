@@ -448,6 +448,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   const email = str('JIRA_EMAIL');
   const apiToken = str('JIRA_API_TOKEN');
   const tokenExpires = str('JIRA_TOKEN_EXPIRES');
+  const scopedCloudId = str('JIRA_CLOUD_ID');
   const configuredHosts = splitAllowedHosts(str('JIRA_ALLOWED_HOSTS') ?? '');
 
   // --- Auth mode and the OAuth block (D91) ---------------------------------
@@ -523,10 +524,39 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   // egress is permitted. In basic mode the list is byte-identical to what the
   // operator wrote: v1's egress surface does not change because a feature it
   // does not use exists.
+  //
+  // D301: a scoped API token works only through the gateway, so basic mode with
+  // `JIRA_CLOUD_ID` allowlists the gateway host — and nothing else: the auth
+  // origin never sees a Basic credential. The id is shape-checked with the same
+  // predicate as the OAuth one; outside basic-on-cloud it has no meaning and is
+  // reported as inert rather than silently routing nowhere.
+  const cloudIdApplies = authMode === 'basic' && deployment === 'cloud';
+  if (scopedCloudId !== undefined && !cloudIdApplies) {
+    add({
+      severity: 'warning',
+      code: 'cloud_id_ignored',
+      message: `JIRA_CLOUD_ID routes a scoped API token through the Atlassian gateway, which only basic auth on a cloud deployment uses; with JIRA_AUTH_MODE=${authMode} and JIRA_DEPLOYMENT=${deployment} it is ignored.${authMode === 'oauth' ? ' OAuth takes its site from JIRA_OAUTH_CLOUD_ID.' : ''} Unset it to silence this.`,
+      field: 'JIRA_CLOUD_ID',
+    });
+  } else if (scopedCloudId !== undefined && !isValidCloudId(scopedCloudId)) {
+    add({
+      severity: 'error',
+      code: 'invalid_cloud_id',
+      message: `JIRA_CLOUD_ID ${JSON.stringify(scopedCloudId)} is not a cloud id — letters, digits and hyphens only. Read the site's id from https://<your-site>/_edge/tenant_info ("cloudId"), not the site URL.`,
+      field: 'JIRA_CLOUD_ID',
+    });
+  }
+  // Only a usable id reaches `Settings`: consumers build a URL from it unchecked.
+  const cloudId =
+    cloudIdApplies && scopedCloudId !== undefined && isValidCloudId(scopedCloudId)
+      ? scopedCloudId
+      : undefined;
   const allowedHosts =
     authMode === 'oauth'
       ? withOAuthHosts(configuredHosts, [oauthAuthOrigin, oauthGatewayOrigin])
-      : configuredHosts;
+      : cloudId !== undefined
+        ? withOAuthHosts(configuredHosts, [oauthGatewayOrigin])
+        : configuredHosts;
 
   // --- Profiles (v1: parsed and validated; per-call switching is locked) ----
   const profiles = parseProfiles(env, add);
@@ -883,6 +913,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     email,
     apiToken,
     tokenExpires,
+    ...(cloudId === undefined ? {} : { cloudId }),
     authMode,
     deployment,
     datacenterPreview,

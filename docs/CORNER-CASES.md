@@ -3528,6 +3528,19 @@ Prompts (D125):
   ignores it.
 - **CC-3003** — `NODE_TLS_REJECT_UNAUTHORIZED=0` warns and points at
   `NODE_EXTRA_CA_CERTS`.
+- **CC-3004** — with `JIRA_CLOUD_ID` in basic mode, the top-level site (and
+  a profile that only swaps email or token) is signed to
+  `<gateway>/ex/jira/<cloudId>`, and the gateway host is the only one added
+  to the allowlist.
+- **CC-3005** — a malformed `JIRA_CLOUD_ID` is a startup error and never
+  reaches `Settings`; under `oauth`, `pat` or Data Center it warns
+  `cloud_id_ignored` (doctor shows it under the host probe).
+- **CC-3006** — a profile with its own site goes direct, never through the
+  gateway of the top-level site's cloud id.
+- **CC-3007** — doctor's identity probe: a 401 on a canonical site without
+  `JIRA_CLOUD_ID` names the variable and `<site>/_edge/tenant_info`; through
+  the gateway a 401 says "classic token, unset it" and a 403 names the
+  missing scope.
 
 ## Project scope guard (D400, 2026-10-27)
 

@@ -248,7 +248,7 @@ async function serve(): Promise<void> {
     assertStartupOk(loaded.report);
 
     const { createJiraRequest } = await import('./core/http.js');
-    const { resolveHost } = await import('./core/host.js');
+    const { gatewayHost, resolveHost } = await import('./core/host.js');
     const { createTelemetry } = await import('./core/telemetry.js');
 
     // The in-process counters (D12). One instance per process, injected — not a
@@ -282,6 +282,10 @@ async function serve(): Promise<void> {
         credentials = buildCredentialResolver({
           settings,
           ...(loaded.host === undefined ? {} : { host: loaded.host }),
+          // D301: a scoped API token is accepted only on the gateway route.
+          ...(settings.cloudId === undefined
+            ? {}
+            : { gateway: gatewayHost(settings.oauth.gatewayOrigin, settings.cloudId) }),
           resolveHost,
         });
         break;

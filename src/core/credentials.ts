@@ -125,6 +125,12 @@ export interface CredentialDeps {
   readonly settings: Settings;
   /** The already-resolved default host from `loadSettings`. */
   readonly host?: HostRef | undefined;
+  /**
+   * The gateway route for `JIRA_CLOUD_ID` (D301), built by the caller with
+   * `gatewayHost` — not here, for the import ban above. When present, every call
+   * whose effective site is the top-level `JIRA_SITE` goes through it.
+   */
+  readonly gateway?: HostRef | undefined;
   readonly resolveHost: (
     rawSite: string | undefined,
     allowedHosts: readonly string[],
@@ -138,12 +144,19 @@ export interface CredentialDeps {
  * `JIRA_SITE` — rather than borrowing the active profile's: with the lock off,
  * a profile without a site of its own must not sign its calls to another
  * profile's tenant (CC-481).
+ *
+ * The gateway (D301) takes precedence for the top-level site only: the cloud id
+ * names ONE tenant, so a profile whose own site is another tenant goes direct
+ * rather than being signed into the wrong one (CC-3006).
  */
 function profileHost(
   deps: CredentialDeps,
   profile: ProfileConfig | undefined,
   site: string | undefined,
 ): HostRef | undefined {
+  if (deps.gateway !== undefined && site !== undefined && site === deps.settings.site) {
+    return deps.gateway;
+  }
   const active = profileOf(deps.settings, deps.settings.activeProfile);
   if (profile?.name === active?.name) return deps.host;
   if (site === undefined || site === '') return undefined;
