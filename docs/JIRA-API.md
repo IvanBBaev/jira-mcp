@@ -242,6 +242,13 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   which is absent when time tracking is off. `GET /configuration/timetracking`
   (the provider) and `/configuration/timetracking/options` (the same figures)
   both demand Administer Jira and are not used. Cloud only here.
+- Remote links (D141): `GET /issue/{issueIdOrKey}/remotelink` is a bare
+  array, unpaged; each entry has a numeric `id`, an optional `globalId`,
+  `relationship` and `application`, and an `object` with `url`, `title`,
+  `summary`, `icon` and `status`. `POST` to the same route creates a link
+  (201) or, when the body's `globalId` matches a link already on the issue,
+  updates that link (200); both answer `{ id, self }`. Jira stores any URL
+  string; the server accepts only absolute `http`/`https`. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

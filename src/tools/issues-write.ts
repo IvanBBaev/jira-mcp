@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // Package `issues-write` (TOOLS.md §Package `issues-write`).
 //
-// The eight writes v1 allows against one issue: create it, update its fields,
+// The nine writes allowed against one issue: create it, update its fields,
 // move it through the workflow, comment on it, edit a comment on it, assign it,
-// log work on it and link it to another. All eight are `writeTier: 'standard'`,
-// so all eight run behind the plan/apply gate (D14, CC-20/CC-32).
+// log work on it, link it to another and attach a web link to it (D141). All
+// nine are `writeTier: 'standard'`, so all nine run behind the plan/apply gate
+// (D14, CC-20/CC-32).
 //
 // NOTHING HERE BRANCHES ON PLAN MODE, and that is the whole design. In plan mode
 // `mcp/write-mode.ts` hands the handler a CAPTURING `ctx.jira`: the handler
@@ -42,6 +43,7 @@ import {
   startedInstant,
 } from '../api/issues.js';
 import type {
+  AddRemoteLinkResult,
   AssignIssueResult,
   CreatedIssue,
   IssueComment,
@@ -1188,6 +1190,71 @@ export const linkIssuesTool = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// jira_add_remote_link
+// ---------------------------------------------------------------------------
+
+const addRemoteLinkInput = writeToolInput({
+  issue: issueArg,
+  url: z
+    .string()
+    .min(1)
+    .max(2048)
+    .describe('Absolute http or https URL of the target — a pull request, a page.'),
+  title: z.string().min(1).max(255).describe('Link text shown on the issue.'),
+  summary: z.string().max(1024).optional().describe('One line under the title.'),
+  relationship: z
+    .string()
+    .max(255)
+    .optional()
+    .describe('Free-text group label on the issue, e.g. "mentioned in".'),
+  globalId: z
+    .string()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      'Upsert key: a link on this issue with the same globalId is REPLACED. ' +
+        'Without one every call adds a new link.',
+    ),
+});
+
+export const addRemoteLinkTool = defineTool({
+  name: 'jira_add_remote_link',
+  title: 'Add remote link',
+  description:
+    'Attach a web link to an issue — a pull request, a Confluence page, a ' +
+    'runbook. url must be absolute http(s). Pass globalId to make the call ' +
+    'repeatable: a link with the same globalId is replaced (data.created false) ' +
+    'instead of duplicated. Remove one with jira_delete_remote_link.',
+  package: 'issues-write',
+  annotations: WRITE_ANNOTATIONS,
+  writeTier: 'standard',
+  input: addRemoteLinkInput,
+  example: {
+    summary: 'Link the pull request that fixes an issue',
+    arguments: {
+      issue: 'PROJ-123',
+      url: 'https://example.com/acme/app/pull/42',
+      title: 'Fix the retry loop (#42)',
+      globalId: 'pr:acme/app/42',
+    },
+  },
+  handler: async (args, ctx): Promise<ToolResult<AddRemoteLinkResult>> =>
+    guarded(async () => {
+      const added = await ctx.api.addRemoteLink({
+        ...callBase(ctx),
+        issue: args.issue,
+        url: args.url,
+        title: args.title,
+        summary: args.summary,
+        relationship: args.relationship,
+        globalId: args.globalId,
+      });
+      return ok(added);
+    }),
+});
+
+// ---------------------------------------------------------------------------
 // The package
 // ---------------------------------------------------------------------------
 
@@ -1201,7 +1268,8 @@ export const issuesWritePackage: PackageSpec = {
   title: 'Issues (write)',
   description:
     'Issue changes: creation, fields, workflow transitions, comments and comment ' +
-    'edits, assignee, worklogs and links — every tool is plan-gated.',
+    'edits, assignee, worklogs, issue links and remote links — every tool is ' +
+    'plan-gated.',
   tools: [
     createIssueTool,
     updateIssueTool,
@@ -1211,6 +1279,7 @@ export const issuesWritePackage: PackageSpec = {
     assignIssueTool,
     addWorklogTool,
     linkIssuesTool,
+    addRemoteLinkTool,
   ],
   references: [MARKDOWN_REFERENCE],
 };

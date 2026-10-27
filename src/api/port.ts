@@ -78,6 +78,7 @@ import {
 import { getFilter, searchFilters } from './filters.js';
 import {
   addComment,
+  addRemoteLink,
   addWorklog,
   assignIssue,
   createIssue,
@@ -90,6 +91,7 @@ import {
   linkIssues,
   listChangelog,
   listComments,
+  listRemoteLinks,
   listTransitions,
   listWorklogs,
   shapeIssueFields,
@@ -202,6 +204,7 @@ export interface JiraApi {
 
   // --- issues ---
   readonly addComment: typeof addComment;
+  readonly addRemoteLink: typeof addRemoteLink;
   readonly addWorklog: typeof addWorklog;
   readonly assignIssue: typeof assignIssue;
   readonly createIssue: typeof createIssue;
@@ -214,6 +217,7 @@ export interface JiraApi {
   readonly linkIssues: typeof linkIssues;
   readonly listChangelog: typeof listChangelog;
   readonly listComments: typeof listComments;
+  readonly listRemoteLinks: typeof listRemoteLinks;
   readonly listTransitions: typeof listTransitions;
   readonly listWorklogs: typeof listWorklogs;
   readonly transitionIssue: typeof transitionIssue;
@@ -312,6 +316,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   searchFilters,
 
   addComment,
+  addRemoteLink,
   addWorklog,
   assignIssue,
   createIssue,
@@ -324,6 +329,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   linkIssues,
   listChangelog,
   listComments,
+  listRemoteLinks,
   listTransitions,
   listWorklogs,
   transitionIssue,

@@ -1606,6 +1606,7 @@ const created = {
   issueKey2: undefined,
   commentId: undefined,
   worklogId: undefined,
+  remoteLinkId: undefined,
   sprintId: undefined,
   sprintName: undefined,
   boardId: undefined,
@@ -1699,6 +1700,48 @@ async function writePhase(session, flags) {
     }
     return 'comment, labels, worklog and assignee applied';
   });
+
+  await claim(
+    'C53',
+    'a remote link is added, upserted by globalId and read back',
+    async () => {
+      const key = created.issueKey;
+      if (key === undefined) skip('no throwaway issue');
+      const globalId = `gate-c:${runId()}`;
+      const first = await planAndApply(session, 'jira_add_remote_link', {
+        issue: key,
+        url: 'https://example.com/gate-c',
+        title: 'Gate C remote link',
+        globalId,
+      });
+      if (first.applied.created !== true) throw new Error('the first add did not create');
+      // Same globalId again: Jira must REPLACE the link (200), not add a second.
+      const second = await planAndApply(session, 'jira_add_remote_link', {
+        issue: key,
+        url: 'https://example.com/gate-c',
+        title: 'Gate C remote link (replaced)',
+        globalId,
+      });
+      if (second.applied.created !== false) {
+        throw new Error('the repeated globalId added a second link instead of replacing');
+      }
+      created.remoteLinkId = first.applied.id;
+      const read = dataOf(
+        await call(session, 'jira_get_remote_links', { issue: key }),
+        'jira_get_remote_links',
+      );
+      const matching = (read.remoteLinks ?? []).filter(
+        (link) => link.globalId === globalId,
+      );
+      if (
+        matching.length !== 1 ||
+        matching[0].title !== 'Gate C remote link (replaced)'
+      ) {
+        throw new Error(`expected one replaced link, read ${JSON.stringify(matching)}`);
+      }
+      return `link ${String(first.applied.id)} created, replaced by globalId, read back once`;
+    },
+  );
 
   await claim('C21', 'watcher add is ACCEPTED with the bare string body', async () => {
     const key = created.issueKey;

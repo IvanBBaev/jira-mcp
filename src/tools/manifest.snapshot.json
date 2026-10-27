@@ -422,6 +422,30 @@
           }
         },
         {
+          "name": "jira_get_remote_links",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_get_bulk_status",
           "annotations": {
             "readOnlyHint": true,
@@ -1017,6 +1041,61 @@
               }
             },
             "required": ["linkType", "inwardIssue", "outwardIssue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_add_remote_link",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "summary": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "relationship": {
+                "type": "string",
+                "maxLength": 255
+              },
+              "globalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "url", "title"],
             "additionalProperties": false
           }
         }

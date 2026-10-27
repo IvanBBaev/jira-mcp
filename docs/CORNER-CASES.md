@@ -3419,3 +3419,17 @@ Prompts (D125):
   admin-only `/configuration/timetracking` route is not on the list.
 - **CC-1517** — `jira_get_timetracking_config` returns the settings as read and
   is never branded untrusted.
+
+## Remote links (D141, 2026-10-27)
+
+- **CC-1518** — `listRemoteLinks` projects each link of the bare array and
+  drops the icon URLs; a body that is not an array, or a row without a
+  numeric `id`, is `unexpected_shape`, never a silently shorter list.
+- **CC-1519** — `addRemoteLink` sends the trimmed link object with empty
+  optionals omitted, reports `created: true` on 201 and `created: false` on
+  200 (a matching `globalId` replaced the link), and refuses any `url` that is
+  not an absolute `http`/`https` URL before anything is sent.
+- **CC-1520** — `jira_get_remote_links` is a content-bearing read and is
+  branded untrusted.
+- **CC-1521** — `jira_add_remote_link` echoes what was sent, unbranded; a
+  refused `url` is a `validation` error with no request made.

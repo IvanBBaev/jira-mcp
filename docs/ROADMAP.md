@@ -206,7 +206,8 @@ Reads:
   Labels shipped as `jira_list_labels` (D139) but outside the cache — they
   are not immutable; tagging an issue creates one.
 - **Remote links**, `GET /rest/api/3/issue/{key}/remotelink`: the pull
-  requests and pages attached to an issue.
+  requests and pages attached to an issue. Shipped as
+  `jira_get_remote_links` (D141).
 - **Server info**, `GET /rest/api/3/serverInfo` (`/rest/api/2/serverInfo`
   on Data Center): the version the server is talking to. The Data Center
   8.4+ routes (D116) are assumed, not detected; with this read the doctor
@@ -224,7 +225,7 @@ Writes, standard tier:
 - **`jira_update_worklog`**, `PUT …/worklog/{id}`: add and delete exist.
 - **`jira_add_remote_link`**, `POST …/remotelink`: a web link to a pull
   request or a Confluence page — the one Confluence-shaped need that does
-  not need Confluence tools.
+  not need Confluence tools. Shipped as `jira_add_remote_link` (D141).
 - **`jira_create_filter`**, `POST /rest/api/3/filter`: "save this JQL".
 
 Irreversible tier, under the `issues-delete` ceremony (D45):

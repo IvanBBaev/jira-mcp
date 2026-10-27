@@ -1411,6 +1411,9 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_get_timetracking_config` (D140) — `GET /configuration`, not
       the admin-only `/configuration/timetracking`; cached (CC-1514…CC-1517);
       claim C52.
+- [x] `jira_get_remote_links`, `jira_add_remote_link` (D141) —
+      `GET`/`POST /issue/{key}/remotelink`, upsert by `globalId`, http(s)
+      URLs only (CC-1518…CC-1521); claim C53.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

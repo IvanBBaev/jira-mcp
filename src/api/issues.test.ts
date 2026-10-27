@@ -36,10 +36,13 @@ import {
   ISSUE_COMMENT_PATH_TEMPLATE,
   ISSUE_LINK_PATH,
   ISSUE_PATH_TEMPLATE,
+  ISSUE_REMOTE_LINK_PATH_TEMPLATE,
   ISSUE_TRANSITIONS_PATH_TEMPLATE,
   ISSUE_WORKLOG_ITEM_PATH_TEMPLATE,
   ISSUE_WORKLOG_PATH_TEMPLATE,
   addComment,
+  addRemoteLink,
+  addRemoteLinkRequest,
   addWorklog,
   assignIssue,
   createIssue,
@@ -56,6 +59,7 @@ import {
   linkIssues,
   listChangelog,
   listComments,
+  listRemoteLinks,
   listTransitions,
   listWorklogs,
   resolveTransitionId,
@@ -2569,5 +2573,156 @@ test('[CC-196] a due date travels as the system field id duedate, and a raw dued
       fields: { duedate: '2026-11-01' },
     }),
     /set twice/,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Remote links (D141)
+// ---------------------------------------------------------------------------
+
+const REMOTE_LINK_GET = `GET /rest/api/3/issue/${KEY}/remotelink`;
+const REMOTE_LINK_POST = `POST /rest/api/3/issue/${KEY}/remotelink`;
+
+test('CC-1518: listRemoteLinks projects each link and drops the icon noise', async () => {
+  const fake = createFakeJiraRequest().on(
+    REMOTE_LINK_GET,
+    // `GET /issue/{key}/remotelink`. // synthetic
+    jiraOk([
+      {
+        id: 10000,
+        self: 'https://example.atlassian.net/rest/api/3/issue/PROJ-1/remotelink/10000',
+        globalId: 'pr:acme/app/42',
+        application: { type: 'com.github', name: 'GitHub' },
+        relationship: 'fixed by',
+        object: {
+          url: 'https://example.com/acme/app/pull/42',
+          title: 'Fix the retry loop',
+          summary: 'Bounded retries.',
+          icon: { url16x16: 'https://example.com/favicon.ico', title: 'GitHub' },
+          status: { resolved: true, icon: {} },
+        },
+      },
+      { id: 10001, object: { url: 'https://example.com/runbook', title: 'Runbook' } },
+    ]),
+  );
+
+  const result = await listRemoteLinks({ jira: fake.fn, issue: ` ${KEY} ` });
+
+  assert.equal(fake.lastRequest()?.pathTemplate, ISSUE_REMOTE_LINK_PATH_TEMPLATE);
+  assert.deepEqual(result, {
+    issue: KEY,
+    remoteLinks: [
+      {
+        id: 10000,
+        globalId: 'pr:acme/app/42',
+        relationship: 'fixed by',
+        application: { type: 'com.github', name: 'GitHub' },
+        url: 'https://example.com/acme/app/pull/42',
+        title: 'Fix the retry loop',
+        summary: 'Bounded retries.',
+        resolved: true,
+      },
+      { id: 10001, url: 'https://example.com/runbook', title: 'Runbook' },
+    ],
+  });
+});
+
+test('CC-1518: a remote link list that is not an array, or a row without a numeric id, is unexpected_shape', async () => {
+  for (const body of [{ values: [] }, [{ id: '10000', object: {} }], [null]]) {
+    const fake = createFakeJiraRequest().on(REMOTE_LINK_GET, jiraOk(body));
+    await assert.rejects(
+      listRemoteLinks({ jira: fake.fn, issue: KEY }),
+      (error: unknown) => error instanceof JiraError && error.kind === 'unexpected_shape',
+      JSON.stringify(body),
+    );
+  }
+});
+
+test('CC-1519: addRemoteLink sends a trimmed link object and reads 201 as created', async () => {
+  const fake = createFakeJiraRequest().on(
+    REMOTE_LINK_POST,
+    jiraOk({ id: 10000, self: 'https://example.atlassian.net/x' }, { status: 201 }),
+  );
+
+  const result = await addRemoteLink({
+    jira: fake.fn,
+    issue: KEY,
+    url: ' https://example.com/pull/42 ',
+    title: ' PR 42 ',
+    summary: '  ',
+    relationship: 'fixed by',
+    globalId: ' pr:42 ',
+  });
+
+  assert.deepEqual(fake.lastRequest()?.body, {
+    globalId: 'pr:42',
+    relationship: 'fixed by',
+    object: { url: 'https://example.com/pull/42', title: 'PR 42' },
+  });
+  assert.deepEqual(result, {
+    issue: KEY,
+    id: 10000,
+    url: 'https://example.com/pull/42',
+    title: 'PR 42',
+    globalId: 'pr:42',
+    created: true,
+  });
+  assertNeverSafe(fake.calls);
+});
+
+test('CC-1519: a 200 answer means the globalId matched and the link was replaced', async () => {
+  const fake = createFakeJiraRequest().on(
+    REMOTE_LINK_POST,
+    jiraOk({ id: 10000, self: 'https://example.atlassian.net/x' }, { status: 200 }),
+  );
+
+  const result = await addRemoteLink({
+    jira: fake.fn,
+    issue: KEY,
+    url: 'https://example.com/pull/42',
+    title: 'PR 42',
+    globalId: 'pr:42',
+  });
+
+  assert.equal(result.created, false);
+});
+
+test('CC-1519: a remote link answer without a numeric id is unexpected_shape', async () => {
+  const fake = createFakeJiraRequest().on(
+    REMOTE_LINK_POST,
+    jiraOk({ id: '10000' }, { status: 201 }),
+  );
+
+  await assert.rejects(
+    addRemoteLink({ jira: fake.fn, issue: KEY, url: 'https://example.com', title: 'x' }),
+    (error: unknown) => error instanceof JiraError && error.kind === 'unexpected_shape',
+  );
+});
+
+test('CC-1519: only an absolute http(s) url is a remote link target', () => {
+  for (const url of [
+    'javascript:alert(1)',
+    'data:text/html,x',
+    'example.com/pull/42',
+    '/pull/42',
+    'ftp://example.com',
+  ]) {
+    assert.throws(
+      () => addRemoteLinkRequest({ issue: KEY, url, title: 'x' }),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'validation' &&
+        /absolute http or https URL/.test(error.message),
+      url,
+    );
+  }
+  assert.equal(
+    (
+      addRemoteLinkRequest({ issue: KEY, url: 'http://intranet.local/x', title: 'x' })
+        .body as {
+        object: { url: string };
+      }
+    ).object.url,
+    'http://intranet.local/x',
   );
 });

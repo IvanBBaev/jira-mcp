@@ -477,6 +477,7 @@ function seedState(config) {
       labels: index === 0 ? ['rehearsal'] : [],
       comments: [],
       worklogs: [],
+      remoteLinks: [],
       changelog: [
         {
           id: String(30000 + number),
@@ -1751,6 +1752,31 @@ function buildRoutes(server) {
       },
     ],
 
+    [
+      'GET',
+      '/rest/api/3/issue/{issueIdOrKey}/remotelink',
+      (ctx) => {
+        const issue = issueOf(ctx.params);
+        if (issue === undefined) return notFound('Issue');
+        // A bare array — no paging envelope, unlike every other issue child.
+        return json(
+          200,
+          issue.remoteLinks.map((link) => ({
+            id: link.id,
+            self: `${origin()}/rest/api/3/issue/${issue.id}/remotelink/${String(link.id)}`,
+            ...(link.globalId === undefined ? {} : { globalId: link.globalId }),
+            ...(link.relationship === undefined
+              ? {}
+              : { relationship: link.relationship }),
+            object: {
+              ...link.object,
+              icon: { url16x16: `${origin()}/favicon.ico` },
+            },
+          })),
+        );
+      },
+    ],
+
     // -- issue writes -----------------------------------------------------
     [
       'POST',
@@ -1797,6 +1823,7 @@ function buildRoutes(server) {
           labels: Array.isArray(fields.labels) ? fields.labels : [],
           comments: [],
           worklogs: [],
+          remoteLinks: [],
           changelog: [],
           attachmentIds: [],
           watchers: [SELF_ACCOUNT],
@@ -1944,6 +1971,35 @@ function buildRoutes(server) {
         };
         issue.worklogs.push(worklog);
         return json(201, wireWorklog(state, issue, worklog, origin()));
+      },
+    ],
+
+    [
+      'POST',
+      '/rest/api/3/issue/{issueIdOrKey}/remotelink',
+      (ctx) => {
+        const issue = issueOf(ctx.params);
+        if (issue === undefined) return notFound('Issue');
+        const object = ctx.body?.object;
+        if (typeof object?.url !== 'string' || typeof object?.title !== 'string') {
+          return jiraError(400, [], { title: 'title: required field' });
+        }
+        // The upsert: a matching globalId replaces the link and answers 200.
+        const globalId = ctx.body?.globalId;
+        const existing =
+          globalId === undefined
+            ? undefined
+            : issue.remoteLinks.find((link) => link.globalId === globalId);
+        const link = {
+          id: existing?.id ?? Number(nextId()),
+          globalId,
+          relationship: ctx.body?.relationship,
+          object: { ...object },
+        };
+        if (existing === undefined) issue.remoteLinks.push(link);
+        else issue.remoteLinks[issue.remoteLinks.indexOf(existing)] = link;
+        const self = `${origin()}/rest/api/3/issue/${issue.id}/remotelink/${String(link.id)}`;
+        return json(existing === undefined ? 201 : 200, { id: link.id, self });
       },
     ],
 

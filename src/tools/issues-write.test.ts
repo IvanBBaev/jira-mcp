@@ -36,6 +36,7 @@ import type { z } from '../mcp/define.js';
 import type { AnyToolSpec, Hint, ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   addCommentTool,
+  addRemoteLinkTool,
   addWorklogTool,
   assignIssueTool,
   createIssueTool,
@@ -207,6 +208,11 @@ const MINIMAL_ARGS: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
   jira_assign_issue: { issue: KEY, accountId: ACCOUNT_ID },
   jira_add_worklog: { issue: KEY, timeSpentSeconds: 3600 },
   jira_link_issues: { linkType: 'Blocks', inwardIssue: KEY, outwardIssue: OTHER_KEY },
+  jira_add_remote_link: {
+    issue: KEY,
+    url: 'https://example.com/pull/42',
+    title: 'PR 42',
+  },
 };
 
 function minimalArgs(tool: AnyToolSpec): Record<string, unknown> {
@@ -226,7 +232,7 @@ function rejectsAsUnknown(tool: AnyToolSpec, input: Record<string, unknown>): bo
 // The package, its annotations and its schemas
 // ---------------------------------------------------------------------------
 
-test('the issues-write package exports exactly the eight documented write tools', () => {
+test('the issues-write package exports exactly the nine documented write tools', () => {
   assert.equal(issuesWritePackage.id, 'issues-write');
   assert.deepEqual(
     ALL_TOOLS.map((tool) => tool.name),
@@ -239,6 +245,7 @@ test('the issues-write package exports exactly the eight documented write tools'
       'jira_assign_issue',
       'jira_add_worklog',
       'jira_link_issues',
+      'jira_add_remote_link',
     ],
   );
   for (const tool of ALL_TOOLS) assert.equal(tool.package, 'issues-write');
@@ -265,6 +272,7 @@ test('every issues-write tool carries the documented annotation quadruple', () =
     jira_assign_issue: [false, true],
     jira_add_worklog: [false, false],
     jira_link_issues: [false, false],
+    jira_add_remote_link: [false, false],
   };
 
   for (const tool of ALL_TOOLS) {
@@ -1026,6 +1034,67 @@ test('an unknown link type name earns the link-type discovery hint', async () =>
   assert.equal(result.ok, false);
   assert.deepEqual(hintCodes(result), ['discovery']);
   assert.match(result.hints?.[0]?.message ?? '', /jira_list_link_types/);
+});
+
+// ---------------------------------------------------------------------------
+// jira_add_remote_link (D141)
+// ---------------------------------------------------------------------------
+
+const REMOTE_LINK_ROUTE = `POST /rest/api/3/issue/${KEY}/remotelink`;
+
+test('CC-1521: jira_add_remote_link posts the link object and reports created', async () => {
+  const fake = createFakeJiraRequest().on(
+    REMOTE_LINK_ROUTE,
+    jiraOk(
+      {
+        id: 10000,
+        self: 'https://example.atlassian.net/rest/api/3/issue/PROJ-1/remotelink/10000',
+      },
+      { status: 201 },
+    ),
+  );
+
+  const result = await addRemoteLinkTool.handler(
+    {
+      issue: KEY,
+      url: 'https://example.com/acme/app/pull/42',
+      title: 'Fix the retry loop (#42)',
+      globalId: 'pr:acme/app/42',
+    },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, {
+    issue: KEY,
+    id: 10000,
+    url: 'https://example.com/acme/app/pull/42',
+    title: 'Fix the retry loop (#42)',
+    globalId: 'pr:acme/app/42',
+    created: true,
+  });
+  assert.deepEqual(lastBody(fake), {
+    globalId: 'pr:acme/app/42',
+    object: {
+      url: 'https://example.com/acme/app/pull/42',
+      title: 'Fix the retry loop (#42)',
+    },
+  });
+  // Echoes what the caller sent — no Jira-authored prose, so no brand.
+  assert.equal(result._untrusted, undefined);
+});
+
+test('CC-1521: a non-http url never reaches Jira', async () => {
+  const fake = createFakeJiraRequest();
+
+  const result = await addRemoteLinkTool.handler(
+    { issue: KEY, url: 'javascript:alert(1)', title: 'x' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.equal(fake.calls.length, 0);
 });
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,11 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_get_remote_links` (D141) in the `issues` package and
+  `jira_add_remote_link` in `issues-write`: read the web links on an issue,
+  and attach one — a pull request, a Confluence page. A `globalId` makes the
+  add repeatable: a link with the same `globalId` is replaced, not duplicated.
+  Only absolute `http`/`https` URLs are accepted.
 - `jira_get_timetracking_config` (D140) in the `meta` package: whether time
   tracking is on, the working day and week, and what "1d" and "1w" are in
   seconds. Needs no admin permission; served from the metadata cache.

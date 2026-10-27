@@ -229,7 +229,8 @@ control that makes the risk visible.
 
 - A **content-bearing read** is any tool whose result can contain Jira-authored
   free text: `jira_get_issue`, `jira_search`, `jira_get_comments`,
-  `jira_get_changelog`, `jira_get_worklogs`, `jira_get_sprint_issues` (its
+  `jira_get_changelog`, `jira_get_worklogs`, `jira_get_remote_links`
+  (link titles and summaries, D141), `jira_get_sprint_issues` (its
   rows are the same issue projection `jira_search` returns), `jira_get_backlog`
   (the same rows, D134), `jira_list_filters`,
   `jira_get_filter` and `jira_get_project` (project, component and version
@@ -300,6 +301,7 @@ to run it.
 | `jira_get_transitions` | `GET .../transitions` | Returns id, name, target status — required before `jira_transition_issue`. |
 | `jira_get_changelog` | `GET .../changelog` | Classic pagination, **oldest-first** — for "what changed recently" read the tail: request the last page (`startAt = max(0, total - maxResults)`) or use `expand=changelog` on `jira_get_issue` for the recent slice. Fields: field, from → to, author, created. Bulk (`changelog/bulkfetch`) is not exposed — one issue per call. |
 | `jira_get_worklogs` | `GET .../worklog` | Classic pagination; timeSpentSeconds, started, author, comment flattened. |
+| `jira_get_remote_links` | `GET .../remotelink` | Input: `issue`. The web links on the issue — pull requests, Confluence pages — as `{ id, globalId?, relationship?, application?, url?, title?, summary?, resolved? }`; icon URLs dropped. Bare array, no paging. Branded untrusted: titles are free text (D141, CC-1518, CC-1520). Cloud only. |
 | `jira_get_bulk_status` | `GET /rest/api/3/bulk/queue/{taskId}` | Input: `taskId` (from a bulk submit). A safe read, deliberately in this package rather than `issues-delete`: it survives `JIRA_PACKAGES_DENY=issues-delete` and works for any bulk task the account may see — UI-submitted included, since the endpoint needs only the global Bulk Change permission (CC-132). Returns the status (`ENQUEUED`, `RUNNING`, `COMPLETE`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`, `DEAD`), progress, and the counts (`totalIssueCount`, `processedCount`, `failedCount`, `invalidOrInaccessibleIssueCount`); a task stays viewable ~14 days after completion. On `FAILED`/`DEAD` the per-issue errors live in the Jira UI — the result carries the counts. |
 
 ## Package `issues-write` (write tier: `standard`)
@@ -314,6 +316,7 @@ to run it.
 | `jira_assign_issue` | `PUT .../assignee` | Input: `issue`, and exactly one of `accountId` (Cloud), `username` (Data Center, D111) or `unassign: true` (sends null). `username` on Cloud is refused before any request (use `jira_search_users`). Idempotent. |
 | `jira_add_worklog` | `POST .../worklog` | Input: `issue`, `timeSpentSeconds` OR `timeSpent` (e.g. "2h 30m"), `started?` (default: now), `comment?`. `started` is always sent with an explicit offset taken from the authenticated user's Jira timezone, not the host's (D16; `Z` is rejected by Jira — CC-23). |
 | `jira_link_issues` | `POST /rest/api/3/issueLink` | Input: `linkType` (name), `inwardIssue`, `outwardIssue`, `comment?`. Link type names discoverable via `jira_list_link_types` (meta). |
+| `jira_add_remote_link` | `POST .../remotelink` | Input: `issue`, `url` (absolute http/https only, refused locally otherwise), `title`, `summary?`, `relationship?`, `globalId?`. A `globalId` matching a link on the issue replaces it (Jira answers 200, `data.created: false`) instead of adding a second; without one every call adds a link. Returns `{ issue, id, url, title, globalId?, created }` (D141, CC-1519, CC-1521). Cloud only. |
 
 Every rich-text input in this package (`description`, `body`, `comment`) also
 takes `format?: "text" | "markdown"`. `format` says how to READ the string
@@ -748,7 +751,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**71 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
+**73 tools / 11 packages** (core 3, search 4, issues 7, issues-write 9,
 issues-delete 8, attachments 3, collab 12, meta 11, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
