@@ -3621,33 +3621,6 @@ Prompts (D125):
   when any named issue has an out-of-scope prefix or none is named, and go
   out after one confirming search when all are in scope.
 
-## Project scope guard (D400, 2026-10-27)
-
-Placeholder ids — renumber once the parallel wave that owns the next free range lands.
-
-- **CC-4000** — `JIRA_PROJECTS` is split on commas, trimmed, upper-cased and
-  de-duplicated; a key not matching `^[A-Z][A-Z0-9_]*$` is an
-  `invalid_project_key` finding and is dropped. Unset or empty means no scope.
-- **CC-4001** — search JQL becomes `project in ("A", "B") AND (<jql>)`; a
-  top-level `ORDER BY` stays outside the parentheses, an empty query becomes
-  the clause alone, and unbalanced quotes or parentheses are a `validation`
-  error with nothing sent.
-- **CC-4002** — an issue key whose prefix is outside the list is refused
-  without a read; any other issue, board, sprint, component, version or link
-  reference is resolved with one memoised read per call and refused with a
-  `permission` error when its project is outside the list.
-- **CC-4003** — a plan-mode write that the guard refuses returns the
-  `permission` error and no `plan_id`; nothing is sent and no plan is stored.
-- **CC-4004** — bulk edit/delete/move resolve their issue lists with one
-  `issuekey in (…)` search per 100 refs; a ref that does not come back, or
-  comes back in another project, refuses the whole call.
-- **CC-4005** — project and board lists are filtered to the scope (their
-  `total` is left as Jira sent it); filters, fields, statuses, priorities and
-  other global metadata are not scoped.
-- **CC-4006** — unknown routes, attachments by id and the `secure` root fail
-  closed under a scope; a response still carrying an out-of-scope issue is
-  refused.
-
 ## Progress notifications (D151, 2026-10-27)
 
 - **CC-1553** — the sink sends the first update at once, holds later ones
@@ -3715,3 +3688,30 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   and `hasMore: true`.
 - **CC-1573** — over the protocol the server advertises `completions: {}`,
   answers both kinds of ref, and refuses an unknown prompt.
+
+## Project scope guard (D400, 2026-10-27)
+
+Placeholder ids — renumber once the parallel wave that owns the next free range lands.
+
+- **CC-4000** — `JIRA_PROJECTS` is split on commas, trimmed, upper-cased and
+  de-duplicated; a key not matching `^[A-Z][A-Z0-9_]*$` is an
+  `invalid_project_key` finding and is dropped. Unset or empty means no scope.
+- **CC-4001** — search JQL becomes `project in ("A", "B") AND (<jql>)`; a
+  top-level `ORDER BY` stays outside the parentheses, an empty query becomes
+  the clause alone, and unbalanced quotes or parentheses are a `validation`
+  error with nothing sent.
+- **CC-4002** — an issue key whose prefix is outside the list is refused
+  without a read; any other issue, board, sprint, component, version or link
+  reference is resolved with one memoised read per call and refused with a
+  `permission` error when its project is outside the list.
+- **CC-4003** — a plan-mode write that the guard refuses returns the
+  `permission` error and no `plan_id`; nothing is sent and no plan is stored.
+- **CC-4004** — bulk edit/delete/move resolve their issue lists with one
+  `issuekey in (…)` search per 100 refs; a ref that does not come back, or
+  comes back in another project, refuses the whole call.
+- **CC-4005** — project and board lists are filtered to the scope (their
+  `total` is left as Jira sent it); filters, fields, statuses, priorities and
+  other global metadata are not scoped.
+- **CC-4006** — unknown routes, attachments by id and the `secure` root fail
+  closed under a scope; a response still carrying an out-of-scope issue is
+  refused.
