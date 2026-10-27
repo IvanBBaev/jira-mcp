@@ -449,6 +449,19 @@ unchanged: they are never replayed on an ambiguous failure — a replayed submit
 enqueues a SECOND task, not the same one. The queue GET is a plain read and
 retries under the normal policy.
 
+## Board configuration (D133)
+
+- `GET /rest/agile/1.0/board/{boardId}/configuration` — answers **200** with
+  `{ id, name, type, location?, filter: { id }, subQuery?: { query },
+  columnConfig: { columns: [{ name, statuses: [{ id }], min?, max? }],
+  constraintType }, estimation?: { type, field?: { fieldId, displayName } },
+  ranking: { rankCustomFieldId } }`. `location.type` is `project` (with
+  `projectKey`/`id`) or `user` for a personal board; ids arrive as numbers or
+  strings. `estimation.type` is `field` when the board estimates by a field
+  (story points, typically `customfield_10016`) or `issueCount`. Permission:
+  view the board, which needs Browse projects on its filter's projects; an
+  invisible board is **404**. A plain read, retried under the normal policy.
+
 ## Agile writes (sprints and the backlog)
 
 Verified against the Cloud reference on 2026-08-13:

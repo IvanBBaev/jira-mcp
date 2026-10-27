@@ -12,7 +12,8 @@
 // Scope is TOOLS.md §Package `agile`: list boards, list a board's sprints, read
 // one sprint or a sprint's issues, move issues INTO a sprint or OUT to the
 // backlog, walk a sprint through its lifecycle — create, start, close (WP-61) —
-// and, since Phase 11 (D102), delete one. The delete PRIMITIVE lives here
+// and, since Phase 11 (D102), delete one. Since D133 it also reads one board's
+// configuration (columns, filter, estimation and rank fields). The delete PRIMITIVE lives here
 // because this module owns the agile root, but the TOOL that calls it belongs
 // to the irreversible `issues-delete` package behind JIRA_ALLOW_IRREVERSIBLE
 // (D50/CC-48) — the `agile` tool package itself still deletes nothing.
@@ -152,6 +153,52 @@ export interface AgileSprint {
   readonly originBoardId?: number;
 }
 
+/** One column of a board, as its configuration lists it (D133). */
+export interface BoardColumn {
+  readonly name: string;
+  /** The status ids mapped to the column; an empty column maps none. */
+  readonly statusIds: readonly string[];
+  /** The column constraint bounds, when the board sets them. */
+  readonly min?: number;
+  readonly max?: number;
+}
+
+/**
+ * How a board estimates (D133). `type` is `field` when a field carries the
+ * estimate — story points on most scrum boards — and `none` or `issueCount`
+ * otherwise; only a field estimate names `fieldId`, which is what
+ * `jira_set_estimate` and a story-points read need.
+ */
+export interface BoardEstimation {
+  readonly type: string;
+  readonly fieldId?: string;
+  readonly fieldName?: string;
+}
+
+/**
+ * The configuration of one board — `GET /board/{boardId}/configuration`,
+ * narrowed to what a model can act on (D133): the saved filter behind the
+ * board, its columns and the statuses in each, the estimation field and the
+ * rank field. `self` links are dropped.
+ */
+export interface BoardConfiguration {
+  readonly boardId: number;
+  readonly name: string;
+  readonly type?: string;
+  /** The saved filter that decides which issues the board shows. */
+  readonly filterId?: string;
+  /** The kanban sub-filter (JQL), when the board has one. */
+  readonly subQuery?: string;
+  readonly projectKey?: string;
+  readonly projectId?: number;
+  readonly columns: readonly BoardColumn[];
+  /** `issueCount`, `issueCountExclSubs` or `none`, as Jira names it. */
+  readonly constraintType?: string;
+  readonly estimation?: BoardEstimation;
+  /** The numeric id of the rank custom field (`customfield_<id>`). */
+  readonly rankFieldId?: number;
+}
+
 /**
  * One issue of a sprint. `fields` is passed through VERBATIM under the ids that
  * were requested (TOOLS.md §Read shaping) — this ring never renames, reorders
@@ -265,6 +312,11 @@ export type StartSprintOptions = AgileBase & {
 /** Options for {@link closeSprint}. */
 export type CloseSprintOptions = AgileBase & {
   readonly sprintId: number | string;
+} & BudgetGuard;
+
+/** Options for {@link getBoardConfiguration}. */
+export type GetBoardConfigurationOptions = AgileBase & {
+  readonly boardId: number | string;
 } & BudgetGuard;
 
 /** Options for {@link getSprint}. */
@@ -453,6 +505,31 @@ export async function listSprintIssues(
   );
 
   return { ...page, fields, fieldsDefaulted };
+}
+
+/**
+ * Read one board's configuration — `GET /rest/agile/1.0/board/{boardId}/
+ * configuration` (D133). One request, no paging: the columns, the filter id,
+ * the estimation field and the rank field come back in one body.
+ *
+ * Read by `jira_get_board_config`, and the place `jira_set_estimate` learns
+ * which field a board estimates with. A kanban board answers too — it has
+ * columns and a filter, usually no estimation field.
+ */
+export async function getBoardConfiguration(
+  options: GetBoardConfigurationOptions,
+): Promise<BoardConfiguration> {
+  const boardId = agileId(options.boardId, 'boardId');
+  const response = await agileCall({ rootProbe: false }, () =>
+    options.jira({
+      method: 'GET',
+      root: 'agile',
+      path: `/board/${boardId}/configuration`,
+      pathTemplate: '/board/{boardId}/configuration',
+      ...writeControls(options),
+    }),
+  );
+  return narrowBoardConfiguration(response.data, 'GET /board/{boardId}/configuration');
 }
 
 /**
@@ -993,6 +1070,73 @@ function narrowSprint(value: unknown, endpoint: string): AgileSprint {
       ? { originBoardId: sprint.originBoardId }
       : {}),
   };
+}
+
+function narrowBoardConfiguration(value: unknown, endpoint: string): BoardConfiguration {
+  const config = expectRecord(value, endpoint, 'board configuration');
+  const location = isRecord(config.location) ? config.location : undefined;
+  const filter = isRecord(config.filter) ? config.filter : undefined;
+  const subQuery = isRecord(config.subQuery) ? config.subQuery.query : undefined;
+  const columnConfig = isRecord(config.columnConfig) ? config.columnConfig : undefined;
+  const columns = isUnknownArray(columnConfig?.columns) ? columnConfig.columns : [];
+  const estimation = narrowEstimation(config.estimation);
+  const ranking = isRecord(config.ranking) ? config.ranking : undefined;
+  const filterId = idText(filter?.id);
+  const projectId = Number(idText(location?.id));
+  return {
+    boardId: requireNumber(config.id, endpoint, 'board.id'),
+    name: requireString(config.name, endpoint, 'board.name'),
+    ...(typeof config.type === 'string' ? { type: config.type } : {}),
+    ...(filterId === undefined ? {} : { filterId }),
+    ...(typeof subQuery === 'string' && subQuery.length > 0 ? { subQuery } : {}),
+    // A board's location is a project or a user; only a project names a key.
+    ...(location?.type === 'project' && typeof location.key === 'string'
+      ? { projectKey: location.key }
+      : {}),
+    ...(location?.type === 'project' && Number.isSafeInteger(projectId)
+      ? { projectId }
+      : {}),
+    columns: columns.map((column) => narrowColumn(column, endpoint)),
+    ...(typeof columnConfig?.constraintType === 'string'
+      ? { constraintType: columnConfig.constraintType }
+      : {}),
+    ...(estimation === undefined ? {} : { estimation }),
+    ...(typeof ranking?.rankCustomFieldId === 'number'
+      ? { rankFieldId: ranking.rankCustomFieldId }
+      : {}),
+  };
+}
+
+function narrowColumn(value: unknown, endpoint: string): BoardColumn {
+  const column = expectRecord(value, endpoint, 'board column');
+  const statuses = isUnknownArray(column.statuses) ? column.statuses : [];
+  const statusIds = statuses
+    .map((status) => (isRecord(status) ? idText(status.id) : undefined))
+    .filter((id): id is string => id !== undefined);
+  return {
+    name: requireString(column.name, endpoint, 'column.name'),
+    statusIds,
+    ...(typeof column.min === 'number' ? { min: column.min } : {}),
+    ...(typeof column.max === 'number' ? { max: column.max } : {}),
+  };
+}
+
+/** Lenient: a board without a readable estimation simply reports none. */
+function narrowEstimation(value: unknown): BoardEstimation | undefined {
+  if (!isRecord(value) || typeof value.type !== 'string') return undefined;
+  const field = isRecord(value.field) ? value.field : undefined;
+  return {
+    type: value.type,
+    ...(typeof field?.fieldId === 'string' ? { fieldId: field.fieldId } : {}),
+    ...(typeof field?.displayName === 'string' ? { fieldName: field.displayName } : {}),
+  };
+}
+
+/** Jira sends these ids as strings on Cloud and as numbers on some hosts. */
+function idText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
 }
 
 /**

@@ -1386,6 +1386,29 @@ check` is green. Not in that exit: proof against a real tenant — both tools ar
 reads over endpoints already proven live (`/search/jql`, `/agile/1.0/board`),
 but neither has run live, so the proven count stays 40, now of 61.
 
+## Phase 15 — v2 wave 2: agile depth and metadata reads (D133…)
+
+One session from 2026-10-27, in a branch worktree; one commit per tool, each
+with its api narrowing, port entry, tool, fake route and Gate C claim. All
+Cloud only — the Data Center adapter stubs every new member.
+
+- [x] `jira_get_board_config` (D133) — `GET /board/{id}/configuration`,
+      narrowed to filter, columns with status ids, estimation and rank field
+      (CC-1480…CC-1484); claim C45.
+- [ ] `jira_get_backlog` — `GET /board/{id}/backlog`.
+- [ ] `jira_update_sprint` — partial `POST /sprint/{id}`, never `PUT`.
+- [ ] `jira_rank_issues` — `PUT /issue/rank`, ≤ 50 issues, per-issue 207
+      failures reported, never replayed.
+- [ ] `jira_set_estimate` — `PUT /issue/{key}/estimation?boardId=`.
+- [ ] `jira_list_priorities`, `jira_list_resolutions`,
+      `jira_list_issue_types` — catalogue reads in the metadata cache.
+- [ ] `jira_list_labels` — `GET /label`.
+- [ ] `jira_get_timetracking_config` — `GET /configuration/timetracking`.
+
+Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
+counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`
+passing offline. Not in that exit: proof against a real tenant.
+
 ## Risks
 
 | Risk | Mitigation |

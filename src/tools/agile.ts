@@ -2,7 +2,8 @@
 // Package `agile` — boards, sprints and the sprint move (TOOLS.md §Package
 // `agile`, WP-34).
 //
-// Three reads over the Jira Software (Agile) root and five writes: the two moves
+// Four reads over the Jira Software (Agile) root (the board configuration since
+// D133) and five writes: the two moves
 // (into a sprint, out to the backlog) and the sprint lifecycle — create, start,
 // close (WP-61). The root is a different API from `/rest/api/3`: a different base
 // path, its own pagination dialect, and its own way of not existing — a site
@@ -56,6 +57,7 @@ import {
   type AgileBoard,
   type AgileIssue,
   type AgileSprint,
+  type BoardConfiguration,
   type SprintLifecycleState,
 } from '../api/agile.js';
 import type { JiraApi } from '../api/port.js';
@@ -215,6 +217,49 @@ export const listBoardsTool = defineTool<z.infer<typeof listBoardsInput>, BoardL
         count: loop.items.length,
         paging: pagingOf(loop, PARTIAL_NOTES),
       });
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 4a. `jira_get_board_config` (D133)
+// ---------------------------------------------------------------------------
+
+const getBoardConfigInput = toolInput({
+  boardId: agileIdArg.describe('Board id from jira_list_boards. Scrum or kanban.'),
+});
+
+/** Result of {@link getBoardConfigTool}. */
+interface BoardConfigData {
+  readonly board: BoardConfiguration;
+}
+
+export const getBoardConfigTool = defineTool<
+  z.infer<typeof getBoardConfigInput>,
+  BoardConfigData
+>({
+  name: 'jira_get_board_config',
+  title: 'Get board configuration',
+  description:
+    "Reads one board's configuration: the saved filter behind it (filterId), its " +
+    'columns with the status ids each one holds, the column constraint, the ' +
+    'estimation field (estimation.fieldId — the story-points field on most scrum ' +
+    'boards) and the rank field. Use it to map a status to its board column, or to ' +
+    'learn which field a board estimates with before reading or setting estimates.',
+  package: 'agile',
+  annotations: READ_ANNOTATIONS,
+  input: getBoardConfigInput,
+  example: {
+    summary: 'The columns and estimation field of board 7',
+    arguments: { boardId: 7 },
+  },
+  handler(args, ctx) {
+    return guarded(async () => {
+      const board = await ctx.api.getBoardConfiguration({
+        ...callBase(ctx),
+        boardId: args.boardId,
+      });
+      return ok<BoardConfigData>({ board });
     });
   },
 });
@@ -775,6 +820,7 @@ export const agilePackage: PackageSpec = {
     'Agile API rather than the platform one.',
   tools: [
     listBoardsTool,
+    getBoardConfigTool,
     listSprintsTool,
     getSprintIssuesTool,
     moveToSprintTool,

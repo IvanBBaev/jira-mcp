@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_get_board_config` (D133) in the `agile` package: a board's filter id,
+  columns with the status ids each one holds, column constraint, estimation
+  field (the story-point field on most Scrum boards) and rank field.
 - Prompts (D125): the server advertises `prompts` and serves four read-only
   workflows on `prompts/list` — `jira_sprint_review` (optional `board`,
   `sprint`), `jira_standup` (optional `project`, `since`),

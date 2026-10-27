@@ -1209,6 +1209,35 @@ async function readPhase(session, flags, credentials) {
     return `board ${String(board.id)}, sprint ${String(sprint.id)} read`;
   });
 
+  await claim('C45', 'jira_get_board_config reads a board configuration', async () => {
+    // D133. Any board will do — a kanban board has columns and a filter too —
+    // so take the first one the site lists. Columns are the shape claim: a
+    // board with none would be a narrowing bug, not a site property.
+    const boards = dataOrSkip(
+      await call(session, 'jira_list_boards', {}),
+      'jira_list_boards',
+      ['unsupported'],
+    );
+    const board = (boards.boards ?? [])[0];
+    if (board === undefined) skip('no board on the site');
+    const data = dataOf(
+      await call(session, 'jira_get_board_config', { boardId: board.id }),
+      'jira_get_board_config',
+    );
+    const config = data.board ?? {};
+    if (config.boardId !== board.id) {
+      throw new Error(
+        `asked for board ${String(board.id)}, got ${String(config.boardId)}`,
+      );
+    }
+    const columns = config.columns ?? [];
+    if (columns.length === 0) throw new Error('the board configuration has no columns');
+    return (
+      `board ${String(board.id)}: ${String(columns.length)} column(s), ` +
+      `estimation=${String(config.estimation?.fieldId ?? config.estimation?.type)}`
+    );
+  });
+
   await claim('C12', 'saved filters read', async () => {
     const data = dataOf(
       await call(session, 'jira_list_filters', {}),

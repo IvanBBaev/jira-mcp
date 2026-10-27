@@ -3312,3 +3312,16 @@ Prompts (D125):
   the handler still owns the refusal.
 - **CC-1479** — `jira_assign_issue` diffs the live assignee for both assign and
   unassign.
+
+## Board configuration (D133, 2026-10-27)
+
+- **CC-1480** — a Scrum project board narrows to its filter id, project key and
+  id, columns with their status ids and limits, constraint, estimation field and
+  rank field.
+- **CC-1481** — a Kanban board on a user location keeps no project key or id;
+  a numeric filter id is returned as a string.
+- **CC-1482** — a configuration without a board id is `unexpected_shape`
+  naming `board.id`; an invalid `boardId` is refused before any request.
+- **CC-1483** — an unknown or invisible board stays `not_found`.
+- **CC-1484** — `jira_get_board_config` returns `{ board }` without the
+  untrusted brand.

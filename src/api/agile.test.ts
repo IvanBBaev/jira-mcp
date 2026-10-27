@@ -46,6 +46,7 @@ import {
   createSprint,
   deleteSprint,
   deleteSprintRequest,
+  getBoardConfiguration,
   getSprint,
   listBoards,
   listSprintIssues,
@@ -1510,4 +1511,148 @@ test('deleteSprint carries the deadline and signal onto the write', async () => 
 
   assert.equal(jira.lastRequest()?.signal, controller.signal);
   assert.equal(jira.lastRequest()?.deadlineAt, 5_000);
+});
+
+// ---------------------------------------------------------------------------
+// Board configuration (D133)
+// ---------------------------------------------------------------------------
+
+const BOARD_CONFIG_ROUTE = 'GET /rest/agile/1.0/board/7/configuration';
+
+/** A scrum board's configuration, as Cloud answers it. */
+function boardConfigBody(): Record<string, unknown> {
+  // synthetic
+  return {
+    id: 7,
+    name: 'PROJ board',
+    type: 'scrum',
+    self: 'https://example.atlassian.net/rest/agile/1.0/board/7/configuration',
+    location: { type: 'project', key: 'PROJ', id: '10000', name: 'Project' },
+    filter: {
+      id: '10042',
+      self: 'https://example.atlassian.net/rest/api/2/filter/10042',
+    },
+    subQuery: { query: '' },
+    columnConfig: {
+      columns: [
+        { name: 'To Do', statuses: [{ id: '10000', self: 'x' }] },
+        { name: 'In Progress', statuses: [{ id: '3' }, { id: 10001 }], max: 5 },
+        { name: 'Done', statuses: [{ id: '10002' }], min: 1 },
+        { name: 'Parked', statuses: [] },
+      ],
+      constraintType: 'issueCount',
+    },
+    estimation: {
+      type: 'field',
+      field: { fieldId: 'customfield_10016', displayName: 'Story point estimate' },
+    },
+    ranking: { rankCustomFieldId: 10019 },
+  };
+}
+
+test('CC-1480: getBoardConfiguration reads one board and narrows it', async () => {
+  const jira = createFakeJiraRequest().on(BOARD_CONFIG_ROUTE, jiraOk(boardConfigBody()));
+
+  const config = await getBoardConfiguration({ jira: jira.fn, boardId: 7 });
+
+  assert.deepEqual(jira.routes(), [BOARD_CONFIG_ROUTE]);
+  assert.equal(jira.lastRequest()?.root, 'agile');
+  assert.equal(jira.lastRequest()?.pathTemplate, '/board/{boardId}/configuration');
+  // Whole-object deepEqual: `self` links are dropped, a blank sub-query is
+  // absent, numeric status ids become strings like the rest, and the string
+  // project id Cloud sends becomes the number the board list reports.
+  assert.deepEqual(config, {
+    boardId: 7,
+    name: 'PROJ board',
+    type: 'scrum',
+    filterId: '10042',
+    projectKey: 'PROJ',
+    projectId: 10000,
+    columns: [
+      { name: 'To Do', statusIds: ['10000'] },
+      { name: 'In Progress', statusIds: ['3', '10001'], max: 5 },
+      { name: 'Done', statusIds: ['10002'], min: 1 },
+      { name: 'Parked', statusIds: [] },
+    ],
+    constraintType: 'issueCount',
+    estimation: {
+      type: 'field',
+      fieldId: 'customfield_10016',
+      fieldName: 'Story point estimate',
+    },
+    rankFieldId: 10019,
+  });
+});
+
+test('CC-1481: a kanban board without estimation or columns still narrows', async () => {
+  const jira = createFakeJiraRequest().on(
+    BOARD_CONFIG_ROUTE,
+    // synthetic
+    jiraOk({
+      id: 7,
+      name: 'Ops kanban',
+      type: 'kanban',
+      location: { type: 'user', name: 'someone' },
+      filter: { id: 10042 },
+      subQuery: { query: 'fixVersion in unreleasedVersions()' },
+      estimation: { type: 'none' },
+    }),
+  );
+
+  const config = await getBoardConfiguration({ jira: jira.fn, boardId: 7 });
+
+  // A user-located board names no project; a numeric filter id is a string.
+  assert.deepEqual(config, {
+    boardId: 7,
+    name: 'Ops kanban',
+    type: 'kanban',
+    filterId: '10042',
+    subQuery: 'fixVersion in unreleasedVersions()',
+    columns: [],
+    estimation: { type: 'none' },
+  });
+});
+
+test('CC-1482: a board configuration without an id is an unexpected shape', async () => {
+  const jira = createFakeJiraRequest().on(BOARD_CONFIG_ROUTE, jiraOk({ name: 'x' }));
+
+  const error = asJiraError(
+    await caught(() => getBoardConfiguration({ jira: jira.fn, boardId: 7 })),
+  );
+
+  assert.equal(error.kind, 'unexpected_shape');
+  assert.match(error.message, /board\.id/);
+});
+
+test('CC-1482: getBoardConfiguration rejects a board id that is not one, before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() => getBoardConfiguration({ jira: jira.fn, boardId: 'PROJ' })),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /boardId/);
+  assert.deepEqual(jira.calls, []);
+});
+
+test('CC-1483: a 404 on a board configuration is that board, not the root', async () => {
+  const jira = createFakeJiraRequest().on(
+    BOARD_CONFIG_ROUTE,
+    jiraErr(
+      new JiraError({
+        kind: 'not_found',
+        message: 'Jira returned 404 for GET /rest/agile/1.0/board/7/configuration.',
+        httpStatus: 404,
+        remediation: 'Check the identifier.',
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => getBoardConfiguration({ jira: jira.fn, boardId: 7 })),
+  );
+
+  // An id-bearing route: the board can be gone, so no root probe rewrite.
+  assert.equal(error.kind, 'not_found');
 });

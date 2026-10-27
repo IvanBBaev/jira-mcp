@@ -2415,6 +2415,45 @@ function buildRoutes(server) {
 
     [
       'GET',
+      '/rest/agile/1.0/board/{boardId}/configuration',
+      (ctx) => {
+        // D133: a scrum board's configuration — three columns over the
+        // statuses the transitions use, a story-points estimation field.
+        const boardId = Number(ctx.params.boardId);
+        const board = state.boards.find((row) => row.id === boardId);
+        if (board === undefined) return notFound('Board');
+        return json(200, {
+          id: board.id,
+          name: board.name,
+          type: board.type,
+          self: `${origin()}/rest/agile/1.0/board/${String(board.id)}/configuration`,
+          location: {
+            type: 'project',
+            key: board.location.projectKey,
+            id: String(board.location.projectId),
+            name: board.location.projectName,
+          },
+          filter: { id: '10000', self: `${origin()}/rest/api/2/filter/10000` },
+          subQuery: { query: '' },
+          columnConfig: {
+            columns: [
+              { name: 'To Do', statuses: [{ id: '1' }] },
+              { name: 'In Progress', statuses: [{ id: '2' }] },
+              { name: 'Done', statuses: [{ id: '3' }] },
+            ],
+            constraintType: 'none',
+          },
+          estimation: {
+            type: 'field',
+            field: { fieldId: 'customfield_10016', displayName: 'Story point estimate' },
+          },
+          ranking: { rankCustomFieldId: 10019 },
+        });
+      },
+    ],
+
+    [
+      'GET',
       '/rest/agile/1.0/board/{boardId}/sprint',
       (ctx) => {
         const boardId = Number(ctx.params.boardId);

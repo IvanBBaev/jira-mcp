@@ -2258,6 +2258,30 @@
           }
         },
         {
+          "name": "jira_get_board_config",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["boardId"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_list_sprints",
           "annotations": {
             "readOnlyHint": true,

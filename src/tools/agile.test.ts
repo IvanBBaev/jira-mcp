@@ -41,6 +41,7 @@ import {
   agilePackage,
   closeSprintTool,
   createSprintTool,
+  getBoardConfigTool,
   getSprintIssuesTool,
   listBoardsTool,
   listSprintsTool,
@@ -198,6 +199,62 @@ test('CC-523: the board project filter is trimmed, and a blank one refused', asy
   assert.ok(parsed.success);
   await listBoardsTool.handler(parsed.data, createCtx(fake.fn));
   assert.equal(fake.lastRequest()?.query?.projectKeyOrId, 'ABC');
+});
+
+// ---------------------------------------------------------------------------
+// `jira_get_board_config` (D133)
+// ---------------------------------------------------------------------------
+
+const BOARD_CONFIG_ROUTE = 'GET /rest/agile/1.0/board/17/configuration';
+
+test('CC-1484: jira_get_board_config returns the narrowed configuration', async () => {
+  const fake = createFakeJiraRequest().on(
+    BOARD_CONFIG_ROUTE,
+    // synthetic — GET /rest/agile/1.0/board/17/configuration
+    jiraOk({
+      id: 17,
+      name: 'ABC board',
+      type: 'scrum',
+      self: 'https://example.atlassian.net/rest/agile/1.0/board/17/configuration',
+      location: { type: 'project', key: 'ABC', id: '10000' },
+      filter: { id: '10042' },
+      columnConfig: {
+        columns: [{ name: 'To Do', statuses: [{ id: '10000' }] }],
+        constraintType: 'none',
+      },
+      estimation: { type: 'field', field: { fieldId: 'customfield_10016' } },
+      ranking: { rankCustomFieldId: 10019 },
+    }),
+  );
+
+  const result = await getBoardConfigTool.handler({ boardId: 17 }, createCtx(fake.fn));
+
+  assert.deepEqual(fake.routes(), [BOARD_CONFIG_ROUTE]);
+  assert.deepEqual(dataOf(result), {
+    board: {
+      boardId: 17,
+      name: 'ABC board',
+      type: 'scrum',
+      filterId: '10042',
+      projectKey: 'ABC',
+      projectId: 10_000,
+      columns: [{ name: 'To Do', statusIds: ['10000'] }],
+      constraintType: 'none',
+      estimation: { type: 'field', fieldId: 'customfield_10016' },
+      rankFieldId: 10019,
+    },
+  });
+  // Board configuration is metadata like the board list: no taint brand.
+  assert.equal(result._untrusted, undefined);
+});
+
+test('jira_get_board_config refuses a non-integer board id in the schema', () => {
+  assert.equal(getBoardConfigTool.input.safeParse({ boardId: 'ABC' }).success, false);
+  assert.equal(getBoardConfigTool.input.safeParse({ boardId: 0 }).success, false);
+  assert.equal(
+    getBoardConfigTool.input.safeParse({ boardId: 17, extra: true }).success,
+    false,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -872,8 +929,13 @@ test('agile ids are positive integers and batches are non-empty (D22)', () => {
   );
 });
 
-test('the three reads carry the read quadruple and no write tier', () => {
-  for (const tool of [listBoardsTool, listSprintsTool, getSprintIssuesTool]) {
+test('the four reads carry the read quadruple and no write tier', () => {
+  for (const tool of [
+    listBoardsTool,
+    getBoardConfigTool,
+    listSprintsTool,
+    getSprintIssuesTool,
+  ]) {
     assert.deepEqual(
       tool.annotations,
       {
@@ -947,12 +1009,13 @@ test('the sprint tools spell out the consequences a caller cannot see', () => {
   assert.match(startSprintTool.description, /Both startDate and\s+endDate are required/);
 });
 
-test('the agile package exports its eight tools in TOOLS.md order', () => {
+test('the agile package exports its nine tools in TOOLS.md order', () => {
   assert.equal(agilePackage.id, 'agile');
   assert.deepEqual(
     agilePackage.tools.map((tool) => tool.name),
     [
       'jira_list_boards',
+      'jira_get_board_config',
       'jira_list_sprints',
       'jira_get_sprint_issues',
       'jira_move_to_sprint',

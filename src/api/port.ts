@@ -39,6 +39,7 @@ import {
   closeSprint,
   createSprint,
   deleteSprint,
+  getBoardConfiguration,
   getSprint,
   listBoards,
   listSprintIssues,
@@ -142,6 +143,7 @@ export interface JiraApi {
   readonly closeSprint: typeof closeSprint;
   readonly createSprint: typeof createSprint;
   readonly deleteSprint: typeof deleteSprint;
+  readonly getBoardConfiguration: typeof getBoardConfiguration;
   readonly getSprint: typeof getSprint;
   readonly listBoards: typeof listBoards;
   readonly listSprintIssues: typeof listSprintIssues;
@@ -247,6 +249,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   closeSprint,
   createSprint,
   deleteSprint,
+  getBoardConfiguration,
   getSprint,
   listBoards,
   listSprintIssues,

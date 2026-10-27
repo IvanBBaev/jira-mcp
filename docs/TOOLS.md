@@ -472,6 +472,7 @@ descriptions, visibility-dependent), transitions, identity or permissions.
 | Tool | Endpoint | Notes |
 |---|---|---|
 | `jira_list_boards` | `GET /rest/agile/1.0/board` | `projectKeyOrId?`, `type?` (scrum/kanban); classic pagination. |
+| `jira_get_board_config` | `GET /rest/agile/1.0/board/{id}/configuration` | D133. Input: `boardId`. Output `{ board }`: `filterId`, `subQuery?`, `projectKey?`/`projectId?` (project boards only), `columns[]` with `statusIds` and `min?`/`max?`, `constraintType?`, `estimation?` (`fieldId` is the story-point field on most Scrum boards) and `rankFieldId?`. Not content-bearing. Cloud only. |
 | `jira_list_sprints` | `GET /rest/agile/1.0/board/{id}/sprint` | `state?` (active/future/closed). Content-bearing (sprint goals are board-user prose): `_untrusted: true` + `untrusted_content` (§Untrusted content, CC-176). |
 | `jira_get_sprint_issues` | `GET /rest/agile/1.0/sprint/{id}/issue` | `fields?`, `jql?` filter; flattened like `jira_search`. |
 | `jira_move_to_sprint` | `POST /rest/agile/1.0/sprint/{id}/issue` | Write tier `standard`. Input: `sprintId`, `issues` (≤ 50 keys). Ranking is unchanged — issues land at the bottom of the sprint. An over-cap batch is refused locally with nothing sent (D22). |
@@ -736,7 +737,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**61 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
+**62 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
 issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 8,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
