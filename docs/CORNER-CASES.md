@@ -3366,3 +3366,16 @@ Prompts (D125):
 - **CC-1497** — `jira_rank_issues` is an idempotent `standard` write; a failure
   entry carrying Jira's error text brands the result untrusted, a clean 204
   does not.
+
+## Estimate (D137, 2026-10-27)
+
+- **CC-1498** — `setEstimate` sends `PUT /issue/{key}/estimation` with the
+  board id in the query and the value as a string (`5` → `"5"`), no `safe`
+  flag, and returns Jira's `{fieldId, value}` echo.
+- **CC-1499** — an empty issue, a negative number, an empty string or a
+  non-numeric board id is refused before any request ("Nothing was sent.").
+- **CC-1504** — a duration such as `1d 4h` is sent trimmed and verbatim; a
+  bodiless answer still succeeds, without `fieldId` or `value`.
+- **CC-1505** — `jira_set_estimate` is an idempotent `standard` write; its
+  schema refuses a negative or missing value, and the echo is not branded
+  untrusted.

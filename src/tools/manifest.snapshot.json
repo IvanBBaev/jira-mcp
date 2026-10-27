@@ -2710,6 +2710,54 @@
             "required": ["issues"],
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_set_estimate",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "boardId", "value"],
+            "additionalProperties": false
+          }
         }
       ]
     },

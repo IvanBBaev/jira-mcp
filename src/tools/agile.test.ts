@@ -42,6 +42,7 @@ import {
   closeSprintTool,
   updateSprintTool,
   rankIssuesTool,
+  setEstimateTool,
   createSprintTool,
   getBacklogTool,
   getBoardConfigTool,
@@ -1076,7 +1077,7 @@ test('the sprint tools spell out the consequences a caller cannot see', () => {
   assert.match(startSprintTool.description, /Both startDate and\s+endDate are required/);
 });
 
-test('the agile package exports its twelve tools in TOOLS.md order', () => {
+test('the agile package exports its thirteen tools in TOOLS.md order', () => {
   assert.equal(agilePackage.id, 'agile');
   assert.deepEqual(
     agilePackage.tools.map((tool) => tool.name),
@@ -1093,6 +1094,7 @@ test('the agile package exports its twelve tools in TOOLS.md order', () => {
       'jira_close_sprint',
       'jira_update_sprint',
       'jira_rank_issues',
+      'jira_set_estimate',
     ],
   );
   for (const tool of agilePackage.tools) {
@@ -1195,4 +1197,44 @@ test('CC-1497: jira_rank_issues is an idempotent standard write', async () => {
   );
   assert.equal(dataOf(clean).outcome, 'all');
   assert.equal(clean._untrusted, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// `jira_set_estimate` (D137)
+// ---------------------------------------------------------------------------
+
+test('CC-1505: jira_set_estimate writes through the board and returns the echo', async () => {
+  const fake = createFakeJiraRequest().on(
+    'PUT /rest/agile/1.0/issue/SHOP-412/estimation',
+    jiraOk({ fieldId: 'customfield_10016', value: '8' }),
+  );
+
+  const result = await setEstimateTool.handler(
+    { issue: 'SHOP-412', boardId: 7, value: 8 },
+    createCtx(fake.fn),
+  );
+  const data = dataOf(result);
+
+  assert.deepEqual(fake.lastRequest()?.body, { value: '8' });
+  assert.equal(data.fieldId, 'customfield_10016');
+  assert.equal(data.value, '8');
+  assert.equal(result._untrusted, undefined);
+});
+
+test('CC-1505: jira_set_estimate is an idempotent standard write', () => {
+  assert.deepEqual(setEstimateTool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  });
+  assert.equal(setEstimateTool.writeTier, 'standard');
+  assert.equal(
+    setEstimateTool.input.safeParse({ issue: 'A-1', boardId: 7, value: -2 }).success,
+    false,
+  );
+  assert.equal(
+    setEstimateTool.input.safeParse({ issue: 'A-1', boardId: 7 }).success,
+    false,
+  );
 });

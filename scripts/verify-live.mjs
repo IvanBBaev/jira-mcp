@@ -1538,6 +1538,7 @@ const created = {
   worklogId: undefined,
   sprintId: undefined,
   sprintName: undefined,
+  boardId: undefined,
   sprintStarted: false,
   versionId: undefined,
   versionName: undefined,
@@ -2034,6 +2035,7 @@ async function agileWriteClaims(session) {
         );
       }
       created.sprintId = sprint.id;
+      created.boardId = board.id;
       created.sprintName = name;
       return (
         `sprint ${String(sprint.id)} on ${String(board.type ?? 'unknown-type')} board ` +
@@ -2152,6 +2154,34 @@ async function agileWriteClaims(session) {
         );
       }
       return `${key} ranked above ${anchor} (HTTP ${String(applied.status)})`;
+    },
+  );
+
+  await claim(
+    'C49',
+    "jira_set_estimate writes the board's estimation field",
+    async () => {
+      const key = created.issueKey;
+      const boardId = created.boardId;
+      if (key === undefined) skip('no throwaway issue');
+      if (boardId === undefined) skip('no agile board — see C27');
+      // A board estimating by issue count, or an issue outside its filter, is
+      // refused by Jira: the site's shape, not a client failure.
+      const { plan, applied } = await planAndApplyOrSkip(
+        session,
+        'jira_set_estimate',
+        { issue: key, boardId, value: 3 },
+        ['validation'],
+      );
+      // Jira's body takes the estimate as a string, whatever the field type.
+      if (plan.planned?.body?.value !== '3') {
+        throw new Error(
+          `planned value is ${JSON.stringify(plan.planned?.body?.value)}, expected "3"`,
+        );
+      }
+      return applied.fieldId === undefined
+        ? `${key} estimated on board ${String(boardId)}; Jira echoed no field`
+        : `${key} estimated at ${String(applied.value)} in ${applied.fieldId}`;
     },
   );
 

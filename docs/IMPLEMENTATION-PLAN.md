@@ -1401,7 +1401,8 @@ Cloud only — the Data Center adapter stubs every new member.
       (CC-1489…CC-1492); claim C47.
 - [x] `jira_rank_issues` (D136) — `PUT /issue/rank`, ≤ 50 issues, per-issue
       207 failures reported, never replayed (CC-1493…CC-1497); claim C48.
-- [ ] `jira_set_estimate` — `PUT /issue/{key}/estimation?boardId=`.
+- [x] `jira_set_estimate` (D137) — `PUT /issue/{key}/estimation?boardId=`,
+      the board picks the field (CC-1498, CC-1499, CC-1504, CC-1505); claim C49.
 - [ ] `jira_list_priorities`, `jira_list_resolutions`,
       `jira_list_issue_types` — catalogue reads in the metadata cache.
 - [ ] `jira_list_labels` — `GET /label`.

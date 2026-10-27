@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_set_estimate` (D137) in the `agile` package: sets an issue's estimate
+  in whichever field its board estimates with, so no custom field id is
+  needed.
 - `jira_rank_issues` (D136) in the `agile` package: ranks up to 50 issues
   directly before or after another, and names the issues Jira refused when it
   ranks only some of them.

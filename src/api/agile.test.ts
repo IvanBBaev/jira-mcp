@@ -51,6 +51,7 @@ import {
   listBacklogIssues,
   updateSprint,
   rankIssues,
+  setEstimate,
   listBoards,
   listSprintIssues,
   listSprints,
@@ -1973,4 +1974,87 @@ test('CC-1496: an unreadable 207 is reported as unknown, an all-green one as all
     rankAfterIssue: 'A-2',
   });
   assert.equal(all.outcome, 'all');
+});
+
+// ---------------------------------------------------------------------------
+// Estimate (D137)
+// ---------------------------------------------------------------------------
+
+const ESTIMATE_ROUTE = 'PUT /rest/agile/1.0/issue/SHOP-412/estimation';
+
+test('CC-1498: setEstimate sends the value as a string, scoped to the board', async () => {
+  const jira = createFakeJiraRequest().on(
+    ESTIMATE_ROUTE,
+    jiraOk({ fieldId: 'customfield_10016', value: '5' }),
+  );
+
+  const result = await setEstimate({
+    jira: jira.fn,
+    issue: ' SHOP-412 ',
+    boardId: '7',
+    value: 5,
+  });
+
+  const request = jira.lastRequest();
+  assert.equal(request?.method, 'PUT');
+  assert.equal(request?.root, 'agile');
+  assert.equal(request?.pathTemplate, '/issue/{issueIdOrKey}/estimation');
+  assert.deepEqual(queryOf(request), { boardId: '7' });
+  assert.deepEqual(request?.body, { value: '5' });
+  assert.equal(request?.safe, undefined);
+  assert.deepEqual(result, {
+    issue: 'SHOP-412',
+    boardId: 7,
+    sent: '5',
+    status: 200,
+    fieldId: 'customfield_10016',
+    value: '5',
+  });
+});
+
+test('CC-1499: setEstimate refuses an empty issue, a negative or empty value and a bad board, before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const issue = asJiraError(
+    await caught(() => setEstimate({ jira: jira.fn, issue: ' ', boardId: 7, value: 3 })),
+  );
+  assert.equal(issue.kind, 'validation');
+
+  const negative = asJiraError(
+    await caught(() =>
+      setEstimate({ jira: jira.fn, issue: 'A-1', boardId: 7, value: -1 }),
+    ),
+  );
+  assert.match(negative.message, /non-negative/);
+
+  const empty = asJiraError(
+    await caught(() =>
+      setEstimate({ jira: jira.fn, issue: 'A-1', boardId: 7, value: '  ' }),
+    ),
+  );
+  assert.match(empty.message, /empty estimate/);
+  assert.match(empty.message, /Nothing was sent/);
+
+  const board = asJiraError(
+    await caught(() =>
+      setEstimate({ jira: jira.fn, issue: 'A-1', boardId: 'main', value: 3 }),
+    ),
+  );
+  assert.equal(board.kind, 'validation');
+
+  assert.equal(jira.calls.length, 0);
+});
+
+test('CC-1504: a duration passes verbatim and a bodiless answer still succeeds without an echo', async () => {
+  const jira = createFakeJiraRequest().on(ESTIMATE_ROUTE, jiraOk('', { status: 204 }));
+
+  const result = await setEstimate({
+    jira: jira.fn,
+    issue: 'SHOP-412',
+    boardId: 7,
+    value: ' 1d 4h ',
+  });
+
+  assert.deepEqual(jira.lastRequest()?.body, { value: '1d 4h' });
+  assert.deepEqual(result, { issue: 'SHOP-412', boardId: 7, sent: '1d 4h', status: 204 });
 });

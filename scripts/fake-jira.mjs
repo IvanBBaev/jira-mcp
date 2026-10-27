@@ -2559,8 +2559,8 @@ function buildRoutes(server) {
       },
     ],
 
-    // The six agile WRITE routes (the delete joined with D102, the rank with
-    // D136). They validate
+    // The seven agile WRITE routes (the delete joined with D102, the rank with
+    // D136, the estimate with D137). They validate
     // rather than shrug, because a
     // lenient fake turns the rehearsal into a tautology: a route that accepts
     // anything cannot catch the client sending the wrong thing, which is the
@@ -2606,6 +2606,28 @@ function buildRoutes(server) {
         }
         for (const issue of resolved) issue.sprintId = sprintId;
         return noContent();
+      },
+    ],
+
+    [
+      'PUT',
+      '/rest/agile/1.0/issue/{issueIdOrKey}/estimation',
+      (ctx) => {
+        // D137. The board picks the field (the configuration route above says
+        // story points), so a request without a known board is refused, and the
+        // value must arrive as a string — Jira's body type, whatever the field.
+        const boardId = Number(ctx.query.boardId);
+        if (!state.boards.some((board) => board.id === boardId)) {
+          return jiraError(400, ['boardId is required and must name a board.']);
+        }
+        const issue = findIssue(String(ctx.params.issueIdOrKey));
+        if (issue === undefined) return notFound('Issue');
+        const value = ctx.body?.value;
+        if (typeof value !== 'string' || value === '') {
+          return jiraError(400, [], { value: 'value must be a non-empty string.' });
+        }
+        issue.estimate = value;
+        return json(200, { fieldId: 'customfield_10016', value });
       },
     ],
 

@@ -525,6 +525,11 @@ and `https://developer.atlassian.com/cloud/jira/software/rest/api-group-backlog/
   only some did, with `entries: [{issueId, issueKey, status, errors}]` — a
   success status, so the client reads the entries rather than throwing, and
   never resends.
+- **Estimate (D137).** `PUT /rest/agile/1.0/issue/{issueIdOrKey}/estimation
+  ?boardId={boardId}` with `{value}` — a string, whatever the field type —
+  writes the field the board estimates with and answers **200**
+  `{fieldId, value}`. An issue off the board or a board without an estimation
+  field answers **400**.
 
 ## Watchers, votes, components, versions and roles
 

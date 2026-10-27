@@ -3,9 +3,10 @@
 // `agile`, WP-34).
 //
 // Five reads over the Jira Software (Agile) root (the board configuration since
-// D133, the backlog since D134) and seven writes: the two moves
+// D133, the backlog since D134) and eight writes: the two moves
 // (into a sprint, out to the backlog), the sprint lifecycle — create, start,
-// close (WP-61) — the sprint edit (D135) and the rank (D136). The root is a different API from `/rest/api/3`: a different base
+// close (WP-61) — the sprint edit (D135), the rank (D136) and the estimate
+// (D137). The root is a different API from `/rest/api/3`: a different base
 // path, its own pagination dialect, and its own way of not existing — a site
 // without Jira Software answers 403/404 on `/board`. That last translation
 // (CC-34) belongs to `api/agile.ts` (`asAgileError`), which is the only layer
@@ -1029,6 +1030,66 @@ export const rankIssuesTool = defineTool<z.infer<typeof rankIssuesInput>, RankIs
 );
 
 // ---------------------------------------------------------------------------
+// 11c. `jira_set_estimate` (D137)
+// ---------------------------------------------------------------------------
+
+const setEstimateInput = writeToolInput({
+  issue: z.string().min(1).describe('Issue key or id, e.g. SHOP-412.'),
+  boardId: agileIdArg.describe(
+    'Board id from jira_list_boards; its estimation field is the one written.',
+  ),
+  value: z
+    .union([z.number().nonnegative(), z.string().min(1)])
+    .describe(
+      'Story points (e.g. 5) or, on a time-estimated board, a duration such as "1d 4h".',
+    ),
+});
+
+/** Result of {@link setEstimateTool}. */
+interface SetEstimateData {
+  readonly issue: string;
+  readonly boardId: number;
+  /** The value sent, as Jira's body takes it. */
+  readonly sent: string;
+  readonly status: number;
+  /** Jira's echo: the field the board estimates with, and the stored value. */
+  readonly fieldId?: string;
+  readonly value?: string;
+}
+
+export const setEstimateTool = defineTool<
+  z.infer<typeof setEstimateInput>,
+  SetEstimateData
+>({
+  name: 'jira_set_estimate',
+  title: 'Set estimate',
+  description:
+    "Sets an issue's estimate in the field its board estimates with — story points " +
+    'or a time estimate — so no custom field id is needed. jira_get_board_config ' +
+    'shows which field that is. Jira refuses an issue that is not on the board or a ' +
+    'board with no estimation field.',
+  package: 'agile',
+  annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+  writeTier: 'standard',
+  input: setEstimateInput,
+  example: {
+    summary: 'Estimate an issue at five story points on board 7',
+    arguments: { issue: 'SHOP-412', boardId: 7, value: 5 },
+  },
+  handler(args, ctx) {
+    return guarded(async () => {
+      const result = await ctx.api.setEstimate({
+        ...callBase(ctx),
+        issue: args.issue,
+        boardId: args.boardId,
+        value: args.value,
+      });
+      return ok<SetEstimateData>({ ...result });
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // 12. The package
 // ---------------------------------------------------------------------------
 
@@ -1057,6 +1118,7 @@ export const agilePackage: PackageSpec = {
     closeSprintTool,
     updateSprintTool,
     rankIssuesTool,
+    setEstimateTool,
   ],
   prompts: [sprintReviewPrompt],
 };

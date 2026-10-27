@@ -15,7 +15,8 @@
 // and, since Phase 11 (D102), delete one. Since D133 it also reads one board's
 // configuration (columns, filter, estimation and rank fields), since D134 its
 // backlog, since D135 it edits a sprint's name, goal and window, and since
-// D136 it ranks issues before or after another. The delete PRIMITIVE lives here
+// D136 it ranks issues before or after another, and since D137 it sets an
+// issue's estimate on a board. The delete PRIMITIVE lives here
 // because this module owns the agile root, but the TOOL that calls it belongs
 // to the irreversible `issues-delete` package behind JIRA_ALLOW_IRREVERSIBLE
 // (D50/CC-48) — the `agile` tool package itself still deletes nothing.
@@ -50,6 +51,7 @@
 // ---------------------------------------------------------------------------
 
 import { createJiraError } from '../core/errors.js';
+import { encodeSegment } from '../core/http-util.js';
 import {
   JiraError,
   type JiraRequestFn,
@@ -332,6 +334,16 @@ export type RankIssuesOptions = AgileBase & {
   readonly rankCustomFieldId?: number;
 } & BudgetGuard;
 
+/** Options for {@link setEstimate} (D137). */
+export type SetEstimateOptions = AgileBase & {
+  /** Issue key or id. */
+  readonly issue: string;
+  /** The board whose estimation field is written. */
+  readonly boardId: number | string;
+  /** Story points as a number, or a duration such as `1d 4h` for a time board. */
+  readonly value: number | string;
+} & BudgetGuard;
+
 /** Options for {@link closeSprint}. */
 export type CloseSprintOptions = AgileBase & {
   readonly sprintId: number | string;
@@ -434,6 +446,19 @@ export interface RankIssuesResult {
   readonly outcome: 'all' | 'partial' | 'unknown';
   readonly failed: readonly RankFailure[];
   readonly status: number;
+}
+
+/**
+ * What {@link setEstimate} returns. `fieldId` and `value` are Jira's echo and
+ * are absent when the response carried none.
+ */
+export interface SetEstimateResult {
+  readonly issue: string;
+  readonly boardId: number;
+  readonly sent: string;
+  readonly status: number;
+  readonly fieldId?: string;
+  readonly value?: string;
 }
 
 /** What {@link updateSprint} returns (D135). */
@@ -869,6 +894,76 @@ function sprintEditBody(options: UpdateSprintOptions): Record<string, string> {
     });
   }
   return body;
+}
+
+/**
+ * Set an issue's estimate on a board (D137).
+ * `PUT /rest/agile/1.0/issue/{issueIdOrKey}/estimation?boardId=` with
+ * `{ value }`. The board decides the field — story points, original estimate or
+ * whatever its estimation statistic is (`jira_get_board_config` names it) — so
+ * the caller never has to know a custom field id. A number is sent as its
+ * decimal string, which is what Jira's body takes; an empty value is refused
+ * locally (D22): the documented body has no "clear".
+ */
+export async function setEstimate(
+  options: SetEstimateOptions,
+): Promise<SetEstimateResult> {
+  const issue = options.issue.trim();
+  if (issue === '') {
+    throw createJiraError({
+      kind: 'validation',
+      reason: 'setEstimate needs an issue key or id. Nothing was sent.',
+      remediation: 'Pass an issue key such as ABC-1.',
+    });
+  }
+  const boardId = agileId(options.boardId, 'boardId');
+  const sent = estimateValue(options.value);
+  const spec: JiraRequestSpec = {
+    method: 'PUT',
+    root: 'agile',
+    path: `/issue/${encodeSegment(issue, 'issue key or id')}/estimation`,
+    pathTemplate: '/issue/{issueIdOrKey}/estimation',
+    query: { boardId },
+    body: { value: sent },
+    ...writeControls(options),
+  };
+
+  const response = await agileCall({ rootProbe: false }, () => options.jira(spec));
+  const echo = isRecord(response.data) ? response.data : {};
+  return {
+    issue,
+    boardId: Number(boardId),
+    sent,
+    status: response.status,
+    ...(typeof echo.fieldId === 'string' ? { fieldId: echo.fieldId } : {}),
+    ...(typeof echo.value === 'string' || typeof echo.value === 'number'
+      ? { value: String(echo.value) }
+      : {}),
+  };
+}
+
+/** The estimate as Jira's body takes it: a finite, non-negative number or a non-empty string. */
+function estimateValue(value: number | string): string {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) {
+      throw createJiraError({
+        kind: 'validation',
+        reason: `setEstimate needs a non-negative estimate, received ${String(value)}. Nothing was sent.`,
+        remediation: 'Pass story points as 0 or more, or a duration such as "1d 4h".',
+      });
+    }
+    return String(value);
+  }
+  const text = value.trim();
+  if (text === '') {
+    throw createJiraError({
+      kind: 'validation',
+      reason: 'setEstimate cannot send an empty estimate. Nothing was sent.',
+      remediation:
+        'Pass a value; to clear an estimate, edit the estimation field with jira_update_issue.',
+    });
+  }
+  return text;
 }
 
 /**
