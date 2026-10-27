@@ -106,6 +106,7 @@ import {
   listPriorities,
   listResolutions,
   listIssueTypes,
+  listLabels,
   listProjects,
   listStatuses,
 } from './meta.js';
@@ -227,6 +228,7 @@ export interface JiraApi {
   readonly listPriorities: typeof listPriorities;
   readonly listResolutions: typeof listResolutions;
   readonly listIssueTypes: typeof listIssueTypes;
+  readonly listLabels: typeof listLabels;
   readonly listProjects: typeof listProjects;
   readonly listStatuses: typeof listStatuses;
 
@@ -334,6 +336,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   listPriorities,
   listResolutions,
   listIssueTypes,
+  listLabels,
   listProjects,
   listStatuses,
 

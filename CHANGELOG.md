@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_list_labels` (D139) in the `meta` package: the labels already in use
+  on the site, with an optional case-insensitive substring filter. Never
+  cached.
 - `jira_list_priorities`, `jira_list_resolutions` and `jira_list_issue_types`
   (D138) in the `meta` package: the site's priority, resolution and issue type
   catalogues, served from the metadata cache.

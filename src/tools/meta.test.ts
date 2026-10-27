@@ -36,6 +36,7 @@ import {
   getProjectTool,
   listFieldsTool,
   listIssueTypesTool,
+  listLabelsTool,
   listLinkTypesTool,
   listPrioritiesTool,
   listProjectsTool,
@@ -191,7 +192,7 @@ function createMetaPage(
 // Package and spec shape
 // ---------------------------------------------------------------------------
 
-test('the package exposes the nine meta tools in TOOLS.md order', () => {
+test('the package exposes the ten meta tools in TOOLS.md order', () => {
   assert.equal(metaPackage.id, 'meta');
   assert.notEqual(metaPackage.title.trim(), '');
   assert.notEqual(metaPackage.description.trim(), '');
@@ -207,6 +208,7 @@ test('the package exposes the nine meta tools in TOOLS.md order', () => {
       'jira_list_priorities',
       'jira_list_resolutions',
       'jira_list_issue_types',
+      'jira_list_labels',
     ],
   );
 });
@@ -751,6 +753,37 @@ test('CC-1510: the D138 catalogue tools report their rows, count and paging', as
     assert.equal(result._untrusted, undefined);
     assert.deepEqual(hintCodes(result), []);
   }
+});
+
+test('CC-1513: jira_list_labels filters what it fetched and keeps the unfiltered count', async () => {
+  const jira = createFakeJiraRequest();
+  // synthetic — GET /rest/api/3/label
+  jira.on(
+    'GET /rest/api/3/label',
+    jiraOk({
+      startAt: 0,
+      maxResults: 1000,
+      total: 3,
+      isLast: true,
+      values: ['backend', 'Frontend', 'frontend-v2'],
+    }),
+  );
+
+  const filtered = await run(listLabelsTool, { query: '  FRONT ' }, createCtx(jira));
+  assert.deepEqual(dataOf(filtered), {
+    labels: ['Frontend', 'frontend-v2'],
+    count: 2,
+    totalCount: 3,
+    paging: dataOf(filtered).paging,
+    query: 'FRONT',
+  });
+  assert.equal(dataOf(filtered).paging.partial, false);
+  assert.equal(filtered._untrusted, undefined);
+
+  const all = dataOf(await run(listLabelsTool, {}, createCtx(jira)));
+  assert.equal(all.count, 3);
+  assert.equal(all.query, undefined);
+  assert.throws(() => listLabelsTool.input.parse({ query: '   ' }));
 });
 
 // ---------------------------------------------------------------------------

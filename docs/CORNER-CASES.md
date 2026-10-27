@@ -3395,3 +3395,15 @@ Prompts (D125):
   entry per page of a paged catalogue.
 - **CC-1510** — the three tools return their rows with `count` (and `paging`
   for the paged two), carry no hint and are never branded untrusted.
+
+## Labels (D139, 2026-10-27)
+
+- **CC-1511** — `listLabels` walks `GET /label` page by page; every entry
+  must be a string, and a page holding anything else is `unexpected_shape`,
+  never a silently shorter list.
+- **CC-1512** — `filterLabels` trims the query and matches a substring
+  case-insensitively; a blank query filters nothing (the tool schema refuses
+  one before it gets here, CC-430).
+- **CC-1513** — `jira_list_labels` returns the filtered `labels` with `count`,
+  keeps the unfiltered `totalCount`, echoes the trimmed `query`, and is never
+  branded untrusted.

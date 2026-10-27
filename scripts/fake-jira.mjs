@@ -1477,6 +1477,11 @@ function buildRoutes(server) {
           { id: '10003', name: 'Epic', subtask: false, hierarchyLevel: 1 },
         ]),
     ],
+    [
+      'GET',
+      '/rest/api/3/label',
+      (ctx) => json(200, page(['backend', 'frontend', 'release-blocker'], ctx.query)),
+    ],
 
     [
       'GET',

@@ -1406,7 +1406,8 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_list_priorities`, `jira_list_resolutions`,
       `jira_list_issue_types` (D138) — catalogue reads in the metadata cache
       (CC-1506…CC-1510); claim C50.
-- [ ] `jira_list_labels` — `GET /label`.
+- [x] `jira_list_labels` (D139) — `GET /label`, paged internally, filtered
+      here, never cached (CC-1511…CC-1513); claim C51.
 - [ ] `jira_get_timetracking_config` — `GET /configuration/timetracking`.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md

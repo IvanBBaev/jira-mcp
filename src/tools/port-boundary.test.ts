@@ -25,6 +25,7 @@ const REPO = new URL('../../', import.meta.url);
  */
 const PURE_HELPERS: ReadonlySet<string> = new Set([
   'filterFields',
+  'filterLabels',
   'resolveTransitionId',
   'startedInstant',
 ]);

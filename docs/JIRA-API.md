@@ -231,6 +231,11 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   array of every type the caller can see; a team-managed project's own type
   carries `scope: {type: PROJECT, project: {id}}`, so names repeat and ids do
   not. Cloud only here — the Data Center adapter stubs all three.
+- Labels (D139): `GET /label` is a classic PageBean whose `values` are plain
+  strings (`startAt`/`maxResults`, default 1000) and takes no filter, so
+  `jira_list_labels` filters client-side. Labels are created implicitly by
+  tagging an issue, so the route is deliberately left out of the metadata
+  cache. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`) are cached in memory for

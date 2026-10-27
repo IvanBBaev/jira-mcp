@@ -203,6 +203,8 @@ Reads:
   catalogues the D123 whitelist would admit. Priorities and resolutions
   shipped as `jira_list_priorities` and `jira_list_resolutions` (D138),
   through the paged `/search` routes, beside `jira_list_issue_types`.
+  Labels shipped as `jira_list_labels` (D139) but outside the cache — they
+  are not immutable; tagging an issue creates one.
 - **Remote links**, `GET /rest/api/3/issue/{key}/remotelink`: the pull
   requests and pages attached to an issue.
 - **Server info**, `GET /rest/api/3/serverInfo` (`/rest/api/2/serverInfo`

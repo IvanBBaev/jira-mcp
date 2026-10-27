@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // Package `meta` — the discovery reads (TOOLS.md §Package `meta`, WP-33).
 //
-// Nine read-only tools that answer "what is this instance called?": projects,
+// Ten read-only tools that answer "what is this instance called?": projects,
 // project detail, the field catalog, create metadata, statuses, issue link
-// types, and the priority, resolution and issue type catalogues (D138). Every write tool in the catalog depends on one of them, because Jira
+// types, the priority, resolution and issue type catalogues (D138) and the
+// labels in use (D139). Every write tool in the catalog depends on one of them, because Jira
 // ids (`customfield_10016`, issue type `10002`, a numeric project id) are
 // tenant-specific and cannot be guessed.
 //
@@ -38,7 +39,7 @@
 // `ctx.jira`, which `api/meta.ts` receives as its `jira` seam.
 // ---------------------------------------------------------------------------
 
-import { filterFields } from '../api/meta.js';
+import { filterFields, filterLabels } from '../api/meta.js';
 import type {
   CreateMetaField,
   FieldInfo,
@@ -702,6 +703,61 @@ export const listIssueTypesTool = defineTool<
 });
 
 // ---------------------------------------------------------------------------
+// 8e. `jira_list_labels` (D139)
+// ---------------------------------------------------------------------------
+
+const listLabelsInput = toolInput({
+  query: z
+    .string()
+    // Trimmed and non-empty for the same reason as `jira_list_fields` (CC-430).
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Case-insensitive substring filter, applied by this server over the labels ' +
+        'it fetched (GET /label takes no filter).',
+    ),
+});
+
+/** Result of {@link listLabelsTool}. */
+interface LabelListData {
+  readonly labels: readonly string[];
+  readonly count: number;
+  /** Labels fetched before `query` narrowed them. */
+  readonly totalCount: number;
+  readonly paging: PagingInfo;
+  readonly query?: string;
+}
+
+export const listLabelsTool = defineTool<z.infer<typeof listLabelsInput>, LabelListData>({
+  name: 'jira_list_labels',
+  title: 'List labels',
+  description:
+    'Lists the labels already in use on this site, so a create, an update or JQL ' +
+    'like labels = backend reuses an existing label instead of minting a near-duplicate ' +
+    '("Backend" vs "backend"). query filters by substring, case-insensitively. Labels ' +
+    'are site-wide and change whenever someone tags an issue, so this read is never ' +
+    'cached.',
+  package: 'meta',
+  annotations: READ_ANNOTATIONS,
+  input: listLabelsInput,
+  example: { summary: 'Labels that mention "front"', arguments: { query: 'front' } },
+  handler(args, ctx) {
+    return guarded(async () => {
+      const loop = await ctx.api.listLabels(pagedOptions(ctx));
+      const labels = filterLabels(loop.items, args.query);
+      return ok<LabelListData>({
+        labels,
+        count: labels.length,
+        totalCount: loop.items.length,
+        paging: metaPaging(loop),
+        ...(args.query === undefined ? {} : { query: args.query }),
+      });
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // 9. The package
 // ---------------------------------------------------------------------------
 
@@ -715,7 +771,7 @@ export const metaPackage: PackageSpec = {
   title: 'Metadata & discovery',
   description:
     'Projects, fields, create metadata, statuses, link types, priorities, ' +
-    'resolutions and issue types — the reads that ' +
+    'resolutions, issue types and labels — the reads that ' +
     'turn names into the ids every other package needs.',
   tools: [
     listProjectsTool,
@@ -727,5 +783,6 @@ export const metaPackage: PackageSpec = {
     listPrioritiesTool,
     listResolutionsTool,
     listIssueTypesTool,
+    listLabelsTool,
   ],
 };

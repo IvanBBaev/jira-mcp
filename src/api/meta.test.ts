@@ -35,7 +35,9 @@ import {
   getProject,
   listCreateMetaIssueTypes,
   listFields,
+  filterLabels,
   listIssueTypes,
+  listLabels,
   listLinkTypes,
   listPriorities,
   listProjects,
@@ -1078,4 +1080,31 @@ test('CC-1508: listIssueTypes keeps a project scope apart and refuses a non-arra
     listIssueTypes({ jira: jira.fn }),
     isJiraError('unexpected_shape'),
   );
+});
+
+test('CC-1511: listLabels walks /label pages of plain strings', async () => {
+  const jira = createFakeJiraRequest();
+  jira
+    .enqueue(
+      jiraOk({ startAt: 0, maxResults: 2, total: 3, isLast: false, values: ['a', 'b'] }),
+    )
+    .enqueue(jiraOk({ startAt: 2, maxResults: 2, total: 3, isLast: true, values: ['c'] }))
+    .enqueue(jiraOk({ startAt: 0, isLast: true, values: ['ok', 7] }));
+
+  const result = await listLabels({ jira: jira.fn, pageSize: 2 });
+  assert.deepEqual(result.items, ['a', 'b', 'c']);
+  assert.deepEqual(
+    jira.calls.map((call) => call.query?.startAt),
+    [0, 2],
+  );
+  assert.equal(jira.calls[0]?.path, '/label');
+
+  await assert.rejects(listLabels({ jira: jira.fn }), isJiraError('unexpected_shape'));
+});
+
+test('CC-1512: filterLabels matches a trimmed substring case-insensitively', () => {
+  const labels = ['Backend', 'frontend', 'ops'];
+  assert.deepEqual(filterLabels(labels, ' END '), ['Backend', 'frontend']);
+  assert.equal(filterLabels(labels, undefined), labels);
+  assert.equal(filterLabels(labels, '   '), labels);
 });

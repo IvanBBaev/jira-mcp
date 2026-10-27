@@ -1173,6 +1173,26 @@ async function readPhase(session, flags, credentials) {
     },
   );
 
+  await claim('C51', 'jira_list_labels reads the site label list', async () => {
+    // A fresh site may have no labels at all, so zero rows is a pass; what has
+    // to hold is that the filter only ever narrows what was fetched.
+    const all = dataOf(await call(session, 'jira_list_labels'), 'jira_list_labels');
+    if (all.count !== all.totalCount) {
+      throw new Error(
+        `unfiltered read narrowed ${String(all.totalCount)} to ${String(all.count)}`,
+      );
+    }
+    const first = all.labels[0];
+    if (first === undefined) return 'no labels on this site';
+    const narrowed = dataOf(
+      await call(session, 'jira_list_labels', { query: first }),
+      'jira_list_labels',
+    );
+    if (!narrowed.labels.includes(first))
+      throw new Error(`query ${first} lost its own label`);
+    return `${String(all.count)} labels, query narrowed to ${String(narrowed.count)}`;
+  });
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

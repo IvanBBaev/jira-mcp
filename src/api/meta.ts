@@ -86,6 +86,9 @@ export const CREATE_META_PAGE_SIZE = 50;
 /** `GET /priority/search` and `GET /resolution/search` page size (D138). */
 export const CATALOGUE_PAGE_SIZE = 50;
 
+/** `GET /label` page size — the endpoint's documented default (D139). */
+export const LABEL_PAGE_SIZE = 1000;
+
 /**
  * `lead` is an EXPAND on `/project/search`, not a default field, and TOOLS.md
  * promises the lead in the project list — so the loop asks for it unless the
@@ -196,6 +199,9 @@ export type ListCatalogueOptions = MetaPagedOptions;
 
 /** Options for {@link listIssueTypes} (D138). */
 export type ListIssueTypesOptions = MetaOptions;
+
+/** Options for {@link listLabels} (D139). */
+export type ListLabelsOptions = MetaPagedOptions;
 
 // ---------------------------------------------------------------------------
 // 3. Result shapes
@@ -971,6 +977,39 @@ export async function listIssueTypes(
   );
 }
 
+/**
+ * List the labels in use on the site — `GET /label`, classic pagination over a
+ * `values` array of plain STRINGS, not objects (D139). Labels are created by
+ * any user who types one on an issue, so this list is never cached.
+ */
+export function listLabels(
+  options: ListLabelsOptions,
+): Promise<ClassicLoopResult<string>> {
+  return runClassic(
+    options,
+    LABEL_PAGE_SIZE,
+    (cursor) => ({
+      method: 'GET',
+      path: '/label',
+      query: { startAt: cursor.startAt, maxResults: cursor.maxResults },
+    }),
+    labelPage,
+  );
+}
+
+/**
+ * Filter labels by a case-insensitive substring. Jira's `GET /label` takes no
+ * filter, so the narrowing happens here, over the rows the loop fetched.
+ */
+export function filterLabels(
+  labels: readonly string[],
+  query: string | undefined,
+): readonly string[] {
+  const needle = trimmed(query)?.toLowerCase();
+  if (needle === undefined) return labels;
+  return labels.filter((label) => label.toLowerCase().includes(needle));
+}
+
 // ---------------------------------------------------------------------------
 // 8. Request plumbing
 // ---------------------------------------------------------------------------
@@ -1375,4 +1414,31 @@ function mapIssueTypeInfo(entry: Record<string, unknown>): IssueTypeInfo {
     ...mapIssueType(entry),
     scopeProjectId: scopeProject === undefined ? undefined : readId(scopeProject, 'id'),
   });
+}
+
+/** One `GET /label` page: `values` holds strings, so {@link classicPage} does not fit. */
+function labelPage(response: JiraResponse): ClassicPage<string> {
+  const body = requireRecord(response.data, 'label page');
+  const raw = body.values;
+  if (!Array.isArray(raw)) {
+    throw shapeError(
+      'A label page arrived without a "values" array.',
+      'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).',
+    );
+  }
+  return {
+    items: raw.map((entry, index) => {
+      if (typeof entry !== 'string') {
+        throw shapeError(
+          `Label #${index} on a label page is not a string.`,
+          'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).',
+        );
+      }
+      return entry;
+    }),
+    isLast: readBoolean(body, 'isLast'),
+    total: readNumber(body, 'total'),
+    startAt: readNumber(body, 'startAt'),
+    maxResults: readNumber(body, 'maxResults'),
+  };
 }
