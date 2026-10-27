@@ -229,7 +229,8 @@ control that makes the risk visible.
 
 - A **content-bearing read** is any tool whose result can contain Jira-authored
   free text: `jira_get_issue`, `jira_search`, `jira_get_comments`,
-  `jira_get_changelog`, `jira_get_worklogs`, `jira_get_remote_links`
+  `jira_get_changelog`, `jira_get_changelogs_bulk` (D150), `jira_get_worklogs`,
+  `jira_get_remote_links`
   (link titles and summaries, D141), `jira_get_sprint_issues` (its
   rows are the same issue projection `jira_search` returns), `jira_get_backlog`
   (the same rows, D134), `jira_list_filters`,
@@ -302,7 +303,8 @@ to run it.
 | `jira_get_issue` | `GET /rest/api/3/issue/{key}`; `POST /rest/api/3/issue/bulkfetch` for `issues` | Input: `issue` (key or id) or `issues` (1–100 keys or ids, Cloud only — D149), `fields?`, `expand?`, `properties?`, `format?`. With `issues` the reply is `{issues, errors, requested, unmatched, raw, fieldsRequested?, expand}`: each issue shaped as a single read, refs Jira did not serve in `unmatched` (a moved issue answers under its new key and is listed there too). Description/textareas rendered via `adfToText`; raw ADF available behind `raw: true`; `format: "markdown"` renders the same fields as the markdown subset (mutually exclusive with `raw`). |
 | `jira_get_comments` | `GET .../comment` | Classic pagination; `orderBy?` (default `-created` — the newest comment is what a digest needs; Jira's own default is oldest-first); bodies flattened (`format: "markdown"` renders them as the markdown subset instead); author `{ accountId, displayName }`. |
 | `jira_get_transitions` | `GET .../transitions` | Returns id, name, target status — required before `jira_transition_issue`. |
-| `jira_get_changelog` | `GET .../changelog` | Classic pagination, **oldest-first** — for "what changed recently" read the tail: request the last page (`startAt = max(0, total - maxResults)`) or use `expand=changelog` on `jira_get_issue` for the recent slice. Fields: field, from → to, author, created. Bulk (`changelog/bulkfetch`) is not exposed — one issue per call. |
+| `jira_get_changelog` | `GET .../changelog` | Classic pagination, **oldest-first** — for "what changed recently" read the tail: request the last page (`startAt = max(0, total - maxResults)`) or use `expand=changelog` on `jira_get_issue` for the recent slice. Fields: field, from → to, author, created. For many issues at once use `jira_get_changelogs_bulk`. |
+| `jira_get_changelogs_bulk` | `POST /rest/api/3/changelog/bulkfetch` | Histories of up to 1000 issues (`issues`, trimmed and de-duplicated) in one request; `fieldIds?` keeps only changes to those fields (`["status"]` for transitions), `maxResults?` 1–1000. Output: `issues[]` of `{ issueId, histories }` — keyed by **numeric issue id, not key** — plus `requested`, `fieldIds?`, `nextPageToken?` and `hasMore`. One page per call; send the cursor back with the same `issues` and `fieldIds`. Histories are shaped like `jira_get_changelog`'s. Cloud only (D150, CC-1549…CC-1552). Content-bearing: `_untrusted`. |
 | `jira_get_worklogs` | `GET .../worklog` | Classic pagination; timeSpentSeconds, started, author, comment flattened. |
 | `jira_get_remote_links` | `GET .../remotelink` | Input: `issue`. The web links on the issue — pull requests, Confluence pages — as `{ id, globalId?, relationship?, application?, url?, title?, summary?, resolved? }`; icon URLs dropped. Bare array, no paging. Branded untrusted: titles are free text (D141, CC-1518, CC-1520). Cloud only. |
 | `jira_get_bulk_status` | `GET /rest/api/3/bulk/queue/{taskId}` | Input: `taskId` (from a bulk submit). A safe read, deliberately in this package rather than `issues-delete`: it survives `JIRA_PACKAGES_DENY=issues-delete` and works for any bulk task the account may see — UI-submitted included, since the endpoint needs only the global Bulk Change permission (CC-132). Returns the status (`ENQUEUED`, `RUNNING`, `COMPLETE`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`, `DEAD`), progress, and the counts (`totalIssueCount`, `processedCount`, `failedCount`, `invalidOrInaccessibleIssueCount`); a task stays viewable ~14 days after completion. On `FAILED`/`DEAD` the per-issue errors live in the Jira UI — the result carries the counts. |
@@ -759,7 +761,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**80 tools / 11 packages** (core 3, search 7, issues 7, issues-write 10,
+**81 tools / 11 packages** (core 3, search 7, issues 8, issues-write 10,
 issues-delete 11, attachments 3, collab 12, meta 11, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the

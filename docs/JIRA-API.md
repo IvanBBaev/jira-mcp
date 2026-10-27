@@ -288,6 +288,12 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   `{issues, issueErrors}` — one request for up to 100 refs; refs Jira cannot
   serve are reported, not fatal. The cap and the `issueErrors` shape are from
   memory, unverified; claim C61 checks a batch with one absent key. Cloud only.
+- Bulk changelog read (D150): `POST /changelog/bulkfetch` with
+  `{issueIdsOrKeys, fieldIds?, maxResults?, nextPageToken?}` returns
+  `{issueChangeLogs: [{issueId, changeHistories}], nextPageToken?}` — histories
+  of up to 1000 issues, grouped by numeric id (never key), one cursor for the
+  batch. The caps and the shape are from memory, unverified; claim C62 checks
+  the id keying and `hasMore`. Cloud only.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

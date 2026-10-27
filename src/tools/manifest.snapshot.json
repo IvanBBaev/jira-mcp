@@ -511,6 +511,52 @@
           }
         },
         {
+          "name": "jira_get_changelogs_bulk",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "fieldIds": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_get_worklogs",
           "annotations": {
             "readOnlyHint": true,

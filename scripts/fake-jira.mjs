@@ -1727,6 +1727,39 @@ function buildRoutes(server) {
     ],
 
     [
+      'POST',
+      '/rest/api/3/changelog/bulkfetch',
+      (ctx) => {
+        const refs = Array.isArray(ctx.body?.issueIdsOrKeys)
+          ? ctx.body.issueIdsOrKeys
+          : [];
+        const fieldIds = Array.isArray(ctx.body?.fieldIds) ? ctx.body.fieldIds : [];
+        // One page holds every match: the fake never cuts mid-issue (D150).
+        const issueChangeLogs = [];
+        for (const ref of refs) {
+          const issue = issueOf({ issueIdOrKey: String(ref) });
+          if (issue === undefined) continue;
+          const changeHistories = issue.changelog
+            .map((entry) => wireChangelogEntry(state, entry, origin()))
+            .map((entry) =>
+              fieldIds.length === 0
+                ? entry
+                : {
+                    ...entry,
+                    items: entry.items.filter(
+                      (item) =>
+                        fieldIds.includes(item.fieldId) || fieldIds.includes(item.field),
+                    ),
+                  },
+            )
+            .filter((entry) => entry.items.length > 0);
+          issueChangeLogs.push({ issueId: String(issue.id), changeHistories });
+        }
+        return json(200, { issueChangeLogs });
+      },
+    ],
+
+    [
       'GET',
       '/rest/api/3/issue/{issueIdOrKey}/comment',
       (ctx) => {

@@ -1438,6 +1438,10 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_get_issue` `issues: [...]` (D149) — up to 100 issues through
       `POST /issue/bulkfetch`, shaped like a single read, misses in
       `errors`/`unmatched`; Data Center refuses it (CC-1544…CC-1548); claim C61.
+- [x] `jira_get_changelogs_bulk` (D150) — histories of up to 1000 issues
+      through `POST /changelog/bulkfetch`, grouped by numeric id, one page
+      per call with `nextPageToken`/`hasMore`; Cloud only (CC-1549…CC-1552);
+      claim C62.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

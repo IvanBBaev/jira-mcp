@@ -1288,6 +1288,28 @@ async function readPhase(session, flags, credentials) {
     return `${String(issues.length)} issue(s), ${String((data.errors ?? []).length)} issueError(s)`;
   });
 
+  await claim('C62', 'jira_get_changelogs_bulk reads histories by issue id', async () => {
+    const key = flags.issue ?? found.issueKey;
+    if (key === undefined) skip('no issue available — pass --issue');
+    const data = dataOf(
+      await call(session, 'jira_get_changelogs_bulk', { issues: [key] }),
+      'jira_get_changelogs_bulk',
+    );
+    // The endpoint keys blocks by numeric id, never by key (D150).
+    const blocks = data.issues ?? [];
+    if (blocks.some((block) => !/^\d+$/.test(String(block.issueId)))) {
+      throw new Error('a block was keyed by something other than a numeric issue id');
+    }
+    if (typeof data.hasMore !== 'boolean') {
+      throw new Error('data.hasMore was not a boolean');
+    }
+    const histories = blocks.reduce(
+      (sum, block) => sum + (block.histories ?? []).length,
+      0,
+    );
+    return `${String(blocks.length)} issue block(s), ${String(histories)} history row(s)`;
+  });
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

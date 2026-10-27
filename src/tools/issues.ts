@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // Package `issues` (read) — TOOLS.md §Package `issues`.
 //
-// Seven read tools: the issue itself, its comments, the workflow transitions
-// available from its current status, its change history, its worklogs, its
-// remote links (D141) — and, since Phase 12, the progress of one bulk
-// operation by task id. Everything
+// Eight read tools: the issue itself, its comments, the workflow transitions
+// available from its current status, its change history, the change history
+// of many issues at once (D150), its worklogs, its remote links (D141) — and,
+// since Phase 12, the progress of one bulk operation by task id. Everything
 // here is read-only, so no tool carries a `writeTier` and none of them ever
 // branches on plan mode — the write gate owns that, and there is nothing to
 // gate. The bulk-status read lives HERE, not in `issues-delete`, on purpose
@@ -30,7 +30,7 @@
 // dressed up as one: a model that reads `truncated` is told not to page on,
 // which is the opposite of what a partial page means (CC-25/26 vs here).
 //
-// UNTRUSTED CONTENT (D15, CC-35). Five of the seven tools can return Jira-authored
+// UNTRUSTED CONTENT (D15, CC-35). Six of the eight tools can return Jira-authored
 // free text — descriptions, comment bodies, changelog values, worklog comments,
 // remote link titles and URLs —
 // so their envelopes are branded `_untrusted: true` and carry the
@@ -46,11 +46,14 @@
 import type { BulkStatusResult } from '../api/bulk.js';
 import {
   DEFAULT_COMMENT_ORDER_BY,
+  MAX_BULK_CHANGELOG_ISSUES,
+  MAX_BULK_CHANGELOG_RESULTS,
   MAX_BULK_ISSUES,
   MAX_PAGE_SIZE,
 } from '../api/issues.js';
 import type {
   ChangelogResult,
+  ChangelogsBulkResult,
   CommentsResult,
   IssueDetail,
   IssuesBulkResult,
@@ -393,6 +396,74 @@ export const getChangelogTool = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// jira_get_changelogs_bulk (D150)
+// ---------------------------------------------------------------------------
+
+const getChangelogsBulkInput = toolInput({
+  issues: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(MAX_BULK_CHANGELOG_ISSUES)
+    .describe(
+      `Issue keys or numeric ids, 1 to ${String(MAX_BULK_CHANGELOG_ISSUES)}; ` +
+        'duplicates are sent once.',
+    ),
+  fieldIds: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      'Keep only changes to these field ids (status, assignee, customfield_10020). ' +
+        'Omit for every field.',
+    ),
+  maxResults: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_BULK_CHANGELOG_RESULTS)
+    .optional()
+    .describe("Histories per page; Jira's default when omitted."),
+  nextPageToken: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Cursor from the previous call (data.nextPageToken). Send it with the same ' +
+        'issues and fieldIds.',
+    ),
+});
+
+export const getChangelogsBulkTool = defineTool({
+  name: 'jira_get_changelogs_bulk',
+  title: 'Get changelogs in bulk',
+  description:
+    'Read the change history of up to 1000 issues in one request, optionally only ' +
+    'for some fields (fieldIds: ["status"] for status transitions). Histories are ' +
+    'grouped by NUMERIC issue id, not key — map ids back with jira_search or ' +
+    'jira_get_issue. One page per call; when data.hasMore is true call again with ' +
+    'data.nextPageToken and the same issues. For one issue use jira_get_changelog.',
+  package: 'issues',
+  annotations: READ_ANNOTATIONS,
+  input: getChangelogsBulkInput,
+  example: {
+    summary: 'Status changes of three issues',
+    arguments: { issues: ['PROJ-1', 'PROJ-2', 'PROJ-3'], fieldIds: ['status'] },
+  },
+  handler: async (args, ctx): Promise<ToolResult<ChangelogsBulkResult>> =>
+    guarded(async () => {
+      const result = await ctx.api.getChangelogsBulk({
+        ...callBase(ctx),
+        issues: args.issues,
+        fieldIds: args.fieldIds,
+        maxResults: args.maxResults,
+        nextPageToken: args.nextPageToken,
+      });
+      return ok(result, { untrusted: true });
+    }),
+});
+
+// ---------------------------------------------------------------------------
 // jira_get_worklogs
 // ---------------------------------------------------------------------------
 
@@ -526,6 +597,7 @@ export const issuesPackage: PackageSpec = {
     getCommentsTool,
     getTransitionsTool,
     getChangelogTool,
+    getChangelogsBulkTool,
     getWorklogsTool,
     getRemoteLinksTool,
     getBulkStatusTool,

@@ -3600,6 +3600,23 @@ Prompts (D125):
 - **CC-1548** — the Data Center adapter refuses `issues` as a `validation`
   error with nothing sent.
 
+## Bulk changelog read (D150, 2026-10-27)
+
+- **CC-1549** — `jira_get_changelogs_bulk` sends one
+  `POST /changelog/bulkfetch` with the trimmed, de-duplicated refs and
+  `fieldIds`; every history is shaped exactly as `listChangelog` shapes it
+  (no email). A numeric `issueId` is restated as a string; a block without
+  an id is dropped.
+- **CC-1550** — zero refs, more than 1000 distinct refs, a blank ref, or a
+  `maxResults` outside 1–1000 (or not whole) is a `validation` error with
+  nothing sent; duplicates collapse before the cap.
+- **CC-1551** — `nextPageToken` is forwarded trimmed; an empty token in the
+  response is the end — the result has no `nextPageToken` and
+  `hasMore: false`.
+- **CC-1552** — the tool returns one page branded `_untrusted`; the schema
+  refuses an empty or oversize `issues`, a blank cursor and `maxResults`
+  over 1000.
+
 ## Project scope guard (D400, 2026-10-27)
 
 Placeholder ids — renumber once the parallel wave that owns the next free range lands.

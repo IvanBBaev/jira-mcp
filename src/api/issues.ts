@@ -77,6 +77,9 @@ export const ISSUE_COLLECTION_PATH = '/issue';
 /** The bulk read endpoint (D149) — Cloud only. */
 export const ISSUE_BULKFETCH_PATH = '/issue/bulkfetch';
 
+/** The bulk changelog endpoint (D150) — Cloud only. */
+export const CHANGELOG_BULKFETCH_PATH = '/changelog/bulkfetch';
+
 /** Issue links live outside the issue resource (JIRA-API.md §Issue links). */
 export const ISSUE_LINK_PATH = '/issueLink';
 
@@ -421,6 +424,43 @@ export interface IssuesBulkResult {
   readonly expand: readonly string[];
 }
 
+/** Most issues one `POST /changelog/bulkfetch` accepts (D150). */
+export const MAX_BULK_CHANGELOG_ISSUES = 1000;
+
+/** Most histories one bulk changelog page may return (D150). */
+export const MAX_BULK_CHANGELOG_RESULTS = 1000;
+
+export interface GetChangelogsBulkBase extends IssueRequestBase {
+  /** Issue keys or ids, 1–{@link MAX_BULK_CHANGELOG_ISSUES} after de-duplication. */
+  readonly issues: readonly string[];
+  /** Field ids to keep (`status`, `assignee`, `customfield_10020`); empty means every field. */
+  readonly fieldIds?: readonly string[];
+  /** Histories per page, 1–{@link MAX_BULK_CHANGELOG_RESULTS}; Jira's default when absent. */
+  readonly maxResults?: number;
+  /** Cursor from the previous page; send it with the SAME issues and fieldIds. */
+  readonly nextPageToken?: string;
+}
+
+export type GetChangelogsBulkOptions = GetChangelogsBulkBase & BudgetGuard;
+
+/** One issue's slice of a bulk changelog page. */
+export interface IssueChangelogPage {
+  /** Jira keys this block by numeric id only — never by key (D150). */
+  readonly issueId: string;
+  /** Oldest first within the issue, as Jira sent them. */
+  readonly histories: readonly ChangelogEntry[];
+}
+
+export interface ChangelogsBulkResult {
+  readonly issues: readonly IssueChangelogPage[];
+  /** The de-duplicated refs that were sent, in request order. */
+  readonly requested: readonly string[];
+  readonly fieldIds?: readonly string[];
+  readonly nextPageToken?: string;
+  /** `nextPageToken !== undefined`, stated so the decision needs no inference. */
+  readonly hasMore: boolean;
+}
+
 export interface ListCommentsBase extends ClassicListBase {
   /** `-created` (default), `created`, `-updated`, `updated`. */
   readonly orderBy?: string;
@@ -674,6 +714,95 @@ export async function listChangelog(
     map: (value) => shapeChangelogEntry(value, options.deployment),
   });
   return { ...page.meta, histories: page.items };
+}
+
+/**
+ * One page of the change history of up to {@link MAX_BULK_CHANGELOG_ISSUES}
+ * issues — `POST /rest/api/3/changelog/bulkfetch` (D150). Histories come back
+ * grouped by issue id; a page can end mid-issue, and the cursor resumes it.
+ * Entries are shaped exactly like {@link listChangelog}'s. Cloud only.
+ */
+export async function getChangelogsBulk(
+  options: GetChangelogsBulkOptions,
+): Promise<ChangelogsBulkResult> {
+  const requested = [
+    ...new Set(
+      options.issues.map((issue) =>
+        requireText(issue, 'issue key or id', ISSUE_REMEDIATION),
+      ),
+    ),
+  ];
+  if (requested.length === 0 || requested.length > MAX_BULK_CHANGELOG_ISSUES) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        `A bulk changelog read takes 1 to ${String(MAX_BULK_CHANGELOG_ISSUES)} distinct ` +
+        `keys or ids, received ${String(requested.length)}. Nothing was sent.`,
+      remediation: `Split the keys into batches of at most ${String(MAX_BULK_CHANGELOG_ISSUES)}.`,
+    });
+  }
+  const maxResults = options.maxResults;
+  if (
+    maxResults !== undefined &&
+    (!Number.isInteger(maxResults) ||
+      maxResults < 1 ||
+      maxResults > MAX_BULK_CHANGELOG_RESULTS)
+  ) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        `maxResults must be a whole number from 1 to ${String(MAX_BULK_CHANGELOG_RESULTS)}, ` +
+        `received ${String(maxResults)}. Nothing was sent.`,
+      remediation: "Leave maxResults out for Jira's default page size.",
+    });
+  }
+  const fieldIds = normalizeList(options.fieldIds);
+  const token = options.nextPageToken?.trim();
+
+  const response = await send(options, {
+    method: 'POST',
+    path: CHANGELOG_BULKFETCH_PATH,
+    body: {
+      issueIdsOrKeys: requested,
+      ...(fieldIds.length === 0 ? {} : { fieldIds }),
+      ...(maxResults === undefined ? {} : { maxResults }),
+      ...(token === undefined || token === '' ? {} : { nextPageToken: token }),
+    },
+  });
+
+  const data = requireRecord(response.data, 'bulk changelog read');
+  const issues: IssueChangelogPage[] = [];
+  const blocks = isUnknownArray(data.issueChangeLogs) ? data.issueChangeLogs : [];
+  for (const block of blocks) {
+    const record = asRecord(block);
+    if (record === undefined) continue;
+    const issueId =
+      typeof record.issueId === 'string'
+        ? record.issueId
+        : typeof record.issueId === 'number'
+          ? String(record.issueId)
+          : undefined;
+    if (issueId === undefined) continue;
+    const histories: ChangelogEntry[] = [];
+    for (const row of isUnknownArray(record.changeHistories)
+      ? record.changeHistories
+      : []) {
+      const entry = shapeChangelogEntry(row, options.deployment);
+      if (entry !== undefined) histories.push(entry);
+    }
+    issues.push({ issueId, histories });
+  }
+  const next =
+    typeof data.nextPageToken === 'string' && data.nextPageToken !== ''
+      ? data.nextPageToken
+      : undefined;
+  return {
+    issues,
+    requested,
+    ...(fieldIds.length === 0 ? {} : { fieldIds }),
+    ...(next === undefined ? {} : { nextPageToken: next }),
+    hasMore: next !== undefined,
+  };
 }
 
 /**

@@ -30,7 +30,10 @@ import {
   AMBIGUOUS_TRANSITION,
   DEFAULT_COMMENT_ORDER_BY,
   ISSUE_ASSIGNEE_PATH_TEMPLATE,
+  CHANGELOG_BULKFETCH_PATH,
   ISSUE_BULKFETCH_PATH,
+  MAX_BULK_CHANGELOG_ISSUES,
+  MAX_BULK_CHANGELOG_RESULTS,
   MAX_BULK_ISSUES,
   MAX_PAGE_SIZE,
   MAX_SHAPE_DEPTH,
@@ -64,6 +67,7 @@ import {
   getComment,
   getIssue,
   getIssueLink,
+  getChangelogsBulk,
   getIssuesBulk,
   getRemoteLink,
   getWorklog,
@@ -3158,4 +3162,130 @@ test('[CC-1546] getIssuesBulk matches refs by key (any case) or id and keeps iss
   ]);
   // Absent fields stay absent rather than defaulting (D41).
   assert.equal('fieldsRequested' in result, false);
+});
+
+// ---------------------------------------------------------------------------
+// getChangelogsBulk (D150)
+// ---------------------------------------------------------------------------
+
+const CHANGELOG_BULK_ROUTE = 'POST /rest/api/3/changelog/bulkfetch';
+
+const HISTORY = {
+  id: '9001',
+  created: '2026-10-01T10:00:00.000+0000',
+  author: {
+    accountId: 'acc-1',
+    displayName: 'Ada',
+    active: true,
+    emailAddress: 'ada@example.com',
+  },
+  items: [{ field: 'status', fieldtype: 'jira', fromString: 'To Do', toString: 'Done' }],
+};
+
+test('[CC-1549] getChangelogsBulk sends one POST and shapes histories like listChangelog', async () => {
+  const fake = createFakeJiraRequest().on(
+    CHANGELOG_BULK_ROUTE,
+    jiraOk({
+      issueChangeLogs: [
+        { issueId: '10001', changeHistories: [HISTORY, 'junk'] },
+        { issueId: 10002, changeHistories: [] },
+        { changeHistories: [HISTORY] },
+      ],
+      nextPageToken: 'next-1',
+    }),
+  );
+
+  const result = await getChangelogsBulk({
+    jira: fake.fn,
+    issues: [KEY, ` ${KEY} `, '10002'],
+    fieldIds: ['status', ' '],
+    maxResults: 50,
+  });
+
+  const request = fake.lastRequest();
+  assert.equal(request?.method, 'POST');
+  assert.equal(request?.path, CHANGELOG_BULKFETCH_PATH);
+  assert.deepEqual(request?.body, {
+    issueIdsOrKeys: [KEY, '10002'],
+    fieldIds: ['status'],
+    maxResults: 50,
+  });
+  assert.equal(fake.calls.length, 1);
+
+  const single = await listChangelog({
+    jira: createFakeJiraRequest().on(
+      `GET /rest/api/3/issue/${KEY}/changelog`,
+      jiraOk({ values: [HISTORY], startAt: 0, maxResults: 50, total: 1, isLast: true }),
+    ).fn,
+    issue: KEY,
+  });
+  // A numeric issue id is restated as a string; a block without one is dropped.
+  assert.deepEqual(result.issues, [
+    { issueId: '10001', histories: single.histories },
+    { issueId: '10002', histories: [] },
+  ]);
+  assert.equal(JSON.stringify(result).includes('ada@example.com'), false);
+  assert.deepEqual(result.requested, [KEY, '10002']);
+  assert.deepEqual(result.fieldIds, ['status']);
+  assert.equal(result.nextPageToken, 'next-1');
+  assert.equal(result.hasMore, true);
+});
+
+test('[CC-1550] getChangelogsBulk refuses bad refs or page size before sending', async () => {
+  const fake = createFakeJiraRequest();
+  const tooMany = Array.from(
+    { length: MAX_BULK_CHANGELOG_ISSUES + 1 },
+    (_, i) => `PROJ-${String(i + 1)}`,
+  );
+  for (const options of [
+    { issues: [] },
+    { issues: tooMany },
+    { issues: [KEY, '  '] },
+    { issues: [KEY], maxResults: 0 },
+    { issues: [KEY], maxResults: MAX_BULK_CHANGELOG_RESULTS + 1 },
+    { issues: [KEY], maxResults: 1.5 },
+  ]) {
+    await assert.rejects(
+      getChangelogsBulk({ jira: fake.fn, ...options }),
+      (error: unknown) =>
+        error instanceof JiraError &&
+        error.kind === 'validation' &&
+        /Nothing was sent|issue key or id/.test(error.message + error.reason),
+    );
+  }
+  assert.equal(fake.calls.length, 0);
+
+  // Duplicates collapse before the cap is counted.
+  const ok = createFakeJiraRequest().on(
+    CHANGELOG_BULK_ROUTE,
+    jiraOk({ issueChangeLogs: [] }),
+  );
+  await getChangelogsBulk({
+    jira: ok.fn,
+    issues: [...tooMany.slice(0, MAX_BULK_CHANGELOG_ISSUES), 'PROJ-1'],
+  });
+  assert.equal(ok.calls.length, 1);
+});
+
+test('[CC-1551] getChangelogsBulk forwards the cursor and reports the last page', async () => {
+  const fake = createFakeJiraRequest().on(
+    CHANGELOG_BULK_ROUTE,
+    jiraOk({ issueChangeLogs: [], nextPageToken: '' }),
+  );
+
+  const result = await getChangelogsBulk({
+    jira: fake.fn,
+    issues: [KEY],
+    nextPageToken: ' cursor-2 ',
+  });
+
+  assert.deepEqual(fake.lastRequest()?.body, {
+    issueIdsOrKeys: [KEY],
+    nextPageToken: 'cursor-2',
+  });
+  // An empty token is the end of the read, not a cursor (D41: absent stays absent).
+  assert.equal('nextPageToken' in result, false);
+  assert.equal('fieldIds' in result, false);
+  assert.equal(result.hasMore, false);
+  assert.deepEqual(result.issues, []);
 });
