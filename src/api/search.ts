@@ -743,3 +743,112 @@ function shapeError(what: string): JiraError {
     reason: `Jira's search response could not be read: ${what}.`,
   });
 }
+
+// ---------------------------------------------------------------------------
+// 8. JQL parse (D146)
+// ---------------------------------------------------------------------------
+
+/** `POST /rest/api/3/jql/parse` — Jira's own JQL parser, nothing is run. */
+export const JQL_PARSE_PATH = '/jql/parse';
+
+/**
+ * Queries per parse call. Our own cap, not a documented Jira limit: a check
+ * that wants more than this is a batch job, not a pre-flight.
+ */
+export const MAX_PARSE_QUERIES = 20;
+
+/** Options for {@link parseJql}. */
+export interface ParseJqlOptions {
+  readonly jira: JiraRequestFn;
+  readonly queries: readonly string[];
+  readonly signal?: AbortSignal;
+  readonly deadlineAt?: number;
+}
+
+/** One query's verdict, in the order the queries were sent. */
+export interface ParsedJql {
+  readonly query: string;
+  /** `true` when Jira's strict validation reported no error. */
+  readonly valid: boolean;
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+/** What {@link parseJql} returns. */
+export interface ParseJqlResult {
+  readonly queries: readonly ParsedJql[];
+}
+
+/**
+ * Parse and strictly validate JQL without running it (D146).
+ *
+ * `validation=strict` makes Jira check field, function and value references
+ * against the caller's permissions as well as the grammar, so a query that
+ * parses here is one {@link searchIssues} will accept. The POST is a read —
+ * nothing is stored — so it is `safe: true` and retried like any GET. Jira's
+ * messages quote the query text back; the tool ring brands them untrusted.
+ */
+export async function parseJql(options: ParseJqlOptions): Promise<ParseJqlResult> {
+  const queries = normalizeParseQueries(options.queries);
+  const response = await options.jira({
+    method: 'POST',
+    path: JQL_PARSE_PATH,
+    query: { validation: 'strict' },
+    safe: true,
+    body: { queries },
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
+  });
+
+  const data = response.data;
+  if (!isRecord(data) || !Array.isArray(data.queries)) {
+    throw shapeError(`${JQL_PARSE_PATH} did not return a "queries" array`);
+  }
+  if (data.queries.length !== queries.length) {
+    throw shapeError(
+      `${JQL_PARSE_PATH} answered ${String(data.queries.length)} queries for ${String(queries.length)} sent`,
+    );
+  }
+  return {
+    queries: data.queries.map((row: unknown, index) => toParsedJql(row, index, queries)),
+  };
+}
+
+function normalizeParseQueries(queries: readonly string[]): readonly string[] {
+  if (queries.length === 0 || queries.length > MAX_PARSE_QUERIES) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `queries carries ${String(queries.length)} entries; pass between 1 and ${String(MAX_PARSE_QUERIES)}.`,
+      remediation: `Parse at most ${String(MAX_PARSE_QUERIES)} JQL queries per call.`,
+    });
+  }
+  return queries.map((query, index) => {
+    const trimmed = query.trim();
+    if (trimmed === '') {
+      throw createJiraError({
+        kind: 'validation',
+        reason: `queries[${String(index)}] is blank.`,
+        remediation: 'Pass the JQL text to check; drop blank entries.',
+      });
+    }
+    return trimmed;
+  });
+}
+
+function toParsedJql(row: unknown, index: number, sent: readonly string[]): ParsedJql {
+  if (!isRecord(row)) {
+    throw shapeError(`${JQL_PARSE_PATH} queries[${String(index)}] is not an object`);
+  }
+  const errors = messageList(row.errors, `queries[${String(index)}].errors`);
+  const warnings = messageList(row.warnings, `queries[${String(index)}].warnings`);
+  const query = typeof row.query === 'string' ? row.query : (sent[index] ?? '');
+  return { query, valid: errors.length === 0, errors, warnings };
+}
+
+function messageList(value: unknown, where: string): readonly string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    throw shapeError(`${JQL_PARSE_PATH} ${where} is not a list of messages`);
+  }
+  return value;
+}

@@ -25,7 +25,9 @@ import { CLOUD_API } from '../api/port.js';
 import {
   APPROXIMATE_COUNT_PATH,
   DEFAULT_SEARCH_FIELDS,
+  JQL_PARSE_PATH,
   JQL_REMEDIATION,
+  MAX_PARSE_QUERIES,
   MAX_SEARCH_RESULTS,
   SEARCH_JQL_PATH,
   type SearchIssuesResult,
@@ -47,6 +49,7 @@ import {
   countTool,
   getFilterTool,
   listFiltersTool,
+  parseJqlTool,
   searchHints,
   searchPackage,
   searchTool,
@@ -55,6 +58,7 @@ import {
 const JQL = 'project = ABC ORDER BY created DESC';
 const SEARCH_ROUTE = `POST /rest/api/3${SEARCH_JQL_PATH}`;
 const COUNT_ROUTE = `POST /rest/api/3${APPROXIMATE_COUNT_PATH}`;
+const PARSE_ROUTE = `POST /rest/api/3${JQL_PARSE_PATH}`;
 const FILTER_SEARCH_ROUTE = `GET /rest/api/3${FILTER_SEARCH_PATH}`;
 const FILTER_ROUTE = 'GET /rest/api/3/filter/10001';
 const ACCOUNT_ID = '5b10a2844c20165700ede21g';
@@ -168,6 +172,7 @@ const MINIMAL_ARGS: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
   Object.freeze({
     jira_search: { jql: JQL },
     jira_count: { jql: JQL },
+    jira_parse_jql: { queries: [JQL] },
     jira_list_filters: {},
     jira_get_filter: { filterId: 10001 },
   });
@@ -182,11 +187,17 @@ function minimalArgs(tool: AnyToolSpec): Record<string, unknown> {
 // The package and its annotations
 // ---------------------------------------------------------------------------
 
-test('the search package exports exactly the four documented tools', () => {
+test('the search package exports exactly the five documented tools', () => {
   assert.equal(searchPackage.id, 'search');
   assert.deepEqual(
     ALL_TOOLS.map((tool) => tool.name),
-    ['jira_search', 'jira_count', 'jira_list_filters', 'jira_get_filter'],
+    [
+      'jira_search',
+      'jira_count',
+      'jira_parse_jql',
+      'jira_list_filters',
+      'jira_get_filter',
+    ],
   );
   for (const tool of ALL_TOOLS) assert.equal(tool.package, 'search');
 });
@@ -1197,4 +1208,100 @@ test('CC-40: jira_get_filter neither runs the filter nor reads any issue', async
   // and stays a decision the model has to take in the open.
   assert.deepEqual(fake.routes(), [FILTER_ROUTE]);
   assert.match(getFilterTool.description, /does\s+NOT run the filter/);
+});
+
+// ---------------------------------------------------------------------------
+// jira_parse_jql (D146)
+// ---------------------------------------------------------------------------
+
+test("CC-1536: jira_parse_jql returns one verdict per query and brands Jira's messages", async () => {
+  const fake = createFakeJiraRequest().on(
+    PARSE_ROUTE,
+    jiraOk({
+      queries: [
+        { query: JQL },
+        {
+          query: 'project = NOPE',
+          errors: ["The value 'NOPE' does not exist for the field 'project'."],
+        },
+      ],
+    }), // synthetic
+    1,
+  );
+
+  const result = await parseJqlTool.handler(
+    { queries: [JQL, 'project = NOPE'] },
+    ctxOf(fake),
+  );
+  const rendered = renderResult(result, { maxResultChars: 100_000 });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.routes(), [PARSE_ROUTE]);
+  assert.deepEqual(fake.lastRequest()?.query, { validation: 'strict' });
+  assert.deepEqual(sentBody(fake), { queries: [JQL, 'project = NOPE'] });
+  assert.deepEqual(result.data, {
+    queries: [
+      { query: JQL, valid: true, errors: [], warnings: [] },
+      {
+        query: 'project = NOPE',
+        valid: false,
+        errors: ["The value 'NOPE' does not exist for the field 'project'."],
+        warnings: [],
+      },
+    ],
+    allValid: false,
+  });
+  assert.equal(hintCodes(result).includes('untrusted_content'), true);
+  assert.equal(rendered.text.includes(TAINT_BEGIN), true);
+  assert.equal(rendered.text.includes(TAINT_END), true);
+});
+
+test('CC-1536: jira_parse_jql reports allValid when no query carries an error', async () => {
+  const fake = createFakeJiraRequest().on(
+    PARSE_ROUTE,
+    jiraOk({ queries: [{ query: JQL, warnings: ['A deprecated form.'] }] }), // synthetic
+    1,
+  );
+
+  const result = await parseJqlTool.handler({ queries: [JQL] }, ctxOf(fake));
+
+  assert.equal(result.data?.allValid, true);
+  assert.deepEqual(result.data?.queries[0]?.warnings, ['A deprecated form.']);
+});
+
+test('CC-1536: jira_parse_jql takes 1 to 20 non-blank queries and nothing else', () => {
+  const ok = (args: unknown): boolean => parseJqlTool.input.safeParse(args).success;
+  assert.equal(ok({ queries: [JQL] }), true);
+  assert.equal(
+    ok({ queries: Array.from({ length: MAX_PARSE_QUERIES }, () => JQL) }),
+    true,
+  );
+  assert.equal(ok({ queries: [] }), false);
+  assert.equal(
+    ok({ queries: Array.from({ length: MAX_PARSE_QUERIES + 1 }, () => JQL) }),
+    false,
+  );
+  assert.equal(ok({ queries: ['  '] }), false);
+  assert.equal(ok({ queries: JQL }), false);
+  assert.equal(ok({ jql: JQL }), false);
+});
+
+test('CC-1536: a parser failure comes back as an error envelope, not a throw', async () => {
+  const fake = createFakeJiraRequest().on(
+    PARSE_ROUTE,
+    jiraErr(
+      errorFromResponse({
+        status: 400,
+        body: { errorMessages: ['Invalid request payload.'], errors: {} },
+        method: 'POST',
+        pathTemplate: JQL_PARSE_PATH,
+      }),
+    ), // synthetic
+    1,
+  );
+
+  const result = await parseJqlTool.handler({ queries: [JQL] }, ctxOf(fake));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
 });

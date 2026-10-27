@@ -1216,6 +1216,24 @@ async function readPhase(session, flags, credentials) {
       : 'time tracking is off on this site';
   });
 
+  await claim('C58', 'jira_parse_jql tells good JQL from a missing field', async () => {
+    const good = flags.project ? `project = ${flags.project}` : 'ORDER BY created ASC';
+    // No site has this field; strict validation must name it as an error.
+    const bad = 'nosuchfieldjiramcp = 1';
+    const data = dataOf(
+      await call(session, 'jira_parse_jql', { queries: [good, bad] }),
+      'jira_parse_jql',
+    );
+    const [first, second] = data.queries ?? [];
+    if (first?.valid !== true)
+      throw new Error(`good JQL refused: ${JSON.stringify(first)}`);
+    if (second?.valid !== false || second.errors.length === 0) {
+      throw new Error(`missing field passed: ${JSON.stringify(second)}`);
+    }
+    if (data.allValid !== false) throw new Error('allValid ignored the bad query');
+    return `1 valid, 1 refused (${String(second.errors.length)} error)`;
+  });
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

@@ -125,7 +125,7 @@ import {
   listStatuses,
 } from './meta.js';
 import { getMyPermissions } from './permissions.js';
-import { approximateCount, searchIssues } from './search.js';
+import { approximateCount, parseJql, searchIssues } from './search.js';
 import {
   getMyself,
   resolveMentionNames,
@@ -261,6 +261,7 @@ export interface JiraApi {
 
   // --- search ---
   readonly approximateCount: typeof approximateCount;
+  readonly parseJql: typeof parseJql;
   readonly searchIssues: typeof searchIssues;
 
   // --- users ---
@@ -377,6 +378,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   getMyPermissions,
 
   approximateCount,
+  parseJql,
   searchIssues,
 
   getMyself,

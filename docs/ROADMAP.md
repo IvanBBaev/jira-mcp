@@ -208,6 +208,8 @@ Reads:
 - **Remote links**, `GET /rest/api/3/issue/{key}/remotelink`: the pull
   requests and pages attached to an issue. Shipped as
   `jira_get_remote_links` (D141).
+- **JQL check**, `POST /rest/api/3/jql/parse`: tell a broken query from a
+  working one before it is run or saved. Shipped as `jira_parse_jql` (D146).
 - **Server info**, `GET /rest/api/3/serverInfo` (`/rest/api/2/serverInfo`
   on Data Center): the version the server is talking to. The Data Center
   8.4+ routes (D116) are assumed, not detected; with this read the doctor

@@ -276,6 +276,7 @@ a model always has a way to ask what it is talking to.
 |---|---|---|
 | `jira_search` | `POST /rest/api/3/search/jql` | Input: `jql` (required), `fields?` (string[], default `summary,status,assignee,priority,issuetype,updated`), `maxResults?` (default 25, cap 100), `nextPageToken?`, `expand?` (passed through — `changelog` included), `reconcileIssues?` (≤ 50 ids, read-after-write; when omitted, the session's recently-written ids are passed automatically — CC-02, D32). Output: issues (ADF fields flattened to text), `nextPageToken?`, `reconciledIssueIds?` (the ids actually reconciled, whoever supplied them; present without the `eventual_consistency` hint when they were auto-passed). No total — hint points at `jira_count`. |
 | `jira_count` | `POST /rest/api/3/search/approximate-count` | Input: `jql`. Output: approximate count + `approximate` hint. |
+| `jira_parse_jql` | `POST /rest/api/3/jql/parse?validation=strict` | Input: `queries` — 1 to 20 non-blank JQL strings. Output: `queries[]` of `{ query, valid, errors, warnings }` in the order sent, and `allValid`. Runs nothing and reads no issues; strict validation also checks that each field, function and value exists for the caller. Branded untrusted — Jira's messages quote tenant text (D146). |
 | `jira_list_filters` | `GET /rest/api/3/filter/search` | Saved filters by `filterName?` (case-insensitive name substring) or `accountId?` (owner); classic pagination, one page per call (`maxResults?`, `startAt?`, `data.paging`). Expand is fixed to `description,owner,jql`. Output rows carry `id`, `name`, `description?`, `owner?` (`{ accountId, displayName }`), `jql?` only — share permissions, edit permissions, subscriptions and shared-user rosters are never returned. Content-bearing: `_untrusted: true` + `untrusted_content` (§Untrusted content). |
 | `jira_get_filter` | `GET /rest/api/3/filter/{id}` | One saved filter by numeric id (from `jira_list_filters`); adds `favourite?`. Does **not** execute the filter — the stored `jql` goes to `jira_search`, which is the only tool that runs JQL. A non-numeric id is refused before the request (D22). Content-bearing, same brand as above. |
 
@@ -756,7 +757,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**77 tools / 11 packages** (core 3, search 4, issues 7, issues-write 10,
+**78 tools / 11 packages** (core 3, search 5, issues 7, issues-write 10,
 issues-delete 11, attachments 3, collab 12, meta 11, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the

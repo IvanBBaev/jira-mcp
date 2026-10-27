@@ -31,16 +31,20 @@ import {
   APPROXIMATE_COUNT_PATH,
   DEFAULT_SEARCH_FIELDS,
   DEFAULT_SEARCH_MAX_RESULTS,
+  JQL_PARSE_PATH,
+  MAX_PARSE_QUERIES,
   MAX_RECONCILE_ISSUES,
   MAX_SEARCH_RESULTS,
   SEARCH_JQL_PATH,
   approximateCount,
+  parseJql,
   searchIssues,
 } from './search.js';
 
 const JQL = 'project = ABC ORDER BY created DESC';
 const SEARCH_ROUTE = `POST /rest/api/3${SEARCH_JQL_PATH}`;
 const COUNT_ROUTE = `POST /rest/api/3${APPROXIMATE_COUNT_PATH}`;
+const PARSE_ROUTE = `POST /rest/api/3${JQL_PARSE_PATH}`;
 
 /** One `/search/jql` issue row, trimmed to what the module narrows. // synthetic */
 function issue(id: string, key: string): Record<string, unknown> {
@@ -729,4 +733,115 @@ test('approximateCount rejects a response with no numeric count', async () => {
     approximateCount({ jira: jira.fn, jql: JQL }),
     isJiraErrorOfKind('unexpected_shape'),
   );
+});
+
+// ---------------------------------------------------------------------------
+// jira_parse_jql — strict JQL validation (D146)
+// ---------------------------------------------------------------------------
+
+test('CC-1534: parseJql posts trimmed queries under strict validation and keeps their order', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk({
+      queries: [
+        { query: JQL, structure: { where: {} } },
+        {
+          query: 'project = NOPE',
+          errors: ["The value 'NOPE' does not exist for the field 'project'."],
+        },
+        { query: 'assignee = currentUser()', warnings: ['A deprecated form.'] },
+      ],
+    }), // synthetic
+  );
+
+  const result = await parseJql({
+    jira: jira.fn,
+    queries: [`  ${JQL} `, 'project = NOPE', 'assignee = currentUser()'],
+  });
+
+  assert.deepEqual(result, {
+    queries: [
+      { query: JQL, valid: true, errors: [], warnings: [] },
+      {
+        query: 'project = NOPE',
+        valid: false,
+        errors: ["The value 'NOPE' does not exist for the field 'project'."],
+        warnings: [],
+      },
+      {
+        query: 'assignee = currentUser()',
+        valid: true,
+        errors: [],
+        warnings: ['A deprecated form.'],
+      },
+    ],
+  });
+  assert.deepEqual(jira.routes(), [PARSE_ROUTE]);
+  const request = jira.lastRequest();
+  assert.deepEqual(request?.query, { validation: 'strict' });
+  assert.equal(request?.safe, true);
+  assert.deepEqual(bodyOf(request), {
+    queries: [JQL, 'project = NOPE', 'assignee = currentUser()'],
+  });
+});
+
+test('CC-1534: parseJql carries the call budget and the abort signal', async () => {
+  const controller = new AbortController();
+  const jira = createFakeJiraRequest().enqueue(jiraOk({ queries: [{ query: JQL }] })); // synthetic
+
+  await parseJql({
+    jira: jira.fn,
+    queries: [JQL],
+    signal: controller.signal,
+    deadlineAt: 4_000,
+  });
+
+  assert.equal(jira.lastRequest()?.deadlineAt, 4_000);
+  assert.equal(jira.lastRequest()?.signal, controller.signal);
+});
+
+test('CC-1535: parseJql refuses an empty list, too many queries or a blank one before the wire', async () => {
+  const jira = createFakeJiraRequest();
+  for (const queries of [
+    [],
+    Array.from({ length: MAX_PARSE_QUERIES + 1 }, () => JQL),
+    [JQL, '   '],
+  ]) {
+    await assert.rejects(
+      parseJql({ jira: jira.fn, queries }),
+      isJiraErrorOfKind('validation'),
+    );
+  }
+  assert.deepEqual(jira.routes(), []);
+});
+
+test('CC-1535: parseJql treats a short, missing or malformed answer as an unexpected shape', async () => {
+  for (const data of [
+    {},
+    { queries: [] },
+    { queries: ['not an object'] },
+    { queries: [{ query: JQL, errors: 'one string' }] },
+  ]) {
+    const jira = createFakeJiraRequest().enqueue(jiraOk(data)); // synthetic
+    await assert.rejects(
+      parseJql({ jira: jira.fn, queries: [JQL] }),
+      isJiraErrorOfKind('unexpected_shape'),
+    );
+  }
+});
+
+test('CC-1535: a Jira 400 from the parser propagates untouched', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraErr(
+      errorFromResponse({
+        status: 400,
+        body: { errorMessages: ['Invalid request payload.'], errors: {} },
+      }),
+    ), // synthetic
+  );
+
+  await assert.rejects(parseJql({ jira: jira.fn, queries: [JQL] }), (error: unknown) => {
+    assert.ok(error instanceof JiraError);
+    assert.equal(error.httpStatus, 400);
+    return true;
+  });
 });

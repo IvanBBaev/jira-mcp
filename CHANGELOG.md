@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_parse_jql` (D146) in the `search` package: check up to 20 JQL
+  queries against Jira's strict parser without running them; each comes back
+  with `valid`, `errors` and `warnings`.
 - `jira_delete_remote_link` (D145) in the `issues-delete` package: remove one
   remote link from an issue by its id. Irreversible: the plan names the link's
   title and target before anything is deleted.

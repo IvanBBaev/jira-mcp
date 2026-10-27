@@ -1,10 +1,12 @@
 // ---------------------------------------------------------------------------
 // Package `search` — TOOLS.md §Package `search`.
 //
-// Four tools. Two run JQL over `/rest/api/3/search/jql` and
+// Five tools. Two run JQL over `/rest/api/3/search/jql` and
 // `/search/approximate-count`: one page of shaped issues, and an index
 // estimate. The legacy `/search` endpoint is gone server-side (2025-08-01) and
-// nothing here can reach it — `api/search.ts` builds the only path.
+// nothing here can reach it — `api/search.ts` builds the only path. A third,
+// `jira_parse_jql` (D146), checks JQL against Jira's strict parser without
+// running it.
 //
 // The other two read SAVED FILTERS (`api/filters.ts`), which belong here for
 // one reason: a saved filter is stored JQL. `jira_list_filters` turns a human
@@ -57,10 +59,11 @@ import {
   DEFAULT_SEARCH_FIELDS,
   DEFAULT_SEARCH_MAX_RESULTS,
   JQL_REMEDIATION,
+  MAX_PARSE_QUERIES,
   MAX_RECONCILE_ISSUES,
   MAX_SEARCH_RESULTS,
 } from '../api/search.js';
-import type { SearchIssue, SearchIssuesResult } from '../api/search.js';
+import type { ParsedJql, SearchIssue, SearchIssuesResult } from '../api/search.js';
 import type { PageStopReason } from '../api/shared.js';
 import type { ErrorRecord, JiraError } from '../core/types.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
@@ -456,6 +459,62 @@ export const countTool = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// jira_parse_jql (D146)
+// ---------------------------------------------------------------------------
+
+/** `data` of a successful {@link parseJqlTool} call. */
+export interface ParseJqlData {
+  /** One verdict per query, in the order they were passed. */
+  readonly queries: readonly ParsedJql[];
+  /** `true` when no query carries an error. */
+  readonly allValid: boolean;
+}
+
+const parseJqlInput = toolInput({
+  queries: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .refine(isNotBlank, BLANK_JQL)
+        .describe('One JQL query, exactly as it would be passed to jira_search.'),
+    )
+    .min(1)
+    .max(MAX_PARSE_QUERIES)
+    .describe(`JQL queries to check, 1 to ${String(MAX_PARSE_QUERIES)}.`),
+});
+
+export const parseJqlTool = defineTool({
+  name: 'jira_parse_jql',
+  title: 'Check JQL',
+  description:
+    "Check JQL against Jira's strict parser without running it: grammar, and whether " +
+    'every field, function and value it names exists for you. Each query comes back ' +
+    'with valid, errors and warnings, so a broken query can be fixed before ' +
+    'jira_search, jira_count or a saved filter uses it. Reads no issues.',
+  package: 'search',
+  annotations: READ_ANNOTATIONS,
+  input: parseJqlInput,
+  example: {
+    summary: 'Check a query before running it',
+    arguments: { queries: ['project = PROJ AND sprint in openSprints()'] },
+  },
+  handler: async (args, ctx): Promise<ToolResult<ParseJqlData>> => {
+    return guarded(async () => {
+      const result = await ctx.api.parseJql({ ...callBase(ctx), queries: args.queries });
+      // Jira's messages quote the query and tenant values back (D15, CC-35).
+      return ok<ParseJqlData>(
+        {
+          queries: result.queries,
+          allValid: result.queries.every((query) => query.valid),
+        },
+        { untrusted: true },
+      );
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Saved filters — pagination reporting (NOT the `truncated` hint)
 // ---------------------------------------------------------------------------
 
@@ -665,9 +724,9 @@ export const searchPackage: PackageSpec = {
   id: 'search',
   title: 'Search',
   description:
-    'JQL search over issues, approximate result counts, and the saved filters ' +
-    'that store reusable JQL — one page per call.',
-  tools: [searchTool, countTool, listFiltersTool, getFilterTool],
+    'JQL search over issues, approximate result counts, strict JQL checks, and ' +
+    'the saved filters that store reusable JQL — one page per call.',
+  tools: [searchTool, countTool, parseJqlTool, listFiltersTool, getFilterTool],
   references: [JQL_REFERENCE],
   prompts: [standupPrompt, triageUnassignedPrompt],
 };

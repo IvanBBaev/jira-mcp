@@ -3484,3 +3484,16 @@ Prompts (D125):
 - **CC-1533** — `jira_delete_remote_link` plans with the link's title, target,
   relationship, application and `globalId`, sends no DELETE when the read
   fails (a 404 stays `not_found`), and its schema refuses a non-numeric id.
+
+## JQL check (D146, 2026-10-27)
+
+- **CC-1534** — `parseJql` sends `POST /jql/parse?validation=strict` with the
+  trimmed queries, marked `safe`, with the call budget and abort signal, and
+  returns one `{ query, valid, errors, warnings }` per query in the order sent.
+- **CC-1535** — an empty list, more than 20 queries or a blank one is a
+  `validation` error before the wire; an answer that is not a `queries` array,
+  has a different length, or carries non-string messages is
+  `unexpected_shape`; a Jira 400 propagates as built.
+- **CC-1536** — `jira_parse_jql` reports `allValid`, brands the result
+  untrusted, its schema takes only 1–20 non-blank queries, and a parser
+  failure is an error envelope.

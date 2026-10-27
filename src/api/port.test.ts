@@ -37,7 +37,7 @@ const MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
 
 test('every Cloud adapter member is the api-ring export of the same name', () => {
   const members = Object.entries(CLOUD_API).filter(([name]) => name !== 'deployment');
-  assert.equal(members.length, 90);
+  assert.equal(members.length, 91);
   for (const [name, value] of members) {
     assert.equal(typeof value, 'function', `${name} is a function`);
     const owners = Object.entries(MODULES).filter(([, mod]) => mod[name] === value);

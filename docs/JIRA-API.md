@@ -267,6 +267,10 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
 - Remote link delete (D145): `DELETE /issue/{issueIdOrKey}/remotelink/{linkId}`
   answers 204. The before-state comes from `GET` on the same path, which
   answers one link in the shape of a list row. Cloud only here.
+- JQL parse (D146): `POST /jql/parse?validation=strict` with
+  `{ queries: [...] }` answers one entry per query, in order, each with
+  `query` and optional `errors`, `warnings` and `structure`. Nothing runs and
+  nothing is stored, so the call is safe to retry. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

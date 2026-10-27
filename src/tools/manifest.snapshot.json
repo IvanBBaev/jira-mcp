@@ -170,6 +170,35 @@
           }
         },
         {
+          "name": "jira_parse_jql",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "queries": {
+                "minItems": 1,
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["queries"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_list_filters",
           "annotations": {
             "readOnlyHint": true,

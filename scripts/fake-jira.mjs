@@ -1652,6 +1652,29 @@ function buildRoutes(server) {
       },
     ],
 
+    [
+      'POST',
+      '/rest/api/3/jql/parse',
+      (ctx) => {
+        // Strict validation, reduced to one rule the gate can lean on: a field
+        // named `nosuchfield…` does not exist. Everything else parses.
+        const queries = Array.isArray(ctx.body?.queries) ? ctx.body.queries : [];
+        return json(200, {
+          queries: queries.map((query) => {
+            const unknown = /\b(nosuchfield\w*)\b/i.exec(String(query));
+            return unknown === null
+              ? { query, structure: {} }
+              : {
+                  query,
+                  errors: [
+                    `Field '${unknown[1]}' does not exist or you do not have permission to view it.`,
+                  ],
+                };
+          }),
+        });
+      },
+    ],
+
     // -- issue reads ------------------------------------------------------
     [
       'GET',
