@@ -292,8 +292,8 @@ export const PASSES = [
       // A full run is every claim the driver owns. The exact number is asserted
       // rather than a floor, so adding a claim without teaching the fake the
       // routes it needs is caught here instead of on a live tenant.
-      if (claims.length !== 58) {
-        failures.push(`expected 58 claims in the report, saw ${String(claims.length)}`);
+      if (claims.length !== 59) {
+        failures.push(`expected 59 claims in the report, saw ${String(claims.length)}`);
       }
       const c00 = claims.find((c) => c.id === 'C00');
       if (c00 === undefined) failures.push('C00 did not run — no doctor preflight');

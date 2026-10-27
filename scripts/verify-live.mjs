@@ -1542,6 +1542,54 @@ async function readPhase(session, flags, credentials) {
     return `planned.body.projectId is the number ${String(sent)}`;
   });
 
+  // D147. Plan mode only: no tool deletes a filter, so an applied create
+  // would be residue no --purge run could remove. The plan proves the wire
+  // shape (no share permission ever sent) and the update's live diff.
+  await claim(
+    'C59',
+    'filter writes plan a private create and a diffed update',
+    async () => {
+      const create = await planOnly(session, 'jira_create_filter', {
+        name: `gate-c-${runId()}`,
+        jql: 'ORDER BY created DESC',
+      });
+      if (create.planned.method !== 'POST') {
+        throw new Error(`create planned ${String(create.planned.method)}, expected POST`);
+      }
+      const sentKeys = Object.keys(create.planned.body ?? {})
+        .sort()
+        .join(',');
+      if (sentKeys !== 'jql,name') {
+        throw new Error(`create body carries ${sentKeys}, expected jql,name only`);
+      }
+      if (found.accountId === undefined)
+        return 'create planned; no account for an update';
+      const mine = dataOf(
+        await call(session, 'jira_list_filters', {
+          accountId: found.accountId,
+          maxResults: 1,
+        }),
+        'jira_list_filters',
+      ).filters?.[0];
+      if (mine === undefined)
+        return 'create planned; you own no filter to plan an update on';
+      const update = dataOf(
+        await call(session, 'jira_update_filter', {
+          filterId: mine.id,
+          description: `gate-c-${runId()} probe`,
+        }),
+        'jira_update_filter (plan)',
+      );
+      if (update.planned?.method !== 'PUT') {
+        throw new Error(`update planned ${String(update.planned?.method)}, expected PUT`);
+      }
+      if (!Array.isArray(update.diff) || update.diff[0]?.field !== 'description') {
+        throw new Error(`update plan diff is ${JSON.stringify(update.diff)}`);
+      }
+      return `create planned; update on filter ${String(mine.id)} diffs description`;
+    },
+  );
+
   await claim('C16', 'diagnostics went to stderr, never to stdout', () => {
     const diagnostics = session.stderr();
     if (!/server_start|settings_report/.test(diagnostics)) {

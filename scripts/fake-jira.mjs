@@ -2668,6 +2668,69 @@ function buildRoutes(server) {
       },
     ],
 
+    // D147. A created filter carries no share permission (private); an
+    // update replaces name, jql and description. Both answer with the filter.
+    [
+      'POST',
+      '/rest/api/3/filter',
+      (ctx) => {
+        const body = ctx.body ?? {};
+        if (typeof body.name !== 'string' || body.name.trim() === '') {
+          return jiraError(400, [], { name: 'The filter name must not be empty.' });
+        }
+        if (state.filters.some((row) => row.name === body.name)) {
+          return jiraError(400, [], {
+            filterName: 'A filter with this name already exists.',
+          });
+        }
+        const filter = {
+          id: String(10000 + state.filters.length),
+          name: body.name,
+          description:
+            typeof body.description === 'string' ? body.description : undefined,
+          jql: typeof body.jql === 'string' ? body.jql : '',
+          ownerAccountId: SELF_ACCOUNT,
+          favourite: false,
+        };
+        state.filters.push(filter);
+        return json(200, {
+          self: `${origin()}/rest/api/3/filter/${filter.id}`,
+          id: filter.id,
+          name: filter.name,
+          description: filter.description,
+          owner: wireUser(state, filter.ownerAccountId, origin()),
+          jql: filter.jql,
+          sharePermissions: [],
+          editPermissions: [],
+        });
+      },
+    ],
+
+    [
+      'PUT',
+      '/rest/api/3/filter/{id}',
+      (ctx) => {
+        const filter = state.filters.find((row) => row.id === ctx.params.id);
+        if (filter === undefined) return notFound('Filter');
+        const body = ctx.body ?? {};
+        if (typeof body.name !== 'string' || body.name.trim() === '') {
+          return jiraError(400, [], { name: 'The filter name must not be empty.' });
+        }
+        filter.name = body.name;
+        if (typeof body.jql === 'string') filter.jql = body.jql;
+        if (typeof body.description === 'string') filter.description = body.description;
+        return json(200, {
+          self: `${origin()}/rest/api/3/filter/${filter.id}`,
+          id: filter.id,
+          name: filter.name,
+          description: filter.description,
+          owner: wireUser(state, filter.ownerAccountId, origin()),
+          jql: filter.jql,
+          sharePermissions: [],
+        });
+      },
+    ],
+
     // -- agile --------------------------------------------------------------
     [
       'GET',

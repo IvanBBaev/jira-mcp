@@ -1,19 +1,21 @@
 // ---------------------------------------------------------------------------
 // Package `search` — TOOLS.md §Package `search`.
 //
-// Five tools. Two run JQL over `/rest/api/3/search/jql` and
+// Seven tools. Two run JQL over `/rest/api/3/search/jql` and
 // `/search/approximate-count`: one page of shaped issues, and an index
 // estimate. The legacy `/search` endpoint is gone server-side (2025-08-01) and
 // nothing here can reach it — `api/search.ts` builds the only path. A third,
 // `jira_parse_jql` (D146), checks JQL against Jira's strict parser without
 // running it.
 //
-// The other two read SAVED FILTERS (`api/filters.ts`), which belong here for
+// Two more read SAVED FILTERS (`api/filters.ts`), which belong here for
 // one reason: a saved filter is stored JQL. `jira_list_filters` turns a human
 // phrase ("the escalations filter") into a `jql` string, and `jira_search` runs
 // it. Neither filter tool executes anything — the model has to pass the JQL to
 // `jira_search` deliberately, which is also what makes the taint brand below
-// worth carrying.
+// worth carrying. The last two (D147) save JQL as a new private filter and
+// edit a filter's name, JQL or description — plan-gated standard writes that
+// never send a share or edit permission.
 //
 // ONE PAGE PER CALL. `searchIssues` is called WITHOUT `maxPages`, so it reads
 // the api default of one page and hands back the cursor. That is the contract a
@@ -66,19 +68,28 @@ import {
 import type { ParsedJql, SearchIssue, SearchIssuesResult } from '../api/search.js';
 import type { PageStopReason } from '../api/shared.js';
 import type { ErrorRecord, JiraError } from '../core/types.js';
-import { defineTool, toolInput, z } from '../mcp/define.js';
+import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { errorResult, toErrorRecord } from '../mcp/errors.js';
 import { currentRecentWrites } from '../mcp/recent-writes.js';
 import { err, ok } from '../mcp/result.js';
 import {
+  IDEMPOTENT_WRITE_ANNOTATIONS,
   READ_ANNOTATIONS,
+  WRITE_ANNOTATIONS,
   callBase,
   guarded,
   pagingOf,
   rethrowUnexpected,
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
-import type { Hint, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
+import type {
+  Hint,
+  PackageSpec,
+  PlanContext,
+  ToolCtx,
+  ToolResult,
+} from '../mcp/types.js';
+import { fieldChange } from './plan-context.js';
 import { JQL_REFERENCE } from './references.js';
 import { standupPrompt, triageUnassignedPrompt } from './prompts.js';
 
@@ -712,6 +723,123 @@ export const getFilterTool = defineTool<z.infer<typeof getFilterInput>, FilterDa
 });
 
 // ---------------------------------------------------------------------------
+// jira_create_filter / jira_update_filter (D147)
+// ---------------------------------------------------------------------------
+
+const filterNameArg = z
+  .string()
+  .trim()
+  .min(1)
+  .describe('Filter name; must be non-blank.');
+const filterJqlArg = z
+  .string()
+  .trim()
+  .min(1)
+  .describe('The JQL to save — check it first with jira_parse_jql.');
+const filterDescriptionArg = z.string().describe('Free-text description.');
+
+const createFilterInput = writeToolInput({
+  name: filterNameArg,
+  jql: filterJqlArg,
+  description: filterDescriptionArg.optional(),
+});
+
+export const createFilterTool = defineTool({
+  name: 'jira_create_filter',
+  title: 'Create saved filter',
+  description:
+    'Save a JQL query as a new filter owned by you. The filter is private — no ' +
+    'share or edit permission is ever sent — and this tool does not run the JQL. ' +
+    'Jira refuses invalid JQL and, on some sites, a name you already use. Edit it ' +
+    'later with jira_update_filter.',
+  package: 'search',
+  annotations: WRITE_ANNOTATIONS,
+  writeTier: 'standard',
+  input: createFilterInput,
+  example: {
+    summary: 'Save my open bugs as a filter',
+    arguments: {
+      name: 'My open bugs',
+      jql: 'assignee = currentUser() AND type = Bug AND statusCategory != Done',
+    },
+  },
+  handler: async (args, ctx): Promise<ToolResult<FilterData>> =>
+    guarded(async () => {
+      const filter = await ctx.api.createFilter({
+        ...callBase(ctx),
+        name: args.name,
+        jql: args.jql,
+        ...(args.description === undefined ? {} : { description: args.description }),
+      });
+      return ok<FilterData>({ filter }, { untrusted: true });
+    }),
+});
+
+const updateFilterInput = writeToolInput({
+  filterId: getFilterInput.shape.filterId,
+  name: filterNameArg.optional(),
+  jql: filterJqlArg.optional(),
+  description: filterDescriptionArg
+    .optional()
+    .describe('New description; an empty string clears it.'),
+}).refine(
+  (value) =>
+    value.name !== undefined ||
+    value.jql !== undefined ||
+    value.description !== undefined,
+  { message: 'Name at least one of name, jql or description.', path: ['name'] },
+);
+
+/** The three editable fields as one string: a filter has no `updated` stamp. */
+function filterVersion(filter: SavedFilter): string {
+  return JSON.stringify([filter.name, filter.jql ?? null, filter.description ?? null]);
+}
+
+export const updateFilterTool = defineTool({
+  name: 'jira_update_filter',
+  title: 'Update saved filter',
+  description:
+    "Change a saved filter's name, JQL or description by numeric id (from " +
+    'jira_list_filters). Fields you leave out keep their current value; ' +
+    'description "" clears it. Sharing and edit permissions are never touched. ' +
+    'The plan shows a before/after diff, and an apply is refused if the filter ' +
+    'changed since the plan. Jira allows it only on filters you may edit.',
+  package: 'search',
+  annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+  writeTier: 'standard',
+  input: updateFilterInput,
+  example: {
+    summary: 'Narrow a saved filter to one project',
+    arguments: { filterId: '10042', jql: 'project = PROJ AND statusCategory != Done' },
+  },
+  handler: async (args, ctx): Promise<ToolResult<FilterData>> =>
+    guarded(async () => {
+      const filter = await ctx.api.updateFilter({
+        ...callBase(ctx),
+        filterId: args.filterId,
+        ...(args.name === undefined ? {} : { name: args.name }),
+        ...(args.jql === undefined ? {} : { jql: args.jql }),
+        ...(args.description === undefined ? {} : { description: args.description }),
+      });
+      return ok<FilterData>({ filter }, { untrusted: true });
+    }),
+  planContext: async (args, ctx): Promise<PlanContext> => {
+    const current = await ctx.api.getFilter({
+      ...callBase(ctx),
+      filterId: args.filterId,
+    });
+    const diff = [
+      ...(args.name === undefined ? [] : [fieldChange('name', current.name, args.name)]),
+      ...(args.jql === undefined ? [] : [fieldChange('jql', current.jql, args.jql)]),
+      ...(args.description === undefined
+        ? []
+        : [fieldChange('description', current.description, args.description)]),
+    ];
+    return { diff, version: filterVersion(current) };
+  },
+});
+
+// ---------------------------------------------------------------------------
 // The package
 // ---------------------------------------------------------------------------
 
@@ -725,8 +853,17 @@ export const searchPackage: PackageSpec = {
   title: 'Search',
   description:
     'JQL search over issues, approximate result counts, strict JQL checks, and ' +
-    'the saved filters that store reusable JQL — one page per call.',
-  tools: [searchTool, countTool, parseJqlTool, listFiltersTool, getFilterTool],
+    'the saved filters that store reusable JQL — read, created and edited, one ' +
+    'page per call.',
+  tools: [
+    searchTool,
+    countTool,
+    parseJqlTool,
+    listFiltersTool,
+    getFilterTool,
+    createFilterTool,
+    updateFilterTool,
+  ],
   references: [JQL_REFERENCE],
   prompts: [standupPrompt, triageUnassignedPrompt],
 };

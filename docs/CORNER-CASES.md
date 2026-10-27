@@ -3497,3 +3497,22 @@ Prompts (D125):
 - **CC-1536** — `jira_parse_jql` reports `allValid`, brands the result
   untrusted, its schema takes only 1–20 non-blank queries, and a parser
   failure is an error envelope.
+
+## Filter writes (D147, 2026-10-27)
+
+- **CC-1537** — `createFilter` sends `POST /filter` with the trimmed name and
+  JQL and a description only when non-blank — never `sharePermissions` or
+  `editPermissions` — and maps the answer through the allowlist; a blank name
+  or JQL is a `validation` error before the wire.
+- **CC-1538** — `updateFilter` reads `GET /filter/{id}` and sends `PUT` with
+  the named fields merged over the live name, JQL and description;
+  `description: ""` is sent as an empty string and clears it.
+- **CC-1539** — an update naming no field, a blank name or JQL, or a
+  non-numeric id is a `validation` error with nothing sent.
+- **CC-1540** — `jira_create_filter` is a non-idempotent `standard` write,
+  `jira_update_filter` an idempotent one; both take `apply`/`plan_id`, their
+  schemas refuse blanks and an update with no field, and results are branded
+  untrusted with no share data in them.
+- **CC-1541** — `jira_update_filter` plans a diff of only the named fields
+  and binds the name/JQL/description trio as its version, so a filter edited
+  between plan and apply is refused as stale.

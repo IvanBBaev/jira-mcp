@@ -14,6 +14,10 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_create_filter` and `jira_update_filter` (D147) in the `search`
+  package: save JQL as a new private filter, and change a filter's name, JQL
+  or description. Sharing is never sent or changed; the update plan shows a
+  before/after diff.
 - `jira_parse_jql` (D146) in the `search` package: check up to 20 JQL
   queries against Jira's strict parser without running them; each comes back
   with `valid`, `errors` and `warnings`.

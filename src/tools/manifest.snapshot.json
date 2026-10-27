@@ -264,6 +264,90 @@
             "required": ["filterId"],
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_create_filter",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["name", "jql"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_filter",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filterId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["filterId"],
+            "additionalProperties": false
+          }
         }
       ]
     },

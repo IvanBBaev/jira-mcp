@@ -26,10 +26,14 @@ import {
 } from '../core/fakes/index.js';
 import { JiraError } from '../core/types.js';
 import {
+  createFilter,
+  createFilterRequest,
+  FILTER_CREATE_PATH,
   FILTER_PATH_TEMPLATE,
   FILTER_SEARCH_EXPAND,
   getFilter,
   searchFilters,
+  updateFilter,
 } from './filters.js';
 
 const SITE = 'https://example.atlassian.net';
@@ -474,4 +478,107 @@ test('an upstream failure this ring has no opinion about propagates untouched', 
   const error = await caught(() => getFilter({ jira: jira.fn, filterId: 10001 }));
 
   assert.equal(error, upstream);
+});
+
+// ---------------------------------------------------------------------------
+// createFilter / updateFilter (D147)
+// ---------------------------------------------------------------------------
+
+test('[CC-1537] createFilter posts name, JQL and description only — never a share', async () => {
+  const jira = createFakeJiraRequest().on(
+    'POST /rest/api/3/filter',
+    jiraOk(filterRow(1)),
+  );
+
+  const filter = await createFilter({
+    jira: jira.fn,
+    name: '  Filter 1 ',
+    jql: ' project = PR1 ORDER BY created DESC ',
+    description: 'Saved query number 1.',
+  });
+
+  const spec = jira.lastRequest();
+  assert.equal(spec?.method, 'POST');
+  assert.equal(spec?.pathTemplate, FILTER_CREATE_PATH);
+  assert.notEqual(spec?.safe, true);
+  assert.deepEqual(spec?.body, {
+    name: 'Filter 1',
+    jql: 'project = PR1 ORDER BY created DESC',
+    description: 'Saved query number 1.',
+  });
+  // The answer goes through the allowlist like any read.
+  assert.equal(filter.id, '10001');
+  assert.equal(JSON.stringify(filter).includes('sharePermissions'), false);
+  assert.equal(JSON.stringify(filter).includes('editPermissions'), false);
+});
+
+test('[CC-1537] createFilter omits a blank description and refuses a blank name or JQL', async () => {
+  assert.deepEqual(createFilterRequest({ name: 'n', jql: 'q', description: '  ' }).body, {
+    name: 'n',
+    jql: 'q',
+  });
+  const jira = createFakeJiraRequest();
+  for (const input of [
+    { name: ' ', jql: 'project = PR1' },
+    { name: 'Mine', jql: '' },
+  ]) {
+    const error = asJiraError(
+      await caught(() => createFilter({ jira: jira.fn, ...input })),
+    );
+    assert.equal(error.kind, 'validation');
+  }
+  assert.deepEqual(jira.calls, []);
+});
+
+test('[CC-1538] updateFilter merges the named field over the live filter', async () => {
+  const jira = createFakeJiraRequest()
+    .on('GET /rest/api/3/filter/10001', jiraOk(filterRow(1)))
+    .on(
+      'PUT /rest/api/3/filter/10001',
+      jiraOk({ ...filterRow(1), jql: 'project = NEW' }),
+    );
+
+  const filter = await updateFilter({
+    jira: jira.fn,
+    filterId: 10001,
+    jql: 'project = NEW',
+  });
+
+  const spec = jira.lastRequest();
+  assert.equal(spec?.method, 'PUT');
+  assert.equal(spec?.pathTemplate, FILTER_PATH_TEMPLATE);
+  assert.deepEqual(spec?.body, {
+    name: 'Filter 1',
+    jql: 'project = NEW',
+    description: 'Saved query number 1.',
+  });
+  assert.equal(filter.jql, 'project = NEW');
+});
+
+test('[CC-1538] updateFilter clears the description with an empty string', async () => {
+  const jira = createFakeJiraRequest()
+    .on('GET /rest/api/3/filter/10001', jiraOk(filterRow(1)))
+    .on('PUT /rest/api/3/filter/10001', jiraOk(filterRow(1)));
+
+  await updateFilter({ jira: jira.fn, filterId: '10001', description: '' });
+
+  assert.deepEqual(jira.lastRequest()?.body, {
+    name: 'Filter 1',
+    jql: 'project = PR1 ORDER BY created DESC',
+    description: '',
+  });
+});
+
+test('[CC-1539] updateFilter refuses no field, a blank name and a bad id with nothing sent', async () => {
+  const jira = createFakeJiraRequest();
+  for (const call of [
+    () => updateFilter({ jira: jira.fn, filterId: 10001 }),
+    () => updateFilter({ jira: jira.fn, filterId: 10001, name: '  ' }),
+    () => updateFilter({ jira: jira.fn, filterId: 10001, jql: '' }),
+    () => updateFilter({ jira: jira.fn, filterId: 'My filter', name: 'x' }),
+  ]) {
+    const error = asJiraError(await caught(call));
+    assert.equal(error.kind, 'validation');
+  }
+  assert.deepEqual(jira.calls, []);
 });

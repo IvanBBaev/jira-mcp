@@ -267,17 +267,17 @@ describe('the tool manifest', () => {
     assert.ok(names.every((name) => name.startsWith('jira_')));
   });
 
-  test('holds 78 tools — 38 writes behind the gate, 11 of them irreversible', () => {
+  test('holds 80 tools — 40 writes behind the gate, 11 of them irreversible', () => {
     // Phase 12 grew the surface from 55 to 58: the two bulk writes joined
     // `issues-delete` (D103), taking that package from 6 tools to 8 and the
     // write surface from 28 to 30, and the safe queue read joined `issues`.
     // D122 added the permission check to `core`, 58 to 59, and D126 the two
     // `portfolio` reads, 59 to 61, and D133 the board configuration read, 61
-    // to 62, D134 the backlog read, 62 to 63, D135 the sprint edit, 63 to 64 and 30 to 31 writes, D136 the rank, 64 to 65 and 31 to 32 writes, D137 the estimate, 65 to 66 and 32 to 33 writes, D138 the priority, resolution and issue type catalogues, 66 to 69, D139 the label list, 69 to 70, D140 the time tracking settings, 70 to 71, D141 the remote link read and add, 71 to 73 and 33 to 34 writes, D142 the worklog edit, 73 to 74 and 34 to 35 writes, D143 the unlink, 74 to 75, 35 to 36 writes and 8 to 9 irreversible, D144 the attachment delete, 75 to 76, 36 to 37 writes and 9 to 10 irreversible, D145 the remote link delete, 76 to 77, 37 to 38 writes and 10 to 11 irreversible, and D146 the JQL check, 77 to 78. A drift in any of
+    // to 62, D134 the backlog read, 62 to 63, D135 the sprint edit, 63 to 64 and 30 to 31 writes, D136 the rank, 64 to 65 and 31 to 32 writes, D137 the estimate, 65 to 66 and 32 to 33 writes, D138 the priority, resolution and issue type catalogues, 66 to 69, D139 the label list, 69 to 70, D140 the time tracking settings, 70 to 71, D141 the remote link read and add, 71 to 73 and 33 to 34 writes, D142 the worklog edit, 73 to 74 and 34 to 35 writes, D143 the unlink, 74 to 75, 35 to 36 writes and 8 to 9 irreversible, D144 the attachment delete, 75 to 76, 36 to 37 writes and 9 to 10 irreversible, D145 the remote link delete, 76 to 77, 37 to 38 writes and 10 to 11 irreversible, D146 the JQL check, 77 to 78, and D147 the filter create and update, 78 to 80 and 38 to 40 writes. A drift in any of
     // these numbers is a surface change someone has to have meant.
     const tools = PACKAGES.flatMap((pkg) => pkg.tools);
-    assert.equal(tools.length, 78);
-    assert.equal(tools.filter((tool) => tool.writeTier !== undefined).length, 38);
+    assert.equal(tools.length, 80);
+    assert.equal(tools.filter((tool) => tool.writeTier !== undefined).length, 40);
 
     const deletes = PACKAGES.find((pkg) => pkg.id === 'issues-delete');
     assert.ok(deletes);

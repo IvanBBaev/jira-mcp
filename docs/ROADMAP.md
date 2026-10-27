@@ -230,6 +230,8 @@ Writes, standard tier:
   request or a Confluence page — the one Confluence-shaped need that does
   not need Confluence tools. Shipped as `jira_add_remote_link` (D141).
 - **`jira_create_filter`**, `POST /rest/api/3/filter`: "save this JQL".
+  Shipped as `jira_create_filter` (D147), with `jira_update_filter` for the
+  name, JQL and description of an existing one.
 
 Irreversible tier, under the `issues-delete` ceremony (D45):
 

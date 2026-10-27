@@ -1428,6 +1428,10 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_parse_jql` (D146) — `POST /jql/parse?validation=strict`, a
       safe read, 1–20 queries, verdicts in order (CC-1534…CC-1536); claim
       C58.
+- [x] `jira_create_filter` + `jira_update_filter` (D147) — `POST /filter`
+      and `PUT /filter/{id}`, `standard` tier, name/JQL/description only and
+      never a share; the update merges over a read and plans a diff
+      (CC-1537…CC-1541); claim C59, plan mode only.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

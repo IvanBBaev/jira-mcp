@@ -12,6 +12,8 @@
 //
 //   * `GET /filter/search` — {@link searchFilters}, classic pagination
 //   * `GET /filter/{id}`   — {@link getFilter}
+//   * `POST /filter`       — {@link createFilter} (D147)
+//   * `PUT /filter/{id}`   — {@link updateFilter} (D147)
 //
 // and their Jira Data Center twins (D115, stage 13.7a — UNVERIFIED against a
 // real Data Center host):
@@ -37,6 +39,11 @@
 //  3. **Wire data enters as `unknown`** and is narrowed by hand-rolled guards
 //     (ARCHITECTURE.md §Typing strategy); a shape Jira should never send
 //     becomes a `JiraError` with `kind: "unexpected_shape"`.
+//
+// The two writes (D147) touch the name, the JQL and the description — never
+// the share or edit permissions. A filter created here carries no
+// `sharePermissions`, so it is private to the authenticated user; an update
+// sends the three allowlisted fields only.
 //
 // Filter ids are positive integers and are validated BEFORE any request is
 // built (D22), so a caller that passes a filter NAME where an id belongs gets
@@ -71,6 +78,9 @@ export const FILTER_SEARCH_PATH = '/filter/search';
 
 /** `pathTemplate` for the single-filter route — logs and errors show this. */
 export const FILTER_PATH_TEMPLATE = '/filter/{id}';
+
+/** `POST` target of {@link createFilter} (D147). */
+export const FILTER_CREATE_PATH = '/filter';
 
 /**
  * Page size for `/filter/search`, whose documented default is 50. Over-asking
@@ -252,6 +262,123 @@ export async function getFilter(options: GetFilterOptions): Promise<SavedFilter>
 }
 
 // ---------------------------------------------------------------------------
+// 4a. Writes — create and update (D147)
+// ---------------------------------------------------------------------------
+
+/** Pure input of {@link createFilterRequest}. */
+export interface CreateFilterInput {
+  readonly name: string;
+  readonly jql: string;
+  readonly description?: string;
+}
+
+/** Options for {@link createFilter}. */
+export type CreateFilterOptions = FilterOptions & CreateFilterInput;
+
+/**
+ * Pure input of {@link updateFilterRequest}: the id plus the COMPLETE set of
+ * the three editable fields, already merged with the live filter.
+ */
+export interface UpdateFilterInput {
+  readonly filterId: number | string;
+  readonly name: string;
+  readonly jql: string;
+  readonly description?: string;
+}
+
+/**
+ * Options for {@link updateFilter}. Every field is optional; at least one
+ * must be named. `description: ""` clears the description.
+ */
+export type UpdateFilterOptions = FilterOptions & {
+  readonly filterId: number | string;
+  readonly name?: string;
+  readonly jql?: string;
+  readonly description?: string;
+};
+
+/**
+ * Build `POST /filter`. No `sharePermissions` and no `editPermissions` are
+ * sent, so the new filter is private to its owner. Blank names and blank
+ * JQL are refused before anything is built (D22).
+ */
+export function createFilterRequest(input: CreateFilterInput): JiraRequestSpec {
+  const description = input.description?.trim();
+  return {
+    method: 'POST',
+    path: '/filter',
+    pathTemplate: FILTER_CREATE_PATH,
+    body: {
+      name: requireText(input.name, 'name'),
+      jql: requireText(input.jql, 'jql'),
+      ...(description === undefined || description === '' ? {} : { description }),
+    },
+  };
+}
+
+/** Save a JQL query as a new private filter and return it through the allowlist. */
+export async function createFilter(options: CreateFilterOptions): Promise<SavedFilter> {
+  const response = await sendOne(options, createFilterRequest(options));
+  return mapFilter(requireRecord(response.data, 'filter'), 'cloud');
+}
+
+/**
+ * Build `PUT /filter/{id}` from a merged field set. The body names the three
+ * editable fields only, so the share and edit permissions are never part of
+ * a request this server builds.
+ */
+export function updateFilterRequest(input: UpdateFilterInput): JiraRequestSpec {
+  const id = filterId(input.filterId);
+  return {
+    method: 'PUT',
+    path: `/filter/${id}`,
+    pathTemplate: FILTER_PATH_TEMPLATE,
+    body: {
+      name: requireText(input.name, 'name'),
+      jql: requireText(input.jql, 'jql'),
+      ...(input.description === undefined
+        ? {}
+        : { description: input.description.trim() }),
+    },
+  };
+}
+
+/**
+ * Edit a filter's name, JQL or description. The live filter is read first
+ * and the named fields are merged over it, so the PUT always carries a full
+ * name/JQL pair whatever Jira does with an omitted field; a call naming no
+ * field, or a blank name or JQL, is refused before anything is sent.
+ */
+export async function updateFilter(options: UpdateFilterOptions): Promise<SavedFilter> {
+  const id = filterId(options.filterId);
+  if (
+    options.name === undefined &&
+    options.jql === undefined &&
+    options.description === undefined
+  ) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: 'A filter update needs at least one of name, jql or description.',
+      remediation: 'Name the field to change; jira_get_filter shows the current values.',
+    });
+  }
+  if (options.name !== undefined) requireText(options.name, 'name');
+  if (options.jql !== undefined) requireText(options.jql, 'jql');
+  const current = await getFilter({ ...options, filterId: id });
+  const description = options.description ?? current.description;
+  const response = await sendOne(
+    options,
+    updateFilterRequest({
+      filterId: id,
+      name: options.name ?? current.name,
+      jql: options.jql ?? current.jql ?? '',
+      ...(description === undefined ? {} : { description }),
+    }),
+  );
+  return mapFilter(requireRecord(response.data, 'filter'), 'cloud');
+}
+
+// ---------------------------------------------------------------------------
 // 4b. The Data Center twins (D115, stage 13.7a — UNVERIFIED)
 // ---------------------------------------------------------------------------
 
@@ -419,6 +546,19 @@ function filterId(value: number | string): string {
     });
   }
   return text;
+}
+
+/** A required text field, trimmed; blank is a local `validation` error (D22). */
+function requireText(value: string, field: string): string {
+  const clean = value.trim();
+  if (clean.length === 0) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `A filter ${field} must not be blank.`,
+      remediation: `Pass a non-empty ${field}.`,
+    });
+  }
+  return clean;
 }
 
 /** Blank query filters are omitted from the URL rather than sent as `''`. */

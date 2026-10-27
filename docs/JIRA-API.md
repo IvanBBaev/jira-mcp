@@ -271,6 +271,12 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   `{ queries: [...] }` answers one entry per query, in order, each with
   `query` and optional `errors`, `warnings` and `structure`. Nothing runs and
   nothing is stored, so the call is safe to retry. Cloud only here.
+- Filter writes (D147): `POST /filter` with `{ name, jql, description? }`
+  creates a filter owned by the caller; with no `sharePermissions` in the body
+  it is shared with no one. `PUT /filter/{id}` takes the same three fields and
+  answers the updated filter. Both are unsafe writes, never replayed. Whether
+  a `PUT` without `sharePermissions` keeps the existing shares is not verified
+  live, which is why this server reads first and never sends that key.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

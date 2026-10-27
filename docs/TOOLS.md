@@ -279,6 +279,8 @@ a model always has a way to ask what it is talking to.
 | `jira_parse_jql` | `POST /rest/api/3/jql/parse?validation=strict` | Input: `queries` — 1 to 20 non-blank JQL strings. Output: `queries[]` of `{ query, valid, errors, warnings }` in the order sent, and `allValid`. Runs nothing and reads no issues; strict validation also checks that each field, function and value exists for the caller. Branded untrusted — Jira's messages quote tenant text (D146). |
 | `jira_list_filters` | `GET /rest/api/3/filter/search` | Saved filters by `filterName?` (case-insensitive name substring) or `accountId?` (owner); classic pagination, one page per call (`maxResults?`, `startAt?`, `data.paging`). Expand is fixed to `description,owner,jql`. Output rows carry `id`, `name`, `description?`, `owner?` (`{ accountId, displayName }`), `jql?` only — share permissions, edit permissions, subscriptions and shared-user rosters are never returned. Content-bearing: `_untrusted: true` + `untrusted_content` (§Untrusted content). |
 | `jira_get_filter` | `GET /rest/api/3/filter/{id}` | One saved filter by numeric id (from `jira_list_filters`); adds `favourite?`. Does **not** execute the filter — the stored `jql` goes to `jira_search`, which is the only tool that runs JQL. A non-numeric id is refused before the request (D22). Content-bearing, same brand as above. |
+| `jira_create_filter` | `POST /rest/api/3/filter` | Write tier `standard`. Input: `name`, `jql` (both non-blank), `description?`. Saves the JQL as a filter owned by the caller and shared with no one — `sharePermissions` and `editPermissions` are never sent. Does not run the JQL. Returns `{ filter }` through the same allowlist as the reads, branded untrusted (D147, CC-1537, CC-1540). |
+| `jira_update_filter` | `PUT /rest/api/3/filter/{id}` | Write tier `standard`, idempotent. Input: numeric `filterId` plus at least one of `name`, `jql`, `description` (`""` clears it). Reads the filter first and sends the merged name, JQL and description — never a share. The plan carries a diff of the named fields; an apply after the filter changed is refused as stale (D132, D147, CC-1538, CC-1539, CC-1541). |
 
 The `jira_search` description carries the JQL idioms a model otherwise
 brute-forces into dozens of calls: `sprint in openSprints()`, `issue in
@@ -549,11 +551,11 @@ its shared terms so the model can judge it. Pair lists stop at 200 each
 | `jira_capabilities` (local only) | true | false | true | **false** |
 | all other reads | true | false | true | true |
 | `jira_download_attachment`, `jira_portfolio_report` | true | false | **false** | true |
-| create/comment/worklog/link, `jira_upload_attachment`, `jira_create_sprint`, `jira_start_sprint`, `jira_create_component`, `jira_create_version` | false | false | false | true |
+| create/comment/worklog/link, `jira_upload_attachment`, `jira_create_filter`, `jira_create_sprint`, `jira_start_sprint`, `jira_create_component`, `jira_create_version` | false | false | false | true |
 | `jira_update_issue`, `jira_update_comment`, `jira_update_worklog`, `jira_close_sprint` | false | **true** | true | true |
 | `jira_delete_issue`, `jira_delete_comment`, `jira_delete_worklog`, `jira_unlink_issues`, `jira_delete_attachment`, `jira_delete_remote_link`, `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`, `jira_bulk_delete_issues`, `jira_bulk_edit_issues` | false | **true** | **false** | true |
 | assign/transition/move | false | false | true* | true |
-| watcher/vote add+remove, `jira_update_component`, `jira_update_version`, `jira_update_sprint`, `jira_rank_issues`, `jira_set_estimate` | false | false | true | true |
+| watcher/vote add+remove, `jira_update_filter`, `jira_update_component`, `jira_update_version`, `jira_update_sprint`, `jira_rank_issues`, `jira_set_estimate` | false | false | true | true |
 
 \* update with absolute values is idempotent; transition is idempotent only if
 the target state equals current — annotated `idempotentHint: false` for
@@ -757,7 +759,7 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**78 tools / 11 packages** (core 3, search 5, issues 7, issues-write 10,
+**80 tools / 11 packages** (core 3, search 7, issues 7, issues-write 10,
 issues-delete 11, attachments 3, collab 12, meta 11, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the

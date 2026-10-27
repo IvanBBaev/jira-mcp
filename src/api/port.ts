@@ -81,7 +81,7 @@ import {
   updateComponent,
   updateVersion,
 } from './collab.js';
-import { getFilter, searchFilters } from './filters.js';
+import { createFilter, getFilter, searchFilters, updateFilter } from './filters.js';
 import {
   addComment,
   addRemoteLink,
@@ -212,8 +212,10 @@ export interface JiraApi {
   readonly updateVersion: typeof updateVersion;
 
   // --- filters ---
+  readonly createFilter: typeof createFilter;
   readonly getFilter: typeof getFilter;
   readonly searchFilters: typeof searchFilters;
+  readonly updateFilter: typeof updateFilter;
 
   // --- issues ---
   readonly addComment: typeof addComment;
@@ -333,8 +335,10 @@ export const CLOUD_API: JiraApi = Object.freeze({
   updateComponent,
   updateVersion,
 
+  createFilter,
   getFilter,
   searchFilters,
+  updateFilter,
 
   addComment,
   addRemoteLink,
