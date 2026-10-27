@@ -235,6 +235,8 @@ Irreversible tier, under the `issues-delete` ceremony (D45):
   **`jira_unlink_issues`**, `DELETE /rest/api/3/issueLink/{id}` — the
   mirrors of `jira_upload_attachment` and `jira_link_issues`. Shipped as
   `jira_unlink_issues` (D143) and `jira_delete_attachment` (D144).
+- **`jira_delete_remote_link`**, `DELETE …/remotelink/{id}` — the mirror of
+  `jira_add_remote_link`. Shipped as `jira_delete_remote_link` (D145).
 
 The natural bundles: the agile items (backlog read, sprint update, rank)
 with the three catalogues as one "agile completeness" wave; the two

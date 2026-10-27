@@ -264,6 +264,9 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   the Delete All Attachments permission, or Delete Own Attachments for the
   caller's own files. The before-state comes from `GET /attachment/{id}`, the
   same read the download uses. Cloud only here.
+- Remote link delete (D145): `DELETE /issue/{issueIdOrKey}/remotelink/{linkId}`
+  answers 204. The before-state comes from `GET` on the same path, which
+  answers one link in the shape of a list row. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140

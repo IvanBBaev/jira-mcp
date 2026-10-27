@@ -2989,3 +2989,80 @@ function issueLinkIdSegment(value: string | number): string {
   }
   return text;
 }
+
+// ---------------------------------------------------------------------------
+// 17. Remote link delete (D145)
+//
+// `DELETE /rest/api/3/issue/{issueIdOrKey}/remotelink/{linkId}` removes one web
+// link from its issue. The before-state is the link itself, read with the
+// single-link GET and shaped like a `listRemoteLinks` row, so the plan names
+// the title and target the model saw when it chose the id.
+// ---------------------------------------------------------------------------
+
+/** One remote link of one issue — the `GET` and `DELETE` target. */
+export const ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE =
+  '/issue/{issueIdOrKey}/remotelink/{linkId}';
+
+export interface RemoteLinkRef {
+  readonly issue: string;
+  /** Numeric remote link id, as `jira_get_remote_links` reports it. */
+  readonly linkId: string | number;
+}
+
+export type GetRemoteLinkOptions = IssueRequestBase & RemoteLinkRef & BudgetGuard;
+
+export type DeleteRemoteLinkOptions = IssueRequestBase & RemoteLinkRef & BudgetGuard;
+
+export interface DeleteRemoteLinkResult {
+  readonly issue: string;
+  readonly linkId: number;
+  readonly deleted: true;
+}
+
+/** Read ONE remote link — `GET /rest/api/3/issue/{issueIdOrKey}/remotelink/{linkId}`. */
+export async function getRemoteLink(options: GetRemoteLinkOptions): Promise<RemoteLink> {
+  const response = await send(options, {
+    method: 'GET',
+    path: issuePath(options.issue, `/remotelink/${remoteLinkIdSegment(options.linkId)}`),
+    pathTemplate: ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE,
+  });
+  const link = shapeRemoteLink(requireRecord(response.data, 'remote link'));
+  if (link === undefined) throw shapeError('the remote link has no numeric "id"');
+  return link;
+}
+
+export function deleteRemoteLinkRequest(input: RemoteLinkRef): JiraRequestSpec {
+  return {
+    method: 'DELETE',
+    path: issuePath(input.issue, `/remotelink/${remoteLinkIdSegment(input.linkId)}`),
+    pathTemplate: ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE,
+  };
+}
+
+/** Delete one remote link. Answers 204; other links on the issue stay. */
+export async function deleteRemoteLink(
+  options: DeleteRemoteLinkOptions,
+): Promise<DeleteRemoteLinkResult> {
+  const request = deleteRemoteLinkRequest(options);
+  await send(options, request);
+  return {
+    issue: options.issue.trim(),
+    linkId: Number(remoteLinkIdSegment(options.linkId)),
+    deleted: true,
+  };
+}
+
+/** Validate a remote link id as a path segment (D22). */
+function remoteLinkIdSegment(value: string | number): string {
+  const text = typeof value === 'number' ? String(value) : value.trim();
+  if (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(Number(text))) {
+    throw createJiraError({
+      kind: 'validation',
+      reason: `A remote link id must be a positive integer, received ${JSON.stringify(String(value))}.`,
+      remediation:
+        'Read the issue with jira_get_remote_links and pass remoteLinks[].id, ' +
+        'the numeric id of the link.',
+    });
+  }
+  return text;
+}

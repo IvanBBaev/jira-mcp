@@ -1422,6 +1422,9 @@ Cloud only — the Data Center adapter stubs every new member.
 - [x] `jira_delete_attachment` (D144) — `DELETE /attachment/{id}`,
       irreversible, the record read first, no media directory needed
       (CC-1529, CC-1530); claim C56.
+- [x] `jira_delete_remote_link` (D145) — `DELETE /issue/{key}/remotelink/{id}`,
+      irreversible, the link read first with the single-link `GET`
+      (CC-1531…CC-1533); claim C57.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

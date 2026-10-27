@@ -360,7 +360,7 @@ Not in the `reader` profile and in no read-only selection. One
 
 D45 seeded the package with the three issue-record deletes; D102 completed the
 tier with the component, version and sprint deletes; D103 adds the two bulk
-writes; D143 adds the issue unlink and D144 the attachment delete. Each landed here rather than in a new package so that a
+writes; D143 adds the issue unlink, D144 the attachment delete and D145 the remote link delete. Each landed here rather than in a new package so that a
 `JIRA_PACKAGES_DENY=issues-delete` written against 0.9 keeps its meaning across
 every upgrade — the package id stays `issues-delete` for that compatibility
 reason even though the package now covers more than issue-record deletes; its
@@ -379,6 +379,7 @@ dontAsk mode denies the tools.
 | `jira_delete_worklog` | `DELETE /rest/api/3/issue/{issueIdOrKey}/worklog/{id}` | Input: `issue`, `worklogId`. Jira's default `adjustEstimate=auto` gives the deleted time back to the remaining estimate — the delete moves the estimate as well as the log. `before` carries author, `started`, `timeSpent`, `timeSpentSeconds`, a comment excerpt and, for a restricted entry, `visibility` `{type, value}` (CC-861). Every excerpt is cut at 500 UTF-16 units on a code-point boundary, never through a surrogate pair (CC-860). |
 | `jira_unlink_issues` | `DELETE /rest/api/3/issueLink/{linkId}` | Input: `linkId` — the `id` of an entry in the issue's `issuelinks` field (`jira_get_issue` with `fields: ["issuelinks"]`); a non-numeric id is refused before any request. Removes the link from **both** issues. Needs Link Issues on both ends' projects. `before` carries the link type's name and its inward/outward phrases and both ends — key, a summary excerpt and status — from a `GET /issueLink/{linkId}` (D143, CC-1526…CC-1528). `jira_link_issues` recreates a link, but not its id. |
 | `jira_delete_attachment` | `DELETE /rest/api/3/attachment/{id}` | Input: `attachmentId` — a positive integer from `jira_list_attachments`, refused by the schema otherwise. Needs Delete All Attachments, or Delete Own Attachments for the caller's own files; needs no `JIRA_MEDIA_DIR`. `before` carries the filename (excerpted), size, media type, author and creation time from `GET /attachment/{id}`, never the signed content URL (D144, CC-1529, CC-1530). Only a downloaded copy (`jira_download_attachment`) outlives it. |
+| `jira_delete_remote_link` | `DELETE /rest/api/3/issue/{issueIdOrKey}/remotelink/{linkId}` | Input: `issue`, `linkId` — a positive integer from `jira_get_remote_links` (`remoteLinks[].id`), refused by the schema otherwise. `before` carries the title and URL (excerpted), relationship, application name and `globalId` from `GET` on the same path, never the icon URLs (D145, CC-1531…CC-1533). `jira_add_remote_link` can only create a new link with a new id in its place. |
 | `jira_delete_component` | `DELETE /rest/api/3/component/{id}` | Input: `componentId`, `moveIssuesTo?` — another component id Jira reassigns every affected issue to; absent means the `components` entries are simply removed. Needs Administer Projects. `before` carries name, a description excerpt, lead, project and `issueCount` from a second GET on `relatedIssueCounts` — the number of issues Jira will rewrite — plus the `moveIssuesTo` target itself, because the target is a query parameter and `planned` shows method/path/body only (CC-121, CC-125). To rename or retire a component reversibly, `jira_update_component` edits it in place. |
 | `jira_delete_version` | `POST /rest/api/3/version/{id}/removeAndSwap` | Input: `versionId`, `moveFixIssuesTo?`, `moveAffectedIssuesTo?`. The bare `DELETE /version/{id}` is deprecated upstream and is never called (CC-122). An absent swap target means that occurrence type is **cleared** from every issue, not that the call fails; `customFieldReplacementList` is out of scope, so custom version-picker fields are always **cleared** of the version — `issueCountWithCustomFieldsShowingVersion` in the plan says how many issues that touches. Needs Administer Projects. `before` carries the version's flags, all three related-issue counts (`issuesFixedCount`, `issuesAffectedCount`, `issueCountWithCustomFieldsShowingVersion`) and both swap targets (CC-123, CC-125). Archiving via `jira_update_version` is the reversible alternative. |
 | `jira_delete_sprint` | `DELETE /rest/agile/1.0/sprint/{sprintId}` | Input: `sprintId`. Open issues in the sprint move to the backlog. No client-side state guard: the DELETE is sent whatever the sprint's state, and a Jira refusal is re-aimed with remediation like the other sprint writes (CC-124). Needs the board's manage-sprints permission. `before` carries name, `state`, dates, origin board and a goal excerpt — the auditable record of what was destroyed. To end a sprint rather than erase it, `jira_close_sprint` is the standard-tier alternative. |
@@ -549,7 +550,7 @@ its shared terms so the model can judge it. Pair lists stop at 200 each
 | `jira_download_attachment`, `jira_portfolio_report` | true | false | **false** | true |
 | create/comment/worklog/link, `jira_upload_attachment`, `jira_create_sprint`, `jira_start_sprint`, `jira_create_component`, `jira_create_version` | false | false | false | true |
 | `jira_update_issue`, `jira_update_comment`, `jira_update_worklog`, `jira_close_sprint` | false | **true** | true | true |
-| `jira_delete_issue`, `jira_delete_comment`, `jira_delete_worklog`, `jira_unlink_issues`, `jira_delete_attachment`, `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`, `jira_bulk_delete_issues`, `jira_bulk_edit_issues` | false | **true** | **false** | true |
+| `jira_delete_issue`, `jira_delete_comment`, `jira_delete_worklog`, `jira_unlink_issues`, `jira_delete_attachment`, `jira_delete_remote_link`, `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`, `jira_bulk_delete_issues`, `jira_bulk_edit_issues` | false | **true** | **false** | true |
 | assign/transition/move | false | false | true* | true |
 | watcher/vote add+remove, `jira_update_component`, `jira_update_version`, `jira_update_sprint`, `jira_rank_issues`, `jira_set_estimate` | false | false | true | true |
 
@@ -755,8 +756,8 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**76 tools / 11 packages** (core 3, search 4, issues 7, issues-write 10,
-issues-delete 10, attachments 3, collab 12, meta 11, users 1, agile 13,
+**77 tools / 11 packages** (core 3, search 4, issues 7, issues-write 10,
+issues-delete 11, attachments 3, collab 12, meta 11, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —

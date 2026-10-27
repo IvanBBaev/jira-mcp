@@ -1,8 +1,9 @@
 // ---------------------------------------------------------------------------
 // Package `issues-delete` — the irreversible surface (D45, WP-72, Phases 11–12).
 //
-// Ten tools that destroy data Jira cannot give back: an issue, a comment, a
-// worklog entry, an issue link (D143), an attachment (D144), a component, a version, a sprint, and —
+// Eleven tools that destroy data Jira cannot give back: an issue, a comment, a
+// worklog entry, an issue link (D143), an attachment (D144), a remote link
+// (D145), a component, a version, a sprint, and —
 // since Phase 12 — up to a thousand issues at once, deleted or bulk-edited
 // (Phase 11 added the project-entity deletes; the package id predates all of
 // them and stays for deny-list compatibility, CC-120/CC-126). They are a
@@ -63,6 +64,7 @@ import type {
   DeleteCommentResult,
   DeleteIssueLinkResult,
   DeleteIssueResult,
+  DeleteRemoteLinkResult,
   DeleteWorklogResult,
   IssueComment,
   IssueDetail,
@@ -70,6 +72,7 @@ import type {
   LinkedIssueRef,
   IssueWorklog,
   JiraVisibility,
+  RemoteLink,
 } from '../api/issues.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
@@ -479,6 +482,20 @@ function worklogBefore(issue: string, worklog: IssueWorklog): WorklogBefore {
   };
 }
 
+interface RemoteLinkBefore {
+  readonly kind: 'remoteLink';
+  readonly issue: string;
+  readonly id: number;
+  /** The link's title — tenant text, excerpted like any other. */
+  readonly title?: string;
+  /** The link target, excerpted: a URL can be as long as its author liked. */
+  readonly url?: string;
+  readonly relationship?: string;
+  /** The application the link belongs to, e.g. "GitHub". */
+  readonly application?: string;
+  readonly globalId?: string;
+}
+
 function linkEndBefore(issue: LinkedIssueRef): LinkEndBefore {
   return {
     key: issue.key,
@@ -496,6 +513,20 @@ function issueLinkBefore(link: IssueLinkDetail): IssueLinkBefore {
     ...(link.type.outward === undefined ? {} : { outward: link.type.outward }),
     inwardIssue: linkEndBefore(link.inwardIssue),
     outwardIssue: linkEndBefore(link.outwardIssue),
+  };
+}
+
+function remoteLinkBefore(issue: string, link: RemoteLink): RemoteLinkBefore {
+  const application = link.application?.name ?? link.application?.type;
+  return {
+    kind: 'remoteLink',
+    issue,
+    id: link.id,
+    ...(link.title === undefined ? {} : { title: excerpt(link.title).text }),
+    ...(link.url === undefined ? {} : { url: excerpt(link.url).text }),
+    ...(link.relationship === undefined ? {} : { relationship: link.relationship }),
+    ...(application === undefined ? {} : { application }),
+    ...(link.globalId === undefined ? {} : { globalId: link.globalId }),
   };
 }
 
@@ -679,6 +710,10 @@ export interface DeletedIssueLink extends DeleteIssueLinkResult {
 
 export interface DeletedAttachment extends DeleteAttachmentResult {
   readonly before: AttachmentBefore;
+}
+
+export interface DeletedRemoteLink extends DeleteRemoteLinkResult {
+  readonly before: RemoteLinkBefore;
 }
 
 export interface DeletedComponent extends DeleteComponentResult {
@@ -1014,6 +1049,47 @@ export const deleteAttachmentTool = defineTool({
         ...base,
         attachmentId: args.attachmentId,
       });
+      return ok({ ...deleted, before }, { untrusted: true });
+    }),
+});
+
+// ---------------------------------------------------------------------------
+// jira_delete_remote_link
+// ---------------------------------------------------------------------------
+
+const deleteRemoteLinkInput = writeToolInput({
+  issue: issueArg,
+  linkId: z
+    .string()
+    .regex(/^[1-9]\d*$/, 'A remote link id is a positive integer.')
+    .describe('Numeric remote link id, from jira_get_remote_links (remoteLinks[].id).'),
+});
+
+export const deleteRemoteLinkTool = defineTool({
+  name: 'jira_delete_remote_link',
+  title: 'Delete remote link',
+  description:
+    'Remove one web link (pull request, page, runbook) from an issue. IRREVERSIBLE: ' +
+    'Jira keeps no record of the removed link; jira_add_remote_link can only create ' +
+    'a new one in its place. Requires JIRA_ALLOW_IRREVERSIBLE=true on top of the ' +
+    'usual plan → apply; the plan works without it and shows the link title and target.',
+  package: 'issues-delete',
+  annotations: DELETE_ANNOTATIONS,
+  writeTier: 'irreversible',
+  input: deleteRemoteLinkInput,
+  example: {
+    summary: 'Plan the removal of one remote link',
+    arguments: { issue: 'PROJ-123', linkId: '10300' },
+  },
+  handler: async (args, ctx): Promise<ToolResult<DeletedRemoteLink>> =>
+    guarded(async () => {
+      const base = callBase(ctx);
+      const ref = { issue: args.issue, linkId: args.linkId };
+      const link = await ctx.api.getRemoteLink({ ...base, ...ref });
+      const before = remoteLinkBefore(args.issue, link);
+      noteBeforeState(ctx.jira, before);
+
+      const deleted = await ctx.api.deleteRemoteLink({ ...base, ...ref });
       return ok({ ...deleted, before }, { untrusted: true });
     }),
 });
@@ -1459,7 +1535,7 @@ export const issuesDeletePackage: PackageSpec = {
   title: 'Deletes and bulk changes (irreversible)',
   description:
     'Irreversible deletions — an issue, a comment, a worklog entry, an issue link, ' +
-    'an attachment, a component, ' +
+    'an attachment, a remote link, a component, ' +
     'a version, a sprint — and the bulk writes that delete or edit up to 1000 ' +
     'issues in one asynchronous operation.',
   tools: [
@@ -1468,6 +1544,7 @@ export const issuesDeletePackage: PackageSpec = {
     deleteWorklogTool,
     unlinkIssuesTool,
     deleteAttachmentTool,
+    deleteRemoteLinkTool,
     deleteComponentTool,
     deleteVersionTool,
     deleteSprintTool,

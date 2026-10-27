@@ -37,6 +37,7 @@ import {
   ISSUE_LINK_ITEM_PATH_TEMPLATE,
   ISSUE_LINK_PATH,
   ISSUE_PATH_TEMPLATE,
+  ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE,
   ISSUE_REMOTE_LINK_PATH_TEMPLATE,
   ISSUE_TRANSITIONS_PATH_TEMPLATE,
   ISSUE_WORKLOG_ITEM_PATH_TEMPLATE,
@@ -53,12 +54,15 @@ import {
   deleteIssueLink,
   deleteIssueLinkRequest,
   deleteIssueRequest,
+  deleteRemoteLink,
+  deleteRemoteLinkRequest,
   deleteWorklog,
   deleteWorklogRequest,
   formatJiraTimestamp,
   getComment,
   getIssue,
   getIssueLink,
+  getRemoteLink,
   getWorklog,
   linkIssues,
   listChangelog,
@@ -2935,6 +2939,94 @@ test('CC-1527: a bad issue link id never reaches a URL', async () => {
     });
     await assert.rejects(
       getIssueLink({ jira: fake.fn, linkId }),
+      isJiraErrorOfKind('validation'),
+    );
+  }
+
+  assert.deepEqual(fake.calls, []);
+});
+
+// ---------------------------------------------------------------------------
+// Remote link delete (D145)
+// ---------------------------------------------------------------------------
+
+const REMOTE_LINK_ID = 10300;
+const REMOTE_LINK_ITEM = `/rest/api/3/issue/${KEY}/remotelink/${REMOTE_LINK_ID}`;
+
+test('CC-1531: getRemoteLink reads one link and shapes it like a list row', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET ${REMOTE_LINK_ITEM}`,
+    jiraOk({
+      id: REMOTE_LINK_ID,
+      self: `https://example.atlassian.net${REMOTE_LINK_ITEM}`,
+      relationship: 'mentioned in',
+      object: {
+        url: 'https://example.com/pull/42',
+        title: 'PR #42',
+        icon: { url16x16: 'https://example.com/favicon.ico' },
+      },
+    }),
+  );
+
+  const link = await getRemoteLink({ jira: fake.fn, issue: KEY, linkId: '10300' });
+
+  assert.equal(fake.lastRequest()?.pathTemplate, ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE);
+  assert.deepEqual(link, {
+    id: REMOTE_LINK_ID,
+    relationship: 'mentioned in',
+    url: 'https://example.com/pull/42',
+    title: 'PR #42',
+  });
+});
+
+test('CC-1531: a remote link body without a numeric id is unexpected_shape', async () => {
+  const fake = createFakeJiraRequest().on(
+    `GET ${REMOTE_LINK_ITEM}`,
+    jiraOk({ id: '10300', object: { url: 'https://example.com', title: 'x' } }),
+  );
+
+  await assert.rejects(
+    getRemoteLink({ jira: fake.fn, issue: KEY, linkId: REMOTE_LINK_ID }),
+    isJiraErrorOfKind('unexpected_shape'),
+  );
+});
+
+test('CC-1532: deleteRemoteLink addresses the link under its issue and echoes the receipt', async () => {
+  const fake = createFakeJiraRequest().on(
+    `DELETE ${REMOTE_LINK_ITEM}`,
+    jiraOk(undefined, { status: 204 }),
+  );
+
+  const deleted = await deleteRemoteLink({
+    jira: fake.fn,
+    issue: ` ${KEY} `,
+    linkId: ' 10300 ',
+  });
+
+  assert.equal(fake.lastRequest()?.safe, undefined);
+  assert.deepEqual(deleted, { issue: KEY, linkId: REMOTE_LINK_ID, deleted: true });
+  assert.deepEqual(deleteRemoteLinkRequest({ issue: KEY, linkId: REMOTE_LINK_ID }), {
+    method: 'DELETE',
+    path: `/issue/${KEY}/remotelink/${REMOTE_LINK_ID}`,
+    pathTemplate: ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE,
+  });
+});
+
+test('CC-1532: a bad remote link id never reaches a URL', async () => {
+  const fake = createFakeJiraRequest(); // every route unprogrammed: a call would throw
+
+  for (const linkId of ['', '0', 'abc', '10300/../1', '-1', '9007199254740993']) {
+    await assert.rejects(
+      deleteRemoteLink({ jira: fake.fn, issue: KEY, linkId }),
+      (error: unknown) => {
+        assert.ok(error instanceof JiraError);
+        assert.equal(error.kind, 'validation');
+        assert.match(error.remediation ?? '', /jira_get_remote_links/);
+        return true;
+      },
+    );
+    await assert.rejects(
+      getRemoteLink({ jira: fake.fn, issue: KEY, linkId }),
       isJiraErrorOfKind('validation'),
     );
   }

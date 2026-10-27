@@ -46,8 +46,9 @@
  *   5. **Deletes come last**, and only against issues this run created: the
  *      D103 bulk claims (C42 edits the throwaways, C43 bulk-deletes a third
  *      issue made for that purpose) run first in the same child, then C55
- *      removes the C39 link, C56 the file C23 uploaded, and C26 deletes the
- *      worklog, the comment and the throwaways themselves.
+ *      removes the C39 link, C56 the file C23 uploaded, C57 the C53 remote
+ *      link, and C26 deletes the worklog, the comment and the throwaways
+ *      themselves.
  *   6. **Every run ends with a residue inventory** (C32): the artifacts this
  *      gate's naming convention can still find on the site, each with the way to
  *      remove it. Nothing is guessed — the inventory is a read of the site.
@@ -2546,6 +2547,33 @@ async function deletePhase(session, flags) {
       }
       created.attachmentId = undefined;
       return `${String(plan.before.filename)} gone from ${key}`;
+    },
+  );
+
+  await claim(
+    'C57',
+    'jira_delete_remote_link removes the C53 link from its issue',
+    async () => {
+      const key = created.issueKey;
+      const linkId = created.remoteLinkId;
+      if (key === undefined || linkId === undefined) skip('no remote link from C53');
+      const { plan, applied } = await planAndApply(session, 'jira_delete_remote_link', {
+        issue: key,
+        linkId: String(linkId),
+      });
+      if (plan.before?.id !== linkId) {
+        throw new Error(`the plan did not name remote link ${String(linkId)}`);
+      }
+      if (applied.deleted !== true) throw new Error('apply did not report deleted:true');
+      const read = dataOf(
+        await call(session, 'jira_get_remote_links', { issue: key }),
+        'jira_get_remote_links',
+      );
+      if ((read.remoteLinks ?? []).some((link) => link.id === linkId)) {
+        throw new Error(`${key} still carries remote link ${String(linkId)}`);
+      }
+      created.remoteLinkId = undefined;
+      return `${String(plan.before.title)} gone from ${key}`;
     },
   );
 

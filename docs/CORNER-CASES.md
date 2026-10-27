@@ -3472,3 +3472,15 @@ Prompts (D125):
   media type, author and creation time and never the signed content URL,
   sends no DELETE when the read fails (a 404 stays `not_found`), and its
   schema refuses a non-numeric id.
+
+## Remote link delete (D145, 2026-10-27)
+
+- **CC-1531** — `getRemoteLink` reads `GET /issue/{key}/remotelink/{linkId}`
+  and shapes it like a `listRemoteLinks` row (icons dropped); a body without a
+  numeric `id` is `unexpected_shape`.
+- **CC-1532** — `deleteRemoteLink` sends `DELETE /issue/{key}/remotelink/{linkId}`
+  and returns `{ issue, linkId, deleted: true }`; a non-numeric or unsafe id is
+  a `validation` error naming `jira_get_remote_links` and never reaches the URL.
+- **CC-1533** — `jira_delete_remote_link` plans with the link's title, target,
+  relationship, application and `globalId`, sends no DELETE when the read
+  fails (a 404 stays `not_found`), and its schema refuses a non-numeric id.

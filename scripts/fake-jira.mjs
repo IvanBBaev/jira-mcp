@@ -1975,6 +1975,41 @@ function buildRoutes(server) {
     ],
 
     [
+      'GET',
+      '/rest/api/3/issue/{issueIdOrKey}/remotelink/{linkId}',
+      (ctx) => {
+        const issue = issueOf(ctx.params);
+        if (issue === undefined) return notFound('Issue');
+        const link = issue.remoteLinks.find(
+          (candidate) => String(candidate.id) === ctx.params.linkId,
+        );
+        if (link === undefined) return notFound('Remote link');
+        return json(200, {
+          id: link.id,
+          self: `${origin()}/rest/api/3/issue/${issue.id}/remotelink/${String(link.id)}`,
+          ...(link.globalId === undefined ? {} : { globalId: link.globalId }),
+          ...(link.relationship === undefined ? {} : { relationship: link.relationship }),
+          object: { ...link.object, icon: { url16x16: `${origin()}/favicon.ico` } },
+        });
+      },
+    ],
+
+    [
+      'DELETE',
+      '/rest/api/3/issue/{issueIdOrKey}/remotelink/{linkId}',
+      (ctx) => {
+        const issue = issueOf(ctx.params);
+        if (issue === undefined) return notFound('Issue');
+        const index = issue.remoteLinks.findIndex(
+          (candidate) => String(candidate.id) === ctx.params.linkId,
+        );
+        if (index === -1) return notFound('Remote link');
+        issue.remoteLinks.splice(index, 1);
+        return noContent();
+      },
+    ],
+
+    [
       'POST',
       '/rest/api/3/issue/{issueIdOrKey}/remotelink',
       (ctx) => {

@@ -91,10 +91,12 @@ import {
   deleteComment,
   deleteIssue,
   deleteIssueLink,
+  deleteRemoteLink,
   deleteWorklog,
   getComment,
   getIssue,
   getIssueLink,
+  getRemoteLink,
   getWorklog,
   linkIssues,
   listChangelog,
@@ -222,10 +224,12 @@ export interface JiraApi {
   readonly deleteComment: typeof deleteComment;
   readonly deleteIssue: typeof deleteIssue;
   readonly deleteIssueLink: typeof deleteIssueLink;
+  readonly deleteRemoteLink: typeof deleteRemoteLink;
   readonly deleteWorklog: typeof deleteWorklog;
   readonly getComment: typeof getComment;
   readonly getIssue: typeof getIssue;
   readonly getIssueLink: typeof getIssueLink;
+  readonly getRemoteLink: typeof getRemoteLink;
   readonly getWorklog: typeof getWorklog;
   readonly linkIssues: typeof linkIssues;
   readonly listChangelog: typeof listChangelog;
@@ -339,10 +343,12 @@ export const CLOUD_API: JiraApi = Object.freeze({
   deleteComment,
   deleteIssue,
   deleteIssueLink,
+  deleteRemoteLink,
   deleteWorklog,
   getComment,
   getIssue,
   getIssueLink,
+  getRemoteLink,
   getWorklog,
   linkIssues,
   listChangelog,

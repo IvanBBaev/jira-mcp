@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_delete_remote_link` (D145) in the `issues-delete` package: remove one
+  remote link from an issue by its id. Irreversible: the plan names the link's
+  title and target before anything is deleted.
 - `jira_delete_attachment` (D144) in the `issues-delete` package: delete one
   attachment by id. Irreversible: the plan names the file, its size and its
   author before anything is deleted. Needs no `JIRA_MEDIA_DIR`.

@@ -1354,6 +1354,42 @@
           }
         },
         {
+          "name": "jira_delete_remote_link",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "linkId": {
+                "type": "string",
+                "pattern": "^[1-9]\\d*$"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "linkId"],
+            "additionalProperties": false
+          }
+        },
+        {
           "name": "jira_delete_component",
           "annotations": {
             "readOnlyHint": false,

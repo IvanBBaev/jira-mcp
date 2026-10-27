@@ -17,7 +17,7 @@
 // The gate is real here rather than faked: `createWriteGate` is what turns a
 // handler into a plan, and the whole point of this package is what the gate does
 // with `writeTier: 'irreversible'`. `mcp/write-mode.test.ts` proves the tier
-// rules in isolation; this file proves the ten tools are wired into them.
+// rules in isolation; this file proves the eleven tools are wired into them.
 //
 // Response bodies are inline plain objects shaped after real Jira Cloud v3
 // payloads and marked `// synthetic`. The fake throws on a route nobody
@@ -48,6 +48,7 @@ import {
   deleteCommentTool,
   deleteComponentTool,
   deleteIssueTool,
+  deleteRemoteLinkTool,
   deleteSprintTool,
   deleteVersionTool,
   deleteWorklogTool,
@@ -313,6 +314,7 @@ test('CC-120: the issues-delete package is the whole irreversible surface, and n
       'jira_delete_worklog',
       'jira_unlink_issues',
       'jira_delete_attachment',
+      'jira_delete_remote_link',
       'jira_delete_component',
       'jira_delete_version',
       'jira_delete_sprint',
@@ -353,6 +355,7 @@ test('every delete tool warns about the opt-in and names an alternative', () => 
   assert.match(unlinkIssuesTool.description, /jira_link_issues/);
   // Only a local copy outlives an attachment delete.
   assert.match(deleteAttachmentTool.description, /jira_download_attachment/);
+  assert.match(deleteRemoteLinkTool.description, /jira_add_remote_link/);
   // The one delete whose issues survive: the model must know they only move.
   assert.match(deleteSprintTool.description, /backlog/);
   // The bulk writes name the poller: a 201 receipt alone never says "done".
@@ -2275,6 +2278,118 @@ test('CC-1530: the schema refuses a non-numeric attachment id', () => {
   }
   assert.equal(
     deleteAttachmentTool.input.safeParse({ attachmentId: ATTACHMENT_ID }).success,
+    true,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// jira_delete_remote_link (D145)
+// ---------------------------------------------------------------------------
+
+const REMOTE_LINK_ID = '10300';
+const REMOTE_LINK_ROUTE = `GET /rest/api/3/issue/${KEY}/remotelink/${REMOTE_LINK_ID}`;
+const DELETE_REMOTE_LINK_ROUTE = `DELETE /rest/api/3/issue/${KEY}/remotelink/${REMOTE_LINK_ID}`;
+
+/** `GET /issue/{key}/remotelink/{id}`. // synthetic */
+const REMOTE_LINK_BODY = {
+  id: 10300,
+  self: `https://example.atlassian.net/rest/api/3/issue/${KEY}/remotelink/10300`,
+  globalId: 'pr:acme/app/42',
+  application: { type: 'com.github', name: 'GitHub' },
+  relationship: 'fixed by',
+  object: {
+    url: 'https://example.com/acme/app/pull/42',
+    title: 'Fix the retry loop',
+    summary: 'Bounded retries.',
+    icon: { url16x16: 'https://example.com/favicon.ico' },
+  },
+};
+
+test('CC-1533: the remote link plan names the title and target; the receipt echoes the same snapshot', async () => {
+  const fake = createFakeJiraRequest()
+    .on(DELETE_REMOTE_LINK_ROUTE, NO_CONTENT)
+    .on(REMOTE_LINK_ROUTE, jiraOk(REMOTE_LINK_BODY));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const { plan, applied } = await planThenApply(
+    gate,
+    deleteRemoteLinkTool,
+    { issue: KEY, linkId: REMOTE_LINK_ID },
+    fake,
+  );
+
+  assert.deepEqual((plan.data as { planned: unknown }).planned, {
+    method: 'DELETE',
+    path: `/issue/${KEY}/remotelink/${REMOTE_LINK_ID}`,
+  });
+  const before = beforeOf(plan);
+  assert.deepEqual(before, {
+    kind: 'remoteLink',
+    issue: KEY,
+    id: 10300,
+    title: 'Fix the retry loop',
+    url: 'https://example.com/acme/app/pull/42',
+    relationship: 'fixed by',
+    application: 'GitHub',
+    globalId: 'pr:acme/app/42',
+  });
+  // Icons are rendering noise and never reach the plan (D141).
+  assert.equal(JSON.stringify(plan.data).includes('favicon'), false);
+  assert.deepEqual(applied.data, {
+    issue: KEY,
+    linkId: 10300,
+    deleted: true,
+    before,
+  });
+  assert.equal(applied._untrusted, true);
+  assert.deepEqual(fake.routes(), [
+    REMOTE_LINK_ROUTE,
+    REMOTE_LINK_ROUTE,
+    DELETE_REMOTE_LINK_ROUTE,
+  ]);
+});
+
+test('CC-1533: a missing remote link is the 404 of its read, and nothing is deleted', async () => {
+  const fake = createFakeJiraRequest().on(
+    REMOTE_LINK_ROUTE,
+    jiraErr(
+      new JiraError({
+        kind: 'not_found',
+        message: 'No remote link with id 10300 exists on PROJ-1.',
+        retryable: false,
+        httpStatus: 404,
+      }),
+    ),
+  );
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: true,
+    rng: countingRng(),
+  });
+
+  const result = await gate.execute(
+    callOf(deleteRemoteLinkTool, { issue: KEY, linkId: REMOTE_LINK_ID }, {}, fake.fn),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'not_found');
+  assert.deepEqual(fake.routes(), [REMOTE_LINK_ROUTE]);
+});
+
+test('CC-1533: the schema refuses a non-numeric remote link id', () => {
+  for (const linkId of ['', '0', 'pr:acme/app/42', '10300/../1']) {
+    assert.equal(
+      deleteRemoteLinkTool.input.safeParse({ issue: KEY, linkId }).success,
+      false,
+      linkId,
+    );
+  }
+  assert.equal(
+    deleteRemoteLinkTool.input.safeParse({ issue: KEY, linkId: REMOTE_LINK_ID }).success,
     true,
   );
 });
