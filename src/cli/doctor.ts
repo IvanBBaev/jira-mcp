@@ -55,6 +55,7 @@ import {
 } from '../core/http.js';
 import { createLogger, NO_CID } from '../core/log.js';
 import {
+  createClientCredentialsResolver,
   createOAuthCredentialResolver,
   createTokenStore,
   DEFAULT_PROFILE_KEY,
@@ -768,6 +769,14 @@ function describeEnvFile(
  * call without anyone being told to do anything.
  */
 function oauthHorizon(ctx: DoctorContext): readonly DoctorFinding[] {
+  if (ctx.settings.oauth.grant === 'client_credentials') {
+    return [
+      {
+        status: 'info',
+        text: 'client-credentials tokens live in memory and are minted again before they expire; there is no horizon to watch',
+      },
+    ];
+  }
   const entry = ctx.oauth?.entry;
   if (entry === undefined) {
     return [
@@ -835,6 +844,28 @@ function oauthStoreFindings(ctx: DoctorContext): readonly DoctorFinding[] {
   }
 
   const clientId = oauth.clientId;
+  // D302: a service account stores nothing, so the store has no subject here.
+  // Which site it signs into is the one fact worth printing (CC-3012).
+  if (oauth.grant === 'client_credentials') {
+    return [
+      ...problems,
+      ...(clientId === undefined
+        ? []
+        : [
+            {
+              status: 'ok' as const,
+              text: `auth mode is oauth with the client_credentials grant, client id ${quote(clientId)}`,
+            },
+          ]),
+      {
+        status: 'info',
+        text:
+          oauth.cloudId === undefined
+            ? 'no token store is used: the service account token is minted in memory'
+            : `no token store is used: the service account token is minted in memory for cloudId ${oauth.cloudId}`,
+      },
+    ];
+  }
   const findings: DoctorFinding[] =
     clientId === undefined
       ? // `problems` is never empty here: settings raises an error-severity
@@ -1691,11 +1722,13 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
       : undefined;
   const oauthSettings = loaded.settings.oauth;
   const oauthMode = loaded.settings.authMode === 'oauth';
+  const clientCredentials = oauthMode && oauthSettings.grant === 'client_credentials';
   // Read once, even offline: the store is a local file, and probes 9 and 11 must
-  // describe the same one.
-  const store = oauthMode
-    ? (options.tokenStore ?? createTokenStore({ path: oauthSettings.tokenFile, clock }))
-    : undefined;
+  // describe the same one. A service account has none (D302).
+  const store =
+    oauthMode && !clientCredentials
+      ? (options.tokenStore ?? createTokenStore({ path: oauthSettings.tokenFile, clock }))
+      : undefined;
   const snapshot =
     store === undefined
       ? undefined
@@ -1717,8 +1750,34 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
   // probe 11. `runProbe` then skips the network probes rather than firing four
   // requests that all fail the same way.
   let source: JiraCredentials | CredentialResolver | undefined;
+  const authRequest = (): AuthRequestFn =>
+    options.authRequest ??
+    createAuthRequest({
+      clock,
+      logger,
+      redactor,
+      rng,
+      allowedOrigins: [oauthSettings.authOrigin, oauthSettings.gatewayOrigin],
+      requestTimeoutMs: loaded.settings.requestTimeoutMs,
+    });
   if (flags.offline) {
     source = undefined;
+  } else if (clientCredentials) {
+    // The resolver the server installs: the identity probe's `/myself` is the
+    // first mint, so a wrong secret fails there with the mint's own message.
+    source =
+      oauthSettings.clientId === undefined ||
+      oauthSettings.clientSecret === undefined ||
+      oauthSettings.cloudId === undefined
+        ? undefined
+        : createClientCredentialsResolver({
+            settings: oauthSettings,
+            authRequest: authRequest(),
+            clock,
+            logger,
+            redactor,
+            allowedHosts: loaded.settings.allowedHosts,
+          });
   } else if (oauthMode) {
     source =
       store === undefined ||
@@ -1729,16 +1788,7 @@ export async function run(options: DoctorOptions = {}): Promise<number> {
         : createOAuthCredentialResolver({
             settings: oauthSettings,
             store,
-            authRequest:
-              options.authRequest ??
-              createAuthRequest({
-                clock,
-                logger,
-                redactor,
-                rng,
-                allowedOrigins: [oauthSettings.authOrigin, oauthSettings.gatewayOrigin],
-                requestTimeoutMs: loaded.settings.requestTimeoutMs,
-              }),
+            authRequest: authRequest(),
             clock,
             logger,
             redactor,

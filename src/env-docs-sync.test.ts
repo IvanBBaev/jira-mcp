@@ -268,6 +268,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_OAUTH_CLIENT_ID', (s: Settings) => s.oauth.clientId],
   ['JIRA_OAUTH_CLIENT_SECRET', (s: Settings) => s.oauth.clientSecret],
   ['JIRA_OAUTH_SCOPES', (s: Settings) => list(s.oauth.scopes)],
+  ['JIRA_OAUTH_GRANT', (s: Settings) => s.oauth.grant],
   ['JIRA_OAUTH_CLOUD_ID', (s: Settings) => s.oauth.cloudId],
   // The only probe that cannot read the loader: the resolved path embeds this
   // machine's home directory, so the table documents the SHAPE and the loader

@@ -49,6 +49,8 @@
 | `upstream_degraded` | warn | consecutiveFailures, host (emitted on the 3rd consecutive 5xx/transport failure; see §No circuit breaker) |
 | `oauth_token_refreshed` | info | profile, expiresInMs, rotated |
 | `oauth_token_refresh_failed` | error | profile, status, code |
+| `oauth_token_minted` | info | expiresInMs (client-credentials grant, D302) |
+| `oauth_token_mint_failed` | error | status, code (client-credentials grant, D302) |
 | `shutdown` | info | reason (`stdin_eof` \| `sigint` \| `sigterm` \| `fatal`) |
 
 Notes:
@@ -56,7 +58,10 @@ Notes:
 - `pathTemplate` is the route with placeholders (`/rest/api/3/issue/{key}`),
   never the concrete path — issue keys and project keys are workspace data.
 - The table is complete: a new event = a new row here first, then code.
-- The two `oauth_*` events are the only visibility into a refresh, which happens
+- `oauth_token_minted` / `oauth_token_mint_failed` are the client-credentials
+  counterparts (D302): no profile field, because that grant has none, and the
+  same rule — no token or secret in any field; `code` is the endpoint's `error`.
+- The two `oauth_token_refresh*` events are the only visibility into a refresh, which happens
   in the background with no tool call of its own to attribute it to. `rotated`
   says whether the refresh token itself was replaced, which is what makes the
   difference between "renewed" and "the old refresh token is now dead"

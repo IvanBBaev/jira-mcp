@@ -1231,6 +1231,37 @@ test('oauth mode with no store fails the probe and names the login command', asy
   assert.equal(store.reads(), 1, 'the store is read once per run, not once per probe');
 });
 
+test('[CC-3012] the client_credentials grant reads no token store and reports no horizon', async () => {
+  const store = fakeStore();
+  const r = rig({
+    env: oauthEnv({
+      JIRA_OAUTH_GRANT: 'client_credentials',
+      JIRA_OAUTH_CLOUD_ID: CLOUD_ID,
+    }),
+    extra: { tokenStore: store.store },
+  });
+
+  const code = await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.equal(code, EXIT_OK, out);
+  assert.match(
+    out,
+    new RegExp(
+      `\\[ ok \\] oauth token store: auth mode is oauth with the client_credentials grant, client id "${CLIENT_ID}"`,
+    ),
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `\\[info] oauth token store: no token store is used: the service account token is minted in memory for cloudId ${CLOUD_ID}`,
+    ),
+  );
+  assert.match(out, /client-credentials tokens live in memory/);
+  assert.doesNotMatch(out, /jira-mcp-ai login/);
+  assert.equal(store.reads(), 0, 'a service account has no store to read');
+});
+
 test('the login hint carries the profile the missing grant belongs to', async () => {
   const store = fakeStore({ default: grant() });
   const r = rig({

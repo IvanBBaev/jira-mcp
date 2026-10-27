@@ -14,6 +14,7 @@ import {
   DEFAULT_AUTH_MODE,
   DEFAULT_OAUTH_AUTH_ORIGIN,
   DEFAULT_OAUTH_GATEWAY_ORIGIN,
+  DEFAULT_OAUTH_GRANT,
   DEFAULT_OAUTH_REDIRECT_PORT,
   DEFAULT_OAUTH_SCOPES,
 } from '../settings.js';
@@ -38,6 +39,7 @@ export const FAKE_OAUTH_TOKEN_FILE = '/nonexistent/jira-mcp-fake/oauth.json';
  * oauth-mode test pass without ever having configured one.
  */
 export const FAKE_OAUTH_SETTINGS: OAuthSettings = Object.freeze({
+  grant: DEFAULT_OAUTH_GRANT,
   scopes: DEFAULT_OAUTH_SCOPES,
   tokenFile: FAKE_OAUTH_TOKEN_FILE,
   redirectPort: DEFAULT_OAUTH_REDIRECT_PORT,

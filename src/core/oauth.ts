@@ -75,7 +75,7 @@ import { createJiraError, isJiraError } from './errors.js';
 import { gatewayHost, isAllowedHost } from './host.js';
 import { isBlockedHost } from './http-util.js';
 import type { AuthRequestFn, BearerCredentials, CredentialResolver } from './http.js';
-import type { Clock, Logger, OAuthSettings, Redactor } from './types.js';
+import type { Clock, HostRef, Logger, OAuthSettings, Redactor } from './types.js';
 
 // ---------------------------------------------------------------------------
 // 1. Endpoints and constants
@@ -1310,6 +1310,45 @@ function noTokensError(path: string, key: string): Error {
 }
 
 /**
+ * The gateway route for `cloudId`, refused before any request exists when no
+ * request could reach it. Shared by both grants: they differ in how the token
+ * is obtained, never in where it is sent.
+ */
+function checkedGateway(
+  gatewayOrigin: string,
+  cloudId: string,
+  allowedHosts: readonly string[] | undefined,
+): HostRef {
+  const host = gatewayHost(gatewayOrigin, cloudId);
+
+  // The gateway is not blanket-allowed: `loadSettings` appends it in oauth
+  // mode only, so basic-mode egress is unchanged (D97). Catching it here names
+  // the cause; letting the request layer catch it names only the symptom.
+  const hostname = new URL(host.origin).hostname;
+  // The request layer's SSRF blocklist runs before its allowlist, and the
+  // effective allowlist already names the gateway in oauth mode — so a
+  // loopback or private gateway passes the check below and dies at the first
+  // request with advice about JIRA_SITE. Asked first, the answer names the
+  // variable that is actually wrong; no allowlist entry could fix it (CC-230).
+  if (isBlockedHost(hostname)) {
+    throw createJiraError({
+      kind: 'config',
+      reason: `The OAuth gateway host ${safeLabel(hostname)} is a loopback, private, link-local or metadata address, which is never contacted — not even when it is in the allowlist. Nothing was sent.`,
+      remediation:
+        'Unset JIRA_OAUTH_GATEWAY_ORIGIN to use the default gateway, or point it at a public https host.',
+    });
+  }
+  if (!isAllowedHost(hostname, allowedHosts)) {
+    throw createJiraError({
+      kind: 'config',
+      reason: `The OAuth gateway host ${safeLabel(hostname)} is not in the effective allowlist, so no request could leave for it.`,
+      remediation: `Add ${safeLabel(hostname)} to JIRA_ALLOWED_HOSTS, or unset JIRA_OAUTH_GATEWAY_ORIGIN to use the default gateway.`,
+    });
+  }
+  return host;
+}
+
+/**
  * The resolver the server installs in oauth mode.
  *
  * Five properties, each of which is a bug if it is missing:
@@ -1475,33 +1514,176 @@ export function createOAuthCredentialResolver(
         remediation: `Run \`jira-mcp-ai login${key === DEFAULT_PROFILE_KEY ? '' : ` --profile ${safeLabel(key, 40)}`}\` against the pinned site, or unset JIRA_OAUTH_CLOUD_ID to use the site the profile was authorized for.`,
       });
     }
-    const host = gatewayHost(settings.gatewayOrigin, fresh.cloudId);
-
-    // The gateway is not blanket-allowed: `loadSettings` appends it in oauth
-    // mode only, so basic-mode egress is unchanged (D97). Catching it here names
-    // the cause; letting the request layer catch it names only the symptom.
-    const hostname = new URL(host.origin).hostname;
-    // The request layer's SSRF blocklist runs before its allowlist, and the
-    // effective allowlist already names the gateway in oauth mode — so a
-    // loopback or private gateway passes the check below and dies at the first
-    // request with advice about JIRA_SITE. Asked first, the answer names the
-    // variable that is actually wrong; no allowlist entry could fix it (CC-230).
-    if (isBlockedHost(hostname)) {
-      throw createJiraError({
-        kind: 'config',
-        reason: `The OAuth gateway host ${safeLabel(hostname)} is a loopback, private, link-local or metadata address, which is never contacted — not even when it is in the allowlist. Nothing was sent.`,
-        remediation:
-          'Unset JIRA_OAUTH_GATEWAY_ORIGIN to use the default gateway, or point it at a public https host.',
-      });
-    }
-    if (!isAllowedHost(hostname, deps.allowedHosts)) {
-      throw createJiraError({
-        kind: 'config',
-        reason: `The OAuth gateway host ${safeLabel(hostname)} is not in the effective allowlist, so no request could leave for it.`,
-        remediation: `Add ${safeLabel(hostname)} to JIRA_ALLOWED_HOSTS, or unset JIRA_OAUTH_GATEWAY_ORIGIN to use the default gateway.`,
-      });
-    }
-
+    const host = checkedGateway(settings.gatewayOrigin, fresh.cloudId, deps.allowedHosts);
     return { kind: 'bearer', host, accessToken };
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 10. The client-credentials resolver (service accounts, D302)
+// ---------------------------------------------------------------------------
+
+export interface ClientCredentialsResolverDeps {
+  readonly settings: OAuthSettings;
+  readonly authRequest: AuthRequestFn;
+  readonly clock: Clock;
+  readonly logger: Logger;
+  readonly redactor?: Redactor;
+  readonly allowedHosts?: readonly string[];
+}
+
+/** What every failed mint ends with: the credential, never a `login`. */
+const RE_CLIENT_CREDENTIALS =
+  "Check JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_CLIENT_SECRET against the service account's OAuth 2.0 credential in Atlassian Administration. Nothing is stored, so there is nothing to log in to.";
+
+function mintFailure(
+  status: number | undefined,
+  code: string | undefined,
+  redactor: Redactor | undefined,
+  cause?: unknown,
+): Error {
+  const suffix = code === undefined ? '' : ` (${code})`;
+  const reason = `The Atlassian token endpoint rejected the client-credentials token request with HTTP ${String(status)}${suffix}.`;
+  if (status === 429) {
+    return createJiraError({
+      kind: 'rate_limited',
+      reason,
+      remediation:
+        'Wait and retry the tool call; the token request is not replayed automatically.',
+      httpStatus: status,
+      redactor,
+      cause,
+    });
+  }
+  if (status !== undefined && status >= 500) {
+    return createJiraError({
+      kind: 'transport',
+      reason,
+      remediation:
+        'This is an Atlassian-side failure; retry the tool call. If it persists, run `jira-mcp-ai doctor`.',
+      httpStatus: status,
+      redactor,
+      cause,
+    });
+  }
+  return createJiraError({
+    kind: 'auth',
+    reason,
+    remediation: RE_CLIENT_CREDENTIALS,
+    ...(status === undefined ? {} : { httpStatus: status }),
+    retryable: false,
+    redactor,
+    cause,
+  });
+}
+
+/**
+ * The resolver for `JIRA_OAUTH_GRANT=client_credentials`.
+ *
+ * Simpler than the 3LO one because there is nothing to rotate: the app's id and
+ * secret mint a fresh access token whenever the held one enters its refresh
+ * margin, so a lost token costs one request, never an authorization. Hence no
+ * token file and no cross-process lock — each process mints its own (CC-3008).
+ * What it keeps from the 3LO resolver:
+ *
+ * - **Single-flight.** Concurrent calls that find no usable token share one
+ *   mint (CC-3009).
+ * - **No mint-and-replay on 401.** The mint is proactive; a Jira 401 ends the
+ *   call like any other, because replaying an unsafe write is the failure the
+ *   retry policy exists to prevent.
+ * - **A failed mint is not cached.** The next call tries again (CC-3010).
+ * - **One identity.** A call that names a profile is refused (CC-3011).
+ */
+export function createClientCredentialsResolver(
+  deps: ClientCredentialsResolverDeps,
+): CredentialResolver {
+  const { settings, authRequest, clock, logger, redactor } = deps;
+  if (nonEmptyString(settings.clientSecret)) redactor?.addSecret(settings.clientSecret);
+
+  let held: (OAuthTokens & { readonly lifetimeMs: number }) | undefined;
+  let inFlight: Promise<OAuthTokens & { readonly lifetimeMs: number }> | undefined;
+
+  const mint = async (): Promise<OAuthTokens & { readonly lifetimeMs: number }> => {
+    const { clientId, clientSecret } = requireClientCredentials(settings);
+    let response;
+    try {
+      response = await authRequest({
+        method: 'POST',
+        url: tokenEndpoint(settings.authOrigin),
+        json: {
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+        },
+      });
+    } catch (error) {
+      if (isJiraError(error) && error.httpStatus !== undefined) {
+        const code = detailErrorCode(error.detail);
+        logger.emit('oauth_token_mint_failed', {
+          status: error.httpStatus,
+          code: code ?? 'none',
+        });
+        throw mintFailure(error.httpStatus, code, redactor, error);
+      }
+      logger.emit('oauth_token_mint_failed', tokenFailureFields(error));
+      throw error;
+    }
+    if (response.status < 200 || response.status >= 300) {
+      const code = tokenErrorCode(response.json);
+      logger.emit('oauth_token_mint_failed', {
+        status: response.status,
+        code: code ?? 'none',
+      });
+      throw mintFailure(response.status, code, redactor);
+    }
+    const now = clock.now();
+    const tokens = parseTokenResponse(response.json, now);
+    redactor?.addSecret(tokens.accessToken);
+    logger.emit('oauth_token_minted', { expiresInMs: tokens.expiresAt - now });
+    return { ...tokens, lifetimeMs: tokens.expiresAt - now };
+  };
+
+  const mintOnce = (): Promise<OAuthTokens & { readonly lifetimeMs: number }> => {
+    if (inFlight !== undefined) return inFlight;
+    const started = mint()
+      .then((tokens) => {
+        held = tokens;
+        return tokens;
+      })
+      .finally(() => {
+        inFlight = undefined;
+      });
+    inFlight = started;
+    return started;
+  };
+
+  return async (requested?: string): Promise<BearerCredentials> => {
+    if (requested !== undefined) {
+      throw createJiraError({
+        kind: 'config',
+        reason: `Profile ${JSON.stringify(safeLabel(requested, 40))} was requested, but JIRA_OAUTH_GRANT=client_credentials signs every call as one service account. Nothing was sent.`,
+        remediation:
+          'Call the tool without a profile, or run a separate server per site.',
+      });
+    }
+    const cloudId = settings.cloudId?.trim();
+    if (!nonEmptyString(cloudId)) {
+      throw createJiraError({
+        kind: 'config',
+        reason:
+          'JIRA_OAUTH_GRANT=client_credentials has no site: JIRA_OAUTH_CLOUD_ID is unset. Nothing was sent.',
+        remediation:
+          'Set JIRA_OAUTH_CLOUD_ID to the "cloudId" of https://<your-site>/_edge/tenant_info.',
+      });
+    }
+    // Checked before the mint: a gateway no request could reach must not cost
+    // a token request first.
+    const host = checkedGateway(settings.gatewayOrigin, cloudId, deps.allowedHosts);
+    const current = held;
+    const tokens =
+      current !== undefined && !isExpired(current, clock.now(), current.lifetimeMs)
+        ? current
+        : await mintOnce();
+    return { kind: 'bearer', host, accessToken: tokens.accessToken };
   };
 }

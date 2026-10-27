@@ -438,23 +438,39 @@ interface OAuthDeps {
 async function buildOAuthResolver(deps: OAuthDeps): Promise<CredentialResolver> {
   const { settings, clock, rng, logger, redactor } = deps;
   const { createAuthRequest } = await import('./core/http.js');
-  const { createOAuthCredentialResolver, createTokenStore } =
-    await import('./core/oauth.js');
+  const {
+    createClientCredentialsResolver,
+    createOAuthCredentialResolver,
+    createTokenStore,
+  } = await import('./core/oauth.js');
   const oauth = settings.oauth;
+  const authRequest = createAuthRequest({
+    clock,
+    logger,
+    redactor,
+    rng,
+    // The whole SSRF guard for the auth path: these two origins and nothing
+    // else, whatever a token response might try to redirect us towards.
+    allowedOrigins: [oauth.authOrigin, oauth.gatewayOrigin],
+    requestTimeoutMs: settings.requestTimeoutMs,
+  });
+
+  // A service account mints in memory and never touches the token file (D302).
+  if (oauth.grant === 'client_credentials') {
+    return createClientCredentialsResolver({
+      settings: oauth,
+      authRequest,
+      clock,
+      logger,
+      redactor,
+      allowedHosts: settings.allowedHosts,
+    });
+  }
 
   return createOAuthCredentialResolver({
     settings: oauth,
     store: createTokenStore({ path: oauth.tokenFile, clock }),
-    authRequest: createAuthRequest({
-      clock,
-      logger,
-      redactor,
-      rng,
-      // The whole SSRF guard for the auth path: these two origins and nothing
-      // else, whatever a token response might try to redirect us towards.
-      allowedOrigins: [oauth.authOrigin, oauth.gatewayOrigin],
-      requestTimeoutMs: settings.requestTimeoutMs,
-    }),
+    authRequest,
     clock,
     logger,
     redactor,

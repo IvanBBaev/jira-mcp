@@ -247,6 +247,7 @@ describe('loadSettings — auth mode and the OAuth block', () => {
     assert.deepEqual(report.findings, []);
     assert.equal(settings.authMode, DEFAULT_AUTH_MODE);
     assert.deepEqual(settings.oauth, {
+      grant: 'authorization_code',
       scopes: DEFAULT_OAUTH_SCOPES,
       tokenFile: defaultOAuthTokenFile({ env: {}, ...PATHS }),
       redirectPort: DEFAULT_OAUTH_REDIRECT_PORT,
@@ -284,6 +285,7 @@ describe('loadSettings — auth mode and the OAuth block', () => {
     assert.deepEqual(settings.oauth, {
       clientId: 'client-id-abc',
       clientSecret: 'client-secret-value',
+      grant: 'authorization_code',
       scopes: ['read:jira-work', 'offline_access'],
       cloudId: '0f2a1b3c-4d5e-6f70-8192-a3b4c5d6e7f8',
       tokenFile: '/home/tester/secrets/jira-oauth.json',
@@ -1211,5 +1213,53 @@ describe('loadSettings — JIRA_CLOUD_ID (D301)', () => {
     assert.equal(report.findings[0]?.severity, 'warning');
     assert.match(report.findings[0]?.message ?? '', /JIRA_OAUTH_CLOUD_ID/);
     assert.equal(settings.cloudId, undefined);
+  });
+});
+
+describe('loadSettings — JIRA_OAUTH_GRANT (D302)', () => {
+  const CLOUD_ID = '11111111-2222-3333-4444-555555555555';
+
+  it('parses client_credentials with a cloud id cleanly', () => {
+    const { settings, report } = load({
+      ...VALID_OAUTH,
+      JIRA_OAUTH_GRANT: 'client_credentials',
+      JIRA_OAUTH_CLOUD_ID: CLOUD_ID,
+    });
+    assert.deepEqual(report.findings, []);
+    assert.equal(settings.oauth.grant, 'client_credentials');
+    assert.equal(settings.oauth.cloudId, CLOUD_ID);
+  });
+
+  it('refuses an unknown grant', () => {
+    const { report } = load({ ...VALID_OAUTH, JIRA_OAUTH_GRANT: 'password' });
+    assert.equal(report.errors[0]?.field, 'JIRA_OAUTH_GRANT');
+  });
+
+  it('[CC-3008] client_credentials without JIRA_OAUTH_CLOUD_ID fails startup', () => {
+    const { report } = load({ ...VALID_OAUTH, JIRA_OAUTH_GRANT: 'client_credentials' });
+    assert.deepEqual(codes(report), ['missing_cloud_id']);
+    assert.equal(report.errors[0]?.field, 'JIRA_OAUTH_CLOUD_ID');
+    assert.match(report.errors[0]?.message ?? '', /_edge\/tenant_info/);
+  });
+
+  it('[CC-3011] client_credentials refuses a named active profile', () => {
+    const { report } = load({
+      ...VALID_OAUTH,
+      JIRA_OAUTH_GRANT: 'client_credentials',
+      JIRA_OAUTH_CLOUD_ID: CLOUD_ID,
+      JIRA_ACTIVE_PROFILE: 'WORK',
+    });
+    assert.ok(codes(report).includes('profile_unsupported'));
+    assert.ok(report.errors.some((e) => e.field === 'JIRA_ACTIVE_PROFILE'));
+  });
+
+  it('warns that a non-default grant is ignored outside oauth mode', () => {
+    const { settings, report } = load({
+      ...VALID,
+      JIRA_OAUTH_GRANT: 'client_credentials',
+    });
+    assert.deepEqual(codes(report), ['oauth_grant_ignored']);
+    assert.equal(report.findings[0]?.severity, 'warning');
+    assert.equal(settings.oauth.grant, 'client_credentials');
   });
 });

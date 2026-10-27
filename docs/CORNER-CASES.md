@@ -3541,6 +3541,21 @@ Prompts (D125):
   `JIRA_CLOUD_ID` names the variable and `<site>/_edge/tenant_info`; through
   the gateway a 401 says "classic token, unset it" and a 403 names the
   missing scope.
+- **CC-3008** — `JIRA_OAUTH_GRANT=client_credentials` mints once with
+  `grant_type=client_credentials`, holds the token in memory (no file is
+  written) and reuses it until the refresh skew; without
+  `JIRA_OAUTH_CLOUD_ID` startup fails `missing_cloud_id`.
+- **CC-3009** — concurrent calls with no usable client-credentials token
+  share one mint.
+- **CC-3010** — a failed mint is not cached: 401/400 is a terminal `auth`
+  error naming the client id and secret, 429 `rate_limited`, 5xx
+  `transport`; `oauth_token_mint_failed` carries status and code only.
+- **CC-3011** — the client-credentials grant has no profiles:
+  `JIRA_ACTIVE_PROFILE` is a startup error and a per-call profile is refused
+  before any request.
+- **CC-3012** — `login` refuses the client-credentials grant before it
+  opens a socket; doctor reads no token store for it and reports no expiry
+  horizon.
 
 ## Project scope guard (D400, 2026-10-27)
 

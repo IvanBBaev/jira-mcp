@@ -254,6 +254,14 @@
           "format": "string"
         },
         {
+          "name": "JIRA_OAUTH_GRANT",
+          "description": "How oauth mode gets its token: authorization_code (3LO via login) or client_credentials (an Atlassian service account; needs JIRA_OAUTH_CLOUD_ID, no login or token file).",
+          "isRequired": false,
+          "default": "authorization_code",
+          "choices": ["authorization_code", "client_credentials"],
+          "format": "string"
+        },
+        {
           "name": "JIRA_OAUTH_SCOPES",
           "description": "Comma list of scopes login asks consent for. Changing it after a successful login forces a re-consent.",
           "isRequired": false,

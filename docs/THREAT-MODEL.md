@@ -143,6 +143,14 @@ the exposure is this document's.
 - **Refresh failures do not become retry storms.** A token POST is never
   replayed (D94, JIRA-API.md), and the terminal error set ends the session with
   a remediation instead of hammering the auth host with a dead token (CC-100).
+- **The client-credentials grant (D302) moves the durable credential back into
+  the env file.** With `JIRA_OAUTH_GRANT=client_credentials` there is no
+  refresh token and no token file: the client id and secret alone mint a
+  service-account token, so the secret is now what a refresh token is under
+  3LO — whoever reads it acts as the service account until it is rotated in
+  Atlassian Administration. It is redacted like every credential, the minted
+  token lives in process memory only, and a failed mint is never replayed in a
+  loop (CC-3010). Egress is unchanged: the same two OAuth origins.
 
 ### SSRF / egress
 - Default-deny host allowlist: the canonical Cloud suffix (JIRA-API.md §Hosts)

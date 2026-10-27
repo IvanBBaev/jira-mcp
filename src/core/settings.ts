@@ -40,6 +40,7 @@ import {
   DEPLOYMENTS,
   JiraError,
   LOG_LEVELS,
+  OAUTH_GRANTS,
   TRANSPORT_KINDS,
   WRITE_MODES,
   type AuthMode,
@@ -47,6 +48,7 @@ import {
   type HostRef,
   type JiraDeployment,
   type LogLevel,
+  type OAuthGrant,
   type ProfileConfig,
   type Settings,
   type TransportKind,
@@ -91,6 +93,8 @@ export const DEFAULT_LOCK_PROFILE = true;
 export const TOKEN_EXPIRY_WARNING_DAYS = 30;
 /** `JIRA_AUTH_MODE` default: v1's Basic auth, unchanged (D91). */
 export const DEFAULT_AUTH_MODE: AuthMode = 'basic';
+/** `JIRA_OAUTH_GRANT` default: 3LO with `login`, as oauth mode always was (D302). */
+export const DEFAULT_OAUTH_GRANT: OAuthGrant = 'authorization_code';
 /** `JIRA_DEPLOYMENT` default: Jira Cloud, which is all v1 serves (D2, D106). */
 export const DEFAULT_DEPLOYMENT: JiraDeployment = 'cloud';
 /**
@@ -466,6 +470,11 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
   );
   const pat = str('JIRA_PAT');
   const datacenterPreview = bool('JIRA_DATACENTER_PREVIEW', false);
+  const oauthGrant = enumOf<OAuthGrant>(
+    'JIRA_OAUTH_GRANT',
+    OAUTH_GRANTS,
+    DEFAULT_OAUTH_GRANT,
+  );
   const oauthClientId = str('JIRA_OAUTH_CLIENT_ID');
   const oauthClientSecret = str('JIRA_OAUTH_CLIENT_SECRET');
   const oauthScopes = csv('JIRA_OAUTH_SCOPES');
@@ -684,6 +693,36 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
         field: 'JIRA_OAUTH_CLIENT_SECRET',
       });
     }
+    // D302: a service account has no discovery step — the client-credentials
+    // grant is not a user, so accessible-resources has nobody to answer for —
+    // and no profiles, because one app credential is one identity on one site.
+    if (oauthGrant === 'client_credentials') {
+      if (oauthCloudId === undefined) {
+        add({
+          severity: 'error',
+          code: 'missing_cloud_id',
+          message:
+            'JIRA_OAUTH_GRANT=client_credentials needs JIRA_OAUTH_CLOUD_ID: a service account token is not tied to a site the server could discover. Read the "cloudId" of https://<your-site>/_edge/tenant_info.',
+          field: 'JIRA_OAUTH_CLOUD_ID',
+        });
+      }
+      if (activeProfileRaw !== undefined) {
+        add({
+          severity: 'error',
+          code: 'profile_unsupported',
+          message: `JIRA_ACTIVE_PROFILE is ${JSON.stringify(activeProfileRaw)}, but JIRA_OAUTH_GRANT=client_credentials has no profiles: the app's credential is one service account on the site JIRA_OAUTH_CLOUD_ID names. Unset JIRA_ACTIVE_PROFILE.`,
+          field: 'JIRA_ACTIVE_PROFILE',
+        });
+      }
+    }
+  }
+  if (authMode !== 'oauth' && oauthGrant !== DEFAULT_OAUTH_GRANT) {
+    add({
+      severity: 'warning',
+      code: 'oauth_grant_ignored',
+      message: `JIRA_OAUTH_GRANT=${oauthGrant} selects how oauth mode gets its token, and JIRA_AUTH_MODE is ${authMode}; it is ignored. Set JIRA_AUTH_MODE=oauth to use it, or unset it to silence this.`,
+      field: 'JIRA_OAUTH_GRANT',
+    });
   }
 
   // --- Deployment (D106) ---------------------------------------------------
@@ -921,6 +960,7 @@ export function loadSettings(options: LoadSettingsOptions = {}): LoadSettingsRes
     oauth: {
       ...(oauthClientId === undefined ? {} : { clientId: oauthClientId }),
       ...(oauthClientSecret === undefined ? {} : { clientSecret: oauthClientSecret }),
+      grant: oauthGrant,
       scopes: oauthScopes.length > 0 ? oauthScopes : DEFAULT_OAUTH_SCOPES,
       ...(oauthCloudId === undefined ? {} : { cloudId: oauthCloudId }),
       tokenFile: oauthTokenFile,

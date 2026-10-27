@@ -544,6 +544,23 @@ test('login refuses basic auth mode before it opens a socket', async (t) => {
   assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
 });
 
+test('[CC-3012] login refuses the client_credentials grant before it opens a socket', async (t) => {
+  const r = await rig({
+    env: {
+      JIRA_OAUTH_GRANT: 'client_credentials',
+      JIRA_OAUTH_CLOUD_ID: '11111111-2222-3333-4444-555555555555',
+    },
+  });
+  t.after(() => r.cleanup());
+
+  const code = await run(r.options);
+
+  assert.equal(code, EXIT_CONFIG);
+  assert.match(r.stderr(), /JIRA_OAUTH_GRANT is "client_credentials"/);
+  assert.equal(r.authorizeUrl(), undefined);
+  assert.equal(await accepts(LOOPBACK_HOST, r.port), false);
+});
+
 test('login refuses an oauth mode with no client id, naming the variable', async (t) => {
   const r = await rig({ env: { JIRA_OAUTH_CLIENT_ID: undefined } });
   t.after(() => r.cleanup());

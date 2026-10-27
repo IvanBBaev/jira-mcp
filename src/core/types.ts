@@ -99,13 +99,15 @@ export const LOG_EVENTS = [
   'auth_failure',
   'oauth_token_refreshed',
   'oauth_token_refresh_failed',
+  'oauth_token_minted',
+  'oauth_token_mint_failed',
   'journal_write_failed',
   'upstream_degraded',
   'shutdown',
 ] as const;
 
 /**
- * One of the seventeen contract event names.
+ * One of the nineteen contract event names.
  *
  * Produced by: every layer that logs (WP-10…WP-25).
  * Consumed by: `core/log.ts` (WP-12) and the log-table test.
@@ -135,6 +137,8 @@ export const LOG_EVENT_LEVEL: Readonly<Record<LogEventName, LogLevel>> = Object.
   auth_failure: 'error',
   oauth_token_refreshed: 'info',
   oauth_token_refresh_failed: 'error',
+  oauth_token_minted: 'info',
+  oauth_token_mint_failed: 'error',
   journal_write_failed: 'warn',
   upstream_degraded: 'warn',
   shutdown: 'info',
@@ -275,6 +279,22 @@ export const AUTH_MODES = ['basic', 'oauth', 'pat'] as const;
  */
 export type AuthMode = (typeof AUTH_MODES)[number];
 
+/** Value space of `JIRA_OAUTH_GRANT` (default `authorization_code`). */
+export const OAUTH_GRANTS = ['authorization_code', 'client_credentials'] as const;
+
+/**
+ * How oauth mode obtains its access token (D302).
+ *
+ * `authorization_code` is 3LO: a person consents once through `login`, and the
+ * stored refresh token renews the grant. `client_credentials` is a service
+ * account: the app's own id and secret mint a token on demand, held in memory
+ * only — no browser, no token file, nothing to rotate.
+ *
+ * Produced by: `core/settings.ts`.
+ * Consumed by: `src/index.ts`, `cli/doctor.ts` and `cli/login.ts`.
+ */
+export type OAuthGrant = (typeof OAUTH_GRANTS)[number];
+
 /** Value space of `JIRA_DEPLOYMENT` (default `cloud`). */
 export const DEPLOYMENTS = ['cloud', 'datacenter'] as const;
 
@@ -314,9 +334,14 @@ export interface OAuthSettings {
    * `core/settings.ts` raises a finding when oauth mode leaves it unset.
    */
   readonly clientSecret?: string;
+  /** `JIRA_OAUTH_GRANT` (default `authorization_code`). See {@link OAuthGrant}. */
+  readonly grant: OAuthGrant;
   /** `JIRA_OAUTH_SCOPES`. Space-joined into the authorize request. */
   readonly scopes: readonly string[];
-  /** `JIRA_OAUTH_CLOUD_ID`. Pins the site; otherwise discovery picks it. */
+  /**
+   * `JIRA_OAUTH_CLOUD_ID`. Pins the site; otherwise discovery picks it. Required
+   * by the `client_credentials` grant, which has no discovery step.
+   */
   readonly cloudId?: string;
   /** `JIRA_OAUTH_TOKEN_FILE`. The 0600 token store `login` writes. */
   readonly tokenFile: string;

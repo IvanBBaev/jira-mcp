@@ -49,6 +49,7 @@ import {
   TOKEN_STORE_VERSION,
   accessibleResourcesEndpoint,
   buildAuthorizeUrl,
+  createClientCredentialsResolver,
   createOAuthCredentialResolver,
   createPkcePair,
   createTokenStore,
@@ -159,6 +160,7 @@ function settings(overrides: Partial<OAuthSettings> = {}): OAuthSettings {
   return {
     clientId: 'client-abc',
     clientSecret: 'secret-xyz',
+    grant: 'authorization_code',
     scopes: ['read:jira-work', 'offline_access'],
     tokenFile: join(dir, 'oauth.json'),
     redirectPort: 8250,
@@ -1941,5 +1943,152 @@ describe('createOAuthCredentialResolver', () => {
     const error = await rejects(() => resolved(h));
     assert.equal(error.kind, 'auth');
     assert.match(error.message, /no access token/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The client-credentials resolver (D302)
+// ---------------------------------------------------------------------------
+
+describe('createClientCredentialsResolver', () => {
+  function ccHarness(
+    replies: readonly AuthReply[],
+    overrides: Partial<OAuthSettings> = {},
+  ): {
+    readonly resolve: (requested?: string) => Promise<JiraCredentials>;
+    readonly auth: FakeAuthRequest;
+    readonly clock: ReturnType<typeof createFakeClock>;
+    readonly logger: FakeLogger;
+    readonly redactor: FakeRedactor;
+  } {
+    const auth = fakeAuthRequest(replies);
+    const clock = createFakeClock(1_000_000);
+    const logger = createFakeLogger();
+    const redactor = createFakeRedactor();
+    const resolver = createClientCredentialsResolver({
+      settings: settings({
+        grant: 'client_credentials',
+        cloudId: CLOUD_ID,
+        ...overrides,
+      }),
+      authRequest: auth.fn,
+      clock,
+      logger,
+      redactor,
+      allowedHosts: ['api.atlassian.com'],
+    });
+    const resolve = async (requested?: string): Promise<JiraCredentials> =>
+      resolver(requested);
+    return { resolve, auth, clock, logger, redactor };
+  }
+
+  const minted = (token: string, expiresIn = 3600): AuthResponse =>
+    ok({ access_token: token, expires_in: expiresIn, token_type: 'Bearer' });
+
+  it('[CC-3008] mints once with the client_credentials grant and reuses the token in memory', async () => {
+    const h = ccHarness([minted('cc-1')]);
+    const first = (await h.resolve()) as BearerCredentials;
+    const second = (await h.resolve()) as BearerCredentials;
+    assert.equal(first.kind, 'bearer');
+    assert.equal(first.accessToken, 'cc-1');
+    assert.equal(second.accessToken, 'cc-1');
+    assert.deepEqual(first.host, {
+      origin: 'https://api.atlassian.com',
+      pathPrefix: `/ex/jira/${CLOUD_ID}`,
+    });
+    assert.equal(h.auth.calls(), 1);
+    assert.equal(h.auth.specs[0]?.url, tokenEndpoint('https://auth.atlassian.com'));
+    assert.deepEqual(h.auth.specs[0]?.json, {
+      grant_type: 'client_credentials',
+      client_id: 'client-abc',
+      client_secret: 'secret-xyz',
+    });
+    assert.ok(h.redactor.secrets.includes('secret-xyz'));
+    assert.ok(h.redactor.secrets.includes('cc-1'));
+    assert.equal(h.logger.eventsOf('oauth_token_minted').length, 1);
+    assert.equal(
+      h.logger.eventsOf('oauth_token_minted')[0]?.fields?.['expiresInMs'],
+      3600_000,
+    );
+    assert.deepEqual(readdirSync(dir), [], 'no token file is written');
+  });
+
+  it('[CC-3009] concurrent calls without a token share one mint', async () => {
+    let release: ((value: AuthResponse) => void) | undefined;
+    const pending = new Promise<AuthResponse>((resolve) => {
+      release = resolve;
+    });
+    const h = ccHarness([() => pending]);
+    const calls = [h.resolve(), h.resolve(), h.resolve()];
+    release?.(minted('cc-shared'));
+    const results = (await Promise.all(calls)) as BearerCredentials[];
+    assert.deepEqual(
+      results.map((r) => r.accessToken),
+      ['cc-shared', 'cc-shared', 'cc-shared'],
+    );
+    assert.equal(h.auth.calls(), 1);
+  });
+
+  it('mints again once the held token enters the refresh skew', async () => {
+    const h = ccHarness([minted('cc-1'), minted('cc-2')]);
+    assert.equal(((await h.resolve()) as BearerCredentials).accessToken, 'cc-1');
+    h.clock.advance(3600_000 - TOKEN_REFRESH_SKEW_MS - 1);
+    assert.equal(((await h.resolve()) as BearerCredentials).accessToken, 'cc-1');
+    h.clock.advance(1);
+    assert.equal(((await h.resolve()) as BearerCredentials).accessToken, 'cc-2');
+    assert.equal(h.auth.calls(), 2);
+  });
+
+  it('[CC-3010] a rejected mint is a terminal auth error and is not cached', async () => {
+    const h = ccHarness([raised(401, 'access_denied', 'auth'), minted('cc-1')]);
+    const error = await rejects(() => h.resolve());
+    assert.equal(error.kind, 'auth');
+    assert.equal(error.retryable, false);
+    assert.equal(error.httpStatus, 401);
+    assert.match(error.message, /access_denied/);
+    assert.match(error.message, /JIRA_OAUTH_CLIENT_SECRET/);
+    assert.deepEqual(h.logger.eventsOf('oauth_token_mint_failed')[0]?.fields, {
+      status: 401,
+      code: 'access_denied',
+    });
+    assert.equal(((await h.resolve()) as BearerCredentials).accessToken, 'cc-1');
+    assert.equal(h.auth.calls(), 2);
+  });
+
+  it('[CC-3010] a returned non-2xx body is classified the same way', async () => {
+    const h = ccHarness([ok({ error: 'invalid_client' }, 401)]);
+    const error = await rejects(() => h.resolve());
+    assert.equal(error.kind, 'auth');
+    assert.match(error.message, /invalid_client/);
+  });
+
+  it('[CC-3010] a throttled mint is rate_limited and a 5xx is transport', async () => {
+    const throttledH = ccHarness([throttled()]);
+    assert.equal((await rejects(() => throttledH.resolve())).kind, 'rate_limited');
+    const downH = ccHarness([ok({}, 503)]);
+    assert.equal((await rejects(() => downH.resolve())).kind, 'transport');
+  });
+
+  it('[CC-3011] a call that names a profile is refused before any request', async () => {
+    const h = ccHarness([minted('cc-1')]);
+    const error = await rejects(() => h.resolve('WORK'));
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /one service account/);
+    assert.equal(h.auth.calls(), 0);
+  });
+
+  it('refuses to mint without a cloud id', async () => {
+    const h = ccHarness([minted('cc-1')], { cloudId: undefined });
+    const error = await rejects(() => h.resolve());
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /JIRA_OAUTH_CLOUD_ID/);
+    assert.equal(h.auth.calls(), 0);
+  });
+
+  it('refuses a blocked gateway before spending a token request', async () => {
+    const h = ccHarness([minted('cc-1')], { gatewayOrigin: 'https://127.0.0.1' });
+    const error = await rejects(() => h.resolve());
+    assert.equal(error.kind, 'config');
+    assert.equal(h.auth.calls(), 0);
   });
 });

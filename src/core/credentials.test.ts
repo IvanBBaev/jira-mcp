@@ -31,6 +31,7 @@ const BASE_SETTINGS: Settings = {
   deployment: 'cloud',
   datacenterPreview: false,
   oauth: {
+    grant: 'authorization_code',
     scopes: [],
     tokenFile: '/home/tester/.config/jira-mcp-ai/oauth.json',
     redirectPort: 8250,

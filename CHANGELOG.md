@@ -14,6 +14,10 @@ env var names — not internal refactors.
 
 ### Added
 
+- OAuth 2.0 client credentials for Atlassian service accounts (D302): with
+  `JIRA_AUTH_MODE=oauth`, set `JIRA_OAUTH_GRANT=client_credentials` and
+  `JIRA_OAUTH_CLOUD_ID`, and the server mints its own token from the client
+  id and secret — no `login`, no token file.
 - Scoped API tokens (D301): set `JIRA_CLOUD_ID` (the `cloudId` from
   `https://<site>/_edge/tenant_info`) and basic auth goes through
   `api.atlassian.com/ex/jira/<cloudId>`, the only route Atlassian accepts a

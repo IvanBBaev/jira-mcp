@@ -12,6 +12,7 @@
 |---|---|---|
 | `basic` (default) | `JIRA_EMAIL` + `JIRA_API_TOKEN` | the site host |
 | `oauth` | a bearer access token minted by `jira-mcp-ai login` and refreshed in-process | the `api.atlassian.com` gateway (mandatory — JIRA-API.md) |
+| `oauth` + `JIRA_OAUTH_GRANT=client_credentials` | a bearer access token the server mints itself from a service account's client id and secret, held in memory | the same gateway, at `JIRA_OAUTH_CLOUD_ID` |
 
 Both modes serve the same tool surface. Nothing about a tool's arguments,
 results, write gate or error kinds changes with the mode; what changes is the
@@ -394,6 +395,47 @@ repo does not fill documentation gaps with folklore.
   community claim**, including loopback, plain http, wildcards and multiple
   callback URLs. See the warning above.
 - **Rate limits on the auth host are NOT DOCUMENTED** (JIRA-API.md).
+
+## OAuth 2.0 client credentials (service accounts)
+
+`JIRA_OAUTH_GRANT=client_credentials` (D302) runs oauth mode with an Atlassian
+service account instead of a person. Create the account and its OAuth 2.0
+credential in Atlassian Administration, then set:
+
+```
+JIRA_AUTH_MODE=oauth
+JIRA_OAUTH_GRANT=client_credentials
+JIRA_OAUTH_CLIENT_ID=<service account client id>
+JIRA_OAUTH_CLIENT_SECRET=<service account client secret>
+JIRA_OAUTH_CLOUD_ID=<cloudId from https://<site>/_edge/tenant_info>
+```
+
+What differs from 3LO, and why:
+
+- **No `login`, no consent, no token file.** The server POSTs
+  `grant_type=client_credentials` with the id and secret to the same token
+  endpoint and keeps the access token in memory only. There is no refresh
+  token: the next token costs one more request, so a lost one is never worth
+  persisting, and each process mints its own (CC-3008). `login` refuses this
+  grant rather than store a 3LO grant the server would never read (CC-3012).
+- **`JIRA_OAUTH_CLOUD_ID` is required.** A service account token is not
+  discovered through accessible-resources; the site is configuration, and
+  startup fails without it.
+- **The token is minted again before it expires**, with the same skew as a
+  3LO refresh. Concurrent calls that find no usable token share one request
+  (CC-3009). A failed mint is not cached, so the next call tries again
+  (CC-3010); 401/400 is a terminal `auth` error naming the two variables, 429
+  is `rate_limited`, 5xx is `transport`.
+- **No profiles.** The credential is one service account on one site, so
+  `JIRA_ACTIVE_PROFILE` is a startup error and a per-call profile is refused
+  (CC-3011). Run a second server for a second site.
+- **No mint-and-replay on 401**, exactly as for 3LO: a Jira 401 ends the call.
+
+Scopes are set on the service account's credential in Atlassian
+Administration; `JIRA_OAUTH_SCOPES` is not sent with this grant. What a service
+account may do inside a project is still its project roles — a missing role is
+a 403 like any user's. Atlassian's service accounts are an Atlassian Guard
+feature; whether a given org has them is outside this server's view.
 
 ## Credential storage
 

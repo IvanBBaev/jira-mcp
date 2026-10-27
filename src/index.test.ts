@@ -64,6 +64,7 @@ const DEFAULT_HOST: HostRef = { origin: 'https://example.atlassian.net', pathPre
  * fixture means an oauth case only has to flip `authMode`.
  */
 const BASE_OAUTH = {
+  grant: 'authorization_code',
   scopes: ['read:jira-work', 'offline_access'],
   tokenFile: '/nowhere/oauth.json',
   redirectPort: 8250,

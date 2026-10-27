@@ -796,6 +796,15 @@ export async function run(options: LoginOptions = {}): Promise<number> {
       EXIT_CONFIG,
     );
   }
+  // A service account has no consent step and no stored grant (D302): a browser
+  // flow here would store a 3LO grant the server never reads (CC-3012).
+  if (oauth.grant === 'client_credentials') {
+    return fail(
+      'login is the 3LO consent flow, but JIRA_OAUTH_GRANT is "client_credentials": the server mints its own token from the client id and secret, so there is nothing to log in to.',
+      'Run `jira-mcp-ai doctor` to check the service account, or unset JIRA_OAUTH_GRANT to use 3LO with login.',
+      EXIT_CONFIG,
+    );
+  }
   const clientId = oauth.clientId;
   if (clientId === undefined || clientId === '') {
     return fail(

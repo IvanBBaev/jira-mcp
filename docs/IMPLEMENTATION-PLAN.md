@@ -1447,7 +1447,9 @@ One session from 2026-10-27, in a branch worktree; one commit per item.
 - [x] Scoped API tokens (D301) — `JIRA_CLOUD_ID` routes basic auth through
       `<gateway>/ex/jira/<cloudId>` for the top-level site; doctor hints on
       401/403 (CC-3004…CC-3007).
-- [ ] OAuth 2.0 client-credentials grant (service accounts).
+- [x] OAuth 2.0 client-credentials grant (D302) — `JIRA_OAUTH_GRANT=client_credentials`
+      mints a service-account token in memory at `JIRA_OAUTH_CLOUD_ID`; no
+      login, file or profiles; doctor and login aware (CC-3008…CC-3012).
 - [ ] Elicitation confirm for irreversible applies.
 
 Exit: `npm run check` green; doctor and CONFIGURATION.md agree on every
