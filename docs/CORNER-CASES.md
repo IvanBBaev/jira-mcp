@@ -3338,3 +3338,15 @@ Prompts (D125):
 - **CC-1488** — `jira_get_backlog` returns the search-shaped rows with the
   board echo and the paging block, branded untrusted, and raises
   `fields_defaulted` when it chose the fields.
+
+## Sprint edit (D135, 2026-10-27)
+
+- **CC-1489** — `updateSprint` sends only the named fields, trimmed, as a
+  partial `POST` with no `safe` flag; an empty goal is sent as `""` and clears
+  it.
+- **CC-1490** — an edit naming no field, an empty name, an empty date or a
+  sprint id that is not one is refused before any request.
+- **CC-1491** — Jira's 400 on a closed sprint passes through as `validation`;
+  an applied edit whose echo is unreadable still succeeds, without `sprint`.
+- **CC-1492** — `jira_update_sprint` is an idempotent `standard` write whose
+  schema has no `state`, and a goal-bearing echo is branded untrusted.

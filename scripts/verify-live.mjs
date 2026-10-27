@@ -2094,6 +2094,37 @@ async function agileWriteClaims(session) {
   );
 
   await claim(
+    'C47',
+    'jira_update_sprint edits the goal and leaves the name',
+    async () => {
+      const sprintId = created.sprintId;
+      if (sprintId === undefined) skip('no throwaway sprint — see C27');
+      const goal = `gate-c goal ${runId()}`;
+      const { plan, applied } = await planAndApply(session, 'jira_update_sprint', {
+        sprintId,
+        goal,
+      });
+      // The partial update must send the goal alone — a name in the body would
+      // mean the PUT semantics leaked in.
+      const body = plan.planned?.body ?? {};
+      if (Object.keys(body).join(',') !== 'goal') {
+        throw new Error(
+          `planned body sent ${Object.keys(body).join(',')}, expected goal`,
+        );
+      }
+      if ((applied.updated ?? []).join(',') !== 'goal') {
+        throw new Error(`update reported ${String(applied.updated)}, expected goal`);
+      }
+      if (applied.sprint !== undefined && applied.sprint.name !== created.sprintName) {
+        throw new Error(
+          `the echo renamed the sprint to ${String(applied.sprint.name)}; the partial update leaked`,
+        );
+      }
+      return `sprint ${String(sprintId)} goal set, name untouched`;
+    },
+  );
+
+  await claim(
     'C29',
     'jira_start_sprint moves the sprint from future to active',
     async () => {

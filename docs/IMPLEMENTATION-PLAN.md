@@ -1397,7 +1397,8 @@ Cloud only — the Data Center adapter stubs every new member.
       (CC-1480…CC-1484); claim C45.
 - [x] `jira_get_backlog` (D134) — `GET /board/{id}/backlog`, sharing the
       sprint read's page loop and row shape (CC-1485…CC-1488); claim C46.
-- [ ] `jira_update_sprint` — partial `POST /sprint/{id}`, never `PUT`.
+- [x] `jira_update_sprint` (D135) — partial `POST /sprint/{id}`, never `PUT`
+      (CC-1489…CC-1492); claim C47.
 - [ ] `jira_rank_issues` — `PUT /issue/rank`, ≤ 50 issues, per-issue 207
       failures reported, never replayed.
 - [ ] `jira_set_estimate` — `PUT /issue/{key}/estimation?boardId=`.

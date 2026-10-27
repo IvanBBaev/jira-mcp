@@ -13,7 +13,8 @@
 // one sprint or a sprint's issues, move issues INTO a sprint or OUT to the
 // backlog, walk a sprint through its lifecycle — create, start, close (WP-61) —
 // and, since Phase 11 (D102), delete one. Since D133 it also reads one board's
-// configuration (columns, filter, estimation and rank fields). The delete PRIMITIVE lives here
+// configuration (columns, filter, estimation and rank fields), since D134 its
+// backlog, and since D135 it edits a sprint's name, goal and window. The delete PRIMITIVE lives here
 // because this module owns the agile root, but the TOOL that calls it belongs
 // to the irreversible `issues-delete` package behind JIRA_ALLOW_IRREVERSIBLE
 // (D50/CC-48) — the `agile` tool package itself still deletes nothing.
@@ -306,6 +307,18 @@ export type StartSprintOptions = AgileBase & {
   readonly endDate?: string;
 } & BudgetGuard;
 
+/** Options for {@link updateSprint} (D135). Every field is optional; one is required. */
+export type UpdateSprintOptions = AgileBase & {
+  readonly sprintId: number | string;
+  /** A new name; whitespace is refused, as on create. */
+  readonly name?: string;
+  /** A new goal; the empty string clears it. */
+  readonly goal?: string;
+  /** A new window, forwarded verbatim like {@link CreateSprintOptions}. */
+  readonly startDate?: string;
+  readonly endDate?: string;
+} & BudgetGuard;
+
 /** Options for {@link closeSprint}. */
 export type CloseSprintOptions = AgileBase & {
   readonly sprintId: number | string;
@@ -388,6 +401,16 @@ export interface SprintStateResult {
    * tool call. {@link createSprint} is the opposite case — a created sprint
    * without an id is worthless, so it narrows strictly.
    */
+  readonly sprint?: AgileSprint;
+}
+
+/** What {@link updateSprint} returns (D135). */
+export interface UpdateSprintResult {
+  readonly sprintId: number;
+  /** The sprint fields the partial update sent, in body order. */
+  readonly updated: readonly string[];
+  readonly status: number;
+  /** The echo, optional for the same reason as {@link SprintStateResult}. */
   readonly sprint?: AgileSprint;
 }
 
@@ -740,6 +763,80 @@ export async function startSprint(
     startDate: window.startDate,
     endDate: window.endDate,
   });
+}
+
+/**
+ * Edit a sprint's name, goal or window without touching its state (D135).
+ *
+ * The same `POST /sprint/{sprintId}` partial update the lifecycle writes use —
+ * never the PUT, which nulls every field the body omits. Only the fields the
+ * caller named are sent, and a call that names none is refused before the wire.
+ * The state is deliberately not an input: starting and closing have their own
+ * preconditions and tools. Jira refuses edits to a closed sprint with a 400,
+ * which passes through as `validation`.
+ */
+export async function updateSprint(
+  options: UpdateSprintOptions,
+): Promise<UpdateSprintResult> {
+  const sprintId = agileId(options.sprintId, 'sprintId');
+  const body = sprintEditBody(options);
+  const spec: JiraRequestSpec = {
+    method: 'POST',
+    root: 'agile',
+    path: `/sprint/${sprintId}`,
+    pathTemplate: SPRINT_PATH_TEMPLATE,
+    body,
+    ...writeControls(options),
+  };
+
+  const response = await agileCall({ rootProbe: false }, () => options.jira(spec));
+  const sprint = sprintEcho(response.data);
+  return {
+    sprintId: Number(sprintId),
+    updated: Object.keys(body),
+    status: response.status,
+    ...(sprint === undefined ? {} : { sprint }),
+  };
+}
+
+/** The partial body of {@link updateSprint}: named fields only, at least one. */
+function sprintEditBody(options: UpdateSprintOptions): Record<string, string> {
+  const body: Record<string, string> = {};
+  if (options.name !== undefined) {
+    const name = options.name.trim();
+    if (name.length === 0) {
+      throw createJiraError({
+        kind: 'validation',
+        reason:
+          'updateSprint got an empty name; a sprint cannot be unnamed. Nothing was sent.',
+        remediation: 'Pass the new name, or leave name out to keep the current one.',
+      });
+    }
+    body.name = name;
+  }
+  if (options.goal !== undefined) body.goal = options.goal.trim();
+  for (const field of ['startDate', 'endDate'] as const) {
+    const value = options[field];
+    if (value === undefined) continue;
+    const date = value.trim();
+    if (date.length === 0) {
+      throw createJiraError({
+        kind: 'validation',
+        reason: `updateSprint got an empty ${field}; the Agile API cannot clear a sprint date. Nothing was sent.`,
+        remediation: `Pass an ISO-8601 instant with an offset, or leave ${field} out to keep the current one.`,
+      });
+    }
+    body[field] = date;
+  }
+  if (Object.keys(body).length === 0) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'updateSprint needs at least one of name, goal, startDate or endDate. Nothing was sent.',
+      remediation: 'Name the fields to change; the others are left as they are.',
+    });
+  }
+  return body;
 }
 
 /**

@@ -2772,6 +2772,9 @@ function buildRoutes(server) {
           }
         } else if (wanted !== undefined) {
           return jiraError(400, [], { state: `Invalid sprint state: ${String(wanted)}` });
+        } else if (sprint.state === 'closed') {
+          // A plain edit (D135): Jira refuses any change to a closed sprint.
+          return jiraError(400, ['A closed sprint cannot be updated.']);
         }
 
         for (const name of ['name', 'goal', 'state', 'startDate', 'endDate']) {

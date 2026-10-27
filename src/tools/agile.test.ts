@@ -40,6 +40,7 @@ import type { ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   agilePackage,
   closeSprintTool,
+  updateSprintTool,
   createSprintTool,
   getBacklogTool,
   getBoardConfigTool,
@@ -1074,7 +1075,7 @@ test('the sprint tools spell out the consequences a caller cannot see', () => {
   assert.match(startSprintTool.description, /Both startDate and\s+endDate are required/);
 });
 
-test('the agile package exports its ten tools in TOOLS.md order', () => {
+test('the agile package exports its eleven tools in TOOLS.md order', () => {
   assert.equal(agilePackage.id, 'agile');
   assert.deepEqual(
     agilePackage.tools.map((tool) => tool.name),
@@ -1089,9 +1090,51 @@ test('the agile package exports its ten tools in TOOLS.md order', () => {
       'jira_create_sprint',
       'jira_start_sprint',
       'jira_close_sprint',
+      'jira_update_sprint',
     ],
   );
   for (const tool of agilePackage.tools) {
     assert.ok(tool.description.length <= 500, tool.name);
   }
+});
+
+// ---------------------------------------------------------------------------
+// `jira_update_sprint` (D135)
+// ---------------------------------------------------------------------------
+
+test('CC-1492: jira_update_sprint sends the named fields and brands a goal echo', async () => {
+  const fake = createFakeJiraRequest().on(
+    SPRINT_STATE_ROUTE,
+    jiraOk({ id: 42, name: 'Sprint 7', state: 'future', goal: 'Ship the refund flow.' }),
+  );
+
+  const result = await updateSprintTool.handler(
+    { sprintId: 42, goal: 'Ship the refund flow.' },
+    createCtx(fake.fn),
+  );
+  const data = dataOf(result);
+
+  assert.deepEqual(fake.lastRequest()?.body, { goal: 'Ship the refund flow.' });
+  assert.deepEqual(data.updated, ['goal']);
+  assert.equal(data.sprint?.goal, 'Ship the refund flow.');
+  assert.equal(result._untrusted, true);
+});
+
+test('CC-1492: jira_update_sprint is an idempotent standard write that never takes a state', () => {
+  assert.deepEqual(updateSprintTool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  });
+  assert.equal(updateSprintTool.writeTier, 'standard');
+  assert.equal(
+    updateSprintTool.input.safeParse({ sprintId: 42, state: 'active' }).success,
+    false,
+  );
+  assert.equal(
+    updateSprintTool.input.safeParse({ sprintId: 42, name: '' }).success,
+    false,
+  );
+  assert.match(updateSprintTool.description, /never changes the state/);
 });

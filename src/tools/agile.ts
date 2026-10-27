@@ -3,9 +3,9 @@
 // `agile`, WP-34).
 //
 // Five reads over the Jira Software (Agile) root (the board configuration since
-// D133, the backlog since D134) and five writes: the two moves
-// (into a sprint, out to the backlog) and the sprint lifecycle — create, start,
-// close (WP-61). The root is a different API from `/rest/api/3`: a different base
+// D133, the backlog since D134) and six writes: the two moves
+// (into a sprint, out to the backlog), the sprint lifecycle — create, start,
+// close (WP-61) — and the sprint edit (D135). The root is a different API from `/rest/api/3`: a different base
 // path, its own pagination dialect, and its own way of not existing — a site
 // without Jira Software answers 403/404 on `/board`. That last translation
 // (CC-34) belongs to `api/agile.ts` (`asAgileError`), which is the only layer
@@ -868,6 +868,81 @@ function sprintStateResult(
 }
 
 // ---------------------------------------------------------------------------
+// 11a. `jira_update_sprint` (D135)
+// ---------------------------------------------------------------------------
+
+const updateSprintInput = writeToolInput({
+  sprintId: agileIdArg.describe('Sprint id from jira_list_sprints; not a closed one.'),
+  name: z.string().min(1).optional().describe('New sprint name. Omit to keep it.'),
+  goal: z.string().optional().describe('New sprint goal; "" clears it. Omit to keep it.'),
+  startDate: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(`New start. ${SPRINT_DATE_FORMAT} Omit to keep it.`),
+  endDate: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(`New end. ${SPRINT_DATE_FORMAT} Omit to keep it.`),
+});
+
+/** Result of {@link updateSprintTool}. */
+interface UpdateSprintData {
+  readonly sprintId: number;
+  /** The fields that were sent; everything else was left as it was. */
+  readonly updated: readonly string[];
+  readonly status: number;
+  readonly sprint?: AgileSprint;
+}
+
+export const updateSprintTool = defineTool<
+  z.infer<typeof updateSprintInput>,
+  UpdateSprintData
+>({
+  name: 'jira_update_sprint',
+  title: 'Update sprint',
+  description:
+    "Edits a sprint's name, goal or dates and leaves every other field as it is; at " +
+    'least one is required. It never changes the state — jira_start_sprint and ' +
+    'jira_close_sprint do. A future sprint can take any edit and an active one can move ' +
+    'its end date; Jira refuses edits to a closed sprint.',
+  package: 'agile',
+  annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+  writeTier: 'standard',
+  input: updateSprintInput,
+  example: {
+    summary: 'Extend a sprint by two days and restate its goal',
+    arguments: {
+      sprintId: 43,
+      goal: 'Ship the checkout fixes and the refund flow.',
+      endDate: '2026-11-11T17:00:00.000+02:00',
+    },
+  },
+  handler(args, ctx) {
+    return guarded(async () => {
+      const result = await ctx.api.updateSprint({
+        ...callBase(ctx),
+        sprintId: args.sprintId,
+        name: args.name,
+        goal: args.goal,
+        startDate: args.startDate,
+        endDate: args.endDate,
+      });
+      const data: UpdateSprintData = {
+        sprintId: result.sprintId,
+        updated: result.updated,
+        status: result.status,
+        ...(result.sprint === undefined ? {} : { sprint: result.sprint }),
+      };
+      const goal = result.sprint?.goal;
+      const untrusted = typeof goal === 'string' && goal !== '';
+      return ok<UpdateSprintData>(data, untrusted ? { untrusted } : {});
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // 12. The package
 // ---------------------------------------------------------------------------
 
@@ -894,6 +969,7 @@ export const agilePackage: PackageSpec = {
     createSprintTool,
     startSprintTool,
     closeSprintTool,
+    updateSprintTool,
   ],
   prompts: [sprintReviewPrompt],
 };

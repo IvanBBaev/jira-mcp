@@ -2615,6 +2615,53 @@
             "required": ["sprintId"],
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_update_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "goal": {
+                "type": "string"
+              },
+              "startDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
         }
       ]
     },

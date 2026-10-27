@@ -515,6 +515,10 @@ and `https://developer.atlassian.com/cloud/jira/software/rest/api-group-backlog/
 - **The 50-issue cap is Jira's own**, identical on the sprint move and the
   backlog move, and it is enforced client-side (D22): an over-cap batch is
   refused with nothing sent, rather than half-applied upstream.
+- **Sprint edit (D135).** `POST /rest/agile/1.0/sprint/{sprintId}` with any of
+  `name`, `goal`, `startDate`, `endDate` and no `state` — the same partial
+  update as start and close. A closed sprint answers **400**; an active one
+  accepts a new `endDate` and `goal`.
 
 ## Watchers, votes, components, versions and roles
 

@@ -49,6 +49,7 @@ import {
   getBoardConfiguration,
   getSprint,
   listBacklogIssues,
+  updateSprint,
   listBoards,
   listSprintIssues,
   listSprints,
@@ -1742,4 +1743,100 @@ test('CC-1487: a backlog refusal (kanban without a backlog) passes through', asy
 
   assert.equal(error.kind, 'validation');
   assert.equal(error.httpStatus, 400);
+});
+
+// ---------------------------------------------------------------------------
+// Sprint edit (D135)
+// ---------------------------------------------------------------------------
+
+test('CC-1489: updateSprint sends only the named fields, as a partial POST', async () => {
+  const jira = createFakeJiraRequest().on(
+    SPRINT_STATE_ROUTE,
+    jiraOk({ ...sprintEchoBody('future'), goal: 'Ship the refund flow' }),
+  );
+
+  const result = await updateSprint({
+    jira: jira.fn,
+    sprintId: 42,
+    goal: '  Ship the refund flow ',
+    endDate: '2026-11-11T17:00:00.000+02:00',
+  });
+
+  const request = jira.lastRequest();
+  // POST, never PUT: the PUT nulls every field the body leaves out.
+  assert.equal(request?.method, 'POST');
+  assert.deepEqual(request?.body, {
+    goal: 'Ship the refund flow',
+    endDate: '2026-11-11T17:00:00.000+02:00',
+  });
+  assert.equal(request?.safe, undefined);
+  assert.deepEqual(result.updated, ['goal', 'endDate']);
+  assert.equal(result.sprintId, 42);
+  assert.equal(result.sprint?.goal, 'Ship the refund flow');
+});
+
+test('CC-1489: an empty goal clears it rather than being dropped', async () => {
+  const jira = createFakeJiraRequest().on(
+    SPRINT_STATE_ROUTE,
+    jiraOk(sprintEchoBody('future')),
+  );
+
+  const result = await updateSprint({ jira: jira.fn, sprintId: 42, goal: '' });
+
+  assert.deepEqual(jira.lastRequest()?.body, { goal: '' });
+  assert.deepEqual(result.updated, ['goal']);
+});
+
+test('CC-1490: updateSprint refuses an empty edit, an empty name or date, before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const none = asJiraError(
+    await caught(() => updateSprint({ jira: jira.fn, sprintId: 42 })),
+  );
+  assert.equal(none.kind, 'validation');
+  assert.match(none.message, /at least one of name, goal, startDate or endDate/);
+
+  const name = asJiraError(
+    await caught(() => updateSprint({ jira: jira.fn, sprintId: 42, name: '  ' })),
+  );
+  assert.match(name.message, /empty name/);
+
+  const date = asJiraError(
+    await caught(() => updateSprint({ jira: jira.fn, sprintId: 42, startDate: ' ' })),
+  );
+  assert.match(date.message, /empty startDate/);
+  assert.match(date.message, /Nothing was sent/);
+
+  const id = asJiraError(
+    await caught(() => updateSprint({ jira: jira.fn, sprintId: 'next', name: 'S1' })),
+  );
+  assert.equal(id.kind, 'validation');
+
+  assert.equal(jira.calls.length, 0);
+});
+
+test("CC-1491: an edit to a closed sprint passes Jira's 400 through, with no echo needed", async () => {
+  const refused = createFakeJiraRequest().on(
+    SPRINT_STATE_ROUTE,
+    jiraErr(
+      createJiraError({
+        kind: 'validation',
+        reason: 'Jira refused POST /rest/agile/1.0/sprint/42 (400).',
+        httpStatus: 400,
+        remediation: 'A closed sprint cannot be edited.',
+      }),
+    ),
+  );
+  const error = asJiraError(
+    await caught(() => updateSprint({ jira: refused.fn, sprintId: 42, name: 'Renamed' })),
+  );
+  assert.equal(error.kind, 'validation');
+  assert.equal(refused.calls.length, 1);
+
+  const silent = createFakeJiraRequest().on(
+    SPRINT_STATE_ROUTE,
+    jiraOk('', { status: 204 }),
+  );
+  const result = await updateSprint({ jira: silent.fn, sprintId: 42, name: 'Renamed' });
+  assert.deepEqual(result, { sprintId: 42, updated: ['name'], status: 204 });
 });

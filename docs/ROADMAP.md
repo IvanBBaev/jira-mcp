@@ -213,6 +213,7 @@ Writes, standard tier:
 - **`jira_update_sprint`** — goal, dates and name over the same
   `POST /rest/agile/1.0/sprint/{id}` partial update that start and close
   already use; the sprint has create, start, close and delete, and no edit.
+  Shipped as `jira_update_sprint` (D135).
 - **`jira_rank_issues`**, `PUT /rest/agile/1.0/issue/rank`:
   `jira_move_to_sprint` says in its own description that ranking is
   unchanged.

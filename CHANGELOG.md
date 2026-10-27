@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_update_sprint` (D135) in the `agile` package: edits a sprint's name,
+  goal or dates through the partial update, leaving the state to the
+  lifecycle tools.
 - `jira_get_backlog` (D134) in the `agile` package: one page of a board's
   backlog in rank order, rows shaped like `jira_search`, with `fields`, `jql`
   and `startAt` as on `jira_get_sprint_issues`.
