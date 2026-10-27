@@ -224,8 +224,16 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   is never called, not even as a fallback. UNVERIFIED against a host.
 - `jira_create_issue` / `jira_update_issue` accept a passthrough `fields` object
   for custom fields; the tool description tells the model to discover ids first.
+- Priorities, resolutions and issue types (D138): `GET /priority/search` and
+  `GET /resolution/search` are classic PageBeans over `values`
+  (`startAt`/`maxResults`, default 50); the unpaginated `GET /priority` and
+  `GET /resolution` are deprecated and not used. `GET /issuetype` is a bare
+  array of every type the caller can see; a team-managed project's own type
+  carries `scope: {type: PROJECT, project: {id}}`, so names repeat and ids do
+  not. Cloud only here — the Data Center adapter stubs all three.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
-  on Data Center, and the two create-meta routes) are cached in memory for
+  on Data Center, the two create-meta routes, and since D138
+  `/priority/search`, `/resolution/search` and `/issuetype`) are cached in memory for
   `JIRA_META_CACHE_TTL_S` seconds (D123). A custom field created outside the
   server shows up after the TTL or a restart; set the TTL to `0` when that
   matters. `/issue/{key}/transitions` is never cached — it depends on the

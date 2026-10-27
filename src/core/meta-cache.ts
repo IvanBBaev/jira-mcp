@@ -59,6 +59,9 @@ export const META_CACHE_ROUTES: readonly string[] = [
   '/status',
   '/issue/createmeta/{projectIdOrKey}/issuetypes',
   '/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
+  '/priority/search',
+  '/resolution/search',
+  '/issuetype',
 ];
 
 /**

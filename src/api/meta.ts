@@ -83,6 +83,9 @@ export const STATUS_PAGE_SIZE = 200;
 /** Page size for both createmeta endpoints (server default and cap: 50). */
 export const CREATE_META_PAGE_SIZE = 50;
 
+/** `GET /priority/search` and `GET /resolution/search` page size (D138). */
+export const CATALOGUE_PAGE_SIZE = 50;
+
 /**
  * `lead` is an EXPAND on `/project/search`, not a default field, and TOOLS.md
  * promises the lead in the project list — so the loop asks for it unless the
@@ -187,6 +190,12 @@ export type ListStatusesOptions = MetaPagedOptions & StatusFilters;
 
 /** Options for {@link listLinkTypes}. */
 export type ListLinkTypesOptions = MetaOptions;
+
+/** Options for {@link listPriorities} and {@link listResolutions} (D138). */
+export type ListCatalogueOptions = MetaPagedOptions;
+
+/** Options for {@link listIssueTypes} (D138). */
+export type ListIssueTypesOptions = MetaOptions;
 
 // ---------------------------------------------------------------------------
 // 3. Result shapes
@@ -379,6 +388,31 @@ export interface LinkTypeInfo {
   readonly inward: string;
   /** e.g. `blocks` — the phrase for the OUTWARD issue. */
   readonly outward: string;
+}
+
+/** One row of `GET /priority/search` (D138). */
+export interface PriorityInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  /** The colour Jira paints the priority with, e.g. `#ff7452`. */
+  readonly statusColor?: string;
+  /** The priority a new issue gets when none is set. */
+  readonly isDefault?: boolean;
+}
+
+/** One row of `GET /resolution/search` (D138). */
+export interface ResolutionInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly isDefault?: boolean;
+}
+
+/** One row of `GET /issuetype` (D138). */
+export interface IssueTypeInfo extends IssueTypeRef {
+  /** Numeric project id for a team-managed (project-scoped) type; absent when global. */
+  readonly scopeProjectId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +912,65 @@ export async function listLinkTypes(
   );
 }
 
+/**
+ * List priorities — `GET /priority/search`, classic pagination over a
+ * `values` array (D138). The unpaginated `GET /priority` is deprecated.
+ */
+export function listPriorities(
+  options: ListCatalogueOptions,
+): Promise<ClassicLoopResult<PriorityInfo>> {
+  return runClassic(
+    options,
+    CATALOGUE_PAGE_SIZE,
+    (cursor) => ({
+      method: 'GET',
+      path: '/priority/search',
+      query: { startAt: cursor.startAt, maxResults: cursor.maxResults },
+    }),
+    (response) => classicPage(response, 'values', 'priority search', mapPriority),
+  );
+}
+
+/**
+ * List resolutions — `GET /resolution/search`, classic pagination over a
+ * `values` array (D138). The unpaginated `GET /resolution` is deprecated.
+ */
+export function listResolutions(
+  options: ListCatalogueOptions,
+): Promise<ClassicLoopResult<ResolutionInfo>> {
+  return runClassic(
+    options,
+    CATALOGUE_PAGE_SIZE,
+    (cursor) => ({
+      method: 'GET',
+      path: '/resolution/search',
+      query: { startAt: cursor.startAt, maxResults: cursor.maxResults },
+    }),
+    (response) => classicPage(response, 'values', 'resolution search', mapResolution),
+  );
+}
+
+/**
+ * List the issue types the caller can see — `GET /issuetype`, unpaginated, a
+ * bare JSON array (D138). Team-managed projects contribute their own
+ * project-scoped types, so two rows may share a name; `scopeProjectId` tells
+ * them apart.
+ */
+export async function listIssueTypes(
+  options: ListIssueTypesOptions,
+): Promise<readonly IssueTypeInfo[]> {
+  const response = await sendOne(options, { method: 'GET', path: '/issuetype' });
+  if (!Array.isArray(response.data)) {
+    throw shapeError(
+      'GET /issuetype answered with something other than a JSON array.',
+      'Re-run; if it persists, check that the site is a Jira Cloud v3 endpoint.',
+    );
+  }
+  return response.data.map((entry, index) =>
+    mapIssueTypeInfo(requireRecord(entry, `issue type #${index}`)),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 8. Request plumbing
 // ---------------------------------------------------------------------------
@@ -1253,5 +1346,33 @@ function mapLinkType(entry: Record<string, unknown>): LinkTypeInfo {
     name: requireField(readString(entry, 'name'), 'name', 'issue link type'),
     inward: requireField(readString(entry, 'inward'), 'inward', 'issue link type'),
     outward: requireField(readString(entry, 'outward'), 'outward', 'issue link type'),
+  });
+}
+
+function mapPriority(entry: Record<string, unknown>): PriorityInfo {
+  return compact({
+    id: requireField(readId(entry, 'id'), 'id', 'priority'),
+    name: requireField(readString(entry, 'name'), 'name', 'priority'),
+    description: readString(entry, 'description'),
+    statusColor: readString(entry, 'statusColor'),
+    isDefault: readBoolean(entry, 'isDefault'),
+  });
+}
+
+function mapResolution(entry: Record<string, unknown>): ResolutionInfo {
+  return compact({
+    id: requireField(readId(entry, 'id'), 'id', 'resolution'),
+    name: requireField(readString(entry, 'name'), 'name', 'resolution'),
+    description: readString(entry, 'description'),
+    isDefault: readBoolean(entry, 'isDefault'),
+  });
+}
+
+function mapIssueTypeInfo(entry: Record<string, unknown>): IssueTypeInfo {
+  const scope = asRecord(entry.scope);
+  const scopeProject = scope === undefined ? undefined : asRecord(scope.project);
+  return compact({
+    ...mapIssueType(entry),
+    scopeProjectId: scopeProject === undefined ? undefined : readId(scopeProject, 'id'),
   });
 }

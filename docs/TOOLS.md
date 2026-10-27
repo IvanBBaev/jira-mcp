@@ -239,8 +239,8 @@ control that makes the risk visible.
   carries a goal, and the `jira_update_component` / `jira_update_version`
   echoes whenever the echoed record carries a description (CC-600) — a partial
   update echoes the whole record, so a rename still returns tenant prose; and
-  `jira_rank_issues` whenever a refused entry carries Jira's error text (D136). Metadata-only tools (fields, statuses, projects, boards,
-  capabilities) are not content-bearing — board and sprint *names* are free
+  `jira_rank_issues` whenever a refused entry carries Jira's error text (D136). Metadata-only tools (fields, statuses, priorities,
+  resolutions, issue types, projects, boards, capabilities) are not content-bearing — board and sprint *names* are free
   text but issue/comment class content is the branded category. The filter pair is branded despite being catalogue-shaped: a saved
   filter's name, description and stored **JQL** are written by tenant users,
   and the JQL is handed over precisely so the model can run it next.
@@ -453,9 +453,12 @@ irreversible tier, where destruction pays the tier's full ceremony.
 | `jira_get_create_meta` | `GET /rest/api/3/issue/createmeta/{project}/issuetypes[/{type}]` | Required/optional fields incl. allowed values, per project + issue type. |
 | `jira_list_statuses` | `GET /rest/api/3/statuses/search` | Supports `projectId?` filter; paged internally up to `JIRA_MAX_PAGES` — no `startAt` input, `paging.partial` says more exist upstream. (`GET /rest/api/3/status` returns the full unfiltered list — not used.) |
 | `jira_list_link_types` | `GET /rest/api/3/issueLinkType` | Names for `jira_link_issues`. |
+| `jira_list_priorities` | `GET /rest/api/3/priority/search` | id, name, description, `statusColor`, `isDefault`. Paged internally up to `JIRA_MAX_PAGES` like the statuses (D138). The deprecated unpaginated `GET /priority` is not used. |
+| `jira_list_resolutions` | `GET /rest/api/3/resolution/search` | id, name, description, `isDefault` — the names a transition screen and `resolution =` JQL take. Paged internally (D138). |
+| `jira_list_issue_types` | `GET /rest/api/3/issuetype` | Every issue type the caller can see, site-wide: id, name, `subtask`, `hierarchyLevel`, and `scopeProjectId` for a team-managed project's own type — names repeat across scopes, ids do not. Unpaginated. Per-project creatable types stay with `jira_get_create_meta` (D138). |
 
-The four catalogue reads here — fields, create meta, statuses, link types —
-are answered from an in-process cache for `JIRA_META_CACHE_TTL_S` seconds
+The seven catalogue reads here — fields, create meta, statuses, link types,
+priorities, resolutions and issue types (D138) — are answered from an in-process cache for `JIRA_META_CACHE_TTL_S` seconds
 (default 300) after the first fetch (D123): a model asks for them before
 every write it plans, and they change once a quarter. The cache is per
 profile, never stores a failed fetch, and never covers projects (`_untrusted`
@@ -743,8 +746,8 @@ read differently there, and the tool descriptions above describe Cloud:
 
 ## Counts
 
-**66 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
-issues-delete 8, attachments 3, collab 12, meta 6, users 1, agile 13,
+**69 tools / 11 packages** (core 3, search 4, issues 6, issues-write 8,
+issues-delete 8, attachments 3, collab 12, meta 9, users 1, agile 13,
 portfolio 2). The
 manifest snapshot test locks this surface; adding a tool requires updating the
 snapshot deliberately. Counts elsewhere in docs are derived from this catalog —

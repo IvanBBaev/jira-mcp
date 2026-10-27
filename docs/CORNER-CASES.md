@@ -3379,3 +3379,19 @@ Prompts (D125):
 - **CC-1505** — `jira_set_estimate` is an idempotent `standard` write; its
   schema refuses a negative or missing value, and the echo is not branded
   untrusted.
+
+## Priorities, resolutions and issue types (D138, 2026-10-27)
+
+- **CC-1506** — `listPriorities` walks `GET /priority/search` page by page
+  until `isLast`, normalising numeric ids and keeping `statusColor` and
+  `isDefault`.
+- **CC-1507** — `listResolutions` reads `GET /resolution/search` at the
+  default page size of 50; a page without a `values` array is
+  `unexpected_shape`, never an empty list.
+- **CC-1508** — `listIssueTypes` keeps a team-managed type's project id as
+  `scopeProjectId`, so two `Task` rows stay distinct; a body that is not an
+  array is `unexpected_shape`.
+- **CC-1509** — the metadata cache answers all three routes from memory, one
+  entry per page of a paged catalogue.
+- **CC-1510** — the three tools return their rows with `count` (and `paging`
+  for the paged two), carry no hint and are never branded untrusted.

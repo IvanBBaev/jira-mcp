@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // Package `meta` — the discovery reads (TOOLS.md §Package `meta`, WP-33).
 //
-// Six read-only tools that answer "what is this instance called?": projects,
-// project detail, the field catalog, create metadata, statuses and issue link
-// types. Every write tool in the catalog depends on one of them, because Jira
+// Nine read-only tools that answer "what is this instance called?": projects,
+// project detail, the field catalog, create metadata, statuses, issue link
+// types, and the priority, resolution and issue type catalogues (D138). Every write tool in the catalog depends on one of them, because Jira
 // ids (`customfield_10016`, issue type `10002`, a numeric project id) are
 // tenant-specific and cannot be guessed.
 //
@@ -27,7 +27,8 @@
 //     (`partial`, `stopReason`, `nextStartAt`, `note`) and never as a hint.
 //
 // Metadata is mostly not content-bearing (TOOLS.md §Untrusted content): field
-// names, link types and statuses are admin-configured. The exception is
+// names, link types, statuses, priorities, resolutions and issue types are
+// admin-configured. The exception is
 // `jira_get_project`, whose project, component and version descriptions are
 // tenant-authored free text, so that one result is branded `_untrusted`
 // (CC-146).
@@ -41,10 +42,13 @@ import { filterFields } from '../api/meta.js';
 import type {
   CreateMetaField,
   FieldInfo,
+  IssueTypeInfo,
   IssueTypeRef,
   LinkTypeInfo,
+  PriorityInfo,
   ProjectDetail,
   ProjectSummary,
+  ResolutionInfo,
   StatusInfo,
 } from '../api/meta.js';
 import type { ClassicLoopResult, PageStopReason } from '../api/shared.js';
@@ -581,6 +585,123 @@ export const listLinkTypesTool = defineTool<
 });
 
 // ---------------------------------------------------------------------------
+// 8b. `jira_list_priorities` (D138)
+// ---------------------------------------------------------------------------
+
+const listPrioritiesInput = toolInput({});
+
+/** Result of {@link listPrioritiesTool}. */
+interface PriorityListData {
+  readonly priorities: readonly PriorityInfo[];
+  readonly count: number;
+  readonly paging: PagingInfo;
+}
+
+export const listPrioritiesTool = defineTool<
+  z.infer<typeof listPrioritiesInput>,
+  PriorityListData
+>({
+  name: 'jira_list_priorities',
+  title: 'List priorities',
+  description:
+    'Lists the priorities configured on this site — id, name, colour and which one ' +
+    'is the default — so JQL like priority = High and the priority field of a ' +
+    'create or update name a priority that really exists. Priority names are ' +
+    'tenant-specific; read this instead of guessing "Critical" or "P1". Served ' +
+    'from the metadata cache (JIRA_META_CACHE_TTL_S).',
+  package: 'meta',
+  annotations: READ_ANNOTATIONS,
+  input: listPrioritiesInput,
+  example: { summary: 'The priorities this site defines', arguments: {} },
+  handler(_args, ctx) {
+    return guarded(async () => {
+      const loop = await ctx.api.listPriorities(pagedOptions(ctx));
+      return ok<PriorityListData>({
+        priorities: loop.items,
+        count: loop.items.length,
+        paging: metaPaging(loop),
+      });
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 8c. `jira_list_resolutions` (D138)
+// ---------------------------------------------------------------------------
+
+const listResolutionsInput = toolInput({});
+
+/** Result of {@link listResolutionsTool}. */
+interface ResolutionListData {
+  readonly resolutions: readonly ResolutionInfo[];
+  readonly count: number;
+  readonly paging: PagingInfo;
+}
+
+export const listResolutionsTool = defineTool<
+  z.infer<typeof listResolutionsInput>,
+  ResolutionListData
+>({
+  name: 'jira_list_resolutions',
+  title: 'List resolutions',
+  description:
+    "Lists the resolutions configured on this site (Done, Won't Do, Duplicate, ...) " +
+    'with their ids. A transition screen that asks for a resolution takes one of ' +
+    'these names, and JQL like resolution = Duplicate must match one exactly. ' +
+    'Served from the metadata cache (JIRA_META_CACHE_TTL_S).',
+  package: 'meta',
+  annotations: READ_ANNOTATIONS,
+  input: listResolutionsInput,
+  example: { summary: 'The resolutions this site defines', arguments: {} },
+  handler(_args, ctx) {
+    return guarded(async () => {
+      const loop = await ctx.api.listResolutions(pagedOptions(ctx));
+      return ok<ResolutionListData>({
+        resolutions: loop.items,
+        count: loop.items.length,
+        paging: metaPaging(loop),
+      });
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 8d. `jira_list_issue_types` (D138)
+// ---------------------------------------------------------------------------
+
+const listIssueTypesInput = toolInput({});
+
+/** Result of {@link listIssueTypesTool}. */
+interface IssueTypeListData {
+  readonly issueTypes: readonly IssueTypeInfo[];
+  readonly count: number;
+}
+
+export const listIssueTypesTool = defineTool<
+  z.infer<typeof listIssueTypesInput>,
+  IssueTypeListData
+>({
+  name: 'jira_list_issue_types',
+  title: 'List issue types',
+  description:
+    'Lists every issue type the caller can see, site-wide: id, name, subtask flag, ' +
+    "hierarchy level, and scopeProjectId for a team-managed project's own type — " +
+    'two rows can share a name, so pick by id. For the types ONE project can ' +
+    'create, with their fields, use jira_get_create_meta instead. Unpaginated; ' +
+    'complete unless a `truncated` hint says otherwise.',
+  package: 'meta',
+  annotations: READ_ANNOTATIONS,
+  input: listIssueTypesInput,
+  example: { summary: 'Every issue type on this site', arguments: {} },
+  handler(_args, ctx) {
+    return guarded(async () => {
+      const issueTypes = await ctx.api.listIssueTypes(callBase(ctx));
+      return ok<IssueTypeListData>({ issueTypes, count: issueTypes.length });
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // 9. The package
 // ---------------------------------------------------------------------------
 
@@ -593,7 +714,8 @@ export const metaPackage: PackageSpec = {
   id: 'meta',
   title: 'Metadata & discovery',
   description:
-    'Projects, fields, create metadata, statuses and link types — the reads that ' +
+    'Projects, fields, create metadata, statuses, link types, priorities, ' +
+    'resolutions and issue types — the reads that ' +
     'turn names into the ids every other package needs.',
   tools: [
     listProjectsTool,
@@ -602,5 +724,8 @@ export const metaPackage: PackageSpec = {
     getCreateMetaTool,
     listStatusesTool,
     listLinkTypesTool,
+    listPrioritiesTool,
+    listResolutionsTool,
+    listIssueTypesTool,
   ],
 };

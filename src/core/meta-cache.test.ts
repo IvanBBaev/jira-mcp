@@ -174,6 +174,9 @@ describe('createMetaCache — what is cacheable', () => {
       '/issue/createmeta/{projectIdOrKey}/issuetypes',
       '/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
       '/issueLinkType',
+      '/issuetype',
+      '/priority/search',
+      '/resolution/search',
       '/status',
       '/statuses/search',
     ]);
@@ -202,6 +205,26 @@ describe('createMetaCache — what is cacheable', () => {
     assert.deepEqual(a1.data, { values: ['a'] });
     assert.deepEqual(x1.data, { values: ['x'] });
     assert.deepEqual(a2.data, { values: ['a'] });
+  });
+
+  it('[CC-1509] caches the D138 catalogues, one entry per page of a paged one', async () => {
+    const { fake, jira } = setup();
+    fake.on('GET /rest/api/3/priority/search', jiraOk({ values: ['p'] }));
+    fake.on('GET /rest/api/3/resolution/search', jiraOk({ values: ['r'] }));
+    fake.on('GET /rest/api/3/issuetype', jiraOk(['t']));
+    const page0: JiraRequestSpec = {
+      method: 'GET',
+      path: '/priority/search',
+      query: { startAt: 0, maxResults: 50 },
+    };
+    const page1: JiraRequestSpec = { ...page0, query: { startAt: 50, maxResults: 50 } };
+    const resolutions: JiraRequestSpec = { method: 'GET', path: '/resolution/search' };
+    const types: JiraRequestSpec = { method: 'GET', path: '/issuetype' };
+
+    for (const req of [page0, page1, resolutions, types]) await jira(req);
+    assert.equal(fake.calls.length, 4);
+    for (const req of [page0, page1, resolutions, types]) await jira(req);
+    assert.equal(fake.calls.length, 4);
   });
 
   it('[CC-1412] never caches a POST — `POST /field` creates a custom field', async () => {

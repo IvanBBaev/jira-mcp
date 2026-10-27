@@ -35,8 +35,11 @@ import {
   getProject,
   listCreateMetaIssueTypes,
   listFields,
+  listIssueTypes,
   listLinkTypes,
+  listPriorities,
   listProjects,
+  listResolutions,
   listStatuses,
 } from './meta.js';
 
@@ -962,4 +965,117 @@ test('listStatuses maps a status with no scope and a scope with no project', asy
     statusCategory: 'IN_PROGRESS',
     scopeType: 'PROJECT',
   });
+});
+
+// ---------------------------------------------------------------------------
+// Catalogues (D138)
+// ---------------------------------------------------------------------------
+
+test('CC-1506: listPriorities walks /priority/search pages and keeps the colour and default', async () => {
+  const jira = createFakeJiraRequest();
+  jira
+    .enqueue(
+      jiraOk({
+        startAt: 0,
+        maxResults: 1,
+        total: 2,
+        isLast: false,
+        values: [
+          // synthetic
+          { id: '1', name: 'Highest', statusColor: '#ff5630', isDefault: false },
+        ],
+      }),
+    )
+    .enqueue(
+      jiraOk({
+        startAt: 1,
+        maxResults: 1,
+        total: 2,
+        isLast: true,
+        values: [{ id: 3, name: 'Medium', description: 'Normal', isDefault: true }],
+      }),
+    );
+
+  const result = await listPriorities({ jira: jira.fn, pageSize: 1 });
+
+  assert.deepEqual(result.items, [
+    { id: '1', name: 'Highest', statusColor: '#ff5630', isDefault: false },
+    { id: '3', name: 'Medium', description: 'Normal', isDefault: true },
+  ]);
+  assert.equal(result.partial, false);
+  assert.deepEqual(jira.routes(), [
+    'GET /rest/api/3/priority/search',
+    'GET /rest/api/3/priority/search',
+  ]);
+  assert.deepEqual(
+    jira.calls.map((call) => call.query?.startAt),
+    [0, 1],
+  );
+});
+
+test('CC-1507: listResolutions reads /resolution/search and refuses a page without values', async () => {
+  const jira = createFakeJiraRequest();
+  jira
+    .enqueue(
+      jiraOk({
+        startAt: 0,
+        maxResults: 50,
+        total: 2,
+        isLast: true,
+        values: [
+          { id: '10000', name: 'Done', isDefault: true },
+          { id: '10001', name: "Won't Do", description: 'Not worth it' },
+        ],
+      }),
+    )
+    .enqueue(jiraOk({ startAt: 0, isLast: true }));
+
+  const result = await listResolutions({ jira: jira.fn });
+  assert.deepEqual(
+    result.items.map((row) => row.name),
+    ['Done', "Won't Do"],
+  );
+  assert.equal(jira.calls[0]?.path, '/resolution/search');
+  assert.equal(jira.calls[0]?.query?.maxResults, 50);
+
+  await assert.rejects(
+    listResolutions({ jira: jira.fn }),
+    isJiraError('unexpected_shape'),
+  );
+});
+
+test('CC-1508: listIssueTypes keeps a project scope apart and refuses a non-array body', async () => {
+  const jira = createFakeJiraRequest();
+  jira
+    .enqueue(
+      jiraOk([
+        { id: '10001', name: 'Task', subtask: false, hierarchyLevel: 0 },
+        {
+          id: '10020',
+          name: 'Task',
+          subtask: false,
+          hierarchyLevel: 0,
+          scope: { type: 'PROJECT', project: { id: '10000' } },
+        },
+      ]),
+    )
+    .enqueue(jiraOk({ issueTypes: [] }));
+
+  const types = await listIssueTypes({ jira: jira.fn });
+  assert.deepEqual(types, [
+    { id: '10001', name: 'Task', subtask: false, hierarchyLevel: 0 },
+    {
+      id: '10020',
+      name: 'Task',
+      subtask: false,
+      hierarchyLevel: 0,
+      scopeProjectId: '10000',
+    },
+  ]);
+  assert.deepEqual(jira.routes(), ['GET /rest/api/3/issuetype']);
+
+  await assert.rejects(
+    listIssueTypes({ jira: jira.fn }),
+    isJiraError('unexpected_shape'),
+  );
 });

@@ -35,8 +35,11 @@ import {
   getCreateMetaTool,
   getProjectTool,
   listFieldsTool,
+  listIssueTypesTool,
   listLinkTypesTool,
+  listPrioritiesTool,
   listProjectsTool,
+  listResolutionsTool,
   listStatusesTool,
   metaPackage,
   PARTIAL_CREATE_SCREEN_WARNING,
@@ -188,7 +191,7 @@ function createMetaPage(
 // Package and spec shape
 // ---------------------------------------------------------------------------
 
-test('the package exposes the six meta tools in TOOLS.md order', () => {
+test('the package exposes the nine meta tools in TOOLS.md order', () => {
   assert.equal(metaPackage.id, 'meta');
   assert.notEqual(metaPackage.title.trim(), '');
   assert.notEqual(metaPackage.description.trim(), '');
@@ -201,6 +204,9 @@ test('the package exposes the six meta tools in TOOLS.md order', () => {
       'jira_get_create_meta',
       'jira_list_statuses',
       'jira_list_link_types',
+      'jira_list_priorities',
+      'jira_list_resolutions',
+      'jira_list_issue_types',
     ],
   );
 });
@@ -697,6 +703,56 @@ test('jira_list_link_types returns the inward/outward phrase pairs', async () =>
   assert.equal(result.hints, undefined);
 });
 
+test('CC-1510: the D138 catalogue tools report their rows, count and paging', async () => {
+  const jira = createFakeJiraRequest();
+  // synthetic — GET /rest/api/3/priority/search, /resolution/search, /issuetype
+  jira.on(
+    'GET /rest/api/3/priority/search',
+    jiraOk({
+      startAt: 0,
+      maxResults: 50,
+      total: 1,
+      isLast: true,
+      values: [{ id: '2', name: 'High', statusColor: '#ff7452' }],
+    }),
+  );
+  jira.on(
+    'GET /rest/api/3/resolution/search',
+    jiraOk({
+      startAt: 0,
+      maxResults: 50,
+      total: 1,
+      isLast: true,
+      values: [{ id: '10000', name: 'Done', isDefault: true }],
+    }),
+  );
+  jira.on(
+    'GET /rest/api/3/issuetype',
+    jiraOk([{ id: '10002', name: 'Story', subtask: false, hierarchyLevel: 0 }]),
+  );
+  const ctx = createCtx(jira);
+
+  const priorities = await run(listPrioritiesTool, {}, ctx);
+  assert.deepEqual(dataOf(priorities).priorities, [
+    { id: '2', name: 'High', statusColor: '#ff7452' },
+  ]);
+  assert.equal(dataOf(priorities).paging.partial, false);
+
+  const resolutions = dataOf(await run(listResolutionsTool, {}, ctx));
+  assert.equal(resolutions.count, 1);
+  assert.equal(at(resolutions.resolutions, 0).isDefault, true);
+
+  const types = await run(listIssueTypesTool, {}, ctx);
+  assert.deepEqual(dataOf(types), {
+    issueTypes: [{ id: '10002', name: 'Story', subtask: false, hierarchyLevel: 0 }],
+    count: 1,
+  });
+  for (const result of [priorities, types]) {
+    assert.equal(result._untrusted, undefined);
+    assert.deepEqual(hintCodes(result), []);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -753,7 +809,7 @@ test('a non-JiraError throw keeps travelling, and is contained one ring up', asy
 test('[CC-253] an unpaginated list does not promise completeness past the character budget', () => {
   // "Not paginated" is true; "always complete" was not — the result ladder can
   // still trim the array, and a model told "complete" would not look for the hint.
-  for (const tool of [listFieldsTool, listLinkTypesTool]) {
+  for (const tool of [listFieldsTool, listLinkTypesTool, listIssueTypesTool]) {
     assert.doesNotMatch(tool.description, /always complete/, tool.name);
     assert.match(tool.description, /`truncated` hint/, tool.name);
   }

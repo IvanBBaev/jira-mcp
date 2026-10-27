@@ -14,6 +14,9 @@ env var names — not internal refactors.
 
 ### Added
 
+- `jira_list_priorities`, `jira_list_resolutions` and `jira_list_issue_types`
+  (D138) in the `meta` package: the site's priority, resolution and issue type
+  catalogues, served from the metadata cache.
 - `jira_set_estimate` (D137) in the `agile` package: sets an issue's estimate
   in whichever field its board estimates with, so no custom field id is
   needed.

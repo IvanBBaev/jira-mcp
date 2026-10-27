@@ -200,7 +200,9 @@ Reads:
 - **Priorities, resolutions and labels** — `GET /rest/api/3/priority`,
   `/resolution` and `/label`. `jira_create_issue` takes a priority by name
   and the model has no list to pick from. All three are immutable
-  catalogues the D123 whitelist would admit.
+  catalogues the D123 whitelist would admit. Priorities and resolutions
+  shipped as `jira_list_priorities` and `jira_list_resolutions` (D138),
+  through the paged `/search` routes, beside `jira_list_issue_types`.
 - **Remote links**, `GET /rest/api/3/issue/{key}/remotelink`: the pull
   requests and pages attached to an issue.
 - **Server info**, `GET /rest/api/3/serverInfo` (`/rest/api/2/serverInfo`

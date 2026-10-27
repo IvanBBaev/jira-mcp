@@ -1144,6 +1144,35 @@ async function readPhase(session, flags, credentials) {
     return `project id ${String(found.projectNumericId)}, fields + createmeta + links`;
   });
 
+  await claim(
+    'C50',
+    'the priority, resolution and issue type catalogues are readable',
+    async () => {
+      const priorities = dataOf(
+        await call(session, 'jira_list_priorities'),
+        'jira_list_priorities',
+      );
+      const resolutions = dataOf(
+        await call(session, 'jira_list_resolutions'),
+        'jira_list_resolutions',
+      );
+      const types = dataOf(
+        await call(session, 'jira_list_issue_types'),
+        'jira_list_issue_types',
+      );
+      // Every Jira site ships at least one of each; an empty list means the
+      // mapping dropped the rows, not that the tenant has none.
+      for (const [name, count] of [
+        ['priorities', priorities.count],
+        ['resolutions', resolutions.count],
+        ['issue types', types.count],
+      ]) {
+        if (count === 0) throw new Error(`no ${name} came back`);
+      }
+      return `${String(priorities.count)} priorities, ${String(resolutions.count)} resolutions, ${String(types.count)} issue types`;
+    },
+  );
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

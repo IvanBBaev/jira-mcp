@@ -1435,6 +1435,49 @@ function buildRoutes(server) {
         }),
     ],
 
+    // D138: the catalogue reads; the paged two honour startAt/maxResults.
+    [
+      'GET',
+      '/rest/api/3/priority/search',
+      (ctx) =>
+        json(
+          200,
+          page(
+            [
+              { id: '1', name: 'Highest', statusColor: '#ff5630', isDefault: false },
+              { id: '3', name: 'Medium', statusColor: '#ffab00', isDefault: true },
+              { id: '5', name: 'Lowest', statusColor: '#0065ff', isDefault: false },
+            ],
+            ctx.query,
+          ),
+        ),
+    ],
+    [
+      'GET',
+      '/rest/api/3/resolution/search',
+      (ctx) =>
+        json(
+          200,
+          page(
+            [
+              { id: '10000', name: 'Done', isDefault: true },
+              { id: '10001', name: "Won't Do", isDefault: false },
+            ],
+            ctx.query,
+          ),
+        ),
+    ],
+    [
+      'GET',
+      '/rest/api/3/issuetype',
+      () =>
+        json(200, [
+          { id: '10001', name: 'Task', subtask: false, hierarchyLevel: 0 },
+          { id: '10002', name: 'Sub-task', subtask: true, hierarchyLevel: -1 },
+          { id: '10003', name: 'Epic', subtask: false, hierarchyLevel: 1 },
+        ]),
+    ],
+
     [
       'GET',
       '/rest/api/3/statuses/search',
