@@ -157,6 +157,8 @@ describe('createMetaCache — what is cacheable', () => {
       },
       { method: 'GET', path: '/issue/ABC-1' },
       { method: 'GET', path: '/field/customfield_10014/context' },
+      // Labels are user-created (D139), not a catalogue.
+      { method: 'GET', path: '/label', query: { startAt: 0, maxResults: 1000 } },
     ];
     for (const req of never) {
       assert.equal(isMetaCacheable(req), false, req.path);
@@ -170,6 +172,7 @@ describe('createMetaCache — what is cacheable', () => {
       assert.equal(isMetaCacheable({ method: 'GET', path }), true, path);
     }
     assert.deepEqual([...META_CACHE_ROUTES].sort(), [
+      '/configuration',
       '/field',
       '/issue/createmeta/{projectIdOrKey}/issuetypes',
       '/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}',
@@ -225,6 +228,21 @@ describe('createMetaCache — what is cacheable', () => {
     assert.equal(fake.calls.length, 4);
     for (const req of [page0, page1, resolutions, types]) await jira(req);
     assert.equal(fake.calls.length, 4);
+  });
+
+  it('[CC-1516] caches the global configuration that holds the time tracking settings', async () => {
+    const { fake, jira } = setup();
+    fake.on('GET /rest/api/3/configuration', jiraOk({ timeTrackingEnabled: true }));
+    const req: JiraRequestSpec = { method: 'GET', path: '/configuration' };
+
+    await jira(req);
+    await jira(req);
+    assert.equal(fake.calls.length, 1);
+    // The admin-only sub-routes are not what the tool reads, and stay uncached.
+    assert.equal(
+      isMetaCacheable({ method: 'GET', path: '/configuration/timetracking' }),
+      false,
+    );
   });
 
   it('[CC-1412] never caches a POST — `POST /field` creates a custom field', async () => {

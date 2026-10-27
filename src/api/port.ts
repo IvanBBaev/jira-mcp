@@ -106,6 +106,7 @@ import {
   listPriorities,
   listResolutions,
   listIssueTypes,
+  getTimeTrackingConfig,
   listLabels,
   listProjects,
   listStatuses,
@@ -228,6 +229,7 @@ export interface JiraApi {
   readonly listPriorities: typeof listPriorities;
   readonly listResolutions: typeof listResolutions;
   readonly listIssueTypes: typeof listIssueTypes;
+  readonly getTimeTrackingConfig: typeof getTimeTrackingConfig;
   readonly listLabels: typeof listLabels;
   readonly listProjects: typeof listProjects;
   readonly listStatuses: typeof listStatuses;
@@ -336,6 +338,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
   listPriorities,
   listResolutions,
   listIssueTypes,
+  getTimeTrackingConfig,
   listLabels,
   listProjects,
   listStatuses,

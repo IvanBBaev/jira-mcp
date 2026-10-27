@@ -62,6 +62,7 @@ export const META_CACHE_ROUTES: readonly string[] = [
   '/priority/search',
   '/resolution/search',
   '/issuetype',
+  '/configuration',
 ];
 
 /**

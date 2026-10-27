@@ -36,6 +36,7 @@ import {
   listCreateMetaIssueTypes,
   listFields,
   filterLabels,
+  getTimeTrackingConfig,
   listIssueTypes,
   listLabels,
   listLinkTypes,
@@ -1107,4 +1108,48 @@ test('CC-1512: filterLabels matches a trimmed substring case-insensitively', () 
   assert.deepEqual(filterLabels(labels, ' END '), ['Backend', 'frontend']);
   assert.equal(filterLabels(labels, undefined), labels);
   assert.equal(filterLabels(labels, '   '), labels);
+});
+
+test('CC-1514: getTimeTrackingConfig reads GET /configuration and derives seconds per day and week', async () => {
+  const jira = createFakeJiraRequest();
+  jira
+    .enqueue(
+      jiraOk({
+        votingEnabled: true,
+        timeTrackingEnabled: true,
+        timeTrackingConfiguration: {
+          workingHoursPerDay: 7.5,
+          workingDaysPerWeek: 5,
+          timeFormat: 'pretty',
+          defaultUnit: 'minute',
+        },
+      }),
+    )
+    .enqueue(jiraOk({ timeTrackingEnabled: false }));
+
+  assert.deepEqual(await getTimeTrackingConfig({ jira: jira.fn }), {
+    enabled: true,
+    workingHoursPerDay: 7.5,
+    workingDaysPerWeek: 5,
+    timeFormat: 'pretty',
+    defaultUnit: 'minute',
+    secondsPerDay: 27000,
+    secondsPerWeek: 135000,
+  });
+  assert.equal(jira.calls[0]?.path, '/configuration');
+  assert.deepEqual(await getTimeTrackingConfig({ jira: jira.fn }), { enabled: false });
+});
+
+test('CC-1515: a configuration without a boolean timeTrackingEnabled is a shape error', async () => {
+  const jira = createFakeJiraRequest();
+  jira.enqueue(jiraOk({ timeTrackingEnabled: 'yes' })).enqueue(jiraOk([]));
+
+  await assert.rejects(
+    getTimeTrackingConfig({ jira: jira.fn }),
+    isJiraError('unexpected_shape'),
+  );
+  await assert.rejects(
+    getTimeTrackingConfig({ jira: jira.fn }),
+    isJiraError('unexpected_shape'),
+  );
 });

@@ -1482,6 +1482,22 @@ function buildRoutes(server) {
       '/rest/api/3/label',
       (ctx) => json(200, page(['backend', 'frontend', 'release-blocker'], ctx.query)),
     ],
+    [
+      'GET',
+      '/rest/api/3/configuration',
+      () =>
+        json(200, {
+          votingEnabled: true,
+          watchingEnabled: true,
+          timeTrackingEnabled: true,
+          timeTrackingConfiguration: {
+            workingHoursPerDay: 8,
+            workingDaysPerWeek: 5,
+            timeFormat: 'pretty',
+            defaultUnit: 'minute',
+          },
+        }),
+    ],
 
     [
       'GET',

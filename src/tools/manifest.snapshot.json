@@ -2247,6 +2247,25 @@
             },
             "additionalProperties": false
           }
+        },
+        {
+          "name": "jira_get_timetracking_config",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         }
       ]
     },

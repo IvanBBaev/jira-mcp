@@ -3407,3 +3407,15 @@ Prompts (D125):
 - **CC-1513** — `jira_list_labels` returns the filtered `labels` with `count`,
   keeps the unfiltered `totalCount`, echoes the trimmed `query`, and is never
   branded untrusted.
+
+## Time tracking settings (D140, 2026-10-27)
+
+- **CC-1514** — `getTimeTrackingConfig` reads `GET /configuration` and derives
+  `secondsPerDay` (hours × 3600) and `secondsPerWeek` (× days), so a 7.5-hour
+  day is 27000 s; with time tracking off only `enabled: false` comes back.
+- **CC-1515** — a body that is not an object, or whose `timeTrackingEnabled`
+  is not a boolean, is `unexpected_shape`, never a guessed `false`.
+- **CC-1516** — the metadata cache answers `/configuration` from memory; the
+  admin-only `/configuration/timetracking` route is not on the list.
+- **CC-1517** — `jira_get_timetracking_config` returns the settings as read and
+  is never branded untrusted.

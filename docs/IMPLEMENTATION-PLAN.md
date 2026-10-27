@@ -1408,7 +1408,9 @@ Cloud only — the Data Center adapter stubs every new member.
       (CC-1506…CC-1510); claim C50.
 - [x] `jira_list_labels` (D139) — `GET /label`, paged internally, filtered
       here, never cached (CC-1511…CC-1513); claim C51.
-- [ ] `jira_get_timetracking_config` — `GET /configuration/timetracking`.
+- [x] `jira_get_timetracking_config` (D140) — `GET /configuration`, not
+      the admin-only `/configuration/timetracking`; cached (CC-1514…CC-1517);
+      claim C52.
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

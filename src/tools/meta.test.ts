@@ -37,6 +37,7 @@ import {
   listFieldsTool,
   listIssueTypesTool,
   listLabelsTool,
+  getTimeTrackingConfigTool,
   listLinkTypesTool,
   listPrioritiesTool,
   listProjectsTool,
@@ -192,7 +193,7 @@ function createMetaPage(
 // Package and spec shape
 // ---------------------------------------------------------------------------
 
-test('the package exposes the ten meta tools in TOOLS.md order', () => {
+test('the package exposes the eleven meta tools in TOOLS.md order', () => {
   assert.equal(metaPackage.id, 'meta');
   assert.notEqual(metaPackage.title.trim(), '');
   assert.notEqual(metaPackage.description.trim(), '');
@@ -209,6 +210,7 @@ test('the package exposes the ten meta tools in TOOLS.md order', () => {
       'jira_list_resolutions',
       'jira_list_issue_types',
       'jira_list_labels',
+      'jira_get_timetracking_config',
     ],
   );
 });
@@ -784,6 +786,35 @@ test('CC-1513: jira_list_labels filters what it fetched and keeps the unfiltered
   assert.equal(all.count, 3);
   assert.equal(all.query, undefined);
   assert.throws(() => listLabelsTool.input.parse({ query: '   ' }));
+});
+
+test('CC-1517: jira_get_timetracking_config returns the settings as they came, unbranded', async () => {
+  const jira = createFakeJiraRequest();
+  // synthetic — GET /rest/api/3/configuration
+  jira.on(
+    'GET /rest/api/3/configuration',
+    jiraOk({
+      timeTrackingEnabled: true,
+      timeTrackingConfiguration: {
+        workingHoursPerDay: 8,
+        workingDaysPerWeek: 5,
+        timeFormat: 'pretty',
+        defaultUnit: 'minute',
+      },
+    }),
+  );
+
+  const result = await run(getTimeTrackingConfigTool, {}, createCtx(jira));
+  assert.deepEqual(dataOf(result), {
+    enabled: true,
+    workingHoursPerDay: 8,
+    workingDaysPerWeek: 5,
+    timeFormat: 'pretty',
+    defaultUnit: 'minute',
+    secondsPerDay: 28800,
+    secondsPerWeek: 144000,
+  });
+  assert.equal(result._untrusted, undefined);
 });
 
 // ---------------------------------------------------------------------------

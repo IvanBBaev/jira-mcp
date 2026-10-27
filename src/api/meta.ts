@@ -203,6 +203,9 @@ export type ListIssueTypesOptions = MetaOptions;
 /** Options for {@link listLabels} (D139). */
 export type ListLabelsOptions = MetaPagedOptions;
 
+/** Options for {@link getTimeTrackingConfig}. */
+export type GetTimeTrackingConfigOptions = MetaOptions;
+
 // ---------------------------------------------------------------------------
 // 3. Result shapes
 // ---------------------------------------------------------------------------
@@ -413,6 +416,24 @@ export interface ResolutionInfo {
   readonly name: string;
   readonly description?: string;
   readonly isDefault?: boolean;
+}
+
+/**
+ * Time tracking settings from `GET /configuration` (D140). The working-time
+ * figures are what turns "1d" or "2w" into seconds on this site.
+ */
+export interface TimeTrackingConfig {
+  readonly enabled: boolean;
+  readonly workingHoursPerDay?: number;
+  readonly workingDaysPerWeek?: number;
+  /** How Jira displays durations: `pretty` ("2d 4h"), `days` or `hours`. */
+  readonly timeFormat?: string;
+  /** Unit a bare number is read in when a user logs work, e.g. `minute`. */
+  readonly defaultUnit?: string;
+  /** `workingHoursPerDay` × 3600 — one "1d" in seconds. */
+  readonly secondsPerDay?: number;
+  /** `secondsPerDay` × `workingDaysPerWeek` — one "1w" in seconds. */
+  readonly secondsPerWeek?: number;
 }
 
 /** One row of `GET /issuetype` (D138). */
@@ -975,6 +996,42 @@ export async function listIssueTypes(
   return response.data.map((entry, index) =>
     mapIssueTypeInfo(requireRecord(entry, `issue type #${index}`)),
   );
+}
+
+/**
+ * Read the site's time tracking settings (D140) from `GET /configuration`,
+ * which needs no permission. `GET /configuration/timetracking/options` holds
+ * the same figures but demands Administer Jira, so it is not used.
+ */
+export async function getTimeTrackingConfig(
+  options: GetTimeTrackingConfigOptions,
+): Promise<TimeTrackingConfig> {
+  const response = await sendOne(options, { method: 'GET', path: '/configuration' });
+  const body = requireRecord(response.data, 'the global configuration');
+  const enabled = readBoolean(body, 'timeTrackingEnabled');
+  if (enabled === undefined) {
+    throw shapeError(
+      'GET /configuration answered without a boolean timeTrackingEnabled.',
+      'Re-run; if it persists, check that the site is a Jira Cloud v3 endpoint.',
+    );
+  }
+  const settings = asRecord(body.timeTrackingConfiguration);
+  if (settings === undefined) return { enabled };
+  const hours = readNumber(settings, 'workingHoursPerDay');
+  const days = readNumber(settings, 'workingDaysPerWeek');
+  const secondsPerDay = hours === undefined ? undefined : Math.round(hours * 3600);
+  return compact({
+    enabled,
+    workingHoursPerDay: hours,
+    workingDaysPerWeek: days,
+    timeFormat: readString(settings, 'timeFormat'),
+    defaultUnit: readString(settings, 'defaultUnit'),
+    secondsPerDay,
+    secondsPerWeek:
+      secondsPerDay === undefined || days === undefined
+        ? undefined
+        : Math.round(secondsPerDay * days),
+  });
 }
 
 /**

@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // Package `meta` — the discovery reads (TOOLS.md §Package `meta`, WP-33).
 //
-// Ten read-only tools that answer "what is this instance called?": projects,
+// Eleven read-only tools that answer "what is this instance called?": projects,
 // project detail, the field catalog, create metadata, statuses, issue link
-// types, the priority, resolution and issue type catalogues (D138) and the
-// labels in use (D139). Every write tool in the catalog depends on one of them, because Jira
+// types, the priority, resolution and issue type catalogues (D138), the
+// labels in use (D139) and the time tracking settings (D140). Every write tool in the catalog depends on one of them, because Jira
 // ids (`customfield_10016`, issue type `10002`, a numeric project id) are
 // tenant-specific and cannot be guessed.
 //
@@ -51,6 +51,7 @@ import type {
   ProjectSummary,
   ResolutionInfo,
   StatusInfo,
+  TimeTrackingConfig,
 } from '../api/meta.js';
 import type { ClassicLoopResult, PageStopReason } from '../api/shared.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
@@ -758,6 +759,33 @@ export const listLabelsTool = defineTool<z.infer<typeof listLabelsInput>, LabelL
 });
 
 // ---------------------------------------------------------------------------
+// 8f. `jira_get_timetracking_config` (D140)
+// ---------------------------------------------------------------------------
+
+const timeTrackingInput = toolInput({});
+
+export const getTimeTrackingConfigTool = defineTool<
+  z.infer<typeof timeTrackingInput>,
+  TimeTrackingConfig
+>({
+  name: 'jira_get_timetracking_config',
+  title: 'Get time tracking settings',
+  description:
+    'Reads whether time tracking is on and how this site counts time: working hours ' +
+    'per day, days per week, display format and default unit, plus secondsPerDay and ' +
+    'secondsPerWeek — what "1d" and "1w" mean here, before logging work or setting an ' +
+    'estimate. Needs no admin permission. Cached for the metadata TTL ' +
+    '(JIRA_META_CACHE_TTL_S).',
+  package: 'meta',
+  annotations: READ_ANNOTATIONS,
+  input: timeTrackingInput,
+  example: { summary: 'How long is a working day here?', arguments: {} },
+  handler(_args, ctx) {
+    return guarded(async () => ok(await ctx.api.getTimeTrackingConfig(callBase(ctx))));
+  },
+});
+
+// ---------------------------------------------------------------------------
 // 9. The package
 // ---------------------------------------------------------------------------
 
@@ -771,7 +799,7 @@ export const metaPackage: PackageSpec = {
   title: 'Metadata & discovery',
   description:
     'Projects, fields, create metadata, statuses, link types, priorities, ' +
-    'resolutions, issue types and labels — the reads that ' +
+    'resolutions, issue types, labels and time tracking settings — the reads that ' +
     'turn names into the ids every other package needs.',
   tools: [
     listProjectsTool,
@@ -784,5 +812,6 @@ export const metaPackage: PackageSpec = {
     listResolutionsTool,
     listIssueTypesTool,
     listLabelsTool,
+    getTimeTrackingConfigTool,
   ],
 };

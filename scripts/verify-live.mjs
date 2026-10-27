@@ -1193,6 +1193,27 @@ async function readPhase(session, flags, credentials) {
     return `${String(all.count)} labels, query narrowed to ${String(narrowed.count)}`;
   });
 
+  await claim('C52', 'jira_get_timetracking_config reads the working time', async () => {
+    const data = dataOf(
+      await call(session, 'jira_get_timetracking_config'),
+      'jira_get_timetracking_config',
+    );
+    if (typeof data.enabled !== 'boolean') throw new Error('no boolean enabled');
+    // A site with time tracking on always reports its working day; the
+    // derived seconds must agree with it.
+    if (
+      data.enabled &&
+      data.secondsPerDay !== Math.round(data.workingHoursPerDay * 3600)
+    ) {
+      throw new Error(
+        `secondsPerDay ${String(data.secondsPerDay)} does not match the working day`,
+      );
+    }
+    return data.enabled
+      ? `${String(data.workingHoursPerDay)}h days, ${String(data.workingDaysPerWeek)}-day weeks`
+      : 'time tracking is off on this site';
+  });
+
   await claim('C10', 'jira_search_users finds the second user', async () => {
     // `query` is REQUIRED by the tool schema and the schema is strict, so it has
     // to be present in both shapes — omitting it is a validation error, not a

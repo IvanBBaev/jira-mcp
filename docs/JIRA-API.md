@@ -236,9 +236,16 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   `jira_list_labels` filters client-side. Labels are created implicitly by
   tagging an issue, so the route is deliberately left out of the metadata
   cache. Cloud only here.
+- Time tracking settings (D140): `GET /configuration` needs no permission and
+  carries `timeTrackingEnabled` plus `timeTrackingConfiguration`
+  (`workingHoursPerDay`, `workingDaysPerWeek`, `timeFormat`, `defaultUnit`),
+  which is absent when time tracking is off. `GET /configuration/timetracking`
+  (the provider) and `/configuration/timetracking/options` (the same figures)
+  both demand Administer Jira and are not used. Cloud only here.
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
-  `/priority/search`, `/resolution/search` and `/issuetype`) are cached in memory for
+  `/priority/search`, `/resolution/search` and `/issuetype`, and since D140
+  `/configuration`) are cached in memory for
   `JIRA_META_CACHE_TTL_S` seconds (D123). A custom field created outside the
   server shows up after the TTL or a restart; set the TTL to `0` when that
   matters. `/issue/{key}/transitions` is never cached — it depends on the
