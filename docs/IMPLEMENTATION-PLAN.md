@@ -1437,6 +1437,21 @@ Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`
 passing offline. Not in that exit: proof against a real tenant.
 
+## v2 wave 6 — project scope guard (D400)
+
+Phase number left open: waves 4 and 5 run in parallel and take the next
+ones. D400 and CC-4000…CC-4006 are placeholders to renumber after them.
+
+- [x] `JIRA_PROJECTS` (D400) — a guard below the write gate confines every
+      tool to the listed projects: search JQL rewritten, every named entity
+      resolved to its project and refused outside the list, project and
+      board lists filtered, plan-mode writes checked through the gate's
+      `preflight` hook, unknown routes and attachments by id refused
+      (CC-4000…CC-4006).
+
+Exit: `npm run check` green. Not in that exit: a live run against a tenant
+with a scope set.
+
 ## Risks
 
 | Risk | Mitigation |
