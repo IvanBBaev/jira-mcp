@@ -265,6 +265,19 @@ export interface ToolLimits {
  * Produced by: `mcp/registry.ts` (WP-24) per tool call, from `BuildServerDeps`.
  * Consumed by: every tool handler (WP-30…WP-34).
  */
+/**
+ * One `notifications/progress` update (D151). `progress` must increase across
+ * a call; `total` is set only when the amount of work is known up front.
+ */
+export interface ProgressUpdate {
+  readonly progress: number;
+  readonly total?: number;
+  readonly message?: string;
+}
+
+/** Where a call reports progress; never throws, never fails the call. */
+export type ProgressSink = (update: ProgressUpdate) => void;
+
 export interface ToolCtx {
   /**
    * The only way to reach Jira. In plan mode this is the CAPTURING
@@ -291,6 +304,12 @@ export interface ToolCtx {
   readonly deadlineAt: number;
   /** Cancellation from the MCP request. */
   readonly signal?: AbortSignal;
+  /**
+   * Present only when the client sent a `progressToken` (D151). The registry
+   * already counts every Jira request into it; a tool reports here only when
+   * it knows more (a total, a phase name).
+   */
+  readonly progress?: ProgressSink;
 }
 
 /** A tool's implementation: validated args in, envelope out. Never throws raw. */

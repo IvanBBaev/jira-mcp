@@ -1442,6 +1442,9 @@ Cloud only — the Data Center adapter stubs every new member.
       through `POST /changelog/bulkfetch`, grouped by numeric id, one page
       per call with `nextPageToken`/`hasMore`; Cloud only (CC-1549…CC-1552);
       claim C62.
+- [x] MCP progress notifications (D151) — a `progressToken` gets one
+      throttled, monotonic update per settled Jira request, counted under
+      the write gate (CC-1553…CC-1556).
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`

@@ -61,6 +61,7 @@ import {
   writtenIssueIds,
 } from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
+import { createProgressSink } from './progress.js';
 import { createPromptCatalogue } from './prompts.js';
 import { createRegistry } from './registry.js';
 import { createReferenceCatalogue, serverInstructions } from './resources.js';
@@ -576,15 +577,23 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     // no try/catch here to convert a throw into a bare protocol error.
     // The call runs with this server's registry in scope: the gate records into
     // it and `jira_search` reads it, so HTTP sessions stay apart (CC-244).
+    // A client that sent a progressToken gets throttled progress (D151).
+    const token = request.params._meta?.progressToken;
+    const progress =
+      token === undefined
+        ? undefined
+        : createProgressSink(token, (n) => extra.sendNotification(n), deps.clock);
     const rendered = await withRecentWrites(recent, () =>
       registry.call(
         request.params.name,
         request.params.arguments ?? {},
         // Client cancellation and request timeouts arrive on this signal; the
         // registry forwards it into `ToolCtx.signal` and thence to fetch.
-        { signal: extra.signal },
+        { signal: extra.signal, progress: progress?.sink },
       ),
     );
+    // The newest update the throttle held back goes out before the result.
+    progress?.flush();
     return toCallToolResult(rendered);
   });
 

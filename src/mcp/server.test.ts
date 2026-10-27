@@ -1337,3 +1337,27 @@ test('[CC-244] each server’s tool calls read the registry it records into', as
     sessionRecentWrites.clear();
   }
 });
+
+test('[CC-1556] a progressToken gets one progress notification per Jira request; none without', async () => {
+  const { deps, jira } = makeHarness();
+  jira.on('GET /rest/api/3/issue/ABC-1', jiraOk({ key: 'ABC-1' }));
+  await withSession(deps, async ({ client }) => {
+    const seen: { progress: number; message?: string | undefined }[] = [];
+    const result = (await client.callTool(
+      { name: 'jira_fx_lookup', arguments: { key: 'ABC-1' } },
+      undefined,
+      {
+        onprogress: (p) => {
+          seen.push({ progress: p.progress, message: p.message });
+        },
+      },
+    )) as CallToolResult;
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(seen, [{ progress: 1, message: '1 Jira request(s) completed' }]);
+
+    // Without a token the call is unchanged and nothing is sent.
+    const plain = await callTool(client, 'jira_fx_lookup', { key: 'ABC-1' });
+    assert.notEqual(plain.isError, true);
+    assert.equal(seen.length, 1);
+  });
+});

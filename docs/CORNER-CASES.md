@@ -3647,3 +3647,17 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
 - **CC-4006** — unknown routes, attachments by id and the `secure` root fail
   closed under a scope; a response still carrying an out-of-scope issue is
   refused.
+
+## Progress notifications (D151, 2026-10-27)
+
+- **CC-1553** — the sink sends the first update at once, holds later ones
+  back for 250 ms, sends a completing update (`progress >= total`) at once,
+  and `flush()` sends the newest held update exactly once.
+- **CC-1554** — progress never goes backwards: a value equal to or below
+  the last, or not finite, is dropped; an empty message is left out; a send
+  that rejects or throws never reaches the call.
+- **CC-1555** — `countRequests` reports one step per settled request,
+  answered or failed, and passes the response or the error through unchanged.
+- **CC-1556** — over the protocol, a call with a `progressToken` that issues
+  one GET receives exactly one notification; the same call without a token
+  receives none.

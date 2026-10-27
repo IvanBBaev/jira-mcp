@@ -33,6 +33,10 @@ env var names — not internal refactors.
   `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
   CONFIGURATION.md gains a "Proxy and custom CA" section.
+- Progress notifications (D151): a client that sends `_meta.progressToken`
+  with a tool call receives `notifications/progress` — one step per Jira
+  request completed, at most four a second. Nothing changes for clients that
+  do not ask.
 - `jira_get_changelogs_bulk` (D150) in the `issues` package: the change
   history of up to 1000 issues in one request, optionally only for some
   fields (`fieldIds: ["status"]`), grouped by numeric issue id and paged

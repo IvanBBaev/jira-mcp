@@ -51,6 +51,7 @@ import type {
 } from '../core/types.js';
 import { UNEXPECTED_THROW_KIND, errorResult, errorResultOf } from './errors.js';
 import { createProjectScope } from './project-scope.js';
+import { countRequests } from './progress.js';
 import { renderResult } from './result.js';
 import type { RenderedResult } from './result.js';
 import { PACKAGE_IDS, PACKAGE_PROFILES } from './types.js';
@@ -59,6 +60,7 @@ import type {
   PackageId,
   PackageProfile,
   PackageSpec,
+  ProgressSink,
   ToolCtx,
   ToolResult,
 } from './types.js';
@@ -279,6 +281,8 @@ export interface RegistryDeps {
 export interface CallOptions {
   /** Cancellation forwarded from the MCP request. */
   readonly signal?: AbortSignal | undefined;
+  /** Progress sink for a client that sent a `progressToken` (D151). */
+  readonly progress?: ProgressSink | undefined;
 }
 
 export interface ToolRegistry {
@@ -534,6 +538,7 @@ export function createRegistry(
       },
       deadlineAt: startedAt + settings.callBudgetMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.progress === undefined ? {} : { progress: options.progress }),
     });
 
     const planContext = spec.planContext?.bind(spec);
@@ -541,7 +546,10 @@ export function createRegistry(
       tool: spec,
       args: rest,
       control,
-      jira,
+      // Progress counts requests that reach the wire (D151): the wrap sits
+      // under the gate, so plan-mode captures are not counted and the gate's
+      // seam identity (`noteBeforeState`) is untouched.
+      jira: options.progress === undefined ? jira : countRequests(jira, options.progress),
       invoke: (seam: JiraRequestFn) => spec.handler(rest, ctx(seam)),
       ...(scope === undefined ? {} : { preflight: scope.check }),
       ...(planContext === undefined
