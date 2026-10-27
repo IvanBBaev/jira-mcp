@@ -3616,6 +3616,10 @@ Prompts (D125):
 - **CC-1552** — the tool returns one page branded `_untrusted`; the schema
   refuses an empty or oversize `issues`, a blank cursor and `maxResults`
   over 1000.
+- **CC-1557** — under `JIRA_PROJECTS` (D400) both bulk-fetch reads
+  (`/issue/bulkfetch`, `/changelog/bulkfetch`) are refused with nothing sent
+  when any named issue has an out-of-scope prefix or none is named, and go
+  out after one confirming search when all are in scope.
 
 ## Project scope guard (D400, 2026-10-27)
 

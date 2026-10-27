@@ -449,6 +449,16 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     }
   };
 
+  /** The bulk-fetch reads (D149, D150) name their issues in `issueIdsOrKeys`. */
+  const assertBulkFetch = async (
+    req: JiraRequestSpec,
+    body: Record<string, unknown> | undefined,
+  ): Promise<void> => {
+    const refs = issueRefs(body?.['issueIdsOrKeys']);
+    if (refs.length === 0) throw deny('A bulk read without issues');
+    await assertIssues(req, refs);
+  };
+
   // --- Route classification ------------------------------------------------
 
   const rewriteQueryJql = (req: JiraRequestSpec): Admission => {
@@ -560,6 +570,13 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
         return { req };
       case 'issue':
         return admitIssueRoute(req, seg, body);
+      case 'changelog':
+        // POST /changelog/bulkfetch (D150) — every issue it names.
+        if (second === 'bulkfetch' && third === undefined) {
+          await assertBulkFetch(req, body);
+          return { req };
+        }
+        throw deny('This changelog route');
       case 'issueLink': {
         if (second === undefined) {
           await assertIssues(
@@ -650,6 +667,11 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
       if (project === undefined) throw deny('An issue without a project');
       await assertProject(req, project);
       if (parent !== undefined) await assertIssue(req, parent);
+      return { req };
+    }
+    if (second === 'bulkfetch' && third === undefined) {
+      // POST /issue/bulkfetch (D149) — every issue it names.
+      await assertBulkFetch(req, body);
       return { req };
     }
     if (second === 'createmeta') {

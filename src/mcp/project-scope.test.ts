@@ -249,6 +249,57 @@ test('CC-4004: bulk requests confirm every issue with one search per batch', asy
   );
 });
 
+test('[CC-1557] the bulk issue and changelog reads confirm every issue they name', async () => {
+  const { fake, scope } = setup();
+  // An out-of-scope prefix is refused before anything is sent.
+  await refused(
+    scope.jira({
+      method: 'POST',
+      path: '/issue/bulkfetch',
+      body: { issueIdsOrKeys: ['ABC-1', 'XYZ-2'] },
+    }),
+  );
+  await refused(
+    scope.jira({
+      method: 'POST',
+      path: '/changelog/bulkfetch',
+      body: { issueIdsOrKeys: ['XYZ-2', 'ABC-1'] },
+    }),
+  );
+  await refused(scope.jira({ method: 'POST', path: '/issue/bulkfetch', body: {} }));
+  await refused(scope.jira({ method: 'POST', path: '/changelog/search', body: {} }));
+  assert.equal(fake.calls.length, 0);
+
+  // In-scope references are confirmed with one search, then the read goes out.
+  fake.on(
+    'POST /rest/api/3/search/jql',
+    jiraOk({
+      issues: [
+        { id: '10', key: 'ABC-1', fields: { project: { key: 'ABC' } } },
+        { id: '11', key: 'DEF-2', fields: { project: { key: 'DEF' } } },
+      ],
+    }),
+  );
+  fake.on('POST /rest/api/3/issue/bulkfetch', jiraOk({ issues: [] }));
+  fake.on('POST /rest/api/3/changelog/bulkfetch', jiraOk({ issueChangeLogs: [] }));
+  await scope.jira({
+    method: 'POST',
+    path: '/issue/bulkfetch',
+    body: { issueIdsOrKeys: ['ABC-1', 'DEF-2'] },
+  });
+  await scope.jira({
+    method: 'POST',
+    path: '/changelog/bulkfetch',
+    body: { issueIdsOrKeys: ['ABC-1', 'DEF-2'] },
+  });
+  assert.deepEqual(fake.routes(), [
+    'POST /rest/api/3/search/jql',
+    'POST /rest/api/3/issue/bulkfetch',
+    'POST /rest/api/3/search/jql',
+    'POST /rest/api/3/changelog/bulkfetch',
+  ]);
+});
+
 test('an issue link is checked at both ends', async () => {
   const { fake, scope } = setup();
   await refused(
