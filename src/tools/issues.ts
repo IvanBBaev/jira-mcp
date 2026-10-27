@@ -65,6 +65,7 @@ import { defineTool, outputArg, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import { READ_ANNOTATIONS, callBase, guarded } from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolResult } from '../mcp/types.js';
+import { issueBriefPrompt, worklogSummaryPrompt } from './prompts.js';
 
 // ---------------------------------------------------------------------------
 // Shared plumbing
@@ -608,4 +609,5 @@ export const issuesPackage: PackageSpec = {
     getRemoteLinksTool,
     getBulkStatusTool,
   ],
+  prompts: [issueBriefPrompt, worklogSummaryPrompt],
 };

@@ -91,7 +91,14 @@ import type {
 } from '../mcp/types.js';
 import { fieldChange } from './plan-context.js';
 import { JQL_REFERENCE } from './references.js';
-import { standupPrompt, triageUnassignedPrompt } from './prompts.js';
+import {
+  blockedReportPrompt,
+  bulkPreflightPrompt,
+  epicProgressPrompt,
+  myWorkPrompt,
+  standupPrompt,
+  triageUnassignedPrompt,
+} from './prompts.js';
 
 // ---------------------------------------------------------------------------
 // Hints (TOOLS.md §Hint catalog — closed vocabulary)
@@ -867,5 +874,12 @@ export const searchPackage: PackageSpec = {
     updateFilterTool,
   ],
   references: [JQL_REFERENCE],
-  prompts: [standupPrompt, triageUnassignedPrompt],
+  prompts: [
+    standupPrompt,
+    triageUnassignedPrompt,
+    epicProgressPrompt,
+    myWorkPrompt,
+    blockedReportPrompt,
+    bulkPreflightPrompt,
+  ],
 };

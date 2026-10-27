@@ -3687,3 +3687,15 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
 - **CC-1565** — over the protocol the export arrives as a `resource_link`
   content block and reads back through `resources/read`; the
   `jira://exports/{name}` template is listed only with a media directory.
+
+## Prompts, second set (D153, 2026-10-27)
+
+- **CC-1566** — `issue` (`jira_issue_brief`) and `epic` (`jira_epic_progress`)
+  must be whole issue keys; a lowercase key, a bare project key, a zero
+  number or a JQL tail is refused as `-32602` naming the argument.
+- **CC-1567** — `jira_bulk_preflight` passes the caller's JQL through as one
+  JSON string, samples at most 20 issues, checks the permission its `action`
+  needs together with `BULK_CHANGE`, warns that a delete cannot be undone,
+  refuses an unknown action, and never names a write tool.
+- **CC-1568** — `jira_worklog_summary` looks back `-1w` unless told otherwise;
+  `jira_my_work` without a project has no project clause.

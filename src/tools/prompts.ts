@@ -11,10 +11,17 @@
 //   - jira_standup           (search)  jira_search over a recent window
 //   - jira_triage_unassigned (search)  jira_search + jira_search_users
 //   - jira_release_notes     (collab)  list_versions → jira_search by fixVersion
+//   - jira_issue_brief       (issues)  get_issue → comments → changelog → remote links
+//   - jira_worklog_summary   (issues)  jira_search by worklogDate → get_worklogs
+//   - jira_epic_progress     (search)  get_issue → jira_count per category → jira_search
+//   - jira_my_work           (search)  jira_search on currentUser()
+//   - jira_blocked_report    (search)  jira_search by link type → get_issue for blockers
+//   - jira_bulk_preflight    (search)  jira_count → sample → get_my_permissions (D153)
 //
 // Arguments land inside JQL, so each is pinned down before `render` sees it:
 // project keys and ids by pattern, relative dates by pattern, and the one free
-// text — a version name — quoted and escaped with {@link jqlString}.
+// text — a version name — quoted and escaped with {@link jqlString}. The JQL
+// of `jira_bulk_preflight` is the caller's own query, passed through whole.
 // ---------------------------------------------------------------------------
 
 import { definePrompt } from '../mcp/prompts.js';
@@ -235,6 +242,282 @@ export const releaseNotesPrompt: PromptSpec = definePrompt({
         'issue — key and summary, rewritten for a reader outside the team only where ' +
         'the summary is unclear. List issues that are not in status category Done ' +
         'separately, as open items the release still carries.',
+    );
+  },
+});
+
+// ---------------------------------------------------------------------------
+// The second set (D153): one issue, one epic, my own work, blockers, time
+// logged, and the look before a bulk change.
+// ---------------------------------------------------------------------------
+
+/** An issue key: a project key, a dash, a positive number. */
+const ISSUE_KEY_PATTERN = /[A-Z][A-Z0-9_]{1,49}-[1-9][0-9]{0,17}/;
+
+/** The look-back window `jira_worklog_summary` uses when the caller gives none. */
+export const WORKLOG_DEFAULT_SINCE = '-1w';
+
+/** What `jira_bulk_preflight` can be asked to prepare for. */
+const BULK_ACTION_PATTERN = /(?:edit|transition|delete)/;
+
+/** The permission each bulk action needs on every matching issue. */
+const BULK_PERMISSION: Readonly<Record<string, string>> = {
+  edit: 'EDIT_ISSUES',
+  transition: 'TRANSITION_ISSUES',
+  delete: 'DELETE_ISSUES',
+};
+
+/** How many matching issues `jira_bulk_preflight` samples. */
+export const BULK_PREFLIGHT_SAMPLE = 20;
+
+const ISSUE_ARG: PromptArgumentSpec = {
+  name: 'issue',
+  description: 'Issue key in capitals, e.g. PROJ-123.',
+  required: true,
+  pattern: ISSUE_KEY_PATTERN,
+  maxLength: 70,
+};
+
+function numbered(steps: readonly string[]): string[] {
+  return steps.map((step, index) => `${String(index + 1)}. ${step}`);
+}
+
+// issues -------------------------------------------------------------------
+
+export const issueBriefPrompt: PromptSpec = definePrompt({
+  name: 'jira_issue_brief',
+  title: 'Issue brief',
+  description:
+    'Brief one issue for someone picking it up: what it asks, where it stands, ' +
+    'what was decided in the comments, what changed lately and what it links to.',
+  requires: [
+    'jira_get_issue',
+    'jira_get_comments',
+    'jira_get_changelog',
+    'jira_get_remote_links',
+  ],
+  arguments: [ISSUE_ARG],
+  example: { issue: 'PROJ-123' },
+  render(args) {
+    const issue = arg(args, 'issue');
+    return lines(
+      `Brief Jira issue ${issue} for someone who has to pick it up today.`,
+      '',
+      ...numbered([
+        `Call jira_get_issue with issue "${issue}" and format "text": summary, ` +
+          'description, status, assignee, reporter, priority, parent, links and dates.',
+        `Call jira_get_comments with issue "${issue}", orderBy "-created" and format ` +
+          '"text". Read the newest 50; say so when there are more.',
+        `Call jira_get_changelog with issue "${issue}" and page to the last page: ` +
+          'the latest status, assignee and priority changes, and when they happened.',
+        `Call jira_get_remote_links with issue "${issue}": pull requests, documents ` +
+          'and pages linked from outside Jira.',
+        'Write the brief: one paragraph on what the issue asks; where it stands and ' +
+          'since when; decisions and open questions from the comments, with who said ' +
+          'them; linked and blocking issues; external links. End with the next step ' +
+          'the issue seems to wait for.',
+      ]),
+    );
+  },
+});
+
+export const worklogSummaryPrompt: PromptSpec = definePrompt({
+  name: 'jira_worklog_summary',
+  title: 'Worklog summary',
+  description:
+    'Sum the time logged on a project over a window, per person and per issue, ' +
+    'from the worklogs themselves rather than the issue totals.',
+  requires: ['jira_search', 'jira_get_worklogs'],
+  arguments: [
+    PROJECT_ARG,
+    {
+      name: 'since',
+      description: `JQL relative date to look back to: -1w, -2w, -30d. Default ${WORKLOG_DEFAULT_SINCE}.`,
+      required: false,
+      pattern: RELATIVE_DATE_PATTERN,
+      maxLength: 6,
+    },
+  ],
+  example: { project: 'PROJ' },
+  render(args) {
+    const project = arg(args, 'project');
+    const since = args['since'] ?? WORKLOG_DEFAULT_SINCE;
+    return lines(
+      `Summarise the time logged on Jira project ${project} from ${since} until now.`,
+      '',
+      ...numbered([
+        `Call jira_search with jql "project = ${project} AND worklogDate >= ${since} ` +
+          'ORDER BY key ASC" and fields ["summary", "issuetype", "assignee"]. Follow ' +
+          'nextPageToken until there is none, or stop at 100 issues and say that you did.',
+        'For each issue, call jira_get_worklogs with that issue and page until every ' +
+          `worklog is in. Keep only worklogs whose started date is within ${since} of ` +
+          'now; an issue also carries older ones.',
+        'Report: hours per person, highest first; then per issue — key, summary, ' +
+          'hours and who logged them. Give the total, and name the issues whose ' +
+          'worklogs could not all be read.',
+      ]),
+    );
+  },
+});
+
+// search -------------------------------------------------------------------
+
+const PROGRESS_FIELDS =
+  '["summary", "status", "assignee", "issuetype", "priority", "updated"]';
+
+export const epicProgressPrompt: PromptSpec = definePrompt({
+  name: 'jira_epic_progress',
+  title: 'Epic progress',
+  description:
+    'Report how far an epic is: its children by status category, what is left and ' +
+    'who holds it, and children that have not moved in two weeks.',
+  requires: ['jira_get_issue', 'jira_count', 'jira_search'],
+  arguments: [
+    { ...ISSUE_ARG, name: 'epic', description: 'Epic key in capitals, e.g. PROJ-42.' },
+  ],
+  example: { epic: 'PROJ-42' },
+  render(args) {
+    const epic = arg(args, 'epic');
+    return lines(
+      `Report the progress of Jira epic ${epic}.`,
+      '',
+      ...numbered([
+        `Call jira_get_issue with issue "${epic}" and fields ["summary", "status", ` +
+          '"duedate", "assignee", "issuetype"]. If it is not an epic, say so and stop.',
+        `Call jira_count three times, with jql "parent = ${epic} AND statusCategory ` +
+          `= Done", "parent = ${epic} AND statusCategory = 'In Progress'" and ` +
+          `"parent = ${epic} AND statusCategory = 'To Do'".`,
+        `Call jira_search with jql "parent = ${epic} AND statusCategory != Done ` +
+          `ORDER BY priority DESC, updated ASC" and fields ${PROGRESS_FIELDS}. Follow ` +
+          'nextPageToken until there is none.',
+        'Report: the epic, its status and due date; done / in progress / to do as ' +
+          'counts and a percentage of the whole; what is left grouped by assignee, ' +
+          'unassigned last; and the open children not updated in 14 days. Close with ' +
+          'whether the due date looks reachable, and why.',
+      ]),
+    );
+  },
+});
+
+const MY_WORK_FIELDS =
+  '["summary", "status", "priority", "duedate", "updated", "project"]';
+
+export const myWorkPrompt: PromptSpec = definePrompt({
+  name: 'jira_my_work',
+  title: 'My work',
+  description:
+    "The calling user's open work, ordered for today: overdue and due soon first, " +
+    'then in progress, then the rest — optionally within one project.',
+  requires: ['jira_search'],
+  arguments: [
+    {
+      ...PROJECT_ARG,
+      required: false,
+      description: 'Project key in capitals, e.g. PROJ. Omit for every project.',
+    },
+  ],
+  example: {},
+  render(args) {
+    const project = args['project'];
+    const scope = project === undefined ? '' : `project = ${project} AND `;
+    return lines(
+      project === undefined
+        ? 'List my open Jira work and order it for today.'
+        : `List my open work in Jira project ${project} and order it for today.`,
+      '',
+      ...numbered([
+        `Call jira_search with jql "${scope}assignee = currentUser() AND resolution ` +
+          `= Unresolved ORDER BY duedate ASC, priority DESC" and fields ${MY_WORK_FIELDS}. ` +
+          'Follow nextPageToken until there is none, or stop at 100 issues and say that you did.',
+        `Call jira_search with jql "${scope}reporter = currentUser() AND resolution ` +
+          '= Unresolved AND assignee IS EMPTY ORDER BY created DESC" and the same ' +
+          'fields: what I reported that nobody has taken.',
+        'Report in this order: overdue; due within seven days; in progress; the ' +
+          'rest by priority; then my unowned reports. One line each — key, summary, ' +
+          'status, due date. Keep it to one screen.',
+      ]),
+    );
+  },
+});
+
+const BLOCKED_FIELDS =
+  '["summary", "status", "assignee", "priority", "issuelinks", "updated"]';
+
+export const blockedReportPrompt: PromptSpec = definePrompt({
+  name: 'jira_blocked_report',
+  title: 'Blocked report',
+  description:
+    'List the unresolved issues of a project that are blocked by another issue, ' +
+    'with what blocks each, whether the blocker is still open and who owns it.',
+  requires: ['jira_search', 'jira_get_issue'],
+  arguments: [PROJECT_ARG],
+  example: { project: 'PROJ' },
+  render(args) {
+    const project = arg(args, 'project');
+    return lines(
+      `Report what is blocked in Jira project ${project}.`,
+      '',
+      ...numbered([
+        `Call jira_search with jql "project = ${project} AND resolution = ` +
+          "Unresolved AND issueLinkType = 'is blocked by' ORDER BY priority DESC\" and " +
+          `fields ${BLOCKED_FIELDS}. Follow nextPageToken until there is none, or stop ` +
+          'at 100 issues and say that you did. If the site has no such link type, the ' +
+          'search fails: say so and stop.',
+        'From each issue\'s issuelinks, take the inward "is blocked by" links. Where ' +
+          "a link does not carry the blocker's status or assignee, call jira_get_issue " +
+          'with the blockers\' keys in issues and fields ["summary", "status", "assignee"].',
+        'Report a table: blocked issue, its priority and assignee, the blocker, the ' +
+          "blocker's status and assignee. Put first the issues whose blockers are all " +
+          'done — they may only need unblocking — and flag blockers in other projects.',
+      ]),
+    );
+  },
+});
+
+export const bulkPreflightPrompt: PromptSpec = definePrompt({
+  name: 'jira_bulk_preflight',
+  title: 'Bulk change preflight',
+  description:
+    'Before a bulk edit, transition or delete: how many issues a JQL matches, a ' +
+    'sample of them, and whether you hold the permission the change needs.',
+  requires: ['jira_count', 'jira_search', 'jira_get_my_permissions'],
+  arguments: [
+    {
+      name: 'jql',
+      description: 'The JQL that selects the issues the bulk change would touch.',
+      required: true,
+      maxLength: 200,
+    },
+    {
+      name: 'action',
+      description: 'What the change would do: edit, transition or delete. Default edit.',
+      required: false,
+      pattern: BULK_ACTION_PATTERN,
+      maxLength: 10,
+    },
+  ],
+  example: { jql: 'project = PROJ AND labels = cleanup' },
+  render(args) {
+    const jql = arg(args, 'jql');
+    const action = args['action'] ?? 'edit';
+    const permission = BULK_PERMISSION[action] ?? 'EDIT_ISSUES';
+    return lines(
+      `Prepare a bulk ${action} of the Jira issues matching ${JSON.stringify(jql)}. ` +
+        'Do not make the change: report what it would touch.',
+      '',
+      ...numbered([
+        `Call jira_count with jql ${JSON.stringify(jql)}. If it is 0, say so and stop.`,
+        `Call jira_search with the same jql, fields ["summary", "status", ` +
+          `"assignee", "project", "issuetype"] and maxResults ${String(BULK_PREFLIGHT_SAMPLE)}: ` +
+          'a sample, not the whole set.',
+        'For each project in the sample, call jira_get_my_permissions with ' +
+          `permissions ["${permission}", "BULK_CHANGE"] and that project.`,
+        'Report: the match count; the projects, issue types and statuses the sample ' +
+          'spans; any sample issue that looks out of place for the query; and per ' +
+          `project whether ${permission} and BULK_CHANGE are held. Warn when the ` +
+          'count is large or spans several projects, and suggest a narrower JQL if ' +
+          `one is obvious.${action === 'delete' ? ' A delete cannot be undone — say so plainly.' : ''}`,
+      ]),
     );
   },
 });

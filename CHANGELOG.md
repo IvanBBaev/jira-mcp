@@ -33,6 +33,11 @@ env var names — not internal refactors.
   `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
   CONFIGURATION.md gains a "Proxy and custom CA" section.
+- Six prompts (D153): `jira_issue_brief`, `jira_worklog_summary`,
+  `jira_epic_progress`, `jira_my_work`, `jira_blocked_report` and
+  `jira_bulk_preflight` — read-only workflows over the existing tools, listed
+  when the tools they use are registered. The bulk preflight counts, samples
+  and checks permissions before a bulk change; it never makes one.
 - File output for large reads (D152): `jira_search`, `jira_get_comments`,
   `jira_get_changelog`, `jira_get_worklogs` and `jira_get_sprint_issues`
   take `output: "file"`, which writes the page's rows (redacted) to a JSONL

@@ -12,12 +12,20 @@ import { PROMPT_RULES, createPromptCatalogue, toolTokens } from '../mcp/prompts.
 import type { AnyToolSpec, PromptSpec } from '../mcp/types.js';
 import { PACKAGES } from './index.js';
 import {
+  BULK_PREFLIGHT_SAMPLE,
   STANDUP_DEFAULT_SINCE,
+  WORKLOG_DEFAULT_SINCE,
+  blockedReportPrompt,
+  bulkPreflightPrompt,
+  epicProgressPrompt,
+  issueBriefPrompt,
   jqlString,
+  myWorkPrompt,
   releaseNotesPrompt,
   sprintReviewPrompt,
   standupPrompt,
   triageUnassignedPrompt,
+  worklogSummaryPrompt,
 } from './prompts.js';
 
 const TOOLS = new Map<string, AnyToolSpec>(
@@ -49,7 +57,7 @@ function refused(name: string, args: Record<string, string>, pattern: RegExp): v
   );
 }
 
-test('the manifest ships the four prompts, each on the package of its anchor tool', () => {
+test('the manifest ships the ten prompts, each on the package of its anchor tool', () => {
   const where = Object.fromEntries(
     PACKAGES.flatMap((pkg) => (pkg.prompts ?? []).map((prompt) => [prompt.name, pkg.id])),
   );
@@ -58,10 +66,27 @@ test('the manifest ships the four prompts, each on the package of its anchor too
     jira_standup: 'search',
     jira_triage_unassigned: 'search',
     jira_release_notes: 'collab',
+    jira_issue_brief: 'issues',
+    jira_worklog_summary: 'issues',
+    jira_epic_progress: 'search',
+    jira_my_work: 'search',
+    jira_blocked_report: 'search',
+    jira_bulk_preflight: 'search',
   });
   assert.deepEqual(
     [...PROMPTS].sort((a, b) => a.name.localeCompare(b.name)),
-    [releaseNotesPrompt, sprintReviewPrompt, standupPrompt, triageUnassignedPrompt],
+    [
+      blockedReportPrompt,
+      bulkPreflightPrompt,
+      epicProgressPrompt,
+      issueBriefPrompt,
+      myWorkPrompt,
+      releaseNotesPrompt,
+      sprintReviewPrompt,
+      standupPrompt,
+      triageUnassignedPrompt,
+      worklogSummaryPrompt,
+    ],
   );
 });
 
@@ -88,6 +113,14 @@ test('every argument combination names only the tools a prompt is gated on', () 
     ['jira_standup', { project: 'PROJ', since: '-3d' }],
     ['jira_triage_unassigned', { project: 'PROJ' }],
     ['jira_release_notes', { project: 'PROJ', version: '2.4.0' }],
+    ['jira_issue_brief', { issue: 'PROJ-7' }],
+    ['jira_worklog_summary', { project: 'PROJ' }],
+    ['jira_worklog_summary', { project: 'PROJ', since: '-30d' }],
+    ['jira_epic_progress', { epic: 'PROJ-42' }],
+    ['jira_my_work', { project: 'PROJ' }],
+    ['jira_blocked_report', { project: 'PROJ' }],
+    ['jira_bulk_preflight', { jql: 'project = PROJ' }],
+    ['jira_bulk_preflight', { jql: 'project = PROJ', action: 'delete' }],
   ];
   for (const [name, args] of variants) {
     const prompt = PROMPTS.find((p) => p.name === name);
@@ -146,13 +179,78 @@ test('[CC-1429] a version name lands in JQL as one quoted, escaped string litera
 });
 
 test('a project argument must be a project key', () => {
-  for (const name of PROMPTS.map((prompt) => prompt.name)) {
+  const withProject = PROMPTS.filter((prompt) =>
+    prompt.arguments.some((argument) => argument.name === 'project'),
+  ).map((prompt) => prompt.name);
+  assert.equal(withProject.length, 7);
+  for (const name of withProject) {
     for (const project of ['proj', 'P', '1PROJ', 'PROJ OR project = X', 'PR"OJ']) {
       const extra: Record<string, string> =
         name === 'jira_release_notes' ? { version: '1' } : {};
       refused(name, { project, ...extra }, /"project"/);
     }
   }
+});
+
+test('[CC-1566] an issue or epic argument must be an issue key', () => {
+  for (const [name, key] of [
+    ['jira_issue_brief', 'issue'],
+    ['jira_epic_progress', 'epic'],
+  ] as const) {
+    for (const value of ['PROJ', 'proj-1', 'PROJ-0', 'PROJ-1 OR key = X', 'PROJ-1"']) {
+      refused(name, { [key]: value }, new RegExp(`"${key}"`));
+    }
+  }
+  const brief = text('jira_issue_brief', { issue: 'PROJ-7' });
+  for (const tool of issueBriefPrompt.requires) {
+    assert.ok(brief.includes(`${tool} with issue "PROJ-7"`), tool);
+  }
+  assert.match(text('jira_epic_progress', { epic: 'PROJ-42' }), /parent = PROJ-42 AND/);
+});
+
+test('[CC-1567] the bulk preflight passes the JQL through whole and only counts and samples', () => {
+  const jql = 'project = PROJ AND summary ~ "a \\"b\\"" ORDER BY key';
+  const rendered = text('jira_bulk_preflight', { jql });
+  assert.ok(rendered.includes(`jira_count with jql ${JSON.stringify(jql)}.`));
+  assert.ok(rendered.includes(`maxResults ${String(BULK_PREFLIGHT_SAMPLE)}`));
+  assert.match(rendered, /\["EDIT_ISSUES", "BULK_CHANGE"\]/);
+  assert.match(rendered, /Do not make the change/);
+  assert.doesNotMatch(rendered, /cannot be undone/);
+
+  const deleting = text('jira_bulk_preflight', { jql, action: 'delete' });
+  assert.match(deleting, /\["DELETE_ISSUES", "BULK_CHANGE"\]/);
+  assert.match(deleting, /cannot be undone/);
+  assert.match(
+    text('jira_bulk_preflight', { jql, action: 'transition' }),
+    /\["TRANSITION_ISSUES", "BULK_CHANGE"\]/,
+  );
+  for (const action of ['assign', 'EDIT', 'edit,delete']) {
+    refused('jira_bulk_preflight', { jql, action }, /"action"/);
+  }
+  refused('jira_bulk_preflight', { jql: 'x'.repeat(201) }, /"jql"/);
+});
+
+test('[CC-1568] windows and scopes default as documented', () => {
+  assert.equal(WORKLOG_DEFAULT_SINCE, '-1w');
+  assert.match(
+    text('jira_worklog_summary', { project: 'PROJ' }),
+    /project = PROJ AND worklogDate >= -1w /,
+  );
+  assert.match(
+    text('jira_worklog_summary', { project: 'PROJ', since: '-30d' }),
+    /worklogDate >= -30d /,
+  );
+  const everywhere = text('jira_my_work', {});
+  assert.match(everywhere, /jql "assignee = currentUser\(\)/);
+  assert.doesNotMatch(everywhere, /project = /);
+  assert.match(
+    text('jira_my_work', { project: 'PROJ' }),
+    /jql "project = PROJ AND assignee = currentUser\(\)/,
+  );
+  assert.match(
+    text('jira_blocked_report', { project: 'PROJ' }),
+    /issueLinkType = 'is blocked by'/,
+  );
 });
 
 test('TOOLS.md documents every prompt', () => {

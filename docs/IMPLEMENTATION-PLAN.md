@@ -1449,6 +1449,10 @@ Cloud only — the Data Center adapter stubs every new member.
       writes the page's redacted rows to a JSONL file in `JIRA_MEDIA_DIR`,
       returns a descriptor and a `resource_link`, and serves the file as
       `jira://exports/{name}` (CC-1558…CC-1565).
+- [x] Six more prompts (D153) — `jira_issue_brief`, `jira_worklog_summary`
+      (issues), `jira_epic_progress`, `jira_my_work`, `jira_blocked_report`,
+      `jira_bulk_preflight` (search); read-only, gated on their tools
+      (CC-1566…CC-1568).
 
 Exit: every new tool in the manifest snapshot and README, site and TOOLS.md
 counts matching it, `npm run check` green and `scripts/rehearse-live.mjs`
