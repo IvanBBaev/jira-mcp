@@ -322,7 +322,7 @@ and are not started.
 | V3-12 | Split `api/issues.ts` (3350 lines) by sub-domain; `issues.ts` stays as a barrel | `src/api/issues.ts` → `src/api/issues/*` | D517 | — | todo | 3 |
 | V3-13 | Move the Data Center twins into `src/api/datacenter/` and add an eslint zone for it | `src/api/datacenter.ts` → `src/api/datacenter/*`, DC twins inside `src/api/*.ts`, `eslint.config.js` | D518 | V3-01, V3-12 | todo | 3 |
 | V3-14 | Lazy tool schemas; move the probe/example checks into a test (startup target < 300 ms) | `src/mcp/define.ts`, `src/mcp/schema.ts`, `src/mcp/registry.ts` | D519, CC-5120–5129 | V3-07 | todo | 2 |
-| V3-15 | De-flake `clock.test.ts` (timing assertions at :55 and :80) | `src/core/clock.test.ts` | — | — | todo | 0.5 |
+| V3-15 | De-flake timing tests: `clock.test.ts` (:55, :80) and `rehearse-live.test.ts` CC-1105 (the never-exiting driver fails under a load average ≈ 55, passes alone) | `src/core/clock.test.ts`, `src/testing/rehearse-live.test.ts` | — | — | todo | 1 |
 | V3-16 | Docker image: `Dockerfile`, a ghcr build workflow, and a README install section. The workflow builds only; publishing is R-row V3-23 | `Dockerfile` (new), `.github/workflows/docker.yml` (new), `.dockerignore` (new), `README.md` (install section only) | D520 | — | todo | 2 |
 | V3-17 | MCPB Desktop bundle: manifest and a pack script, built in CI | `mcpb/` (new), `scripts/pack-mcpb.mjs` (new), `package.json` (scripts only) | D521 | — | todo | 2 |
 | V3-18 | Typed fake-jira split per domain under `src/testing/` | `scripts/fake-jira.mjs` → `src/testing/fake-jira/*` | D522 | V3-01, V3-05 | todo | 6 |
