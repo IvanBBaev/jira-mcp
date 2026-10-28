@@ -159,7 +159,7 @@ dies at the first expiry.
 | Irreversible tier (D102) — delete component, delete version | `manage:jira-project` (inferred — its published description names versions and components but does not say *delete*; the finding-1 rule applies: already in the default, and a 403 here is a documentation bug to file, not a configuration problem) | yes |
 | Irreversible tier (D102) — delete sprint | `delete:sprint:jira-software` | **no** — see finding 5 |
 | Boards — board listing | `read:board-scope:jira-software` | yes |
-| Sprint reads — sprint listing, sprint issues | `read:sprint:jira-software`, plus `read:issue:jira-software` for the issue payloads | yes |
+| Sprint reads — sprint listing, sprint issues | `read:sprint:jira-software`, plus `read:issue:jira-software` for the issue payloads. The sprint-issue and backlog reads moved to `/rest/software/1.0` (D500); Atlassian lists the same scopes for the new routes (`read:sprint:jira-software` / `read:board-scope:jira-software`, `read:issue-details:jira`, `read:jql:jira`), so no scope changes | yes |
 | Sprint writes — move issue to sprint, start sprint, close sprint | `write:sprint:jira-software` ("Update sprints, move issues to sprints, and update the order of sprints") | yes |
 | Ranking and estimation on agile endpoints | `write:issue:jira-software` ("Rank and estimate issues") | yes |
 | Create sprint | see finding 2 | — |

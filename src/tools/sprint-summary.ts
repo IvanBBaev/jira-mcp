@@ -300,6 +300,12 @@ export function addedAfterStart(
 // The reads
 // ---------------------------------------------------------------------------
 
+/**
+ * Read the sprint's issues, up to the summary's page cap. On Cloud the read is
+ * token-paged with no `total` (D501), so every count below is a count of the
+ * rows actually read; Data Center still reports a `total`, used only to word
+ * the partial note.
+ */
 async function readIssues(
   ctx: ToolCtx,
   sprintId: number,
@@ -437,8 +443,10 @@ async function summarise(
   if (read.partial) {
     notes.push(
       `INCOMPLETE: only the first ${String(read.issues.length)} issues` +
-        (read.total === undefined ? '' : ` of ${String(read.total)}`) +
-        ' were summarised. Narrow with jira_get_sprint_issues and jql for the rest.',
+        (read.total === undefined
+          ? ' were summarised (Jira reports no total here, so the sprint size is unknown).'
+          : ` of ${String(read.total)} were summarised.`) +
+        ' Narrow with jira_get_sprint_issues and jql for the rest.',
     );
   }
 

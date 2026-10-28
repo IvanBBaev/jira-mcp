@@ -54,6 +54,7 @@ import {
   setEstimate,
   listBoards,
   listSprintIssues,
+  listSprintIssuesDataCenter,
   listSprints,
   moveIssuesToBacklog,
   moveIssuesToSprint,
@@ -142,6 +143,14 @@ function issuesPage(
 ): unknown {
   // synthetic — GET /rest/agile/1.0/sprint/{id}/issue envelope
   return { expand: 'names,schema', startAt, maxResults, total, issues };
+}
+
+/** One `/rest/software/1.0` issue page (D501): token-paged, no `total`. */
+function softwarePage(issues: readonly unknown[], nextPageToken?: string): unknown {
+  // synthetic — GET /rest/software/1.0/sprint/{id}/issue envelope
+  return nextPageToken === undefined
+    ? { expand: 'names,schema', issues, isLast: true }
+    : { expand: 'names,schema', issues, nextPageToken };
 }
 
 // ---------------------------------------------------------------------------
@@ -420,8 +429,8 @@ test('the sprint field set IS the search field set — one const, two names', ()
 
 test('listSprintIssues injects the documented field set when none was asked for', async () => {
   const jira = createFakeJiraRequest().on(
-    'GET /rest/agile/1.0/sprint/21/issue',
-    jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-1', '10001')])),
+    'GET /rest/software/1.0/sprint/21/issue',
+    jiraOk(softwarePage([issueRow('ABC-1', '10001')])),
   );
 
   const result = await listSprintIssues({ jira: jira.fn, sprintId: 21 });
@@ -445,8 +454,8 @@ test('listSprintIssues injects the documented field set when none was asked for'
 
 test("listSprintIssues sends the caller's own fields and JQL unchanged", async () => {
   const jira = createFakeJiraRequest().on(
-    'GET /rest/agile/1.0/sprint/21/issue',
-    jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-2', '10002')])),
+    'GET /rest/software/1.0/sprint/21/issue',
+    jiraOk(softwarePage([issueRow('ABC-2', '10002')])),
   );
 
   const result = await listSprintIssues({
@@ -468,9 +477,9 @@ test("listSprintIssues sends the caller's own fields and JQL unchanged", async (
 
 test('listSprintIssues keeps a row whose fields are missing, without inventing them', async () => {
   const jira = createFakeJiraRequest().on(
-    'GET /rest/agile/1.0/sprint/21/issue',
+    'GET /rest/software/1.0/sprint/21/issue',
     // synthetic — `fields=` was honoured with nothing to return
-    jiraOk(issuesPage(0, 50, 2, [{ key: 'ABC-2', id: '10002' }, { key: 'ABC-3' }])),
+    jiraOk(softwarePage([{ key: 'ABC-2', id: '10002' }, { key: 'ABC-3' }])),
   );
 
   const result = await listSprintIssues({ jira: jira.fn, sprintId: 21 });
@@ -482,7 +491,133 @@ test('listSprintIssues keeps a row whose fields are missing, without inventing t
   assert.equal(Object.hasOwn(result.items[1] ?? {}, 'id'), false);
 });
 
-test('listSprintIssues stops when the offset reaches the reported total', async () => {
+test('CC-5000: listSprintIssues reads the software root and follows nextPageToken until isLast', async () => {
+  const jira = createFakeJiraRequest()
+    .enqueue(
+      jiraOk(
+        softwarePage([issueRow('ABC-1', '10001'), issueRow('ABC-2', '10002')], 'tok-2'),
+      ),
+    )
+    .enqueue(jiraOk(softwarePage([issueRow('ABC-3', '10003')])));
+
+  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21, pageSize: 2 });
+
+  assert.equal(jira.calls[0]?.root, 'software');
+  assert.equal(jira.calls[0]?.pathTemplate, '/sprint/{sprintId}/issue');
+  assert.deepEqual(queryOf(jira.calls[0]), {
+    maxResults: 2,
+    fields: DEFAULT_SPRINT_ISSUE_FIELDS.join(','),
+  });
+  assert.equal(jira.calls[1]?.query?.nextPageToken, 'tok-2');
+  assert.equal(result.pages, 2);
+  assert.equal(result.stopReason, 'exhausted');
+  assert.equal(result.partial, false);
+  // D501: no `total` and no offset — the root reports neither.
+  assert.equal(Object.hasOwn(result, 'total'), false);
+  assert.equal(Object.hasOwn(result, 'nextStartAt'), false);
+  assert.equal(Object.hasOwn(result, 'nextPageToken'), false);
+  assert.deepEqual(
+    result.items.map((issue) => issue.key),
+    ['ABC-1', 'ABC-2', 'ABC-3'],
+  );
+});
+
+test('CC-5000: a partial sprint read hands back the unspent nextPageToken, and resumes from it', async () => {
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk(softwarePage([issueRow('ABC-1', '10001')], 'tok-2')))
+    .enqueue(jiraOk(softwarePage([issueRow('ABC-2', '10002')])));
+
+  const first = await listSprintIssues({ jira: jira.fn, sprintId: 21, maxPages: 1 });
+  assert.equal(first.partial, true);
+  assert.equal(first.stopReason, 'max_pages');
+  assert.equal(first.nextPageToken, 'tok-2');
+
+  const second = await listSprintIssues({
+    jira: jira.fn,
+    sprintId: 21,
+    maxPages: 1,
+    nextPageToken: ' tok-2 ',
+  });
+  assert.equal(jira.lastRequest()?.query?.nextPageToken, 'tok-2');
+  assert.equal(second.partial, false);
+  assert.deepEqual(
+    second.items.map((issue) => issue.key),
+    ['ABC-2'],
+  );
+});
+
+test('CC-5000: a page with a null nextPageToken and no isLast ends the read', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/software/1.0/sprint/21/issue',
+    // synthetic — the schema allows `nextPageToken: null` on the last page
+    jiraOk({ issues: [issueRow('ABC-1', '10001')], nextPageToken: null }),
+  );
+
+  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21 });
+
+  assert.equal(result.stopReason, 'exhausted');
+  assert.equal(jira.calls.length, 1);
+});
+
+test('CC-5001: a Cloud startAt above 0 is refused before the wire — there is no offset to honour', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21, startAt: 50 })),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /nextPageToken/);
+  assert.equal(jira.calls.length, 0);
+});
+
+test('CC-5001: a Cloud startAt of 0 is accepted and never sent', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/software/1.0/sprint/21/issue',
+    jiraOk(softwarePage([])),
+  );
+
+  await listSprintIssues({ jira: jira.fn, sprintId: 21, startAt: 0 });
+
+  assert.equal(jira.lastRequest()?.query?.startAt, undefined);
+});
+
+test('CC-5006: a software page without an issues array is unexpected_shape', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/software/1.0/sprint/21/issue',
+    // synthetic — a proxy that rewrote the body
+    jiraOk({ values: [], isLast: true }),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21 })),
+  );
+
+  assert.equal(error.kind, 'unexpected_shape');
+  assert.match(error.message, /issues/);
+});
+
+test('CC-5005: a 404 from the software root keeps its kind and names the Jira Software possibility (CC-34)', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/software/1.0/sprint/21/issue',
+    jiraErr(
+      createJiraError({
+        kind: 'not_found',
+        reason: 'Jira answered 404.',
+        httpStatus: 404,
+      }),
+    ),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21 })),
+  );
+
+  assert.equal(error.kind, 'not_found');
+  assert.match(error.message, /Agile API itself may be unavailable/);
+});
+
+test('CC-5004: the Data Center twin stays on the agile root with offset paging and a total', async () => {
   const jira = createFakeJiraRequest()
     .enqueue(
       jiraOk(
@@ -491,17 +626,39 @@ test('listSprintIssues stops when the offset reaches the reported total', async 
     )
     .enqueue(jiraOk(issuesPage(2, 2, 3, [issueRow('ABC-3', '10003')])));
 
-  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21, pageSize: 2 });
+  const result = await listSprintIssuesDataCenter({
+    jira: jira.fn,
+    sprintId: 21,
+    pageSize: 2,
+  });
 
+  assert.deepEqual(jira.routes(), [
+    'GET /rest/agile/1.0/sprint/21/issue',
+    'GET /rest/agile/1.0/sprint/21/issue',
+  ]);
+  assert.equal(jira.calls[1]?.query?.startAt, 2);
   // This route reports `total` and no `isLast`, so the count is the terminator.
   assert.equal(result.pages, 2);
   assert.equal(result.stopReason, 'exhausted');
-  assert.equal(result.partial, false);
   assert.equal(result.total, 3);
   assert.deepEqual(
     result.items.map((issue) => issue.key),
     ['ABC-1', 'ABC-2', 'ABC-3'],
   );
+});
+
+test('CC-5004: the Data Center twin refuses a nextPageToken before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() =>
+      listSprintIssuesDataCenter({ jira: jira.fn, sprintId: 21, nextPageToken: 'tok' }),
+    ),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /startAt/);
+  assert.equal(jira.calls.length, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -1665,19 +1822,19 @@ test('CC-1483: a 404 on a board configuration is that board, not the root', asyn
 // Backlog (D134)
 // ---------------------------------------------------------------------------
 
-const BACKLOG_ROUTE = 'GET /rest/agile/1.0/board/7/backlog';
+const BACKLOG_ROUTE = 'GET /rest/software/1.0/board/7/backlog';
 
 test('CC-1485: listBacklogIssues reads the board backlog with the default fields', async () => {
   const jira = createFakeJiraRequest().on(
     BACKLOG_ROUTE,
-    jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-9', '10009')])),
+    jiraOk(softwarePage([issueRow('ABC-9', '10009')])),
   );
 
   const result = await listBacklogIssues({ jira: jira.fn, boardId: 7 });
 
   const request = jira.lastRequest();
   assert.equal(request?.method, 'GET');
-  assert.equal(request?.root, 'agile');
+  assert.equal(request?.root, 'software');
   assert.equal(request?.pathTemplate, '/board/{boardId}/backlog');
   assert.equal(request?.safe, undefined, 'a GET needs no safe flag');
   assert.equal(request?.query?.fields, DEFAULT_SPRINT_ISSUE_FIELDS.join(','));
@@ -1689,10 +1846,10 @@ test('CC-1485: listBacklogIssues reads the board backlog with the default fields
   );
 });
 
-test("CC-1485: listBacklogIssues sends the caller's fields, JQL and offset", async () => {
+test("CC-1485: listBacklogIssues sends the caller's fields, JQL and resume token", async () => {
   const jira = createFakeJiraRequest().on(
     BACKLOG_ROUTE,
-    jiraOk(issuesPage(20, 10, 21, [issueRow('ABC-30', '10030')])),
+    jiraOk(softwarePage([issueRow('ABC-30', '10030')])),
   );
 
   const result = await listBacklogIssues({
@@ -1700,16 +1857,16 @@ test("CC-1485: listBacklogIssues sends the caller's fields, JQL and offset", asy
     boardId: '7',
     fields: [' summary ', 'customfield_10016'],
     jql: ' issuetype = Bug ',
-    startAt: 20,
+    nextPageToken: 'tok-20',
     pageSize: 10,
     maxPages: 1,
   });
 
   assert.deepEqual(queryOf(jira.lastRequest()), {
-    startAt: 20,
     maxResults: 10,
     fields: 'summary,customfield_10016',
     jql: 'issuetype = Bug',
+    nextPageToken: 'tok-20',
   });
   assert.equal(result.fieldsDefaulted, false);
   assert.equal(result.stopReason, 'exhausted');
@@ -1732,7 +1889,7 @@ test('CC-1487: a backlog refusal (kanban without a backlog) passes through', asy
     jiraErr(
       createJiraError({
         kind: 'validation',
-        reason: 'Jira refused GET /rest/agile/1.0/board/7/backlog (400).',
+        reason: 'Jira refused GET /rest/software/1.0/board/7/backlog (400).',
         httpStatus: 400,
         remediation: 'Enable the backlog on this board.',
       }),

@@ -3704,7 +3704,8 @@ Prompts (D125):
   (no `estimates`, no estimate ratio) and a note; a sprint with no board and
   no `boardId` skips the configuration read and says to pass one.
 - **CC-1577** — a sprint past the issue cap is `partial: true` with an
-  `INCOMPLETE: only the first N issues of M` note, and `committed` is absent.
+  `INCOMPLETE: only the first N issues` note (naming the total only when Jira
+  reports one, CC-5002), and `committed` is absent.
 - **CC-1578** — "added after start" is the LAST Sprint-field change after
   `startDate` whose `to` ids hold the sprint and whose `from` ids do not; a
   change before the start, an undated history, another field, or staying in
@@ -3738,3 +3739,29 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
 - **CC-4006** — unknown routes, attachments by id and the `secure` root fail
   closed under a scope; a response still carrying an out-of-scope issue is
   refused.
+
+## Agile issue reads on `/rest/software/1.0` (D500–D504, 2026-10-28)
+
+- **CC-5000** — the Cloud sprint-issue and backlog reads go to the `software`
+  root, send `maxResults` and `fields` (plus `jql` and `nextPageToken` when
+  given), follow `nextPageToken` until `isLast` or a missing/`null` token, and
+  hand back the unspent token as `paging.nextPageToken` on a partial read.
+- **CC-5001** — a Cloud `startAt` above 0 is a `validation` error with nothing
+  sent and a remedy naming `nextPageToken`; `startAt: 0` is accepted and not
+  sent.
+- **CC-5002** — the root reports no `total`: paging carries none, and the
+  sprint summary's partial note says the sprint size is unknown instead of
+  naming one.
+- **CC-5003** — a string `startAt` is the deprecated alias of `nextPageToken`;
+  the same token named twice is fine, two different tokens are a `validation`
+  error with nothing sent.
+- **CC-5004** — the Data Center sprint-issue twin stays on `/rest/agile/1.0`
+  with `startAt`/`total` paging and refuses a `nextPageToken` before the wire.
+- **CC-5005** — a 403/404 from the software root keeps its kind and gains the
+  CC-34 "the Agile API itself may be unavailable" remediation.
+- **CC-5006** — a software page without an `issues` array is
+  `unexpected_shape`.
+- **CC-5007** — under `JIRA_PROJECTS` the software root admits only the
+  sprint-issue and board backlog/issue GETs, adds the project clause to their
+  JQL like the agile routes, and refuses an out-of-scope board and any other
+  route.

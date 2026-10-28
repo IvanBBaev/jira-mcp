@@ -708,6 +708,33 @@ function decodeToken(token) {
   return match === null ? undefined : Number(match[1]);
 }
 
+/**
+ * One page of a `/rest/software/1.0` issue read (D501): `issues`, then
+ * `nextPageToken` while rows remain, else `isLast: true`. No `total`, no
+ * `startAt` — the Jira Software issue-read API reports neither. An offset is
+ * not a parameter there, so a `startAt` in the query is ignored, exactly as
+ * Jira ignores an unknown parameter.
+ */
+function softwareIssuePage(rows, query) {
+  let offset = 0;
+  if (query.nextPageToken !== undefined) {
+    const decoded = decodeToken(query.nextPageToken);
+    if (decoded === undefined) {
+      return jiraError(400, ['The provided nextPageToken is invalid or expired']);
+    }
+    offset = decoded;
+  }
+  const maxResults = Number(query.maxResults ?? 50);
+  const slice = rows.slice(offset, offset + maxResults);
+  const response = { expand: 'schema,names', issues: slice };
+  if (offset + slice.length < rows.length) {
+    response.nextPageToken = encodeToken(offset + slice.length);
+  } else {
+    response.isLast = true;
+  }
+  return json(200, response);
+}
+
 // ---------------------------------------------------------------------------
 // Wire projections — the raw JSON Jira would send
 // ---------------------------------------------------------------------------
@@ -2869,10 +2896,12 @@ function buildRoutes(server) {
 
     [
       'GET',
-      '/rest/agile/1.0/board/{boardId}/backlog',
+      '/rest/software/1.0/board/{boardId}/backlog',
       (ctx) => {
-        // D134: the board's project issues that sit in no active or future
-        // sprint — the same envelope and field handling as the sprint read.
+        // D134, moved by D500: the board's project issues that sit in no
+        // active or future sprint, on the Jira Software issue-read root. The
+        // agile twin is deliberately unrouted on Cloud (CHANGE-3193), so a
+        // regression to it surfaces as an `unmatched` request.
         const boardId = Number(ctx.params.boardId);
         const board = state.boards.find((row) => row.id === boardId);
         if (board === undefined) return notFound('Board');
@@ -2893,15 +2922,7 @@ function buildRoutes(server) {
               !open.has(issue.sprintId),
           )
           .map((issue) => wireIssue(state, issue, origin(), { fields }));
-        const startAt = Number(ctx.query.startAt ?? 0);
-        const maxResults = Number(ctx.query.maxResults ?? 50);
-        return json(200, {
-          expand: 'schema,names',
-          startAt,
-          maxResults,
-          total: rows.length,
-          issues: rows.slice(startAt, startAt + maxResults),
-        });
+        return softwareIssuePage(rows, ctx.query);
       },
     ],
 
@@ -2950,8 +2971,10 @@ function buildRoutes(server) {
 
     [
       'GET',
-      '/rest/agile/1.0/sprint/{sprintId}/issue',
+      '/rest/software/1.0/sprint/{sprintId}/issue',
       (ctx) => {
+        // D500: Cloud reads a sprint's issues from the Jira Software root,
+        // token-paged with no `total`. The agile GET is unrouted on Cloud.
         const sprintId = Number(ctx.params.sprintId);
         if (!state.sprints.some((sprint) => sprint.id === sprintId))
           return notFound('Sprint');
@@ -2962,15 +2985,7 @@ function buildRoutes(server) {
         const rows = [...state.issues.values()]
           .filter((issue) => !issue.deleted && issue.sprintId === sprintId)
           .map((issue) => wireIssue(state, issue, origin(), { fields }));
-        const startAt = Number(ctx.query.startAt ?? 0);
-        const maxResults = Number(ctx.query.maxResults ?? 50);
-        return json(200, {
-          expand: 'schema,names',
-          startAt,
-          maxResults,
-          total: rows.length,
-          issues: rows.slice(startAt, startAt + maxResults),
-        });
+        return softwareIssuePage(rows, ctx.query);
       },
     ],
 

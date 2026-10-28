@@ -107,7 +107,8 @@ const OWNED_LITERALS = [
     owner: 'CONFIGURATION.md',
     what: 'pinned npx registration example',
   },
-  { pattern: /\b5000\b/, owner: 'JIRA-API.md', what: 'maxResults endpoint cap' },
+  // `CC-5000` and up are corner-case ids (the v3 range), not the cap.
+  { pattern: /(?<!CC-)\b5000\b/, owner: 'JIRA-API.md', what: 'maxResults endpoint cap' },
   { pattern: /MAX_RETRY_AFTER_MS/, owner: 'JIRA-API.md', what: 'retry-after ceiling' },
   // Deliberately the whole "N tools / M packages" phrase: a bare `\d+ tools`
   // also matches per-package counts and third-party tool counts (D1's Rovo
@@ -384,7 +385,11 @@ function checkCornerCaseRefs(files, defined) {
   for (const file of files) {
     if (isArchive(file)) continue;
     const text = readFileSync(file, 'utf8');
+    const reserves = relative(DOCS_DIR, file) === 'ROADMAP.md';
     for (const m of text.matchAll(CC_REF_RE)) {
+      // ROADMAP rows reserve id ranges (`CC-nnnn–mmmm`) for work not yet done;
+      // the first id of a reserved range is not a reference to a defined case.
+      if (reserves && /^[–-]\d/.test(text.slice(m.index + m[0].length))) continue;
       if (!defined.has(m[0])) {
         report(file, lineOf(text, m.index), `${m[0]} is not defined in CORNER-CASES.md`);
       }

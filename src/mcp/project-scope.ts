@@ -745,11 +745,34 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     }
   };
 
+  /**
+   * The Cloud Jira Software issue reads (D500) — the sprint-issue and backlog
+   * GETs moved off the agile root. They are scoped exactly as their agile
+   * twins were (the board or sprint must be in scope, and the project clause
+   * is ANDed into the JQL); any other route on this root is refused, since no
+   * served tool sends one.
+   */
+  const admitSoftware = async (
+    req: JiraRequestSpec,
+    seg: readonly string[],
+  ): Promise<Admission> => {
+    const [head, second, third, extra] = seg;
+    const isRead =
+      req.method === 'GET' &&
+      second !== undefined &&
+      extra === undefined &&
+      ((head === 'sprint' && third === 'issue') ||
+        (head === 'board' && (third === 'backlog' || third === 'issue')));
+    if (!isRead) throw deny(`The Jira Software route ${req.pathTemplate ?? req.path}`);
+    return admitAgile(req, seg);
+  };
+
   const admit = async (req: JiraRequestSpec): Promise<Admission> => {
     const seg = segmentsOf(req.path);
     if (seg === undefined) throw deny('This request');
     const root = req.root ?? 'v3';
     if (root === 'agile') return admitAgile(req, seg);
+    if (root === 'software') return admitSoftware(req, seg);
     if (root === 'v3' || root === 'v2') return admitPlatform(req, seg);
     // `secure` is the Data Center attachment servlet — an attachment by id.
     throw deny('An attachment addressed by id');

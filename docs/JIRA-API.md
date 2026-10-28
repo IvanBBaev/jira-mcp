@@ -536,13 +536,52 @@ retries under the normal policy.
 
 ## Board backlog (D134)
 
-- `GET /rest/agile/1.0/board/{boardId}/backlog` — the issues the board's filter
-  (and kanban sub-query) selects that are in no active or future sprint, in
-  rank order. Query: `startAt`, `maxResults` (≤ 50), `jql`, `fields`,
-  `validateQuery`, `expand`. Answers **200** with the sprint-issue envelope
-  `{ startAt, maxResults, total, issues[] }`. A kanban board whose backlog is
-  disabled answers **400**. Permission: view the board. A plain read, retried
-  under the normal policy.
+- `GET /rest/software/1.0/board/{boardId}/backlog` on Cloud (D500; it was
+  `/rest/agile/1.0/board/{boardId}/backlog`, see the next section) — the
+  issues the board's filter (and kanban sub-query) selects that are in no
+  active or future sprint, in rank order. Same query and envelope as the
+  sprint-issue read below. A kanban board whose backlog is disabled answers
+  **400**. Permission: view the board. A plain read, retried under the normal
+  policy.
+
+## Sprint and backlog issue reads on `/rest/software/1.0` (D500–D504)
+
+Atlassian CHANGE-3193 (RFC-127) deprecates the agile issue GETs —
+`GET /rest/agile/1.0/sprint/{sprintId}/issue`,
+`GET /rest/agile/1.0/board/{boardId}/backlog` and their siblings — with removal
+reported for 2026-11-01. The Cloud replacements, verified against the published
+Jira Software swagger on 2026-10-28:
+
+- `GET /rest/software/1.0/sprint/{sprintId}/issue` — the issues of one sprint.
+- `GET /rest/software/1.0/board/{boardId}/backlog` — the board backlog.
+
+Both take `maxResults` (≤ 50 here), `fields`, `jql`, `nextPageToken` and
+`reconcileIssues` (≤ 50 issue ids, unused by this server), and answer **200**
+with `{ expand?, issues[], nextPageToken?, isLast? }`. There is **no
+`startAt` and no `total`** (D501): a page is followed with the token until
+`isLast: true` or the token is absent or `null`, through the same
+`searchPages` loop `jira_search` uses. An expired or foreign token answers
+**400**. The `software` API root (`/rest/software/1.0`) holds only these two
+reads; every other agile route stays on `/rest/agile/1.0`.
+
+- **Scopes.** Unchanged from the agile routes: the sprint read needs
+  `read:sprint:jira-software`, `read:issue-details:jira` and `read:jql:jira`;
+  the backlog read `read:board-scope:jira-software` and
+  `read:issue-details:jira`. Connect apps need `READ`. Basic auth with an API
+  token works as before. Whether every token kind is admitted on the new root
+  is a live question for Gate C (V3-21), not a documented restriction.
+- **Errors.** The CC-34 remap of the agile routes also wraps these calls: a
+  403/404 keeps its kind and names the possibility that Jira Software itself
+  is unavailable (CC-5005).
+- **Read-after-write lag (D504).** Both reads are JQL-backed, so they read the
+  search index. An issue moved by `jira_move_to_sprint` or
+  `jira_move_to_backlog` can be missing from (or still present in) the next
+  read for a short while. The API offers `reconcileIssues` to force named ids
+  into the answer; this server does not send it. Re-read after a moment
+  instead of retrying the write.
+- **Data Center (D502).** Jira Software Data Center has no `/rest/software`
+  root. Its sprint-issue twin stays on `/rest/agile/1.0` with classic
+  `startAt`/`total` paging, and it refuses a `nextPageToken` (CC-5004).
 
 ## Agile writes (sprints and the backlog)
 
@@ -700,7 +739,7 @@ excludes every other tool (CC-263).
 | `/project/{p}/component`, `/project/{p}/version` (paged) | `/components`, `/versions` (arrays, long-standing) | served over the arrays, filters applied here (D108, CC-275) |
 | `/project/{p}/role`, `/project/{p}/role/{id}` | same paths, DC actors (`name`, no `actorUser`) | served (D110), own actor mapper (CC-311) |
 | `/bulk/*` | none | not served |
-| Agile `/board`, `/board/{id}/sprint`, `/sprint/{id}/issue` | same, Jira Software Data Center | served, DC user dialect on issue fields |
+| Agile `/board`, `/board/{id}/sprint`; sprint issues on `/rest/software/1.0/sprint/{id}/issue` (D500) | `/rest/agile/1.0/...` for all three, Jira Software Data Center | served, DC user dialect on issue fields; the sprint-issue twin keeps offset paging (D502) |
 | `POST /issue`, `PUT /issue/{key}`, `POST /issue/{key}/transitions` | same paths under `/rest/api/2`, wiki-markup bodies | served (D109); `assigneeAccountId`/`reporterAccountId` refused |
 | `POST`/`PUT /issue/{key}/comment[/{id}]`, `POST /issue/{key}/worklog`, `POST /issueLink` | same paths under `/rest/api/2`, wiki-markup bodies | served (D109), DC user dialect on the answer |
 | `PUT /issue/{key}/assignee` | same path under `/rest/api/2`, body `{ "name": "<username>" }`, unassign `{ "name": null }` | served (D111) by `username`; `accountId` refused (CC-317, CC-318) |

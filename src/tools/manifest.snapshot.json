@@ -2899,9 +2899,21 @@
                 "type": "string",
                 "minLength": 1
               },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
               "startAt": {
-                "type": "integer",
-                "minimum": 0
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
               },
               "maxResults": {
                 "type": "integer",
@@ -2948,9 +2960,21 @@
                 "type": "string",
                 "minLength": 1
               },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
               "startAt": {
-                "type": "integer",
-                "minimum": 0
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
               },
               "maxResults": {
                 "type": "integer",

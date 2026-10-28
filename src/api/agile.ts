@@ -9,6 +9,13 @@
 // from `api/shared.ts`; this module owns only the routes, the query vocabulary
 // and the runtime guards that turn `unknown` wire data into typed rows.
 //
+// One exception (D500): on Cloud the sprint-issue and backlog READS live under
+// `/rest/software/1.0` (`root: 'software'`), because Atlassian retired their
+// agile twins (CHANGE-3193). That root pages by `nextPageToken` / `isLast` and
+// reports no `total`, so those two reads go through {@link searchPages}
+// instead. Data Center has no software root and keeps the agile sprint-issue
+// route ({@link listSprintIssuesDataCenter}).
+//
 // Scope is TOOLS.md §Package `agile`: list boards, list a board's sprints, read
 // one sprint or a sprint's issues, move issues INTO a sprint or OUT to the
 // backlog, walk a sprint through its lifecycle — create, start, close (WP-61) —
@@ -63,10 +70,14 @@ import { DEFAULT_SEARCH_FIELDS } from './search.js';
 import {
   budgetOf,
   fetchAll,
+  searchPages,
   type BudgetGuard,
   type ClassicCursor,
   type ClassicLoopResult,
   type ClassicPage,
+  type PageLoopResult,
+  type TokenPage,
+  type TokenPaginateBase,
 } from './shared.js';
 
 // ---------------------------------------------------------------------------
@@ -265,6 +276,11 @@ export type ListSprintIssuesOptions = AgilePagedBase & {
   readonly fields?: readonly string[];
   /** Extra JQL, ANDed by Jira with "issue is in this sprint". */
   readonly jql?: string;
+  /**
+   * Cloud only (D501): resume a partial read with the previous result's
+   * `nextPageToken`. Data Center refuses it and resumes by `startAt`.
+   */
+  readonly nextPageToken?: string;
 } & BudgetGuard;
 
 /** Options for {@link moveIssuesToSprint}. */
@@ -380,10 +396,25 @@ export type ListBacklogIssuesOptions = AgilePagedBase & {
   readonly fields?: readonly string[];
   /** Extra JQL, ANDed by Jira with "issue is in this board's backlog". */
   readonly jql?: string;
+  /** As {@link ListSprintIssuesOptions.nextPageToken}. */
+  readonly nextPageToken?: string;
 } & BudgetGuard;
 
-/** What {@link listSprintIssues} and {@link listBacklogIssues} return on top of the loop metadata. */
-export interface SprintIssuesResult extends ClassicLoopResult<AgileIssue> {
+/**
+ * What {@link listSprintIssues}, {@link listBacklogIssues} and
+ * {@link listSprintIssuesDataCenter} return on top of the loop metadata. The
+ * resume handle depends on the root (D501): Cloud's `software` root hands back
+ * `nextPageToken` and never a `total`; Data Center's `agile` root hands back
+ * `nextStartAt` and usually a `total`. Each is present only when the result is
+ * partial.
+ */
+export interface SprintIssuesResult extends PageLoopResult<AgileIssue> {
+  /** Cloud: the unspent token to resume with. */
+  readonly nextPageToken?: string;
+  /** Data Center: the offset to resume from. */
+  readonly nextStartAt?: number;
+  /** Data Center: the server's `total`. Cloud reports none. */
+  readonly total?: number;
   /** The field ids actually sent — the caller's list, or the default set. */
   readonly fields: readonly string[];
   /** `true` when the default set was injected because the caller sent none. */
@@ -551,50 +582,81 @@ export async function listSprints(
 }
 
 /**
- * Read the issues of a sprint. `GET /rest/agile/1.0/sprint/{sprintId}/issue`,
- * classic pagination — note that this route names its rows `issues`, not
- * `values`, and reports `total` but no `isLast`.
+ * Read the issues of a sprint on Cloud —
+ * `GET /rest/software/1.0/sprint/{sprintId}/issue` (D500).
  *
- * CC-03: an absent or empty `fields` is never sent as "no fields" (which on the
- * agile root means "everything Jira has", a page-sized wall of custom fields).
+ * Atlassian retired the `/rest/agile/1.0` twin of this route (CHANGE-3193), so
+ * Cloud reads it from the Jira Software issue-read root. That root pages by
+ * `nextPageToken` / `isLast` and reports no `total` (D501): the loop is
+ * {@link searchPages}, the resume handle is `nextPageToken`, and an offset
+ * cannot be honoured — a `startAt` above 0 is refused locally rather than
+ * silently read from the first page (CC-5001). The rows are still named
+ * `issues` and the CC-34 remap still applies: the route belongs to Jira
+ * Software exactly as the agile one did.
+ *
+ * CC-03: an absent or empty `fields` is never sent as "no fields" (which on
+ * this root means "everything Jira has", a page-sized wall of custom fields).
  * The documented default set is injected and the substitution is reported, so
  * the tool can raise `fields_defaulted`.
+ *
+ * Data Center keeps the agile route and its classic paging:
+ * {@link listSprintIssuesDataCenter}.
  */
 export async function listSprintIssues(
   options: ListSprintIssuesOptions,
 ): Promise<SprintIssuesResult> {
   const sprintId = agileId(options.sprintId, 'sprintId');
-  return listIssuePage(options, `/sprint/${sprintId}/issue`, '/sprint/{sprintId}/issue');
+  return listSoftwareIssuePage(
+    options,
+    `/sprint/${sprintId}/issue`,
+    SOFTWARE_SPRINT_ISSUES_TEMPLATE,
+  );
 }
 
 /**
- * Read one page of a board's backlog — `GET /rest/agile/1.0/board/{boardId}/
- * backlog` (D134): the issues of the board's filter that sit in no active or
- * future sprint, in board rank order. Same pagination dialect, same CC-03
- * field default and same raw `fields` bags as {@link listSprintIssues}. A
- * kanban board answers too when its backlog is enabled; otherwise Jira refuses
- * with a 400, which passes through as `validation`.
+ * Read one page of a board's backlog on Cloud —
+ * `GET /rest/software/1.0/board/{boardId}/backlog` (D134, moved by D500): the
+ * issues of the board's filter that sit in no active or future sprint, in
+ * board rank order. Same token paging, same CC-03 field default and same raw
+ * `fields` bags as {@link listSprintIssues}. A kanban board answers too when
+ * its backlog is enabled; otherwise Jira refuses with a 400, which passes
+ * through as `validation`.
  */
 export async function listBacklogIssues(
   options: ListBacklogIssuesOptions,
 ): Promise<SprintIssuesResult> {
   const boardId = agileId(options.boardId, 'boardId');
-  return listIssuePage(options, `/board/${boardId}/backlog`, '/board/{boardId}/backlog');
+  return listSoftwareIssuePage(
+    options,
+    `/board/${boardId}/backlog`,
+    SOFTWARE_BACKLOG_TEMPLATE,
+  );
 }
 
-/** The issue page shared by the sprint and backlog reads. */
-async function listIssuePage(
-  options: AgilePagedBase &
-    BudgetGuard & { readonly fields?: readonly string[]; readonly jql?: string },
-  path: string,
-  pathTemplate: string,
+/**
+ * {@link listSprintIssues} on Jira Data Center —
+ * `GET /rest/agile/1.0/sprint/{sprintId}/issue` (D502).
+ *
+ * Data Center has no `/rest/software/1.0`; its agile route is not deprecated
+ * and still pages by `startAt` with a `total`, so this twin keeps the classic
+ * loop. A `nextPageToken` names a Cloud cursor and is refused (CC-5004).
+ */
+export async function listSprintIssuesDataCenter(
+  options: ListSprintIssuesOptions,
 ): Promise<SprintIssuesResult> {
-  const requested = (options.fields ?? [])
-    .map((field) => field.trim())
-    .filter((field) => field.length > 0);
-  const fieldsDefaulted = requested.length === 0;
-  const fields = fieldsDefaulted ? DEFAULT_SPRINT_ISSUE_FIELDS : requested;
-  const jql = options.jql?.trim();
+  if (trimmedOrUndefined(options.nextPageToken) !== undefined) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        'nextPageToken is a Jira Cloud cursor; Jira Data Center pages sprint issues by offset.',
+      remediation:
+        'Drop nextPageToken and resume with startAt = paging.nextStartAt from the previous result.',
+    });
+  }
+  const sprintId = agileId(options.sprintId, 'sprintId');
+  const pathTemplate = '/sprint/{sprintId}/issue';
+  const { fields, fieldsDefaulted } = issueFields(options.fields);
+  const jql = trimmedOrUndefined(options.jql);
   const endpoint = `GET ${pathTemplate}`;
 
   const page = await agileCall({ rootProbe: false }, () =>
@@ -603,12 +665,12 @@ async function listIssuePage(
       (cursor) => ({
         method: 'GET',
         root: 'agile',
-        path,
+        path: `/sprint/${sprintId}/issue`,
         pathTemplate,
         query: {
           ...pageQuery(cursor),
           fields: fields.join(','),
-          ...(jql === undefined || jql.length === 0 ? {} : { jql }),
+          ...(jql === undefined ? {} : { jql }),
         },
       }),
       (response) => readCollection(response, endpoint, 'issues', narrowIssue),
@@ -616,6 +678,84 @@ async function listIssuePage(
   );
 
   return { ...page, fields, fieldsDefaulted };
+}
+
+/** `pathTemplate` of the Cloud sprint-issue read on the `software` root. */
+export const SOFTWARE_SPRINT_ISSUES_TEMPLATE = '/sprint/{sprintId}/issue';
+
+/** `pathTemplate` of the Cloud backlog read on the `software` root. */
+export const SOFTWARE_BACKLOG_TEMPLATE = '/board/{boardId}/backlog';
+
+/** The token-paged issue read shared by the Cloud sprint and backlog routes. */
+async function listSoftwareIssuePage(
+  options: AgilePagedBase &
+    BudgetGuard & {
+      readonly fields?: readonly string[];
+      readonly jql?: string;
+      readonly nextPageToken?: string;
+    },
+  path: string,
+  pathTemplate: string,
+): Promise<SprintIssuesResult> {
+  if (options.startAt !== undefined && options.startAt !== 0) {
+    throw createJiraError({
+      kind: 'validation',
+      reason:
+        `startAt ${String(options.startAt)} cannot be honoured: Jira Cloud pages ` +
+        'sprint and backlog issues by nextPageToken and has no offset.',
+      remediation:
+        'Omit startAt (or pass 0) to read from the first page, and resume with ' +
+        'nextPageToken = paging.nextPageToken from the previous result.',
+    });
+  }
+  const { fields, fieldsDefaulted } = issueFields(options.fields);
+  const jql = trimmedOrUndefined(options.jql);
+  const endpoint = `GET ${pathTemplate}`;
+  const maxResults = options.pageSize ?? DEFAULT_AGILE_PAGE_SIZE;
+  const startToken = trimmedOrUndefined(options.nextPageToken);
+
+  const base: TokenPaginateBase<AgileIssue> = {
+    jira: options.jira,
+    request: (cursor) => ({
+      method: 'GET',
+      root: 'software',
+      path,
+      pathTemplate,
+      query: {
+        maxResults,
+        fields: fields.join(','),
+        ...(jql === undefined ? {} : { jql }),
+        ...(cursor.nextPageToken === undefined
+          ? {}
+          : { nextPageToken: cursor.nextPageToken }),
+      },
+    }),
+    readPage: (response) => readTokenCollection(response, endpoint),
+    ...(startToken === undefined ? {} : { startToken }),
+    ...(options.maxPages === undefined ? {} : { maxPages: options.maxPages }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
+  const guard: BudgetGuard = options;
+  const page = await agileCall({ rootProbe: false }, () =>
+    searchPages<AgileIssue>({ ...base, ...budgetOf(guard) }),
+  );
+
+  return { ...page, fields, fieldsDefaulted };
+}
+
+/** CC-03: the caller's trimmed field list, or the default set when it is empty. */
+function issueFields(requestedFields: readonly string[] | undefined): {
+  readonly fields: readonly string[];
+  readonly fieldsDefaulted: boolean;
+} {
+  const requested = (requestedFields ?? [])
+    .map((field) => field.trim())
+    .filter((field) => field.length > 0);
+  const fieldsDefaulted = requested.length === 0;
+  return {
+    fields: fieldsDefaulted ? DEFAULT_SPRINT_ISSUE_FIELDS : requested,
+    fieldsDefaulted,
+  };
 }
 
 /**
@@ -1385,6 +1525,32 @@ function readCollection<T>(
     ...(typeof body.startAt === 'number' ? { startAt: body.startAt } : {}),
     ...(typeof body.maxResults === 'number' ? { maxResults: body.maxResults } : {}),
     ...(typeof body.total === 'number' ? { total: body.total } : {}),
+    ...(typeof body.isLast === 'boolean' ? { isLast: body.isLast } : {}),
+  };
+}
+
+/**
+ * Narrow one token page of the `software` root (D501). The rows live under
+ * `issues`; `nextPageToken` is absent or `null` on the last page, and `isLast`
+ * may say so too. There is no `total`, `startAt` or `maxResults` to read.
+ */
+function readTokenCollection(
+  response: JiraResponse,
+  endpoint: string,
+): TokenPage<AgileIssue> {
+  const body = expectRecord(response.data, endpoint, 'response body');
+  const rows = body.issues;
+  if (!isUnknownArray(rows)) {
+    throw unexpectedShape(
+      `${endpoint} returned no \`issues\` array — the Jira Software API changed ` +
+        'shape, or a proxy rewrote the response.',
+    );
+  }
+  return {
+    items: rows.map((row) => narrowIssue(row, endpoint)),
+    ...(typeof body.nextPageToken === 'string'
+      ? { nextPageToken: body.nextPageToken }
+      : {}),
     ...(typeof body.isLast === 'boolean' ? { isLast: body.isLast } : {}),
   };
 }

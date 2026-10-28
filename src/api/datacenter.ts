@@ -19,7 +19,9 @@
 //     field, issueLinkType, project/{key}) the Cloud function is reused through
 //     {@link onV2}, which moves the request to the v2 root and nothing else.
 //     The agile root (`/rest/agile/1.0`) is the same on Jira Software DC and is
-//     left alone.
+//     left alone — except the sprint-issue read, which Cloud moved to
+//     `/rest/software/1.0` (D500); Data Center has no such root, so its twin
+//     (`listSprintIssuesDataCenter`) keeps the agile route and offset paging.
 //   * Users have no `accountId`; they are `name` + `key`. Every read that shapes
 //     users gets `deployment: 'datacenter'`, which switches the projection to
 //     the Data Center allowlist — without it a DC user would fall through the
@@ -115,6 +117,7 @@ import type {
   JiraResponse,
 } from '../core/types.js';
 import { renderAdfDocs, type AdfNode, type MentionTarget } from './adf.js';
+import { listSprintIssuesDataCenter } from './agile.js';
 import {
   downloadAttachmentDataCenter,
   listAttachmentsDataCenter,
@@ -492,7 +495,10 @@ const served: Partial<JiraApi> = {
   moveIssuesToBacklog: CLOUD_API.moveIssuesToBacklog,
   listBoards: CLOUD_API.listBoards,
   listSprints: CLOUD_API.listSprints,
-  listSprintIssues: CLOUD_API.listSprintIssues,
+  // D502: Cloud reads sprint issues from `/rest/software/1.0`, which Data
+  // Center does not have; the DC twin stays on the agile route and its offset
+  // paging.
+  listSprintIssues: listSprintIssuesDataCenter,
 };
 
 function buildDataCenterApi(): JiraApi {

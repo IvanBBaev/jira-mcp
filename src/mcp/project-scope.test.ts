@@ -394,6 +394,46 @@ test('sprint issue lists get the project clause added to their JQL', async () =>
   assert.deepEqual(fake.lastRequest()?.query, { fields: 'summary', jql: CLAUSE });
 });
 
+test('CC-5007: Cloud sprint issue and backlog reads on the software root get the project clause', async () => {
+  const { fake, scope } = setup();
+  fake.on('GET /rest/software/1.0/sprint/9/issue', jiraOk({ issues: [] }));
+  fake.on('GET /rest/software/1.0/board/1/backlog', jiraOk({ issues: [] }));
+  fake.on('GET /rest/agile/1.0/sprint/9', jiraOk({ id: 9, originBoardId: 1 }));
+  fake.on(
+    'GET /rest/agile/1.0/board/1',
+    jiraOk({ id: 1, location: { projectKey: 'ABC' } }),
+  );
+  await scope.jira({
+    method: 'GET',
+    root: 'software',
+    path: '/sprint/9/issue',
+    query: { fields: 'summary' },
+  });
+  assert.deepEqual(fake.lastRequest()?.query, { fields: 'summary', jql: CLAUSE });
+  await scope.jira({
+    method: 'GET',
+    root: 'software',
+    path: '/board/1/backlog',
+    query: { fields: 'summary' },
+  });
+  assert.deepEqual(fake.lastRequest()?.query, { fields: 'summary', jql: CLAUSE });
+});
+
+test('CC-5007: the software root refuses an out-of-scope board and any route but the issue reads', async () => {
+  const { fake, scope } = setup();
+  fake.on(
+    'GET /rest/agile/1.0/board/2',
+    jiraOk({ id: 2, location: { projectKey: 'XYZ' } }),
+  );
+  await refused(
+    scope.jira({ method: 'GET', root: 'software', path: '/board/2/backlog' }),
+  );
+  await refused(scope.jira({ method: 'GET', root: 'software', path: '/board/1' }));
+  await refused(
+    scope.jira({ method: 'POST', root: 'software', path: '/sprint/9/issue', body: {} }),
+  );
+});
+
 test('rank checks every issue and both anchors', async () => {
   const { scope } = setup();
   await refused(

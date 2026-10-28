@@ -27,7 +27,7 @@ import {
 } from './sprint-summary.js';
 
 const SPRINT_ROUTE = 'GET /rest/agile/1.0/sprint/42';
-const SPRINT_ISSUES_ROUTE = 'GET /rest/agile/1.0/sprint/42/issue';
+const SPRINT_ISSUES_ROUTE = 'GET /rest/software/1.0/sprint/42/issue';
 const BOARD_CONFIG_ROUTE = 'GET /rest/agile/1.0/board/17/configuration';
 const FIELDS_ROUTE = 'GET /rest/api/3/field';
 const CHANGELOG_ROUTE = 'POST /rest/api/3/changelog/bulkfetch';
@@ -93,11 +93,9 @@ function issue(
   };
 }
 
-// synthetic — GET /rest/agile/1.0/sprint/42/issue
+// synthetic — GET /rest/software/1.0/sprint/42/issue (token-paged, no total)
 const ISSUES_PAGE = {
-  startAt: 0,
-  maxResults: 50,
-  total: 4,
+  isLast: true,
   issues: [
     issue('10001', 'SAN-1', 'done', 3),
     issue('10002', 'SAN-2', 'indeterminate', 5),
@@ -269,8 +267,9 @@ test('[CC-1576] a board without a field estimate counts issues only; no board sa
   assert.ok(orphan.notes.some((note) => /Pass boardId/.test(note)));
 });
 
-test('[CC-1577] a sprint larger than the issue cap is partial and says how far it got', async () => {
-  const page = { ...ISSUES_PAGE, total: 900, isLast: false };
+test('[CC-1577][CC-5002] a sprint larger than the issue cap is partial and says how far it got', async () => {
+  // Cloud reports no total on this root (D501), so the note cannot name one.
+  const page = { issues: ISSUES_PAGE.issues, nextPageToken: 'tok-2' };
   const fake = createFakeJiraRequest()
     .on(SPRINT_ISSUES_ROUTE, jiraOk(page))
     .on(SPRINT_ROUTE, jiraOk(SPRINT))
@@ -281,7 +280,11 @@ test('[CC-1577] a sprint larger than the issue cap is partial and says how far i
   );
   assert.equal(data.partial, true);
   assert.ok(
-    data.notes.some((note) => /INCOMPLETE: only the first 4 issues of 900/.test(note)),
+    data.notes.some((note) =>
+      /INCOMPLETE: only the first 4 issues were summarised \(Jira reports no total/.test(
+        note,
+      ),
+    ),
   );
   assert.equal(data.committed, undefined);
 });

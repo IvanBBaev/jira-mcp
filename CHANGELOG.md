@@ -166,6 +166,14 @@ env var names — not internal refactors.
 
 ### Changed
 
+- `jira_get_sprint_issues`, `jira_get_backlog` and `jira_sprint_summary` read
+  Jira Cloud's new `/rest/software/1.0` routes (D500): Atlassian is removing
+  the old agile issue routes (CHANGE-3193, reported for 2026-11-01). Paging is
+  now by token: pass `paging.nextPageToken` back as the new `nextPageToken`
+  input. On Cloud `paging.total` and `paging.nextStartAt` are gone because
+  Jira no longer reports them, and a `startAt` above 0 is refused. `startAt`
+  still accepts 0 or a token as a deprecated alias (D503). Data Center is
+  unchanged. OAuth scopes are unchanged.
 - `tools/list` is smaller (D124): schemas no longer carry `$schema` or the
   `±(2^53 − 1)` bounds the converter put on every integer, the `apply`,
   `plan_id` and `profile` descriptions are one line each, the `format` and

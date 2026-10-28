@@ -60,7 +60,7 @@ import {
 
 const BOARDS_ROUTE = 'GET /rest/agile/1.0/board';
 const SPRINTS_ROUTE = 'GET /rest/agile/1.0/board/17/sprint';
-const SPRINT_ISSUES_ROUTE = 'GET /rest/agile/1.0/sprint/42/issue';
+const SPRINT_ISSUES_ROUTE = 'GET /rest/software/1.0/sprint/42/issue';
 const MOVE_ROUTE = 'POST /rest/agile/1.0/sprint/42/issue';
 const BACKLOG_ROUTE = 'POST /rest/agile/1.0/backlog/issue';
 const CREATE_SPRINT_ROUTE = 'POST /rest/agile/1.0/sprint';
@@ -372,11 +372,9 @@ const ADF_DESCRIPTION = {
 test('CC-35: sprint issues are branded untrusted and shaped exactly like search rows', async () => {
   const fake = createFakeJiraRequest().on(
     SPRINT_ISSUES_ROUTE,
-    // synthetic — GET /rest/agile/1.0/sprint/{sprintId}/issue
+    // synthetic — GET /rest/software/1.0/sprint/{sprintId}/issue
     jiraOk({
-      startAt: 0,
-      maxResults: 50,
-      total: 1,
+      isLast: true,
       issues: [
         {
           id: '10001',
@@ -438,9 +436,7 @@ test('CC-03: omitting fields sends the default set and raises fields_defaulted',
   const fake = createFakeJiraRequest().on(
     SPRINT_ISSUES_ROUTE,
     jiraOk({
-      startAt: 0,
-      maxResults: 50,
-      total: 1,
+      isLast: true,
       issues: [{ key: 'ABC-1', fields: { summary: 'Importer drops the last row' } }],
     }),
   );
@@ -459,7 +455,7 @@ test('CC-03: omitting fields sends the default set and raises fields_defaulted',
 test('jira_get_sprint_issues forwards extra jql untouched', async () => {
   const fake = createFakeJiraRequest().on(
     SPRINT_ISSUES_ROUTE,
-    jiraOk({ startAt: 0, maxResults: 50, total: 0, issues: [] }),
+    jiraOk({ isLast: true, issues: [] }),
   );
 
   const result = await getSprintIssuesTool.handler(
@@ -477,16 +473,14 @@ test('jira_get_sprint_issues forwards extra jql untouched', async () => {
 // `jira_get_backlog` (D134)
 // ---------------------------------------------------------------------------
 
-const BOARD_BACKLOG_ROUTE = 'GET /rest/agile/1.0/board/17/backlog';
+const BOARD_BACKLOG_ROUTE = 'GET /rest/software/1.0/board/17/backlog';
 
 test('CC-1488: jira_get_backlog pages a board backlog like the sprint read', async () => {
   const fake = createFakeJiraRequest().on(
     BOARD_BACKLOG_ROUTE,
-    // synthetic — GET /rest/agile/1.0/board/{boardId}/backlog
+    // synthetic — GET /rest/software/1.0/board/{boardId}/backlog
     jiraOk({
-      startAt: 0,
-      maxResults: 2,
-      total: 5,
+      nextPageToken: 'tok-3',
       issues: [
         { id: '10007', key: 'ABC-7', fields: { summary: 'Top of the backlog' } },
         { id: '10008', key: 'ABC-8', fields: { summary: 'Next one' } },
@@ -509,7 +503,11 @@ test('CC-1488: jira_get_backlog pages a board backlog like the sprint read', asy
   assert.equal(data.boardId, 17);
   assert.equal(data.count, 2);
   assert.equal(data.paging.partial, true);
-  assert.equal(data.paging.nextStartAt, 2);
+  assert.equal(data.paging.nextPageToken, 'tok-3');
+  // D501: the software root reports neither an offset nor a total.
+  assert.equal(data.paging.nextStartAt, undefined);
+  assert.equal(data.paging.total, undefined);
+  assert.match(String(data.paging.note), /nextPageToken = paging\.nextPageToken/);
   // Issue summaries are tenant prose: branded like the sprint read (CC-35).
   assert.equal(result._untrusted, true);
   assert.ok(!hintCodes(result).includes('truncated'));
@@ -518,7 +516,7 @@ test('CC-1488: jira_get_backlog pages a board backlog like the sprint read', asy
 test('CC-1488: jira_get_backlog defaults the fields and says so', async () => {
   const fake = createFakeJiraRequest().on(
     BOARD_BACKLOG_ROUTE,
-    jiraOk({ startAt: 0, maxResults: 50, total: 0, issues: [] }),
+    jiraOk({ isLast: true, issues: [] }),
   );
 
   const result = await getBacklogTool.handler({ boardId: 17 }, createCtx(fake.fn));
@@ -534,6 +532,69 @@ test('jira_get_backlog refuses a blank jql and a non-integer board id', () => {
     getBacklogTool.input.safeParse({ boardId: 17, sprintId: 4 }).success,
     false,
   );
+});
+
+test('CC-5000: jira_get_sprint_issues resumes from nextPageToken and reports the next one', async () => {
+  const fake = createFakeJiraRequest().on(
+    SPRINT_ISSUES_ROUTE,
+    jiraOk({ nextPageToken: 'tok-b', issues: [{ key: 'ABC-2', fields: {} }] }),
+  );
+
+  const result = await getSprintIssuesTool.handler(
+    { sprintId: 42, fields: ['summary'], nextPageToken: 'tok-a' },
+    createCtx(fake.fn),
+  );
+  const data = dataOf(result);
+
+  assert.equal(fake.lastRequest()?.query?.nextPageToken, 'tok-a');
+  assert.equal(fake.lastRequest()?.query?.startAt, undefined);
+  assert.equal(data.paging.partial, true);
+  assert.equal(data.paging.nextPageToken, 'tok-b');
+});
+
+test('CC-5003: a string startAt is read as the token alias; two different tokens are refused', async () => {
+  const fake = createFakeJiraRequest().on(
+    BOARD_BACKLOG_ROUTE,
+    jiraOk({ isLast: true, issues: [] }),
+  );
+
+  assert.equal(
+    getBacklogTool.input.safeParse({ boardId: 17, startAt: 'tok-a' }).success,
+    true,
+  );
+  await getBacklogTool.handler(
+    { boardId: 17, fields: ['summary'], startAt: 'tok-a' },
+    createCtx(fake.fn),
+  );
+  assert.equal(fake.lastRequest()?.query?.nextPageToken, 'tok-a');
+
+  // The same token named twice is harmless; two different ones are a conflict.
+  await getBacklogTool.handler(
+    { boardId: 17, fields: ['summary'], startAt: 'tok-a', nextPageToken: 'tok-a' },
+    createCtx(fake.fn),
+  );
+  const calls = fake.calls.length;
+  const result = await getSprintIssuesTool.handler(
+    { sprintId: 42, startAt: 'tok-a', nextPageToken: 'tok-b' },
+    createCtx(fake.fn),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(result.error?.remediation ?? '', /deprecated alias/);
+  assert.equal(fake.calls.length, calls);
+});
+
+test('CC-5001: a numeric startAt above 0 is refused on Cloud with the token remedy', async () => {
+  const fake = createFakeJiraRequest();
+
+  const result = await getSprintIssuesTool.handler(
+    { sprintId: 42, startAt: 50 },
+    createCtx(fake.fn),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(JSON.stringify(result.error), /nextPageToken/);
+  assert.equal(fake.calls.length, 0);
 });
 
 // ---------------------------------------------------------------------------
