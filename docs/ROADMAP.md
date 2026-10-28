@@ -268,6 +268,90 @@ Not proposed, because already parked below or rejected in a D-row:
 Confluence, JSM, webhooks, a JQL builder, bulk move / transition / watch,
 and coalescing concurrent cache misses (D123).
 
+## v3 preparation — parallel work packages (2026-10-28)
+
+The 1.x work that clears the way for 2.0 and 3.0: one Jira Cloud API removal,
+small additive contract items, and the refactors 2.0 needs (the server-wide
+plan store comes first). Each row is one branch (`wp/<ID>`), one worktree
+under `~/Development/_branches/jira-mcp-<ID>`, one merge into `main`. A row
+graduates into committed scope through the D-row it writes. Rows marked
+`blocked-owner` / `blocked-external` wait for a decision or an outside event
+and are not started.
+
+### Rules that keep parallel branches apart
+
+1. **File ownership.** A WP edits only the files in its *Owns* column, plus
+   its own new files and tests next to them. If it has to touch a file
+   another WP owns, the row lists that WP under *Deps*. A WP that turns out
+   to need more files stops and records that in its row.
+2. **Pure moves stay pure.** The split WPs (V3-10…V3-13) only move code, with
+   no change in behaviour. The old module stays behind as a re-export barrel
+   so no importer changes in the same commit. The tests are frozen first:
+   the suite must pass unchanged before and after the move.
+3. **ID blocks are reserved per WP.** Use only the D-rows and CC numbers from
+   the *IDs* column. Never take "the next free number". This avoids the
+   placeholder renumbering that parallel v2 waves needed.
+4. **Shared append-only files** are `docs/DECISIONS.md`,
+   `docs/CORNER-CASES.md`, `CHANGELOG.md` (under `[Unreleased]`) and this
+   table. Add rows there; never edit or reorder someone else's. A rebase
+   conflict in these files is resolved by keeping both sides.
+5. **Status updates.** Change only your own row, in a separate commit that
+   touches only this file: `todo` → `done <sha>`.
+6. **Contract changes are stop-the-line.** Any change visible to a user
+   stops the WP and goes to the owner first: a tool name, an argument, an
+   output shape, a default, an env var or the meaning of a plan. That
+   includes anything breaking. Additive changes are fine.
+7. **Gate:** `npm run check` green after the rebase. `merge` runs it under
+   the merge lock.
+
+### Work packages
+
+| ID | Item | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|
+| V3-01 | Agile issue reads on `/rest/software/1.0` (RFC-127 / CHANGE-3193; agile issue routes reported removed 2026-11-01). Covers `jira_get_sprint_issues`, `jira_get_backlog` and `jira_sprint_summary` on Cloud. Paging by `nextPageToken`/`isLast`; no `total`, so the summary counts rows. `startAt` stays as a deprecated alias (0 or an opaque resume token). The DC twin stays on `/rest/agile/1.0`. Adds the `software` root, fake-jira routes and the OAuth scope docs. Also documents read-after-write lag after `jira_move_to_sprint` | `src/core/types.ts` (root paths only), `src/api/agile.ts`, `src/api/datacenter.ts`, `src/tools/agile.ts`, `src/tools/sprint-summary.ts`, `scripts/fake-jira.mjs` (agile routes), `docs/JIRA-API.md`, `docs/AUTH.md` | D500–D504, CC-5000–5019 | — | todo | 4 |
+| V3-02 | Rate-limit headers: read `RateLimit` / `RateLimit-Policy` / `RateLimit-Reason` with and without the `Beta-` prefix | `src/core/http-util.ts` | D505, CC-5020–5029 | — | todo | 1 |
+| V3-03 | Config drift: add `JIRA_META_CACHE_TTL_S` and `JIRA_REPORT_DIR` to `.env.example`; document the Atlassian egress range `131.162.88.0/21` (allow-list by 2027-01-01) in the proxy section | `.env.example`, `docs/CONFIGURATION.md` | — | — | todo | 0.5 |
+| V3-04 | Additive envelope fields: `executed: true` on applied writes, `reason` on every `ErrorRecord` | `src/mcp/result.ts`, `src/mcp/errors.ts`, `src/mcp/types.ts`, `src/core/types.ts` (`ErrorRecord` only), `docs/TOOLS.md` (envelope section) | D506–D507, CC-5030–5049 | — | todo | 2 |
+| V3-05 | `maxResults` above the cap is clamped with a hint instead of rejected, one shared arg helper (five behaviours today) | `src/tools/agile.ts`, `src/tools/collab.ts`, `src/tools/issues.ts` and the other `maxResultsArg` sites, `src/mcp/tool-helpers.ts` | D508, CC-5050–5069 | V3-01, V3-07 | todo | 2 |
+| V3-06 | Call-time enforcement proof: tests showing that a call to a tool that is not listed is refused at invocation. Covers packages, read-only mode, `JIRA_PROJECTS` and plan-only mode | `src/mcp/call-time-guard.test.ts` (new) | CC-5070–5089 | — | todo | 1.5 |
+| V3-07 | `_meta["anthropic/alwaysLoad"]` on the ~4 hottest reads; keyword-first descriptions for exactly those tools | `src/mcp/registry.ts` (meta emission), `src/tools/search.ts`, `src/tools/issues.ts` (descriptions only) | D509 | — | todo | 1.5 |
+| V3-08 | Surface ratchet: a per-profile `tools/list` byte budget and a per-tool size cap as a test | `src/mcp/surface.test.ts` (new), `test/surface-budget.json` (new) | D510 | V3-01, V3-07 | todo | 1.5 |
+| V3-09 | Server-wide `PlanStore`, bound to the session and credential that planned, so a stateless wire can find plans. Behaviour unchanged for stdio. A D-row defines the binding | `src/mcp/write-mode.ts`, `src/mcp/server.ts`, `src/mcp/transport-http.ts` | D511–D514, CC-5090–5119 | V3-04 | todo | 4 |
+| V3-10 | Split `core/http.ts` into stages (request build, send, retry, response). Retry semantics are frozen by tests first; extract, never rewrite | `src/core/http.ts` → `src/core/http/*` | D515 | V3-02 | todo | 4 |
+| V3-11 | Split `loadSettings` into per-domain loaders | `src/core/settings.ts` → `src/core/settings/*` | D516 | V3-03 | todo | 3 |
+| V3-12 | Split `api/issues.ts` (3350 lines) by sub-domain; `issues.ts` stays as a barrel | `src/api/issues.ts` → `src/api/issues/*` | D517 | — | todo | 3 |
+| V3-13 | Move the Data Center twins into `src/api/datacenter/` and add an eslint zone for it | `src/api/datacenter.ts` → `src/api/datacenter/*`, DC twins inside `src/api/*.ts`, `eslint.config.js` | D518 | V3-01, V3-12 | todo | 3 |
+| V3-14 | Lazy tool schemas; move the probe/example checks into a test (startup target < 300 ms) | `src/mcp/define.ts`, `src/mcp/schema.ts`, `src/mcp/registry.ts` | D519, CC-5120–5129 | V3-07 | todo | 2 |
+| V3-15 | De-flake `clock.test.ts` (timing assertions at :55 and :80) | `src/core/clock.test.ts` | — | — | todo | 0.5 |
+| V3-16 | Docker image: `Dockerfile`, a ghcr build workflow, and a README install section. The workflow builds only; publishing is R-row V3-23 | `Dockerfile` (new), `.github/workflows/docker.yml` (new), `.dockerignore` (new), `README.md` (install section only) | D520 | — | todo | 2 |
+| V3-17 | MCPB Desktop bundle: manifest and a pack script, built in CI | `mcpb/` (new), `scripts/pack-mcpb.mjs` (new), `package.json` (scripts only) | D521 | — | todo | 2 |
+| V3-18 | Typed fake-jira split per domain under `src/testing/` | `scripts/fake-jira.mjs` → `src/testing/fake-jira/*` | D522 | V3-01, V3-05 | todo | 6 |
+| V3-19 | Write gate as an explicit, ordered middleware list | `src/mcp/write-mode.ts`, `src/mcp/registry.ts`, `src/mcp/project-scope.ts` | D523–D524 | V3-09, V3-14 | todo | 4 |
+| V3-20 | Docs split: `docs/decisions/Dnnn.md` plus an index; archive the IMPLEMENTATION-PLAN phases 0–16; split CORNER-CASES by domain. **Solo**: runs only when no other WP is open | `docs/DECISIONS.md`, `docs/CORNER-CASES.md`, `docs/IMPLEMENTATION-PLAN.md`, `docs/decisions/` (new) | — | V3-01, V3-02, V3-04, V3-05, V3-06, V3-07, V3-08, V3-09, V3-10, V3-11, V3-12, V3-13, V3-14, V3-18, V3-19 | todo | 4 |
+| V3-21 | Live check of `/rest/software/1.0` under Basic auth, a scoped token and OAuth 3LO (a 403 has been reported); keep a fallback to `/agile` while it still answers | — (live run) | — | V3-01 | blocked-external | 1 |
+| V3-22 | Release `main` as 1.1.0 (or V3-01 alone as 1.0.1) | release | — | V3-01 | blocked-owner | 1.5 |
+| V3-23 | Distribution: official MCP registry entry, ghcr publish, Docker MCP Catalog, listings | registry, CI secrets | — | V3-16 | blocked-owner | 2 |
+| V3-24 | 2.0 contract cleanup: the open v2 §3 renames plus the new inconsistencies; old names stay hidden but callable through 2.x; env aliases print a warning | tool surface | — | V3-05, V3-09 | blocked-owner | 12 |
+| V3-25 | Default profile `standard` (≈50 tools); hide gated irreversible tools; `profile` param only when there is more than one profile | `src/mcp/registry.ts`, packages | — | V3-08 | blocked-owner | 4 |
+| V3-26 | JSM read package `jsm`, opt-in. It reverses the JSM item under "Considered and parked" | `src/api/jsm.ts`, `src/tools/jsm.ts` (new) | — | V3-12 | blocked-owner | 6 |
+| V3-27 | Data Center: decide between growing it (needs a live host) and removing it in 3.0, by 2027-06-30 | — | — | V3-13 | blocked-owner | — |
+| V3-28 | 3.0 wire: adopt the 2027-03-30 MCP spec, retire 2025-11-25, progressive discovery as default, Skills over MCP | `src/mcp/*` | — | V3-19, V3-24, V3-25 | blocked-external | 20 |
+
+Parallel lanes as of 2026-10-28. Rows in the same lane share files and run in
+order; different lanes do not touch each other's files.
+
+- **Agile:** V3-01 → V3-13 / V3-18 / V3-21
+- **HTTP:** V3-02 → V3-10
+- **Config:** V3-03 → V3-11
+- **Envelope and plans:** V3-04 → V3-09 → V3-19
+- **Tool surface:** V3-07 → V3-08 / V3-14, then V3-05
+- **Issues API:** V3-12
+- **Independent:** V3-06, V3-15, V3-16, V3-17
+- **Solo, last:** V3-20
+
+The first seven rows that are free now (V3-01, 02, 03, 04, 06, 07, 12) can
+run at the same time. Add V3-15, 16 and 17 as cheap fillers.
+
 ## Considered and parked
 
 - Confluence tools — separate server (`confluence-mcp`), not scope creep here.
