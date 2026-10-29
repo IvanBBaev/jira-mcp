@@ -3765,3 +3765,21 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   sprint-issue and board backlog/issue GETs, adds the project clause to their
   JQL like the agile routes, and refuses an out-of-scope board and any other
   route.
+
+## Rate-limit headers with and without `Beta-` (D505, 2026-10-29)
+
+- **CC-5020** — `RateLimit-Reason` is read from `Beta-RateLimit-Reason` when
+  the unprefixed header is absent; the unprefixed one wins when both are sent,
+  and an unknown value is dropped either way.
+- **CC-5021** — `RateLimit` and `RateLimit-Policy` are read with or without
+  the prefix (also mixed) and paired by member name into `remaining`, `limit`
+  and `windowS`; the unprefixed header wins.
+- **CC-5022** — with several windows the one with the fewest points left is
+  reported, together with its own policy and reset.
+- **CC-5023** — `nearLimit` is set when `remaining` is under 20 % of the
+  paired quota; with no paired policy or a zero quota nothing is flagged.
+- **CC-5024** — the tightest window's `t` is the reset instant only when
+  neither `Retry-After` nor an ISO `X-RateLimit-Reset` parses.
+- **CC-5025** — malformed members (no number, negative, fractional,
+  exponent, over 15 digits) are skipped, and only the first 16 members of a
+  list are read.

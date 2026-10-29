@@ -645,6 +645,63 @@ export interface RateLimitInfo {
    * `X-RateLimit-Reset` (an ISO 8601 instant). `undefined` when neither does.
    */
   readonly resetAtMs?: number;
+  /**
+   * Points left in the tightest window of the `RateLimit` header (`r`), read
+   * with or without the `Beta-` prefix (D505). `undefined` when not sent.
+   */
+  readonly remaining?: number;
+  /** That window's quota (`q` of the same-named `RateLimit-Policy` item). */
+  readonly limit?: number;
+  /** That window's length in seconds (`w` of the same policy item). */
+  readonly windowS?: number;
+}
+
+/** Share of the quota below which a window counts as near its limit. */
+const NEAR_LIMIT_FRACTION = 0.2;
+
+/** At most this many list members of one structured header are read. */
+const MAX_RATE_LIMIT_ITEMS = 16;
+
+/**
+ * One rate-limit header by its unprefixed name, falling back to the
+ * `Beta-`-prefixed one Atlassian sent while the points model was in beta
+ * (D505). The unprefixed header wins when both are present.
+ */
+function rateLimitHeader(
+  headers: Readonly<Record<string, string>>,
+  name: string,
+): string | undefined {
+  return headers[name] ?? headers[`beta-${name}`];
+}
+
+/** One member of a `RateLimit` / `RateLimit-Policy` list. */
+interface RateLimitItem {
+  readonly name: string;
+  readonly params: ReadonlyMap<string, number>;
+}
+
+/**
+ * Parse a structured-field list such as `"global-app-quota";q=65000;w=3600`
+ * (IETF RateLimit headers draft). Only non-negative integer parameters are
+ * kept; anything else in a member is skipped, never guessed. The name is used
+ * to pair a `RateLimit` member with its policy and goes no further.
+ */
+function parseRateLimitItems(raw: string | undefined): RateLimitItem[] {
+  if (raw === undefined) return [];
+  const items: RateLimitItem[] = [];
+  for (const member of raw.split(',').slice(0, MAX_RATE_LIMIT_ITEMS)) {
+    const [head = '', ...rest] = member.split(';');
+    const name = head.trim().replace(/^"(.*)"$/, '$1');
+    const params = new Map<string, number>();
+    for (const part of rest) {
+      const match = /^\s*([a-z][a-z0-9_-]*)\s*=\s*(\d{1,15})\s*$/.exec(part);
+      if (match?.[1] !== undefined && match[2] !== undefined) {
+        params.set(match[1], Number(match[2]));
+      }
+    }
+    if (name !== '' || params.size > 0) items.push({ name, params });
+  }
+  return items;
 }
 
 /**
@@ -659,9 +716,34 @@ export function parseRateLimit(
   headers: Readonly<Record<string, string>>,
   nowMs: number,
 ): RateLimitInfo {
-  const rawReason = headers['ratelimit-reason']?.trim().toLowerCase();
+  const rawReason = rateLimitHeader(headers, 'ratelimit-reason')?.trim().toLowerCase();
   const reason = RATE_LIMIT_REASONS.find((known) => known === rawReason);
-  const nearLimit = headers['x-ratelimit-nearlimit']?.trim().toLowerCase() === 'true';
+
+  // The tightest window: the `RateLimit` member with the fewest points left.
+  let tightest: RateLimitItem | undefined;
+  for (const item of parseRateLimitItems(rateLimitHeader(headers, 'ratelimit'))) {
+    const left = item.params.get('r');
+    if (left === undefined) continue;
+    if (tightest === undefined || left < (tightest.params.get('r') ?? Infinity)) {
+      tightest = item;
+    }
+  }
+  const remaining = tightest?.params.get('r');
+  const policy =
+    tightest === undefined
+      ? undefined
+      : parseRateLimitItems(rateLimitHeader(headers, 'ratelimit-policy')).find(
+          (item) => item.name === tightest.name,
+        );
+  const limit = policy?.params.get('q');
+  const windowS = policy?.params.get('w');
+
+  const nearLimit =
+    headers['x-ratelimit-nearlimit']?.trim().toLowerCase() === 'true' ||
+    (remaining !== undefined &&
+      limit !== undefined &&
+      limit > 0 &&
+      remaining < limit * NEAR_LIMIT_FRACTION);
 
   let resetAtMs: number | undefined;
   const retryAfterMs = parseRetryAfterMs(headers['retry-after'], nowMs);
@@ -671,7 +753,14 @@ export function parseRateLimit(
     const reset = headers['x-ratelimit-reset']?.trim() ?? '';
     // An ISO instant always carries a date separator; a bare number does not.
     const at = /^\d{4}-\d{2}-\d{2}T/.test(reset) ? Date.parse(reset) : NaN;
-    if (!Number.isNaN(at)) resetAtMs = Math.max(nowMs, at);
+    if (!Number.isNaN(at)) {
+      resetAtMs = Math.max(nowMs, at);
+    } else {
+      // Last resort: the `t` (seconds until the window resets) of the
+      // tightest `RateLimit` member.
+      const resetS = tightest?.params.get('t');
+      if (resetS !== undefined) resetAtMs = nowMs + resetS * 1000;
+    }
   }
 
   return {
@@ -679,6 +768,9 @@ export function parseRateLimit(
     quota: reason !== undefined && QUOTA_REASONS.includes(reason),
     nearLimit,
     ...(resetAtMs === undefined ? {} : { resetAtMs }),
+    ...(remaining === undefined ? {} : { remaining }),
+    ...(limit === undefined ? {} : { limit }),
+    ...(windowS === undefined ? {} : { windowS }),
   };
 }
 

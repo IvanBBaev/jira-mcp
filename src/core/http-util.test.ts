@@ -668,3 +668,134 @@ test('[CC-1446] parseRateLimit reads NearLimit and the reset instant', () => {
   );
   assert.equal(parseRateLimit({ 'x-ratelimit-reset': 'soon' }, now).resetAtMs, undefined);
 });
+
+test('[CC-5020] parseRateLimit reads RateLimit-Reason with or without the Beta- prefix', () => {
+  const beta = parseRateLimit({ 'beta-ratelimit-reason': 'jira-quota-global-based' }, 0);
+  assert.equal(beta.reason, 'jira-quota-global-based');
+  assert.equal(beta.quota, true);
+  // The unprefixed header wins when both are sent.
+  assert.equal(
+    parseRateLimit(
+      {
+        'ratelimit-reason': 'jira-burst-based',
+        'beta-ratelimit-reason': 'jira-quota-tenant-based',
+      },
+      0,
+    ).reason,
+    'jira-burst-based',
+  );
+  assert.equal(
+    parseRateLimit({ 'beta-ratelimit-reason': 'Bearer secret' }, 0).reason,
+    undefined,
+  );
+});
+
+test('[CC-5021] parseRateLimit pairs RateLimit with RateLimit-Policy, prefixed or not', () => {
+  const expected = {
+    quota: false,
+    nearLimit: false,
+    remaining: 40_000,
+    limit: 65_000,
+    windowS: 3600,
+  };
+  for (const prefix of ['', 'beta-']) {
+    assert.deepEqual(
+      parseRateLimit(
+        {
+          [`${prefix}ratelimit`]: '"global-app-quota";r=40000;t=600',
+          [`${prefix}ratelimit-policy`]: '"global-app-quota";q=65000;w=3600',
+        },
+        0,
+      ),
+      { ...expected, resetAtMs: 600_000 },
+    );
+  }
+  // Mixed: the new RateLimit beside the old Beta- policy still pairs.
+  assert.equal(
+    parseRateLimit(
+      {
+        ratelimit: '"global-app-quota";r=1;t=5',
+        'beta-ratelimit-policy': '"global-app-quota";q=65000;w=3600',
+      },
+      0,
+    ).limit,
+    65_000,
+  );
+  // The unprefixed header wins.
+  assert.equal(
+    parseRateLimit({ ratelimit: '"a";r=7', 'beta-ratelimit': '"a";r=9' }, 0).remaining,
+    7,
+  );
+});
+
+test('[CC-5022] parseRateLimit picks the window with the fewest points left', () => {
+  const info = parseRateLimit(
+    {
+      ratelimit: '"tenant";r=900;t=60, "global-app-quota";r=12;t=1800',
+      'ratelimit-policy': '"tenant";q=1000;w=60, "global-app-quota";q=65000;w=3600',
+    },
+    0,
+  );
+  assert.equal(info.remaining, 12);
+  assert.equal(info.limit, 65_000);
+  assert.equal(info.windowS, 3600);
+  assert.equal(info.resetAtMs, 1_800_000);
+});
+
+test('[CC-5023] parseRateLimit flags nearLimit under 20 % of the paired quota', () => {
+  const near = (r: number): boolean =>
+    parseRateLimit(
+      { ratelimit: `"q";r=${String(r)}`, 'ratelimit-policy': '"q";q=100;w=3600' },
+      0,
+    ).nearLimit;
+  assert.equal(near(19), true);
+  assert.equal(near(20), false);
+  // No paired policy: the share is unknown and nothing is flagged.
+  assert.equal(parseRateLimit({ ratelimit: '"q";r=0' }, 0).nearLimit, false);
+  assert.equal(
+    parseRateLimit({ ratelimit: '"q";r=0', 'ratelimit-policy': '"other";q=100' }, 0)
+      .limit,
+    undefined,
+  );
+  // A zero quota is not divided by.
+  assert.equal(
+    parseRateLimit({ ratelimit: '"q";r=0', 'ratelimit-policy': '"q";q=0' }, 0).nearLimit,
+    false,
+  );
+});
+
+test('[CC-5024] RateLimit t is the last resort for the reset instant', () => {
+  const now = Date.parse('2026-10-24T10:00:00Z');
+  const headers = { ratelimit: '"q";r=0;t=120' };
+  assert.equal(parseRateLimit(headers, now).resetAtMs, now + 120_000);
+  assert.equal(
+    parseRateLimit({ ...headers, 'retry-after': '30' }, now).resetAtMs,
+    now + 30_000,
+  );
+  assert.equal(
+    parseRateLimit({ ...headers, 'x-ratelimit-reset': '2026-10-24T11:00:00Z' }, now)
+      .resetAtMs,
+    Date.parse('2026-10-24T11:00:00Z'),
+  );
+});
+
+test('[CC-5025] malformed RateLimit members are skipped, never guessed', () => {
+  assert.deepEqual(
+    parseRateLimit(
+      {
+        ratelimit: 'garbage, "q";r=-1;t=1.5, "q";r=abc',
+        'ratelimit-policy': '"q";q=1e9',
+      },
+      0,
+    ),
+    { quota: false, nearLimit: false },
+  );
+  // An oversized number is not read.
+  assert.equal(
+    parseRateLimit({ ratelimit: '"q";r=9999999999999999' }, 0).remaining,
+    undefined,
+  );
+  // Only the first 16 members are looked at.
+  const many = [...Array.from({ length: 16 }, () => '"a";r=50'), '"b";r=1'].join(', ');
+  assert.equal(parseRateLimit({ ratelimit: many }, 0).remaining, 50);
+});

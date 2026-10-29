@@ -174,6 +174,11 @@ env var names — not internal refactors.
   Jira no longer reports them, and a `startAt` above 0 is refused. `startAt`
   still accepts 0 or a token as a deprecated alias (D503). Data Center is
   unchanged. OAuth scopes are unchanged.
+- Rate-limit headers are read with or without the `Beta-` prefix Atlassian
+  is dropping (D505): `RateLimit-Reason` keeps the quota fail-fast working
+  either way, and the points-model `RateLimit` / `RateLimit-Policy` pair now
+  also feeds the near-limit flag (under 20 % left) and the reset instant in
+  the `jira_capabilities` counters.
 - `tools/list` is smaller (D124): schemas no longer carry `$schema` or the
   `±(2^53 − 1)` bounds the converter put on every integer, the `apply`,
   `plan_id` and `profile` descriptions are one line each, the `format` and
