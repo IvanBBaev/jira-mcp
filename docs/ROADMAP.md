@@ -167,7 +167,8 @@ Outcome (D124): `tools/list` went from 107,073 to 93,722 characters, most
 of it from the schema trim; the per-tool, write-mode, JQL and markdown
 references and the server `instructions` shipped together, and the
 per-description cap is the manifest test. TOOLS.md §Reference resources
-is the contract.
+is the contract. The surface has grown since (82 tools, 145,968 wire
+characters on 2026-10-30); D510 now budgets it per profile in a test.
 
 ### 2. The rest of the MCP surface: prompts, the plugin
 
@@ -315,7 +316,7 @@ and are not started.
 | V3-05 | `maxResults` above the cap is clamped with a hint instead of rejected, one shared arg helper (five behaviours today) | `src/tools/agile.ts`, `src/tools/collab.ts`, `src/tools/issues.ts` and the other `maxResultsArg` sites, `src/mcp/tool-helpers.ts` (also touched `src/tools/search.ts`, `src/tools/users.ts`, the manifest snapshot and `src/tools/page-size.test.ts` (new)) | D508, CC-5050–5069 | V3-01, V3-07 | done 013bbb7 | 2 |
 | V3-06 | Call-time enforcement proof: tests showing that a call to a tool that is not listed is refused at invocation. Covers packages, read-only mode, `JIRA_PROJECTS` and plan-only mode | `src/mcp/call-time-guard.test.ts` (new) | CC-5070–5089 | — | done 306d322 | 1.5 |
 | V3-07 | `_meta["anthropic/alwaysLoad"]` on the ~4 hottest reads; keyword-first descriptions for exactly those tools | `src/mcp/registry.ts` (meta emission), `src/tools/search.ts`, `src/tools/issues.ts` (descriptions only); the emission landed in `src/mcp/client-hints.ts` (+test) beside D130, not `registry.ts`; also touched `README.md` (generated tool tables), `docs/TOOLS.md`, `docs/DECISIONS.md`, `CHANGELOG.md` | D509 | — | done b8f4d15 | 1.5 |
-| V3-08 | Surface ratchet: a per-profile `tools/list` byte budget and a per-tool size cap as a test. Panel 2026-10-29 (MCP-R1): budget model-visible characters, refresh the D124 "~94k" figure to the measured 145k, README guidance for tool-capped clients | `src/mcp/surface.test.ts` (new), `test/surface-budget.json` (new) | D510 | V3-01, V3-07 | todo | 1.5 |
+| V3-08 | Surface ratchet: a per-profile `tools/list` byte budget and a per-tool size cap as a test. Panel 2026-10-29 (MCP-R1): budget model-visible characters, refresh the D124 "~94k" figure to the measured 145k, README guidance for tool-capped clients | `src/mcp/surface.test.ts` (new), `test/surface-budget.json` (new) (landed as `src/tools/surface.test.ts`: eslint zones keep mcp/ off the manifest; also touched `README.md` and the D124 row) | D510 | V3-01, V3-07 | done 51ceee4 | 1.5 |
 | V3-09 | Server-wide `PlanStore`, bound to the session and credential that planned, so a stateless wire can find plans. Behaviour unchanged for stdio. A D-row defines the binding. Panel 2026-10-29 (ARC-R3, SEC-R5): plan ids from a CSPRNG (`src/core/rng.ts`), bound to session and credential, TTL and per-session quota | `src/mcp/write-mode.ts`, `src/mcp/server.ts`, `src/mcp/transport-http.ts`, `src/core/rng.ts` | D511–D514, CC-5090–5119 | V3-04, V3-40 | todo | 6 |
 | V3-10 | Split `core/http.ts` into stages (request build, send, retry, response). Retry semantics are frozen by tests first; extract, never rewrite. Panel 2026-10-29 (TSN-R1): not a pure move — first extract pure `classifyOutcome`/`decideNext` with table tests, then move the stages | `src/core/http.ts` → `src/core/http/*`, `src/core/http-util.ts` | D515 | V3-02 | todo | 6 |
 | V3-11 | Split `loadSettings` into per-domain loaders | `src/core/settings.ts` → `src/core/settings/*` | D516 | V3-03 | todo | 3 |
