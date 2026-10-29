@@ -272,7 +272,7 @@ export async function connectHttpTransport(
     entry.closed = true;
     sessions.delete(sid);
     // Transport first: its `onclose` runs the Protocol's `_onclose`, which
-    // aborts every in-flight request handler (verified in SDK 1.30.0 source) —
+    // aborts every in-flight request handler (verified in SDK 1.32.1 source) —
     // the `server.close()` after it is then a settled no-op, kept because the
     // ordering is an SDK implementation detail this module must not lean on.
     // Each close is guarded on its own — a rejected close is still a close
