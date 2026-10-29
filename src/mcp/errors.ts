@@ -71,6 +71,7 @@ export function toErrorRecord(error: unknown): ErrorRecord {
     return {
       kind: UNEXPECTED_THROW_KIND,
       message: UNEXPECTED_THROW_MESSAGE,
+      reason: UNEXPECTED_THROW_MESSAGE,
       retryable: false,
       remediation: UNEXPECTED_THROW_REMEDIATION,
     };

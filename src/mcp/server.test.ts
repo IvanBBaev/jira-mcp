@@ -788,7 +788,7 @@ test('an apply is refused until JIRA_ALLOW_IRREVERSIBLE is on, then it goes thro
         return;
       }
 
-      assert.deepEqual(dataOf(result), { deleted: 'ABC-5' });
+      assert.deepEqual(dataOf(result), { executed: true, deleted: 'ABC-5' });
       assert.ok(jira.routes().includes('DELETE /rest/api/3/issue/ABC-5'));
       assert.equal(journal.entries.length, 1);
       assert.equal(journal.entries[0]?.tool, 'jira_fx_delete');
@@ -832,7 +832,7 @@ test('[CC-3013] JIRA_IRREVERSIBLE_CONFIRM=elicit asks the client and honours the
         });
 
         if (answer === 'accept') {
-          assert.deepEqual(dataOf(result), { deleted: 'ABC-5' });
+          assert.deepEqual(dataOf(result), { executed: true, deleted: 'ABC-5' });
           assert.equal(asked.length, 1);
           const params = asked[0]?.params as { message: string; mode?: string };
           assert.equal(params.mode, 'form');
@@ -886,7 +886,7 @@ test('an executed write journals one line with the plan fingerprint', async () =
     const data = dataOf(
       await callTool(client, 'jira_fx_create', { ...args, apply: true, plan_id: planId }),
     );
-    assert.deepEqual(data, { key: 'ABC-7' });
+    assert.deepEqual(data, { executed: true, key: 'ABC-7' });
 
     assert.equal(journal.entries.length, 1);
     const entry = journal.entries[0];
@@ -1057,7 +1057,7 @@ test('a failed append hints instead of failing the write (CC-33)', async () => {
 
     // The write succeeded; saying otherwise would make the model retry it.
     assert.equal(result.isError, undefined);
-    assert.deepEqual(dataOf(result), { key: 'ABC-9' });
+    assert.deepEqual(dataOf(result), { executed: true, key: 'ABC-9' });
     const hints = envelopeOf(result).hints ?? [];
     const hint = hints.find((h) => h.code === 'journal_unavailable');
     assert.equal(hint?.message, JOURNAL_UNAVAILABLE_MESSAGE);
@@ -1077,7 +1077,7 @@ test('without a journal the write path is unchanged', async () => {
       plan_id: planId,
     });
 
-    assert.deepEqual(dataOf(result), { key: 'ABC-4' });
+    assert.deepEqual(dataOf(result), { executed: true, key: 'ABC-4' });
     assert.deepEqual(envelopeOf(result).hints ?? [], []);
   });
 });
@@ -1126,7 +1126,7 @@ test('[CC-192] an applied irreversible write records nothing in the recent write
       plan_id: planId,
     });
 
-    assert.deepEqual(dataOf(result), { deleted: '10005' });
+    assert.deepEqual(dataOf(result), { executed: true, deleted: '10005' });
     assert.deepEqual(recent.snapshot(), ['10001']);
   });
 });
@@ -1155,7 +1155,7 @@ test('CC-02: an applied create records the id it minted', async () => {
   await withSession(deps, async ({ client }) => {
     const result = await applyWrite(client, 'jira_fx_create', { summary: 'S' });
 
-    assert.deepEqual(dataOf(result), { id: '10007', key: 'ABC-7' });
+    assert.deepEqual(dataOf(result), { executed: true, id: '10007', key: 'ABC-7' });
     assert.deepEqual(recent.snapshot(), ['10007']);
   });
 });

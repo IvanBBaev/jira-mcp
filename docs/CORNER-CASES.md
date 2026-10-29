@@ -3765,3 +3765,24 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   sprint-issue and board backlog/issue GETs, adds the project clause to their
   JQL like the agile routes, and refuses an out-of-scope board and any other
   route.
+
+## Additive envelope fields (D506–D507, 2026-10-29)
+
+- **CC-5030** — an applied write whose mutation came back from Jira returns
+  `data.executed: true`, as the first key of `data`; its plan still says
+  `executed: false`.
+- **CC-5031** — an apply whose handler sent no mutation is not stamped.
+- **CC-5032** — a mutation that threw is not stamped, even when the handler
+  swallowed the error and reported `ok`.
+- **CC-5033** — a refused apply stays an error envelope with no `executed`.
+- **CC-5034** — `markExecuted` leaves an error envelope, an array or scalar
+  `data`, and a `data` that already has `executed` untouched, and keeps hints
+  and the `_untrusted` brand.
+- **CC-5040** — `reason` is the cause sentence alone; `message` keeps cause
+  then remedy.
+- **CC-5041** — an error built without a separate cause (or with an empty one)
+  reports its `message` as `reason`.
+- **CC-5042** — a non-`JiraError` throw carries the fixed unexpected-error text
+  as `reason` and nothing from the throw.
+- **CC-5043** — every envelope from `errorResult` and `errorResultOf` has a
+  `reason`.

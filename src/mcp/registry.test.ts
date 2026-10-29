@@ -672,6 +672,7 @@ test('a returned error envelope is logged through the same three-field projectio
         error: {
           kind: 'permission' as const,
           message: 'Nope.',
+          reason: 'Nope.',
           retryable: false,
           httpStatus: 403,
         },
@@ -886,7 +887,7 @@ test('apply mode with a plan_id from the plan call executes the write', async ()
     plan_id: planId,
   });
 
-  assert.deepEqual(applied.structuredContent.data, { created: 'ABC-7' });
+  assert.deepEqual(applied.structuredContent.data, { executed: true, created: 'ABC-7' });
   assert.deepEqual(h.jira.routes(), ['POST /rest/api/3/issue']);
 });
 
@@ -940,7 +941,7 @@ test('the opt-in reaches the gate and lets the same plan_id through', async () =
     plan_id: planned.plan_id,
   });
 
-  assert.deepEqual(applied.structuredContent.data, { deleted: 'ABC-9' });
+  assert.deepEqual(applied.structuredContent.data, { executed: true, deleted: 'ABC-9' });
   assert.deepEqual(h.jira.routes(), [
     'GET /rest/api/3/issue/ABC-9',
     'GET /rest/api/3/issue/ABC-9',
@@ -1218,7 +1219,7 @@ test('[CC-1414] the plan call warms the cache the apply call then reads from', a
     plan_id: planId,
   });
 
-  assert.deepEqual(applied.structuredContent.data, { created: 'ABC-1' });
+  assert.deepEqual(applied.structuredContent.data, { executed: true, created: 'ABC-1' });
   assert.equal(fieldRequests(h), 1, 'the apply call read the catalogue from memory');
   assert.deepEqual(h.jira.routes(), ['GET /rest/api/3/field', 'POST /rest/api/3/issue']);
 });

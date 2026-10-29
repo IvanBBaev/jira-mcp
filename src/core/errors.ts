@@ -438,6 +438,8 @@ export function toErrorRecord(error: JiraError): ErrorRecord {
   return {
     kind: error.kind,
     message: error.message,
+    reason:
+      error.reason !== undefined && error.reason !== '' ? error.reason : error.message,
     retryable: error.retryable,
     ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
     ...(error.jiraMessages !== undefined && error.jiraMessages.length > 0

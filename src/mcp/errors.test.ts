@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { createJiraError } from '../core/errors.js';
 import { JIRA_ERROR_KINDS, JiraError, RETRYABLE_ERROR_KINDS } from '../core/types.js';
 import {
   UNEXPECTED_THROW_KIND,
@@ -45,6 +46,7 @@ test('remediation, httpStatus, jiraMessages and detail pass through unchanged', 
   assert.deepEqual(record, {
     kind: 'validation',
     message: 'Jira rejected the field update.',
+    reason: 'Jira rejected the field update.',
     retryable: false,
     httpStatus: 400,
     jiraMessages: ['Field "customfield_10011" cannot be set.'],
@@ -58,7 +60,12 @@ test('absent members are omitted, never serialized as null', () => {
     new JiraError({ kind: 'auth', message: '401 from Jira.' }),
   );
 
-  assert.deepEqual(Object.keys(record).sort(), ['kind', 'message', 'retryable']);
+  assert.deepEqual(Object.keys(record).sort(), [
+    'kind',
+    'message',
+    'reason',
+    'retryable',
+  ]);
   assert.equal('httpStatus' in record, false);
   assert.equal('detail' in record, false);
   assert.ok(!JSON.stringify(record).includes('null'));
@@ -164,6 +171,7 @@ test('errorResult() produces a complete ok:false envelope', () => {
     error: {
       kind: 'permission',
       message: 'You cannot browse PROJ.',
+      reason: 'You cannot browse PROJ.',
       retryable: false,
     },
   });
@@ -200,4 +208,53 @@ test('errorResultOf() builds a local refusal through the same JiraError rules', 
 
   const retryable = errorResultOf('rate_limited', 'Jira asked us to slow down.');
   assert.equal(retryable.error?.retryable, true, 'retryability comes from the catalog');
+});
+
+// ---------------------------------------------------------------------------
+// `reason` on every ErrorRecord (D507)
+// ---------------------------------------------------------------------------
+
+test('[CC-5040] reason is the cause sentence alone; message keeps cause then remedy', () => {
+  const record = toErrorRecord(
+    createJiraError({
+      kind: 'not_found',
+      reason: 'Issue PROJ-1 does not exist, or you cannot see it.',
+      remediation: 'Check the key with jira_search.',
+    }),
+  );
+
+  assert.equal(record.reason, 'Issue PROJ-1 does not exist, or you cannot see it.');
+  assert.equal(
+    record.message,
+    'Issue PROJ-1 does not exist, or you cannot see it. Check the key with jira_search.',
+  );
+  assert.equal(record.remediation, 'Check the key with jira_search.');
+});
+
+test('[CC-5041] an error built without a separate cause reports its message as reason', () => {
+  for (const reason of [undefined, '']) {
+    const record = toErrorRecord(
+      new JiraError({ kind: 'auth', message: '401 from Jira.', reason }),
+    );
+    assert.equal(record.reason, '401 from Jira.');
+  }
+});
+
+test('[CC-5042] a non-JiraError throw carries the fixed message as reason', () => {
+  const record = toErrorRecord(new TypeError('boom at /secret/path'));
+
+  assert.equal(record.reason, UNEXPECTED_THROW_MESSAGE);
+  assert.ok(!JSON.stringify(record).includes('/secret/path'));
+});
+
+test('[CC-5043] every envelope built by errorResult and errorResultOf has a reason', () => {
+  const fromThrow = errorResult(
+    new JiraError({ kind: 'timeout', message: 'Timed out.' }),
+  );
+  const local = errorResultOf('write_gated', 'Not performed.', {
+    remediation: 'Plan first.',
+  });
+
+  assert.equal(fromThrow.error?.reason, 'Timed out.');
+  assert.equal(local.error?.reason, 'Not performed.');
 });

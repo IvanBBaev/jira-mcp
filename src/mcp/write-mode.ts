@@ -57,7 +57,7 @@ import type {
 } from '../core/types.js';
 import { CONTROL_FIELD_NAMES } from './define.js';
 import { errorResult, errorResultOf } from './errors.js';
-import { ok } from './result.js';
+import { markExecuted, ok } from './result.js';
 import type {
   AnyToolSpec,
   ControlFields,
@@ -575,6 +575,32 @@ function createPayloadGuard(
   };
 }
 
+/**
+ * A pass-through seam that remembers whether a mutation came back from Jira
+ * with a response. Reads and a mutation that threw do not count: the first
+ * changed nothing, and the second's outcome is the error envelope's to tell.
+ */
+function observeMutations(inner: JiraRequestFn): {
+  readonly jira: JiraRequestFn;
+  readonly any: boolean;
+} {
+  let any = false;
+  const jira: JiraRequestFn = async <T = unknown>(
+    req: JiraRequestSpec,
+  ): Promise<JiraResponse<T>> => {
+    if (isReadRequest(req)) return inner<T>(req);
+    const response = await inner<T>(req);
+    any = true;
+    return response;
+  };
+  return {
+    jira,
+    get any(): boolean {
+      return any;
+    },
+  };
+}
+
 /** Rejects a mutation issued by a `planContext`; never leaves this module. */
 class ContextMutated extends Error {
   constructor() {
@@ -1013,9 +1039,15 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
         if (!confirmed) return writeGatedResult('declined');
       }
 
+      // `executed: true` (D506) only when a mutation reached Jira and came back:
+      // a handler that decided there was nothing to send did not execute.
+      const sent = observeMutations(call.jira);
+      const stamp = (result: ToolResult<unknown>): ToolResult<unknown> =>
+        sent.any ? markExecuted(result) : result;
+
       const expected = issued?.payload;
-      if (expected === undefined) return call.invoke(call.jira);
-      const guard = createPayloadGuard(call.jira, expected);
+      if (expected === undefined) return stamp(await call.invoke(sent.jira));
+      const guard = createPayloadGuard(sent.jira, expected);
       let result: ToolResult<unknown>;
       try {
         result = await call.invoke(guard.jira);
@@ -1023,7 +1055,7 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
         if (!(error instanceof PayloadDrifted)) throw error;
         return writeGatedResult('payload');
       }
-      return guard.drifted ? writeGatedResult('payload') : result;
+      return guard.drifted ? writeGatedResult('payload') : stamp(result);
     },
   };
 }

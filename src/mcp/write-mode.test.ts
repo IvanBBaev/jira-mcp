@@ -1110,7 +1110,7 @@ test('plan then apply with identical arguments executes exactly once', async () 
   );
 
   assert.equal(applied.ok, true);
-  assert.deepEqual(applied.data, { created: 'ABC-9' });
+  assert.deepEqual(applied.data, { executed: true, created: 'ABC-9' });
   assert.deepEqual(fake.routes(), ['POST /rest/api/3/issue']);
   assert.equal(gate.outstandingPlans, 0);
 
@@ -1342,6 +1342,7 @@ test('with the opt-in, plan then apply deletes once and echoes the before-state'
 
   assert.equal(applied.ok, true);
   assert.deepEqual(applied.data, {
+    executed: true,
     deleted: true,
     before: { key: 'ABC-1', summary: 'Old title' },
   });
@@ -1382,7 +1383,7 @@ test('the standard tier is untouched by the irreversible switch', async () => {
     const applied = await gate.execute(
       callOf(writeTool, args, { apply: true, plan_id: planId }, fake.fn),
     );
-    assert.deepEqual(applied.data, { created: 'ABC-9' });
+    assert.deepEqual(applied.data, { executed: true, created: 'ABC-9' });
     assert.deepEqual(fake.routes(), ['POST /rest/api/3/issue']);
   }
 });
@@ -1909,4 +1910,101 @@ test('[D400] a plan-mode mutation the preflight admits is planned as before', as
   assert.equal(result.ok, true);
   planIdOf(result);
   assert.equal(fake.calls.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// `executed: true` on applied writes (D506)
+// ---------------------------------------------------------------------------
+
+/**
+ * A write tool whose apply finds nothing left to change: it sends its POST only
+ * the first time it runs (the plan), so the apply passes the gate and then
+ * sends nothing.
+ */
+let noOpRuns = 0;
+const noOpWriteTool = defineTool({
+  name: 'jira_test_write_noop',
+  title: 'Test no-op write',
+  description: 'Writes nothing when there is nothing left to change.',
+  package: 'issues-write',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  writeTier: 'standard',
+  input: writeToolInput({ summary: z.string() }),
+  async handler(args, ctx) {
+    noOpRuns += 1;
+    if (noOpRuns > 1) return ok({ unchanged: true });
+    await ctx.jira({ method: 'POST', path: '/issue', body: { summary: args.summary } });
+    return ok({ unchanged: false });
+  },
+});
+
+async function planAndApply(
+  tool: AnyToolSpec,
+  fake: ReturnType<typeof createFakeJiraRequest>,
+): Promise<{ plan: ToolResult<unknown>; applied: ToolResult<unknown> }> {
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    rng: countingRng(),
+  });
+  const args = { summary: 'Ship it' };
+  const plan = await gate.execute(callOf(tool, args, {}, fake.fn));
+  const applied = await gate.execute(
+    callOf(tool, args, { apply: true, plan_id: planIdOf(plan) }, fake.fn),
+  );
+  return { plan, applied };
+}
+
+test('[CC-5030] an applied write carries data.executed: true as its first key', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on('POST /rest/api/3/issue', jiraOk({ key: 'ABC-9' }));
+
+  const { plan, applied } = await planAndApply(writeTool, fake);
+
+  assert.equal((plan.data as { executed?: unknown }).executed, false);
+  assert.equal(applied.ok, true);
+  assert.deepEqual(Object.keys(applied.data as object), ['executed', 'created']);
+  assert.equal((applied.data as { executed?: unknown }).executed, true);
+});
+
+test('[CC-5031] an apply whose handler sent no mutation is not stamped executed', async () => {
+  const fake = createFakeJiraRequest();
+
+  noOpRuns = 0;
+  const { applied } = await planAndApply(noOpWriteTool, fake);
+
+  assert.equal(applied.ok, true);
+  assert.deepEqual(applied.data, { unchanged: true });
+  assert.deepEqual(fake.calls, []);
+});
+
+test('[CC-5032] a mutation that failed is not stamped, even when the handler reports ok', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(
+    'POST /rest/api/3/issue',
+    jiraErr(new JiraError({ kind: 'validation', message: '400 from Jira.' })),
+  );
+
+  const { applied } = await planAndApply(swallowingTool, fake);
+
+  assert.equal(applied.ok, true);
+  assert.deepEqual(applied.data, { swallowed: true });
+});
+
+test('[CC-5033] an applied write that Jira refused stays an error envelope without executed', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(
+    'POST /rest/api/3/issue',
+    jiraErr(new JiraError({ kind: 'permission', message: '403 from Jira.' })),
+  );
+
+  await assert.rejects(planAndApply(writeTool, fake), (error: unknown) => {
+    assert.ok(error instanceof JiraError);
+    return true;
+  });
 });
