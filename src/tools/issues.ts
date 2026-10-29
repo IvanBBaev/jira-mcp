@@ -226,7 +226,7 @@ export const getIssueTool = defineTool({
   name: 'jira_get_issue',
   title: 'Get issue',
   description:
-    'Read one issue by key or id, or up to 100 in one request with issues: [...]. ' +
+    'Get a Jira issue by key or id, or up to 100 in one request with issues: [...]. ' +
     'Name the fields you need — omitting fields returns ' +
     "Jira's whole navigable set and burns the result budget. Rich text is flattened to " +
     'plain text; raw: true returns the ADF trees instead (only this tool can), format: ' +

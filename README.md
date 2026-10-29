@@ -113,8 +113,8 @@ JQL search over issues, approximate result counts, strict JQL checks, and the sa
 
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
-| `jira_search` | Search issues | read-only | Run JQL and return ONE page of issues plus data.nextPageToken — pass it back to read the next page. There is no total; use jira_count. |
-| `jira_count` | Count issues | read-only | Count the issues a JQL matches without fetching any of them. |
+| `jira_search` | Search issues | read-only | Search Jira issues by JQL: returns ONE page of issues plus data.nextPageToken — pass it back to read the next page. |
+| `jira_count` | Count issues | read-only | Count Jira issues matching a JQL query without fetching any of them. |
 | `jira_parse_jql` | Check JQL | read-only | Check JQL against Jira's strict parser without running it: grammar, and whether every field, function and value it names exists for you. |
 | `jira_list_filters` | List saved filters | read-only | Find saved filters — named, stored JQL — by name substring or owner, each with its jql. |
 | `jira_get_filter` | Get saved filter | read-only | Reads one saved filter by numeric id (from jira_list_filters): name, description, owner, the JQL it stores and whether you favourited it. |
@@ -127,7 +127,7 @@ One issue and its comments, available transitions, change history, worklogs and 
 
 | Tool | Title | Access | What it does |
 | --- | --- | --- | --- |
-| `jira_get_issue` | Get issue | read-only | Read one issue by key or id, or up to 100 in one request with issues: [...]. Name the fields you need — omitting fields returns Jira's whole navigable set and burns the result budget. |
+| `jira_get_issue` | Get issue | read-only | Get a Jira issue by key or id, or up to 100 in one request with issues: [...]. Name the fields you need — omitting fields returns Jira's whole navigable set and burns the result budget. |
 | `jira_get_comments` | Get comments | read-only | List the comments on an issue, newest first by default (orderBy -created; Jira's own default is oldest first). |
 | `jira_get_transitions` | Get transitions | read-only | List the workflow transitions available from this issue's CURRENT status: id, name and target status. |
 | `jira_get_changelog` | Get changelog | read-only | Read an issue's change history — field, from → to, author, created. |

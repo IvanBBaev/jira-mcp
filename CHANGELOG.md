@@ -14,6 +14,11 @@ env var names — not internal refactors.
 
 ### Added
 
+- Claude Code loads the four hottest reads upfront (D509): `jira_search`,
+  `jira_count`, `jira_get_issue` and `jira_search_users` carry
+  `_meta["anthropic/alwaysLoad"]: true`, so they need no tool-search step. Their
+  descriptions now open with the verb and the Jira noun. Set `"alwaysLoad": false`
+  on the server in your MCP configuration to keep them deferred.
 - Applied writes say so: a write that reached Jira returns
   `data.executed: true`, the twin of a plan's `executed: false` (D506).
 - Every error carries `error.reason`, the cause sentence without the

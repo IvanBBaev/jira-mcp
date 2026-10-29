@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  ALWAYS_LOAD_META,
+  ALWAYS_LOAD_TOOLS,
   CLIENT_MAX_RESULT_CHARS,
   MAX_RESULT_SIZE_META,
   REQUIRES_USER_INTERACTION_META,
@@ -79,4 +81,17 @@ test('[CC-1458] a raised budget raises the client threshold by the text-channel 
 test('[CC-1459] the size hint is capped at the client ceiling', () => {
   const hints = clientHints(readTool(), { maxResultChars: 10_000_000 });
   assert.deepEqual(hints, { [MAX_RESULT_SIZE_META]: CLIENT_MAX_RESULT_CHARS });
+});
+
+test('[D509] a named hot read loads upfront; other tools do not', () => {
+  assert.equal(clientHints(readTool(), DEFAULT_BUDGET), undefined);
+  const name = [...ALWAYS_LOAD_TOOLS][0];
+  assert.ok(name !== undefined);
+  const hot = { ...readTool(), name } as AnyToolSpec;
+  assert.deepEqual(clientHints(hot, DEFAULT_BUDGET), { [ALWAYS_LOAD_META]: true });
+  // It composes with the size hint like any other key.
+  assert.deepEqual(clientHints(hot, { maxResultChars: 120_000 }), {
+    [ALWAYS_LOAD_META]: true,
+    [MAX_RESULT_SIZE_META]: 120_000 + TEXT_CHANNEL_SLACK_CHARS,
+  });
 });

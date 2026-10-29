@@ -622,6 +622,12 @@ links their matching `add` restores exactly, and the two partial updates cannot
 drop a field the caller did not name — the annotation is reserved for writes
 that can lose content or end something for good (D50).
 
+Four reads — `jira_search`, `jira_count`, `jira_get_issue` and
+`jira_search_users` — list with Claude Code's `_meta["anthropic/alwaysLoad"]: true`
+(D509): under tool search that client loads them upfront, so the common first
+step of a session needs no search. `"alwaysLoad": false` in the server's MCP
+configuration defers them like the rest.
+
 ## Reference resources
 
 `tools/list` is read on every session, so each description there pays per

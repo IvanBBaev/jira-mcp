@@ -369,8 +369,8 @@ export const searchTool = defineTool({
   name: 'jira_search',
   title: 'Search issues',
   description:
-    'Run JQL and return ONE page of issues plus data.nextPageToken — pass it back ' +
-    'to read the next page. There is no total; use jira_count. Name the fields you ' +
+    'Search Jira issues by JQL: returns ONE page of issues plus data.nextPageToken — ' +
+    'pass it back to read the next page. There is no total; use jira_count. Name the fields you ' +
     'need. Idioms: sprint in openSprints(); issue in (KEY-1, KEY-2) to batch-fetch; ' +
     'updated >= -1d; assignee = currentUser(); statusCategory != Done; backlog ≈ ' +
     'sprint is EMPTY AND statusCategory != Done. Quote values with spaces. Issue ' +
@@ -449,7 +449,7 @@ export const countTool = defineTool({
   name: 'jira_count',
   title: 'Count issues',
   description:
-    'Count the issues a JQL matches without fetching any of them. The number comes ' +
+    'Count Jira issues matching a JQL query without fetching any of them. The number comes ' +
     "from Jira's search index, so it is an estimate: it drifts under concurrent " +
     'writes and can disagree with what jira_search returns. Use it to size a query ' +
     'or answer "how many", then read the rows with jira_search. Values with spaces ' +
