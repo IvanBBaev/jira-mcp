@@ -419,6 +419,12 @@ export interface SprintIssuesResult extends PageLoopResult<AgileIssue> {
   readonly fields: readonly string[];
   /** `true` when the default set was injected because the caller sent none. */
   readonly fieldsDefaulted: boolean;
+  /**
+   * Cloud only (D525): `true` when `/rest/software/1.0` refused the read and
+   * it was answered by the `/rest/agile/1.0` twin instead. The page then
+   * carries offset paging (`nextStartAt`, `total`), not a token.
+   */
+  readonly rootFallback?: true;
 }
 
 /** What {@link moveIssuesToSprint} returns. */
@@ -610,6 +616,7 @@ export async function listSprintIssues(
     options,
     `/sprint/${sprintId}/issue`,
     SOFTWARE_SPRINT_ISSUES_TEMPLATE,
+    AGILE_SPRINT_ISSUES_TEMPLATE,
   );
 }
 
@@ -630,6 +637,7 @@ export async function listBacklogIssues(
     options,
     `/board/${boardId}/backlog`,
     SOFTWARE_BACKLOG_TEMPLATE,
+    AGILE_BACKLOG_TEMPLATE,
   );
 }
 
@@ -654,7 +662,29 @@ export async function listSprintIssuesDataCenter(
     });
   }
   const sprintId = agileId(options.sprintId, 'sprintId');
-  const pathTemplate = '/sprint/{sprintId}/issue';
+  return listAgileIssuePage(
+    options,
+    `/sprint/${sprintId}/issue`,
+    AGILE_SPRINT_ISSUES_TEMPLATE,
+  );
+}
+
+/** `pathTemplate` of the sprint-issue read on the `agile` root (DC, and the D525 fallback). */
+export const AGILE_SPRINT_ISSUES_TEMPLATE = '/sprint/{sprintId}/issue';
+
+/** `pathTemplate` of the backlog read on the `agile` root (the D525 fallback). */
+export const AGILE_BACKLOG_TEMPLATE = '/board/{boardId}/backlog';
+
+/** The offset-paged issue read on the `agile` root, shared by DC and the D525 fallback. */
+async function listAgileIssuePage(
+  options: AgilePagedBase &
+    BudgetGuard & {
+      readonly fields?: readonly string[];
+      readonly jql?: string;
+    },
+  path: string,
+  pathTemplate: string,
+): Promise<SprintIssuesResult> {
   const { fields, fieldsDefaulted } = issueFields(options.fields);
   const jql = trimmedOrUndefined(options.jql);
   const endpoint = `GET ${pathTemplate}`;
@@ -665,7 +695,7 @@ export async function listSprintIssuesDataCenter(
       (cursor) => ({
         method: 'GET',
         root: 'agile',
-        path: `/sprint/${sprintId}/issue`,
+        path,
         pathTemplate,
         query: {
           ...pageQuery(cursor),
@@ -680,13 +710,44 @@ export async function listSprintIssuesDataCenter(
   return { ...page, fields, fieldsDefaulted };
 }
 
+/**
+ * Upstream statuses that mean "this root will not answer this read" rather
+ * than "this sprint or board is wrong" — the D525 fallback trigger. 403 is the
+ * reported answer of `/rest/software/1.0` to some token types (V3-21); 404 and
+ * 410 are what a retired or not-yet-routed root answers.
+ */
+const ROOT_REFUSED_STATUSES: ReadonlySet<number> = new Set([403, 404, 410]);
+
+function rootRefused(error: unknown): error is JiraError {
+  return (
+    error instanceof JiraError &&
+    error.httpStatus !== undefined &&
+    ROOT_REFUSED_STATUSES.has(error.httpStatus) &&
+    error.kind !== 'auth'
+  );
+}
+
 /** `pathTemplate` of the Cloud sprint-issue read on the `software` root. */
 export const SOFTWARE_SPRINT_ISSUES_TEMPLATE = '/sprint/{sprintId}/issue';
 
 /** `pathTemplate` of the Cloud backlog read on the `software` root. */
 export const SOFTWARE_BACKLOG_TEMPLATE = '/board/{boardId}/backlog';
 
-/** The token-paged issue read shared by the Cloud sprint and backlog routes. */
+/**
+ * The token-paged issue read shared by the Cloud sprint and backlog routes,
+ * with the D525 fallback to their `/rest/agile/1.0` twins.
+ *
+ * The fallback is read-only and bounded: when the software root answers 403,
+ * 404 or 410 on a first-page read, the same read is sent ONCE to the agile
+ * route; if that is refused too, the software error is what surfaces (it is
+ * the one that names the current route). A `nextPageToken` resume never falls
+ * back — the token belongs to the software root and means nothing on agile.
+ * A `startAt` above 0 is an offset, which only the agile route can honour (the
+ * fallback hands one back as `nextStartAt`), so it goes there directly; where
+ * the agile route is gone, it is refused with the token remedy (CC-5001).
+ * Nothing is memoised: a refused root costs one extra request per call, which
+ * keeps the api ring stateless and lets a root that comes back be used again.
+ */
 async function listSoftwareIssuePage(
   options: AgilePagedBase &
     BudgetGuard & {
@@ -696,23 +757,57 @@ async function listSoftwareIssuePage(
     },
   path: string,
   pathTemplate: string,
+  agilePathTemplate: string,
 ): Promise<SprintIssuesResult> {
+  const startToken = trimmedOrUndefined(options.nextPageToken);
   if (options.startAt !== undefined && options.startAt !== 0) {
-    throw createJiraError({
-      kind: 'validation',
-      reason:
-        `startAt ${String(options.startAt)} cannot be honoured: Jira Cloud pages ` +
-        'sprint and backlog issues by nextPageToken and has no offset.',
-      remediation:
-        'Omit startAt (or pass 0) to read from the first page, and resume with ' +
-        'nextPageToken = paging.nextPageToken from the previous result.',
-    });
+    try {
+      const page = await listAgileIssuePage(options, path, agilePathTemplate);
+      return { ...page, rootFallback: true };
+    } catch (error) {
+      if (!rootRefused(error)) throw error;
+      throw createJiraError({
+        kind: 'validation',
+        reason:
+          `startAt ${String(options.startAt)} cannot be honoured: Jira Cloud pages ` +
+          'sprint and backlog issues by nextPageToken and has no offset.',
+        remediation:
+          'Omit startAt (or pass 0) to read from the first page, and resume with ' +
+          'nextPageToken = paging.nextPageToken from the previous result.',
+        cause: error,
+      });
+    }
   }
+  try {
+    return await readSoftwareIssuePage(options, path, pathTemplate, startToken);
+  } catch (error) {
+    if (startToken !== undefined || !rootRefused(error)) throw error;
+    try {
+      const firstPage = { ...options, startAt: undefined };
+      const page = await listAgileIssuePage(firstPage, path, agilePathTemplate);
+      return { ...page, rootFallback: true };
+    } catch (fallbackError) {
+      if (rootRefused(fallbackError)) throw error;
+      throw fallbackError;
+    }
+  }
+}
+
+/** One token-paged read on the `software` root — no fallback (see above). */
+async function readSoftwareIssuePage(
+  options: AgilePagedBase &
+    BudgetGuard & {
+      readonly fields?: readonly string[];
+      readonly jql?: string;
+    },
+  path: string,
+  pathTemplate: string,
+  startToken: string | undefined,
+): Promise<SprintIssuesResult> {
   const { fields, fieldsDefaulted } = issueFields(options.fields);
   const jql = trimmedOrUndefined(options.jql);
   const endpoint = `GET ${pathTemplate}`;
   const maxResults = options.pageSize ?? DEFAULT_AGILE_PAGE_SIZE;
-  const startToken = trimmedOrUndefined(options.nextPageToken);
 
   const base: TokenPaginateBase<AgileIssue> = {
     jira: options.jira,

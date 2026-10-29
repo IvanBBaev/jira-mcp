@@ -435,6 +435,24 @@ const FIELDS_DEFAULTED_HINT: Hint = {
     'time — the agile root reads "no fields" as "every field Jira has".',
 };
 
+/** D525: the software root refused the read and the agile twin answered it. */
+const ROOT_FALLBACK_HINT: Hint = {
+  code: 'root_fallback',
+  message:
+    'Jira Cloud refused /rest/software/1.0 for this read, so it was answered by ' +
+    'the older /rest/agile/1.0 route. Page on with startAt = paging.nextStartAt. ' +
+    'Atlassian is retiring that route (CHANGE-3193); if reads start failing, the ' +
+    'account needs access to the Jira Software issue-read API.',
+};
+
+/** The advisory hints of a sprint-issue or backlog read. */
+function issueReadHints(loop: SprintIssuesResult): Hint[] {
+  return [
+    ...(loop.fieldsDefaulted ? [FIELDS_DEFAULTED_HINT] : []),
+    ...(loop.rootFallback === true ? [ROOT_FALLBACK_HINT] : []),
+  ];
+}
+
 const getSprintIssuesInput = toolInput({
   sprintId: agileIdArg.describe('Sprint id from jira_list_sprints.'),
   fields: z
@@ -534,7 +552,7 @@ export const getSprintIssuesTool = defineTool<
         fields: args.fields,
         jql: args.jql,
       });
-      const hints: Hint[] = loop.fieldsDefaulted ? [FIELDS_DEFAULTED_HINT] : [];
+      const hints = issueReadHints(loop);
       // CC-35: content-bearing, so it is branded here and stays branded through
       // truncation. See the DOC GAP note in the module header.
       return ok<SprintIssuesData>(
@@ -605,7 +623,7 @@ export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, Backlo
         fields: args.fields,
         jql: args.jql,
       });
-      const hints: Hint[] = loop.fieldsDefaulted ? [FIELDS_DEFAULTED_HINT] : [];
+      const hints = issueReadHints(loop);
       // Content-bearing exactly like the sprint read (CC-35).
       return ok<BacklogData>(
         {

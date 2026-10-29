@@ -145,6 +145,15 @@ function issuesPage(
   return { expand: 'names,schema', startAt, maxResults, total, issues };
 }
 
+/** A root that will not answer the read (D525 trigger statuses). */
+function rootRefusal(status: 403 | 404 | 410): JiraError {
+  return createJiraError({
+    kind: status === 403 ? 'permission' : 'not_found',
+    reason: `Jira answered ${String(status)}.`,
+    httpStatus: status,
+  });
+}
+
 /** One `/rest/software/1.0` issue page (D501): token-paged, no `total`. */
 function softwarePage(issues: readonly unknown[], nextPageToken?: string): unknown {
   // synthetic — GET /rest/software/1.0/sprint/{id}/issue envelope
@@ -559,8 +568,13 @@ test('CC-5000: a page with a null nextPageToken and no isLast ends the read', as
   assert.equal(jira.calls.length, 1);
 });
 
-test('CC-5001: a Cloud startAt above 0 is refused before the wire — there is no offset to honour', async () => {
-  const jira = createFakeJiraRequest();
+test('CC-5001: a Cloud startAt above 0 is refused with the token remedy once the agile route is gone', async () => {
+  // D525: an offset is only honourable on the agile twin, so it is tried there;
+  // a retired twin turns into the same refusal the caller got before.
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/sprint/21/issue',
+    jiraErr(rootRefusal(404)),
+  );
 
   const error = asJiraError(
     await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21, startAt: 50 })),
@@ -568,7 +582,7 @@ test('CC-5001: a Cloud startAt above 0 is refused before the wire — there is n
 
   assert.equal(error.kind, 'validation');
   assert.match(error.message, /nextPageToken/);
-  assert.equal(jira.calls.length, 0);
+  assert.deepEqual(jira.routes(), ['GET /rest/agile/1.0/sprint/21/issue']);
 });
 
 test('CC-5001: a Cloud startAt of 0 is accepted and never sent', async () => {
@@ -598,16 +612,19 @@ test('CC-5006: a software page without an issues array is unexpected_shape', asy
 });
 
 test('CC-5005: a 404 from the software root keeps its kind and names the Jira Software possibility (CC-34)', async () => {
-  const jira = createFakeJiraRequest().on(
-    'GET /rest/software/1.0/sprint/21/issue',
-    jiraErr(
-      createJiraError({
-        kind: 'not_found',
-        reason: 'Jira answered 404.',
-        httpStatus: 404,
-      }),
-    ),
-  );
+  // The agile twin refuses too (D525), so the software error is what surfaces.
+  const jira = createFakeJiraRequest()
+    .on(
+      'GET /rest/software/1.0/sprint/21/issue',
+      jiraErr(
+        createJiraError({
+          kind: 'not_found',
+          reason: 'Jira answered 404.',
+          httpStatus: 404,
+        }),
+      ),
+    )
+    .on('GET /rest/agile/1.0/sprint/21/issue', jiraErr(rootRefusal(410)));
 
   const error = asJiraError(
     await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21 })),
@@ -615,6 +632,110 @@ test('CC-5005: a 404 from the software root keeps its kind and names the Jira So
 
   assert.equal(error.kind, 'not_found');
   assert.match(error.message, /Agile API itself may be unavailable/);
+});
+
+// ---------------------------------------------------------------------------
+// D525: the software-root fallback
+// ---------------------------------------------------------------------------
+
+test('CC-5130: a 403 from the software root is answered once by the agile twin, marked rootFallback', async () => {
+  const jira = createFakeJiraRequest()
+    .on('GET /rest/software/1.0/sprint/21/issue', jiraErr(rootRefusal(403)))
+    .on(
+      'GET /rest/agile/1.0/sprint/21/issue',
+      jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-1', '10001')])),
+    );
+
+  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21 });
+
+  assert.deepEqual(jira.routes(), [
+    'GET /rest/software/1.0/sprint/21/issue',
+    'GET /rest/agile/1.0/sprint/21/issue',
+  ]);
+  assert.equal(result.rootFallback, true);
+  assert.equal(result.total, 1);
+  assert.equal(result.nextPageToken, undefined);
+  assert.deepEqual(
+    result.items.map((issue) => issue.key),
+    ['ABC-1'],
+  );
+  // CC-03 holds on the fallback leg too: the default field set is sent.
+  assert.equal(queryOf(jira.lastRequest()).fields, DEFAULT_SPRINT_ISSUE_FIELDS.join(','));
+});
+
+test('CC-5131: the backlog read falls back to the agile board backlog on a 404', async () => {
+  const jira = createFakeJiraRequest()
+    .on('GET /rest/software/1.0/board/7/backlog', jiraErr(rootRefusal(404)))
+    .on(
+      'GET /rest/agile/1.0/board/7/backlog',
+      jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-9', '10009')])),
+    );
+
+  const result = await listBacklogIssues({ jira: jira.fn, boardId: 7 });
+
+  assert.equal(result.rootFallback, true);
+  assert.deepEqual(
+    result.items.map((issue) => issue.key),
+    ['ABC-9'],
+  );
+});
+
+test('CC-5132: a Cloud startAt above 0 goes straight to the agile twin and is honoured as an offset', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/sprint/21/issue',
+    jiraOk(issuesPage(50, 50, 51, [issueRow('ABC-51', '10051')])),
+  );
+
+  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21, startAt: 50 });
+
+  assert.deepEqual(jira.routes(), ['GET /rest/agile/1.0/sprint/21/issue']);
+  assert.equal(queryOf(jira.lastRequest()).startAt, 50);
+  assert.equal(result.rootFallback, true);
+});
+
+test('CC-5133: a nextPageToken resume never falls back — the token means nothing on agile', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/software/1.0/sprint/21/issue',
+    jiraErr(rootRefusal(403)),
+  );
+
+  const error = asJiraError(
+    await caught(() =>
+      listSprintIssues({ jira: jira.fn, sprintId: 21, nextPageToken: 'tok-2' }),
+    ),
+  );
+
+  assert.equal(error.kind, 'permission');
+  assert.deepEqual(jira.routes(), ['GET /rest/software/1.0/sprint/21/issue']);
+});
+
+test('CC-5134: a 403 the client read as auth (CC-18) does not fall back', async () => {
+  const jira = createFakeJiraRequest().on(
+    'GET /rest/software/1.0/sprint/21/issue',
+    jiraErr(createJiraError({ kind: 'auth', reason: 'Login denied.', httpStatus: 403 })),
+  );
+
+  const error = asJiraError(
+    await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21 })),
+  );
+
+  assert.equal(error.kind, 'auth');
+  assert.equal(jira.calls.length, 1);
+});
+
+test('CC-5135: a fallback leg that fails for another reason surfaces its own error', async () => {
+  const jira = createFakeJiraRequest()
+    .on('GET /rest/software/1.0/sprint/21/issue', jiraErr(rootRefusal(404)))
+    .on(
+      'GET /rest/agile/1.0/sprint/21/issue',
+      jiraErr(createJiraError({ kind: 'transport', reason: 'Socket hang up.' })),
+    );
+
+  const error = asJiraError(
+    await caught(() => listSprintIssues({ jira: jira.fn, sprintId: 21 })),
+  );
+
+  assert.equal(error.kind, 'transport');
 });
 
 test('CC-5004: the Data Center twin stays on the agile root with offset paging and a total', async () => {

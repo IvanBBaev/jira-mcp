@@ -3746,9 +3746,10 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   root, send `maxResults` and `fields` (plus `jql` and `nextPageToken` when
   given), follow `nextPageToken` until `isLast` or a missing/`null` token, and
   hand back the unspent token as `paging.nextPageToken` on a partial read.
-- **CC-5001** — a Cloud `startAt` above 0 is a `validation` error with nothing
-  sent and a remedy naming `nextPageToken`; `startAt: 0` is accepted and not
-  sent.
+- **CC-5001** — a Cloud `startAt` above 0 is sent to the `/rest/agile/1.0`
+  twin (D525); when that route refuses it (403/404/410) the read is a
+  `validation` error whose remedy names `nextPageToken`, and nothing goes to
+  the software root. `startAt: 0` is accepted and not sent.
 - **CC-5002** — the root reports no `total`: paging carries none, and the
   sprint summary's partial note says the sprint size is unknown instead of
   naming one.
@@ -3757,14 +3758,33 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   error with nothing sent.
 - **CC-5004** — the Data Center sprint-issue twin stays on `/rest/agile/1.0`
   with `startAt`/`total` paging and refuses a `nextPageToken` before the wire.
-- **CC-5005** — a 403/404 from the software root keeps its kind and gains the
-  CC-34 "the Agile API itself may be unavailable" remediation.
+- **CC-5005** — a 403/404 from the software root, when the agile fallback
+  (D525) refuses too, keeps its kind and gains the CC-34 "the Agile API itself
+  may be unavailable" remediation.
 - **CC-5006** — a software page without an `issues` array is
   `unexpected_shape`.
 - **CC-5007** — under `JIRA_PROJECTS` the software root admits only the
   sprint-issue and board backlog/issue GETs, adds the project clause to their
   JQL like the agile routes, and refuses an out-of-scope board and any other
   route.
+
+## Agile-root fallback for the software reads (D525, 2026-10-30)
+
+- **CC-5130** — a 403 from the software root on a first-page sprint read is
+  retried once on `/rest/agile/1.0/sprint/{id}/issue` with the CC-03 field
+  default; the result carries `total` and `rootFallback: true`.
+- **CC-5131** — a 404 from the software backlog read falls back to
+  `/rest/agile/1.0/board/{id}/backlog` the same way.
+- **CC-5132** — a `startAt` above 0 goes straight to the agile route; the
+  software root is not called.
+- **CC-5133** — a `nextPageToken` resume never falls back: the software error
+  surfaces as itself.
+- **CC-5134** — a 403 the client already classified as `auth` does not fall
+  back.
+- **CC-5135** — a transport failure on the agile leg surfaces as `transport`,
+  not as the software root's refusal.
+- **CC-5136** — the sprint-issue and backlog tools add the `root_fallback`
+  hint and hand back no `nextPageToken` on a fallback read.
 
 ## Rate-limit headers with and without `Beta-` (D505, 2026-10-29)
 

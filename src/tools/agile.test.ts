@@ -34,6 +34,7 @@ import {
   jiraErr,
   jiraOk,
 } from '../core/fakes/index.js';
+import { createJiraError } from '../core/errors.js';
 import { JiraError, type JiraRequestFn } from '../core/types.js';
 import { writtenIssueIds } from '../mcp/recent-writes.js';
 import type { ToolCtx, ToolResult } from '../mcp/types.js';
@@ -585,7 +586,11 @@ test('CC-5003: a string startAt is read as the token alias; two different tokens
 });
 
 test('CC-5001: a numeric startAt above 0 is refused on Cloud with the token remedy', async () => {
-  const fake = createFakeJiraRequest();
+  // D525 tries the offset on the agile twin first; here that twin is retired.
+  const fake = createFakeJiraRequest().on(
+    'GET /rest/agile/1.0/sprint/42/issue',
+    jiraErr(createJiraError({ kind: 'not_found', reason: 'Gone.', httpStatus: 410 })),
+  );
 
   const result = await getSprintIssuesTool.handler(
     { sprintId: 42, startAt: 50 },
@@ -594,7 +599,36 @@ test('CC-5001: a numeric startAt above 0 is refused on Cloud with the token reme
   assert.equal(result.ok, false);
   assert.equal(result.error?.kind, 'validation');
   assert.match(JSON.stringify(result.error), /nextPageToken/);
-  assert.equal(fake.calls.length, 0);
+  assert.equal(fake.calls.length, 1);
+});
+
+test('CC-5136: a software-root fallback is reported with the root_fallback hint and offset paging', async () => {
+  const fake = createFakeJiraRequest()
+    .on(
+      'GET /rest/software/1.0/sprint/42/issue',
+      jiraErr(
+        createJiraError({ kind: 'permission', reason: 'Denied.', httpStatus: 403 }),
+      ),
+    )
+    .on(
+      'GET /rest/agile/1.0/sprint/42/issue',
+      // synthetic — classic agile envelope, one page of two
+      jiraOk({
+        startAt: 0,
+        maxResults: 1,
+        total: 2,
+        issues: [{ id: '1', key: 'ABC-1', fields: {} }],
+      }),
+    );
+
+  const result = await getSprintIssuesTool.handler(
+    { sprintId: 42, fields: ['summary'], maxResults: 1 },
+    createCtx(fake.fn),
+  );
+
+  assert.equal(result.ok, true);
+  assert.ok(result.hints?.some((hint) => hint.code === 'root_fallback'));
+  assert.equal(result.data?.paging.nextPageToken, undefined);
 });
 
 // ---------------------------------------------------------------------------

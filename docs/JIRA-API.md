@@ -573,6 +573,19 @@ reads; every other agile route stays on `/rest/agile/1.0`.
 - **Errors.** The CC-34 remap of the agile routes also wraps these calls: a
   403/404 keeps its kind and names the possibility that Jira Software itself
   is unavailable (CC-5005).
+- **Agile-root fallback (D525).** A 403, 404 or 410 from the software root on
+  a first-page read (one the client did not already classify as `auth`)
+  sends the same read once to the `/rest/agile/1.0` twin, with the CC-03
+  field default and classic `startAt`/`total` paging. The result carries
+  `rootFallback: true`, and the tool adds the `root_fallback` hint and no
+  `nextPageToken`. If the agile route refuses too, the software error
+  surfaces; any other agile-leg failure (transport, 5xx) surfaces as itself.
+  A `nextPageToken` resume never falls back. A `startAt` above 0 goes
+  straight to the agile route, and a refusal there is the CC-5001 validation
+  error that points at token paging. Nothing is memoised: every read tries
+  the software root first, so a tenant that gains the root is picked up on
+  the next call. Before 2026-11-01 the agile route still answers; after the
+  removal it refuses too, and only the software root works.
 - **Read-after-write lag (D504).** Both reads are JQL-backed, so they read the
   search index. An issue moved by `jira_move_to_sprint` or
   `jira_move_to_backlog` can be missing from (or still present in) the next
