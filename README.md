@@ -84,6 +84,26 @@ Every setting is an environment variable with the `JIRA_` prefix. The full table
 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md); [`.env.example`](.env.example)
 is a fill-in-the-blanks copy.
 
+### Choosing a surface
+
+Every listed tool costs context. A client without tool search pays that cost
+on every turn, and some clients cap how many tools a server may list.
+`JIRA_TOOL_PACKAGES` picks a profile or a comma list of packages. Measured per
+profile (model-visible = name + description + input schema; wire = the whole
+`tools/list` result):
+
+| Profile | Tools | Model-visible chars | Wire chars |
+|---|---|---|---|
+| `core` | 3 | 2.7k | 3.9k |
+| `reader` | 34 | 37k | 50k |
+| `all` (default) | 82 | 114k | 146k |
+
+On a tool-capped client (Cursor has historically capped at about 40 tools),
+use `JIRA_TOOL_PACKAGES=reader`, which is read-only, or list only the packages
+you need, for example `core,search,issues,issues-write`. Claude Code defers
+MCP tools behind tool search, so there `all` is fine. A test holds these
+figures (D510), so the table cannot go stale unnoticed.
+
 ## Tools
 
 <!-- GENERATED:TOOLS:START -->

@@ -1,0 +1,21 @@
+{
+  "tolerance": 0.02,
+  "perToolCap": 4000,
+  "profiles": {
+    "core": {
+      "tools": 3,
+      "modelVisible": 2742,
+      "wire": 3923
+    },
+    "reader": {
+      "tools": 34,
+      "modelVisible": 37040,
+      "wire": 50320
+    },
+    "all": {
+      "tools": 82,
+      "modelVisible": 113600,
+      "wire": 145968
+    }
+  }
+}
