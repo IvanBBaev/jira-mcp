@@ -3804,3 +3804,53 @@ Placeholder ids — renumber once the parallel wave that owns the next free rang
   as `reason` and nothing from the throw.
 - **CC-5043** — every envelope from `errorResult` and `errorResultOf` has a
   `reason`.
+
+## Call-time enforcement of the tool surface (V3-06, 2026-10-29)
+
+Hiding a tool from `tools/list` is not the guarantee; refusing the call is.
+Proven over the real MCP protocol in `src/mcp/call-time-guard.test.ts`. A
+refusal here means an `ok: false` envelope with `isError`, the handler never
+run, no request sent and nothing journaled.
+
+- **CC-5070** — a tool in a package `JIRA_TOOL_PACKAGES` did not select is
+  unlisted, and calling it by name is a `config` refusal, a write with
+  `apply: true` and a `plan_id` included.
+- **CC-5071** — `JIRA_PACKAGES_DENY` wins over the selection: the denied
+  package's tools are unlisted and refused as `config`.
+- **CC-5072** — the package refusal names `JIRA_TOOL_PACKAGES` and
+  `JIRA_PACKAGES_DENY` and is not retryable.
+- **CC-5073** — denying `core` does not remove it: it stays listed and
+  callable.
+- **CC-5074** — a name the manifest never declared is `not_found` with nothing
+  sent.
+- **CC-5075** — a write in a `JIRA_PACKAGES_READONLY` package is unlisted and
+  refused as `write_gated`, as a plan request and as an apply.
+- **CC-5076** — `JIRA_PACKAGES_READONLY` strips only the writes of the
+  packages it names; their reads and other packages' writes stay callable.
+- **CC-5077** — the `reader` profile refuses the writes of the packages it
+  selects as `write_gated`, and the writes of packages outside it as `config`.
+- **CC-5078** — the read-only refusal says nothing was sent and names
+  `JIRA_PACKAGES_READONLY` in its remedy.
+- **CC-5079** — across a sweep of gating configurations, every unlisted tool
+  is refused with a gating kind before its handler runs, and every listed tool
+  runs.
+- **CC-5080** — under `JIRA_PROJECTS` every tool stays listed: the scope is
+  enforced per call, not on the surface.
+- **CC-5081** — a read naming an out-of-scope issue is a `permission` refusal
+  naming `JIRA_PROJECTS`, with nothing sent.
+- **CC-5082** — an out-of-scope write is refused at plan time: no plan is
+  minted and nothing is sent or journaled.
+- **CC-5083** — an apply quoting a plan id it never got, for an out-of-scope
+  write, sends nothing.
+- **CC-5084** — an in-scope call under `JIRA_PROJECTS` reaches Jira, touching
+  only the issue it names.
+- **CC-5085** — under `JIRA_WRITE_MODE=plan` every write stays listed, and a
+  call returns a plan (`executed: false`, a `plan_id`) with nothing sent.
+- **CC-5086** — under `JIRA_WRITE_MODE=plan` an apply quoting a real plan id
+  is planned again, never executed or journaled.
+- **CC-5087** — under `JIRA_WRITE_MODE=plan` the plan hint names
+  `JIRA_WRITE_MODE`, so the caller learns that apply is off on this server.
+- **CC-5088** — `JIRA_WRITE_MODE=plan` lets reads through unchanged.
+- **CC-5089** — the gates compose: a read-only package's write under plan-only
+  mode and `JIRA_PROJECTS` is refused as `write_gated` before the scope guard
+  or the planner sees it.
