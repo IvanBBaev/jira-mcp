@@ -531,6 +531,7 @@ test('CC-65: an applied issue delete echoes the same snapshot the plan showed', 
 
   assert.equal(applied.ok, true);
   assert.deepEqual(applied.data, {
+    executed: true,
     issue: KEY,
     deleted: true,
     deleteSubtasks: false,
@@ -772,6 +773,7 @@ test('the comment snapshot flattens the ADF body and drops the author PII', asyn
     jsdPublic: false,
   });
   assert.deepEqual(applied.data, {
+    executed: true,
     issue: KEY,
     commentId: COMMENT_ID,
     deleted: true,
@@ -930,6 +932,7 @@ test('the worklog snapshot keeps the time and the started instant verbatim', asy
     commentTruncated: false,
   });
   assert.deepEqual(applied.data, {
+    executed: true,
     issue: KEY,
     worklogId: WORKLOG_ID,
     deleted: true,
@@ -1068,6 +1071,7 @@ test('an applied component delete echoes the snapshot and the reassignment', asy
 
   assert.equal(applied.ok, true);
   assert.deepEqual(applied.data, {
+    executed: true,
     componentId: '10500',
     deleted: true,
     movedIssuesTo: '10501',
@@ -1245,6 +1249,7 @@ test('an applied version delete echoes the snapshot and both swap targets', asyn
 
   assert.equal(applied.ok, true);
   assert.deepEqual(applied.data, {
+    executed: true,
     versionId: '10600',
     deleted: true,
     movedFixIssuesTo: '10601',
@@ -1372,6 +1377,7 @@ test('CC-124: the sprint snapshot records the state — an audit trail, not a gu
   assert.equal(applied.ok, true);
   // `sprintId` is a NUMBER in the receipt — agile ids are numeric end to end.
   assert.deepEqual(applied.data, {
+    executed: true,
     sprintId: SPRINT_ID,
     deleted: true,
     before: beforeOf(plan),
@@ -1457,7 +1463,11 @@ test('CC-127 [CC-183, CC-964]: a 201 means ENQUEUED — the receipt carries the 
 
   assert.equal(applied.ok, true);
   // The receipt is the taskId and the before-state — no completion claim.
-  assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
+  assert.deepEqual(applied.data, {
+    executed: true,
+    taskId: TASK_ID,
+    before: beforeOf(plan),
+  });
   const hint = (applied.hints ?? [])[0];
   // CC-183: its own code — `discovery` would send a client to a lookup tool.
   assert.equal(hint?.code, 'enqueued');
@@ -1733,7 +1743,11 @@ test('CC-130: the edit posts to /bulk/issues/fields and DERIVES selectedActions 
     issues: [KEY, 'PROJ-2'],
     edits: { labels: { action: 'ADD', values: ['triaged'] }, priorityId: '2' },
   });
-  assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
+  assert.deepEqual(applied.data, {
+    executed: true,
+    taskId: TASK_ID,
+    before: beforeOf(plan),
+  });
   // `selectedActions` is derived, never caller-supplied: the strict schema
   // refuses the key rather than trusting a caller's account of their intent.
   assert.equal(
@@ -1777,7 +1791,11 @@ test('the fixVersions family rides through the tool into the wire and the before
   assert.deepEqual(beforeOf(plan)['edits'], {
     fixVersions: { action: 'REPLACE', versionIds: ['10600', '10601'] },
   });
-  assert.deepEqual(applied.data, { taskId: TASK_ID, before: beforeOf(plan) });
+  assert.deepEqual(applied.data, {
+    executed: true,
+    taskId: TASK_ID,
+    before: beforeOf(plan),
+  });
 });
 
 test('CC-131: notifyUsers maps to sendBulkNotification, and absent means omitted', async () => {
@@ -2130,7 +2148,12 @@ test('CC-1528: the link plan names both ends; the receipt echoes the same snapsh
     inwardIssue: { key: KEY, summary: 'Retry policy', status: 'In Progress' },
     outwardIssue: { key: 'PROJ-2', summary: `${'x'.repeat(500)}…`, status: 'To Do' },
   });
-  assert.deepEqual(applied.data, { linkId: LINK_ID, deleted: true, before });
+  assert.deepEqual(applied.data, {
+    executed: true,
+    linkId: LINK_ID,
+    deleted: true,
+    before,
+  });
   assert.equal(applied._untrusted, true);
   assert.deepEqual(fake.routes(), [LINK_ROUTE, LINK_ROUTE, DELETE_LINK_ROUTE]);
 });
@@ -2232,7 +2255,12 @@ test('CC-1530: the attachment plan names the file; the receipt echoes the same s
   });
   // The signed content URL never reaches the plan (D41).
   assert.equal(JSON.stringify(plan.data).includes('/attachment/content/'), false);
-  assert.deepEqual(applied.data, { attachmentId: ATTACHMENT_ID, deleted: true, before });
+  assert.deepEqual(applied.data, {
+    executed: true,
+    attachmentId: ATTACHMENT_ID,
+    deleted: true,
+    before,
+  });
   assert.equal(applied._untrusted, true);
   assert.deepEqual(fake.routes(), [
     ATTACHMENT_ROUTE,
@@ -2340,6 +2368,7 @@ test('CC-1533: the remote link plan names the title and target; the receipt echo
   // Icons are rendering noise and never reach the plan (D141).
   assert.equal(JSON.stringify(plan.data).includes('favicon'), false);
   assert.deepEqual(applied.data, {
+    executed: true,
     issue: KEY,
     linkId: 10300,
     deleted: true,

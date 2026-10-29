@@ -143,6 +143,25 @@ export function err(
   return options.untrusted === true ? brandUntrusted(withHints) : withHints;
 }
 
+/**
+ * Stamp an applied write's success envelope with `data.executed: true` (D506),
+ * the twin of the plan payload's `executed: false`, so "did this run?" has one
+ * field to read in both modes.
+ *
+ * Only a success whose `data` is a plain object is stamped; anything else
+ * travels through untouched, because wrapping an array or a scalar would change
+ * the shape a caller already parses. The key goes first, as on a plan, and a
+ * handler's own `executed` is never overwritten. The `_untrusted` brand, hints
+ * and every other envelope member are kept.
+ */
+export function markExecuted<T>(result: ToolResult<T>): ToolResult<T> {
+  if (!result.ok) return result;
+  const data: unknown = result.data;
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return result;
+  if (Object.hasOwn(data, 'executed')) return result;
+  return { ...result, data: { executed: true, ...data } as T };
+}
+
 /** Append hints to an existing envelope, preserving order and dropping empties. */
 export function withHints<T>(
   result: ToolResult<T>,

@@ -92,7 +92,12 @@ test('[CC-1560] exportRows writes the redacted rows and keeps cursors inline', a
   assert.equal(descriptor['preview'], written);
 
   // A failure passes through; a missing row array is a declaration bug.
-  const failed = err({ kind: 'not_found', message: 'gone', retryable: false });
+  const failed = err({
+    kind: 'not_found',
+    message: 'gone',
+    reason: 'gone',
+    retryable: false,
+  });
   assert.equal(await exportRows('jira_search', 'issues', failed, deps), failed);
   await assert.rejects(
     exportRows('jira_search', 'rows', result, deps),

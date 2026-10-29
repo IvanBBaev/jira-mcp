@@ -9,6 +9,7 @@ import {
   ELLIPSIS,
   UNTRUSTED_HINT_MESSAGE,
   err,
+  markExecuted,
   normalizeHints,
   ok,
   renderResult,
@@ -20,6 +21,7 @@ import type { Hint, ToolResult } from './types.js';
 const RECORD: ErrorRecord = {
   kind: 'not_found',
   message: 'Issue PROJ-1 does not exist, or you cannot see it.',
+  reason: 'Issue PROJ-1 does not exist, or you cannot see it.',
   retryable: false,
 };
 
@@ -653,4 +655,38 @@ test('[CC-563] a common string cap never leaves half of a surrogate pair', () =>
     assert.doesNotMatch(out.json, lone, `budget ${String(budget)}`);
   }
   assert.ok(capped > 0, 'rung 3 was reached');
+});
+
+// ---------------------------------------------------------------------------
+// markExecuted (D506)
+// ---------------------------------------------------------------------------
+
+test('[CC-5034] markExecuted stamps a plain-object success and keeps the envelope', () => {
+  const hint: Hint = { code: 'sprint_move_required', message: 'Move it.' };
+  const stamped = markExecuted(ok({ key: 'ABC-1' }, { hints: [hint], untrusted: true }));
+
+  assert.deepEqual(stamped.data, { executed: true, key: 'ABC-1' });
+  assert.deepEqual(Object.keys(stamped.data as object), ['executed', 'key']);
+  assert.equal(stamped._untrusted, true);
+  assert.deepEqual(
+    stamped.hints?.map((h) => h.code),
+    ['sprint_move_required', 'untrusted_content'],
+  );
+});
+
+test('[CC-5034] markExecuted leaves errors, non-objects and an own executed alone', () => {
+  const failure = err(RECORD);
+  assert.equal(markExecuted(failure), failure);
+
+  const list = ok([1, 2]);
+  assert.equal(markExecuted(list), list);
+
+  const scalar = ok('done');
+  assert.equal(markExecuted(scalar), scalar);
+
+  const empty = ok(null);
+  assert.equal(markExecuted(empty), empty);
+
+  const own = ok({ executed: false, queued: true });
+  assert.equal(markExecuted(own), own);
 });

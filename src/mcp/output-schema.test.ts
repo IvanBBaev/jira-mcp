@@ -18,6 +18,7 @@ function emitted(result: ToolResult<unknown>, budget = 25_000): unknown {
 const ERROR = {
   kind: 'not_found',
   message: 'Issue ABC-1 does not exist.',
+  reason: 'Issue ABC-1 does not exist.',
   retryable: false,
   httpStatus: 404,
 } as const;

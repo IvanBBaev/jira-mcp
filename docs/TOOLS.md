@@ -60,6 +60,17 @@ there are any, §Prompts), paging, and the untrusted-content rule (CC-1422).
   content); like `_truncation` it sits on the envelope, never inside `data`.
 - A hint never changes `ok`. Truncation, approximation and eventual consistency
   are successful results with caveats, not failures.
+- An applied write's success carries `data.executed: true` as the first key of
+  `data` (D506), the twin of a plan's `data.executed: false`. It is set only
+  when a mutation reached Jira and came back with a response, and only when
+  `data` is a plain object; a handler that sent nothing, a mutation that threw,
+  and an error envelope carry no `executed`. Like the rest of `data` it can be
+  lost at the truncation floor [test: src/mcp/write-mode.test.ts].
+- `error` is `{ kind, message, reason, retryable, httpStatus?, jiraMessages?,
+  remediation?, detail? }`. `reason` (D507) is always present: the cause
+  sentence alone, while `message` stays cause then remedy. An error with no
+  separate cause reports its `message` as `reason`
+  [test: src/mcp/errors.test.ts].
 
 ## Hint catalog (closed vocabulary)
 

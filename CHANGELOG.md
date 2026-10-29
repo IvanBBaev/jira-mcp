@@ -14,6 +14,10 @@ env var names — not internal refactors.
 
 ### Added
 
+- Applied writes say so: a write that reached Jira returns
+  `data.executed: true`, the twin of a plan's `executed: false` (D506).
+- Every error carries `error.reason`, the cause sentence without the
+  remediation; `message` is unchanged (D507).
 - `jira_sprint_summary` (D155, agile): one sprint in one call — issue counts
   and story points by status category, completion, the issues added after
   the start and the committed scope. A stand-in for the velocity / sprint

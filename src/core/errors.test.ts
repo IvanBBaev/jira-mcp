@@ -525,6 +525,7 @@ describe('toErrorRecord', () => {
     assert.deepEqual(toErrorRecord(error), {
       kind: 'validation',
       message: error.message,
+      reason: error.reason,
       retryable: false,
       httpStatus: 400,
       jiraMessages: ['summary: Field is required.'],
@@ -540,6 +541,7 @@ describe('toErrorRecord', () => {
     assert.deepEqual(Object.keys(record), [
       'kind',
       'message',
+      'reason',
       'retryable',
       'remediation',
     ]);
@@ -558,6 +560,7 @@ describe('toErrorRecord', () => {
         [
           'kind',
           'message',
+          'reason',
           'retryable',
           'httpStatus',
           'jiraMessages',

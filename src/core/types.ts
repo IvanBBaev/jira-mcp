@@ -668,6 +668,12 @@ export class JiraError extends Error {
 export interface ErrorRecord {
   readonly kind: JiraErrorKind;
   readonly message: string;
+  /**
+   * The cause sentence alone, without the remediation that `message` appends
+   * (D507). Always present: when the error carries no separate cause it equals
+   * `message`. Additive in 1.x; `message` keeps its cause-then-remedy text.
+   */
+  readonly reason: string;
   readonly retryable: boolean;
   readonly httpStatus?: number;
   readonly jiraMessages?: readonly string[];
