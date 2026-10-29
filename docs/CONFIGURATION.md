@@ -170,6 +170,14 @@ it, a `NO_PROXY` that exempts the site, an unreadable or non-PEM CA bundle, and
 disabled certificate checks. Whether the proxy actually answers is the identity
 probe's question.
 
+**Allow-listing by IP.** Atlassian adds `131.162.88.0/21` to its published IP
+ranges (Jira platform changelog). A firewall or proxy that allow-lists Atlassian
+by IP address rather than by hostname must include that range by **2027-01-01**,
+or requests to the site and to `api.atlassian.com` start failing once traffic
+moves onto it. Hostname allow-lists (`*.atlassian.net`, `api.atlassian.com`,
+`auth.atlassian.com`) need no change. The server's own egress allowlist is by
+host, never by IP, so nothing in its configuration changes.
+
 ## Transport
 
 | Variable | Default | Description |
