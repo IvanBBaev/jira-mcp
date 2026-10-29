@@ -3614,8 +3614,8 @@ Prompts (D125):
   response is the end — the result has no `nextPageToken` and
   `hasMore: false`.
 - **CC-1552** — the tool returns one page branded `_untrusted`; the schema
-  refuses an empty or oversize `issues`, a blank cursor and `maxResults`
-  over 1000.
+  refuses an empty or oversize `issues` and a blank cursor. A `maxResults`
+  over 1000 is clamped to 1000 with a `clamped` hint since D508 (CC-5057).
 - **CC-1557** — under `JIRA_PROJECTS` (D400) both bulk-fetch reads
   (`/issue/bulkfetch`, `/changelog/bulkfetch`) are refused with nothing sent
   when any named issue has an out-of-scope prefix or none is named, and go
@@ -3874,3 +3874,29 @@ run, no request sent and nothing journaled.
 - **CC-5089** — the gates compose: a read-only package's write under plan-only
   mode and `JIRA_PROJECTS` is refused as `write_gated` before the scope guard
   or the planner sees it.
+
+## One page-size behaviour: clamp with a hint (D508, 2026-10-30)
+
+Every tool that takes `maxResults` uses the shared argument and clamp in
+`src/mcp/tool-helpers.ts`. Proven in `src/mcp/tool-helpers.test.ts`, the
+package tests and `src/tools/page-size.test.ts`.
+
+- **CC-5050** — an omitted `maxResults` stays omitted (the api ring owns the
+  default); a value at or under the cap is sent unchanged with no hint.
+- **CC-5051** — a value above the cap is sent as the cap, with exactly one
+  `clamped` hint.
+- **CC-5052** — the hint names the value asked for, the cap and the cursor to
+  page on with (`startAt` or `nextPageToken`).
+- **CC-5053** — the schema accepts any positive integer; 0, negatives,
+  fractions and strings are still refused as `validation`.
+- **CC-5054** — `jira_list_boards` (and `jira_list_sprints`) clamp to the
+  Agile cap of 50 instead of refusing.
+- **CC-5055** — `jira_get_sprint_issues` and `jira_get_backlog` clamp to 50
+  and point at `nextPageToken`; the `clamped` hint comes before
+  `fields_defaulted` and `root_fallback`.
+- **CC-5056** — `jira_list_components` and `jira_list_versions` clamp to 50
+  instead of refusing.
+- **CC-5057** — `jira_get_changelogs_bulk` clamps to 1000 instead of refusing,
+  and points at `nextPageToken`.
+- **CC-5058** — no tool's `maxResults` schema carries a maximum, so a package
+  that hand-rolls `.max()` again fails the surface test.

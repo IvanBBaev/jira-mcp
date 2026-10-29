@@ -26,7 +26,10 @@ import {
   READ_ANNOTATIONS,
   WRITE_ANNOTATIONS,
   callBase,
+  clampPageSize,
+  clampedHint,
   guarded,
+  pageSizeArg,
   pagingOf,
   rethrowUnexpected,
 } from './tool-helpers.js';
@@ -311,4 +314,44 @@ test('total zero and startAt zero survive: they are values, not absences', () =>
 
   assert.equal(paging.total, 0);
   assert.equal(paging.nextStartAt, 0);
+});
+
+// ---------------------------------------------------------------------------
+// The page-size argument (D508)
+// ---------------------------------------------------------------------------
+
+test('[CC-5050] an omitted or in-cap page size passes through with no hint', () => {
+  assert.deepEqual(clampPageSize(undefined, 50, 'startAt'), {
+    pageSize: undefined,
+    hints: [],
+  });
+  assert.deepEqual(clampPageSize(1, 50, 'startAt'), { pageSize: 1, hints: [] });
+  assert.deepEqual(clampPageSize(50, 50, 'startAt'), { pageSize: 50, hints: [] });
+});
+
+test('[CC-5051] an over-cap page size is clamped to the cap with one clamped hint', () => {
+  const clamped = clampPageSize(51, 50, 'startAt');
+  assert.equal(clamped.pageSize, 50);
+  assert.deepEqual(clamped.hints, [clampedHint(51, 50, 'startAt')]);
+});
+
+test('[CC-5052] the clamped hint names the value asked for, the cap and the cursor', () => {
+  const hint = clampedHint(500, 100, 'nextPageToken');
+  assert.equal(hint.code, 'clamped');
+  assert.match(hint.message, /maxResults 500 /);
+  assert.match(hint.message, /page cap of 100/);
+  assert.match(hint.message, /page on with nextPageToken\.$/);
+  assert.match(clampedHint(60, 50, 'startAt').message, /page on with startAt\.$/);
+});
+
+test('[CC-5053] the shared argument accepts any positive integer and names its cap', () => {
+  const arg = pageSizeArg({ cap: 50, defaultText: '50' });
+  assert.equal(arg.safeParse(undefined).success, true);
+  assert.equal(arg.safeParse(1).success, true);
+  // Above the cap is the handler's business (clamp + hint), not a refusal.
+  assert.equal(arg.safeParse(5_000).success, true);
+  for (const bad of [0, -1, 1.5, '10']) {
+    assert.equal(arg.safeParse(bad).success, false, String(bad));
+  }
+  assert.match(String(arg.description), /1…50; default 50\. Values above 50 are clamped/);
 });

@@ -1334,3 +1334,44 @@ test('CC-1505: jira_set_estimate is an idempotent standard write', () => {
     false,
   );
 });
+
+// ---------------------------------------------------------------------------
+// D508 — maxResults above the Agile cap is clamped, not refused
+// ---------------------------------------------------------------------------
+
+test('[CC-5054] jira_list_boards clamps maxResults above 50 and says so', async () => {
+  const fake = createFakeJiraRequest().on(
+    BOARDS_ROUTE,
+    jiraOk({ maxResults: 50, startAt: 0, isLast: true, values: [] }),
+  );
+
+  const result = await listBoardsTool.handler({ maxResults: 500 }, createCtx(fake.fn));
+
+  assert.equal(result.ok, true);
+  assert.equal(fake.lastRequest()?.query?.maxResults, 50);
+  assert.deepEqual(hintCodes(result), ['clamped']);
+  assert.match(String(result.hints?.[0]?.message), /maxResults 500 .*cap of 50/);
+});
+
+test('[CC-5055] jira_get_sprint_issues clamps and points at nextPageToken', async () => {
+  const fake = createFakeJiraRequest().on(
+    SPRINT_ISSUES_ROUTE,
+    jiraOk({ isLast: true, issues: [] }),
+  );
+
+  const result = await getSprintIssuesTool.handler(
+    { sprintId: 42, fields: ['summary'], maxResults: 200 },
+    createCtx(fake.fn),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(fake.lastRequest()?.query?.maxResults, 50);
+  const clamped = result.hints?.find((hint) => hint.code === 'clamped');
+  assert.match(String(clamped?.message), /page on with nextPageToken/);
+  // In-cap requests carry no clamped hint.
+  const inCap = await getSprintIssuesTool.handler(
+    { sprintId: 42, fields: ['summary'], maxResults: 50 },
+    createCtx(fake.fn),
+  );
+  assert.equal(hintCodes(inCap).includes('clamped'), false);
+});

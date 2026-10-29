@@ -45,7 +45,10 @@
 
 import type { BulkStatusResult } from '../api/bulk.js';
 import {
+  DEFAULT_CHANGELOG_PAGE_SIZE,
   DEFAULT_COMMENT_ORDER_BY,
+  DEFAULT_COMMENT_PAGE_SIZE,
+  DEFAULT_WORKLOG_PAGE_SIZE,
   MAX_BULK_CHANGELOG_ISSUES,
   MAX_BULK_CHANGELOG_RESULTS,
   MAX_BULK_ISSUES,
@@ -63,7 +66,13 @@ import type {
 } from '../api/issues.js';
 import { defineTool, outputArg, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
-import { READ_ANNOTATIONS, callBase, guarded } from '../mcp/tool-helpers.js';
+import {
+  READ_ANNOTATIONS,
+  callBase,
+  clampPageSize,
+  guarded,
+  pageSizeArg,
+} from '../mcp/tool-helpers.js';
 import type { Hint, PackageSpec, ToolResult } from '../mcp/types.js';
 import { issueBriefPrompt, worklogSummaryPrompt } from './prompts.js';
 
@@ -79,26 +88,6 @@ const FIELDS_DEFAULTED_HINT: Hint = {
     'field the issue has. Name the fields you actually need next time; the answer ' +
     'is smaller, cheaper and stable across instances.',
 };
-
-/** TOOLS.md hint catalog — `clamped`. */
-function clampedHint(requested: number): Hint {
-  return {
-    code: 'clamped',
-    message:
-      `maxResults ${requested} is above the page cap of ${MAX_PAGE_SIZE}, so ${MAX_PAGE_SIZE} ` +
-      `was requested instead. Ask for ${MAX_PAGE_SIZE} or fewer and page on with startAt.`,
-  };
-}
-
-/**
- * The hints a classic list can raise. A stop at the page cap is NOT one of them:
- * it is reported as data (`partial`, `nextStartAt`), never as `truncated`.
- */
-function listHints(maxResults: number | undefined): Hint[] {
-  return maxResults !== undefined && maxResults > MAX_PAGE_SIZE
-    ? [clampedHint(maxResults)]
-    : [];
-}
 
 // ---------------------------------------------------------------------------
 // Shared arguments
@@ -121,15 +110,22 @@ const startAtArg = z
       'from the data.nextStartAt the previous call reported.',
   );
 
-const maxResultsArg = z
-  .number()
-  .int()
-  .min(1)
-  .optional()
-  .describe(
-    `Rows per page; values above ${MAX_PAGE_SIZE} are clamped to ${MAX_PAGE_SIZE}. ` +
-      'One page is read per call.',
-  );
+/**
+ * The page-size arguments of the three classic lists (D508): above
+ * {@link MAX_PAGE_SIZE} the handler clamps and says so with a `clamped` hint.
+ */
+const commentsMaxResultsArg = pageSizeArg({
+  cap: MAX_PAGE_SIZE,
+  defaultText: String(DEFAULT_COMMENT_PAGE_SIZE),
+});
+const changelogMaxResultsArg = pageSizeArg({
+  cap: MAX_PAGE_SIZE,
+  defaultText: String(DEFAULT_CHANGELOG_PAGE_SIZE),
+});
+const worklogsMaxResultsArg = pageSizeArg({
+  cap: MAX_PAGE_SIZE,
+  defaultText: String(DEFAULT_WORKLOG_PAGE_SIZE),
+});
 
 /**
  * How rich text is rendered. `text` is the default and stays the default: an
@@ -275,7 +271,7 @@ export const getIssueTool = defineTool({
 const getCommentsInput = toolInput({
   issue: issueArg,
   startAt: startAtArg,
-  maxResults: maxResultsArg,
+  maxResults: commentsMaxResultsArg,
   orderBy: z
     // Jira documents only the created date as a comment sort key; `updated`
     // was accepted here and silently ignored or refused by Jira (CC-194).
@@ -314,15 +310,16 @@ export const getCommentsTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<CommentsResult>> =>
     guarded(async () => {
+      const page = clampPageSize(args.maxResults, MAX_PAGE_SIZE, 'startAt');
       const comments = await ctx.api.listComments({
         ...callBase(ctx),
         issue: args.issue,
         startAt: args.startAt,
-        maxResults: args.maxResults,
+        maxResults: page.pageSize,
         orderBy: args.orderBy,
         format: args.format,
       });
-      return ok(comments, { untrusted: true, hints: listHints(args.maxResults) });
+      return ok(comments, { untrusted: true, hints: page.hints });
     }),
 });
 
@@ -366,7 +363,7 @@ export const getTransitionsTool = defineTool({
 const getChangelogInput = toolInput({
   issue: issueArg,
   startAt: startAtArg,
-  maxResults: maxResultsArg,
+  maxResults: changelogMaxResultsArg,
   output: outputArg,
 });
 
@@ -390,13 +387,14 @@ export const getChangelogTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<ChangelogResult>> =>
     guarded(async () => {
+      const page = clampPageSize(args.maxResults, MAX_PAGE_SIZE, 'startAt');
       const changelog = await ctx.api.listChangelog({
         ...callBase(ctx),
         issue: args.issue,
         startAt: args.startAt,
-        maxResults: args.maxResults,
+        maxResults: page.pageSize,
       });
-      return ok(changelog, { untrusted: true, hints: listHints(args.maxResults) });
+      return ok(changelog, { untrusted: true, hints: page.hints });
     }),
 });
 
@@ -421,13 +419,10 @@ const getChangelogsBulkInput = toolInput({
       'Keep only changes to these field ids (status, assignee, customfield_10020). ' +
         'Omit for every field.',
     ),
-  maxResults: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_BULK_CHANGELOG_RESULTS)
-    .optional()
-    .describe("Histories per page; Jira's default when omitted."),
+  maxResults: pageSizeArg({
+    cap: MAX_BULK_CHANGELOG_RESULTS,
+    defaultText: "Jira's page size",
+  }),
   nextPageToken: z
     .string()
     .trim()
@@ -457,14 +452,19 @@ export const getChangelogsBulkTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<ChangelogsBulkResult>> =>
     guarded(async () => {
+      const page = clampPageSize(
+        args.maxResults,
+        MAX_BULK_CHANGELOG_RESULTS,
+        'nextPageToken',
+      );
       const result = await ctx.api.getChangelogsBulk({
         ...callBase(ctx),
         issues: args.issues,
         fieldIds: args.fieldIds,
-        maxResults: args.maxResults,
+        maxResults: page.pageSize,
         nextPageToken: args.nextPageToken,
       });
-      return ok(result, { untrusted: true });
+      return ok(result, { untrusted: true, hints: page.hints });
     }),
 });
 
@@ -475,7 +475,7 @@ export const getChangelogsBulkTool = defineTool({
 const getWorklogsInput = toolInput({
   issue: issueArg,
   startAt: startAtArg,
-  maxResults: maxResultsArg,
+  maxResults: worklogsMaxResultsArg,
   output: outputArg,
 });
 
@@ -498,13 +498,14 @@ export const getWorklogsTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<WorklogsResult>> =>
     guarded(async () => {
+      const page = clampPageSize(args.maxResults, MAX_PAGE_SIZE, 'startAt');
       const worklogs = await ctx.api.listWorklogs({
         ...callBase(ctx),
         issue: args.issue,
         startAt: args.startAt,
-        maxResults: args.maxResults,
+        maxResults: page.pageSize,
       });
-      return ok(worklogs, { untrusted: true, hints: listHints(args.maxResults) });
+      return ok(worklogs, { untrusted: true, hints: page.hints });
     }),
 });
 

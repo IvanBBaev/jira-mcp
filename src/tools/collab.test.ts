@@ -1231,3 +1231,26 @@ test('CC-430: a whitespace-only query is refused, not dropped into a full list',
     assert.equal(tool.input.safeParse({ project: 'ABC', query: 'x' }).success, true);
   }
 });
+
+// ---------------------------------------------------------------------------
+// D508 — maxResults above the collab cap is clamped, not refused
+// ---------------------------------------------------------------------------
+
+test('[CC-5056] components and versions clamp maxResults above 50 and say so', async () => {
+  for (const [tool, route] of [
+    [listComponentsTool, COMPONENTS_ROUTE],
+    [listVersionsTool, VERSIONS_ROUTE],
+  ] as const) {
+    const fake = createFakeJiraRequest().on(route, jiraOk(page([], true, 0)));
+
+    const result = await tool.handler(
+      { project: 'ABC', maxResults: 75 },
+      createCtx(fake.fn),
+    );
+
+    assert.equal(result.ok, true, tool.name);
+    assert.equal(fake.lastRequest()?.query?.maxResults, 50, tool.name);
+    assert.ok(hintCodes(result).includes('clamped'), tool.name);
+    assert.match(String(result.hints?.find((h) => h.code === 'clamped')?.message), /75/);
+  }
+});

@@ -75,7 +75,9 @@ import {
   READ_ANNOTATIONS,
   WRITE_ANNOTATIONS,
   callBase,
+  clampPageSize,
   guarded,
+  pageSizeArg,
   pagingOf,
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
@@ -231,16 +233,14 @@ const nextPageTokenArg = z
       'Jira Cloud only.',
   );
 
-const maxResultsArg = z
-  .number()
-  .int()
-  .min(1)
-  .max(DEFAULT_AGILE_PAGE_SIZE)
-  .optional()
-  .describe(
-    `Rows per page, 1…${String(DEFAULT_AGILE_PAGE_SIZE)} (the Agile API's own cap); ` +
-      `default ${String(DEFAULT_AGILE_PAGE_SIZE)}. One page is read per call.`,
-  );
+/**
+ * Rows per page (D508). The Agile API's own cap is the cap here too; above it
+ * the handler clamps and says so with a `clamped` hint instead of refusing.
+ */
+const maxResultsArg = pageSizeArg({
+  cap: DEFAULT_AGILE_PAGE_SIZE,
+  defaultText: String(DEFAULT_AGILE_PAGE_SIZE),
+});
 
 /**
  * Agile ids are positive integers (D22) and are validated again in `api/agile.ts`
@@ -299,16 +299,20 @@ export const listBoardsTool = defineTool<z.infer<typeof listBoardsInput>, BoardL
   },
   handler(args, ctx) {
     return guarded(async () => {
+      const page = clampPageSize(args.maxResults, DEFAULT_AGILE_PAGE_SIZE, 'startAt');
       const loop = await ctx.api.listBoards({
-        ...pagedOptions(ctx, args.startAt, args.maxResults),
+        ...pagedOptions(ctx, args.startAt, page.pageSize),
         projectKeyOrId: args.projectKeyOrId,
         type: args.type,
       });
-      return ok<BoardListData>({
-        boards: loop.items,
-        count: loop.items.length,
-        paging: pagingOf(loop, PARTIAL_NOTES),
-      });
+      return ok<BoardListData>(
+        {
+          boards: loop.items,
+          count: loop.items.length,
+          paging: pagingOf(loop, PARTIAL_NOTES),
+        },
+        { hints: page.hints },
+      );
     });
   },
 });
@@ -402,8 +406,9 @@ export const listSprintsTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
+      const page = clampPageSize(args.maxResults, DEFAULT_AGILE_PAGE_SIZE, 'startAt');
       const loop = await ctx.api.listSprints({
-        ...pagedOptions(ctx, args.startAt, args.maxResults),
+        ...pagedOptions(ctx, args.startAt, page.pageSize),
         boardId: args.boardId,
         state: args.state,
       });
@@ -416,7 +421,7 @@ export const listSprintsTool = defineTool<
           boardId: args.boardId,
           paging: pagingOf(loop, PARTIAL_NOTES),
         },
-        { untrusted: true },
+        { untrusted: true, hints: page.hints },
       );
     });
   },
@@ -543,8 +548,13 @@ export const getSprintIssuesTool = defineTool<
   handler(args, ctx) {
     return guarded(async () => {
       const cursor = issueCursor(args.startAt, args.nextPageToken);
+      const page = clampPageSize(
+        args.maxResults,
+        DEFAULT_AGILE_PAGE_SIZE,
+        'nextPageToken',
+      );
       const loop = await ctx.api.listSprintIssues({
-        ...pagedOptions(ctx, cursor.startAt, args.maxResults),
+        ...pagedOptions(ctx, cursor.startAt, page.pageSize),
         ...(cursor.nextPageToken === undefined
           ? {}
           : { nextPageToken: cursor.nextPageToken }),
@@ -552,7 +562,7 @@ export const getSprintIssuesTool = defineTool<
         fields: args.fields,
         jql: args.jql,
       });
-      const hints = issueReadHints(loop);
+      const hints = [...page.hints, ...issueReadHints(loop)];
       // CC-35: content-bearing, so it is branded here and stays branded through
       // truncation. See the DOC GAP note in the module header.
       return ok<SprintIssuesData>(
@@ -614,8 +624,13 @@ export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, Backlo
   handler(args, ctx) {
     return guarded(async () => {
       const cursor = issueCursor(args.startAt, args.nextPageToken);
+      const page = clampPageSize(
+        args.maxResults,
+        DEFAULT_AGILE_PAGE_SIZE,
+        'nextPageToken',
+      );
       const loop = await ctx.api.listBacklogIssues({
-        ...pagedOptions(ctx, cursor.startAt, args.maxResults),
+        ...pagedOptions(ctx, cursor.startAt, page.pageSize),
         ...(cursor.nextPageToken === undefined
           ? {}
           : { nextPageToken: cursor.nextPageToken }),
@@ -623,7 +638,7 @@ export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, Backlo
         fields: args.fields,
         jql: args.jql,
       });
-      const hints = issueReadHints(loop);
+      const hints = [...page.hints, ...issueReadHints(loop)];
       // Content-bearing exactly like the sprint read (CC-35).
       return ok<BacklogData>(
         {

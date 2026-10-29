@@ -70,7 +70,9 @@ import {
   READ_ANNOTATIONS,
   WRITE_ANNOTATIONS,
   callBase,
+  clampPageSize,
   guarded,
+  pageSizeArg,
   pagingOf,
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
@@ -130,16 +132,11 @@ const startAtArg = z
   .optional()
   .describe('Offset to resume from — pass `paging.nextStartAt` from the previous call.');
 
-const maxResultsArg = z
-  .number()
-  .int()
-  .min(1)
-  .max(COLLAB_PAGE_SIZE)
-  .optional()
-  .describe(
-    `Rows per page, 1…${String(COLLAB_PAGE_SIZE)}; default ${String(COLLAB_PAGE_SIZE)}. ` +
-      'One page is read per call.',
-  );
+/** Rows per page (D508): above the cap the handler clamps, with a `clamped` hint. */
+const maxResultsArg = pageSizeArg({
+  cap: COLLAB_PAGE_SIZE,
+  defaultText: String(COLLAB_PAGE_SIZE),
+});
 
 const issueArg = z
   .string()
@@ -521,8 +518,9 @@ export const listComponentsTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
+      const page = clampPageSize(args.maxResults, COLLAB_PAGE_SIZE, 'startAt');
       const loop = await ctx.api.listComponents({
-        ...pagedOptions(ctx, args.startAt, args.maxResults),
+        ...pagedOptions(ctx, args.startAt, page.pageSize),
         project: args.project,
         query: args.query,
       });
@@ -533,7 +531,7 @@ export const listComponentsTool = defineTool<
           count: loop.items.length,
           paging: pagingOf(loop, PARTIAL_NOTES),
         },
-        { untrusted: true },
+        { untrusted: true, hints: page.hints },
       );
     });
   },
@@ -749,8 +747,9 @@ export const listVersionsTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
+      const page = clampPageSize(args.maxResults, COLLAB_PAGE_SIZE, 'startAt');
       const loop = await ctx.api.listVersions({
-        ...pagedOptions(ctx, args.startAt, args.maxResults),
+        ...pagedOptions(ctx, args.startAt, page.pageSize),
         project: args.project,
         query: args.query,
         status: args.status,
@@ -763,7 +762,7 @@ export const listVersionsTool = defineTool<
           count: loop.items.length,
           paging: pagingOf(loop, PARTIAL_NOTES),
         },
-        { untrusted: true },
+        { untrusted: true, hints: page.hints },
       );
     });
   },

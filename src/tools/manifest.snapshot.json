@@ -552,8 +552,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 1000
+                "minimum": 1
               },
               "nextPageToken": {
                 "type": "string",
@@ -2144,8 +2143,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 50
+                "minimum": 1
               },
               "profile": {
                 "type": "string",
@@ -2298,8 +2296,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 50
+                "minimum": 1
               },
               "profile": {
                 "type": "string",
@@ -2788,8 +2785,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 50
+                "minimum": 1
               },
               "profile": {
                 "type": "string",
@@ -2860,8 +2856,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 50
+                "minimum": 1
               },
               "profile": {
                 "type": "string",
@@ -2917,8 +2912,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 50
+                "minimum": 1
               },
               "output": {
                 "type": "string",
@@ -2978,8 +2972,7 @@
               },
               "maxResults": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 50
+                "minimum": 1
               },
               "profile": {
                 "type": "string",

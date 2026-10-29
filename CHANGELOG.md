@@ -12,6 +12,16 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
+### Changed
+
+- A `maxResults` above a tool's page cap is clamped to the cap with a
+  `clamped` hint on every tool (D508). The agile lists (`jira_list_boards`,
+  `jira_list_sprints`, `jira_get_sprint_issues`, `jira_get_backlog`), the
+  collab lists (`jira_list_components`, `jira_list_versions`) and
+  `jira_get_changelogs_bulk` used to refuse it as a validation error. The
+  `clamped` hint now names the value you asked for, the cap and the cursor to
+  page on with. The caps are unchanged.
+
 ### Added
 
 - Claude Code loads the four hottest reads upfront (D509): `jira_search`,

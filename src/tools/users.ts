@@ -42,7 +42,9 @@ import { ok } from '../mcp/result.js';
 import {
   READ_ANNOTATIONS,
   callBase,
+  clampPageSize,
   guarded,
+  pageSizeArg,
   pagingOf,
   type PagingInfo as PagingInfoOf,
 } from '../mcp/tool-helpers.js';
@@ -93,15 +95,6 @@ const EMAIL_HIDDEN_HINT: Hint = {
     'user by accountId.',
 };
 
-/** CC-04-shaped: the page size was above the tool cap and was clamped, not refused. */
-const CLAMPED_HINT: Hint = {
-  code: 'clamped',
-  message:
-    `maxResults was above this tool's cap and was clamped to ` +
-    `${String(MAX_USER_SEARCH_RESULTS)}. Ask for ${String(MAX_USER_SEARCH_RESULTS)} ` +
-    'or fewer; a name lookup needing more candidates needs a better query.',
-};
-
 const searchUsersInput = toolInput({
   query: z
     .string()
@@ -142,15 +135,10 @@ const searchUsersInput = toolInput({
       'Return emailAddress when Jira exposes it. Default false: email is personal ' +
         'data and is dropped from every row unless it is explicitly asked for.',
     ),
-  maxResults: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe(
-      `Rows to ask for; default ${String(DEFAULT_USER_SEARCH_MAX_RESULTS)}, values ` +
-        `above ${String(MAX_USER_SEARCH_RESULTS)} are clamped. One page per call.`,
-    ),
+  maxResults: pageSizeArg({
+    cap: MAX_USER_SEARCH_RESULTS,
+    defaultText: String(DEFAULT_USER_SEARCH_MAX_RESULTS),
+  }),
   startAt: z
     .number()
     .int()
@@ -248,12 +236,14 @@ export const searchUsersTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
+      // D508: clamped here, so the hint can name the value asked for.
+      const page = clampPageSize(args.maxResults, MAX_USER_SEARCH_RESULTS, 'startAt');
       const result = await ctx.api.searchUsers({
         ...callBase(ctx),
         query: args.query,
         issueKey: args.issue,
         project: args.project,
-        maxResults: args.maxResults,
+        maxResults: page.pageSize,
         startAt: args.startAt,
         includeEmail: args.includeEmail,
       });
@@ -261,8 +251,7 @@ export const searchUsersTool = defineTool<
       const includeEmail = args.includeEmail === true;
       const users = result.users.map((user) => projectUser(user, includeEmail));
 
-      const hints: Hint[] = [];
-      if (result.clamped) hints.push(CLAMPED_HINT);
+      const hints: Hint[] = [...page.hints];
       // CC-19: only meaningful to a caller that asked for the field.
       if (includeEmail && result.emailHidden) hints.push(EMAIL_HIDDEN_HINT);
 

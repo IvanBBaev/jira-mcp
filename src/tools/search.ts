@@ -77,7 +77,9 @@ import {
   READ_ANNOTATIONS,
   WRITE_ANNOTATIONS,
   callBase,
+  clampPageSize,
   guarded,
+  pageSizeArg,
   pagingOf,
   rethrowUnexpected,
   type PagingInfo as PagingInfoOf,
@@ -122,15 +124,6 @@ const FIELDS_DEFAULTED_HINT: Hint = {
     'time: a field outside that list is absent from these rows, not empty.',
 };
 
-/** CC-04 — the requested page size exceeded the cap and was clamped. */
-const CLAMPED_HINT: Hint = {
-  code: 'clamped',
-  message:
-    `maxResults was above the cap of ${MAX_SEARCH_RESULTS}, so ${MAX_SEARCH_RESULTS} ` +
-    `rows were requested instead. Ask for ${MAX_SEARCH_RESULTS} or fewer and page on ` +
-    'with nextPageToken.',
-};
-
 /** CC-02 — nothing came back for a search that named recently written issues. */
 const EVENTUAL_CONSISTENCY_HINT: Hint = {
   code: 'eventual_consistency',
@@ -166,7 +159,6 @@ export function searchHints(
   const hints: Hint[] = [];
   if (result.restarted) hints.push(PAGINATION_RESTARTED_HINT);
   if (result.fieldsDefaulted) hints.push(FIELDS_DEFAULTED_HINT);
-  if (result.clamped) hints.push(CLAMPED_HINT);
   // CC-02: only when the CALLER named ids to reconcile (D27). Flagging every
   // empty result would put an index caveat on searches that simply match
   // nothing — the caller's reconcile ids are what makes "a write may not have
@@ -326,16 +318,10 @@ const searchInput = toolInput({
       `Field ids or names to return; default ${DEFAULT_SEARCH_FIELDS.join(', ')}. ` +
         'Custom field ids come from jira_list_fields.',
     ),
-  maxResults: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe(
-      `Rows per page; default ${DEFAULT_SEARCH_MAX_RESULTS}, values above ` +
-        `${MAX_SEARCH_RESULTS} are clamped to ${MAX_SEARCH_RESULTS}. One page is ` +
-        'read per call.',
-    ),
+  maxResults: pageSizeArg({
+    cap: MAX_SEARCH_RESULTS,
+    defaultText: String(DEFAULT_SEARCH_MAX_RESULTS),
+  }),
   nextPageToken: z
     .string()
     // Trimmed so a blank cursor is refused here instead of reaching the api
@@ -396,11 +382,13 @@ export const searchTool = defineTool({
       // `undefined` and `[]` are deliberately not the same thing here.
       const recentlyWrittenIssueIds =
         args.reconcileIssues === undefined ? currentRecentWrites().snapshot() : undefined;
+      // CC-04 / D508: clamped here, so the hint can name the value asked for.
+      const page = clampPageSize(args.maxResults, MAX_SEARCH_RESULTS, 'nextPageToken');
       const result = await ctx.api.searchIssues({
         ...callBase(ctx),
         jql: args.jql,
         fields: args.fields,
-        maxResults: args.maxResults,
+        maxResults: page.pageSize,
         nextPageToken: args.nextPageToken,
         expand: args.expand,
         reconcileIssues: args.reconcileIssues,
@@ -409,9 +397,12 @@ export const searchTool = defineTool({
       // Summaries, descriptions and comments are Jira free text (D15, CC-35):
       // `ok` brands the envelope and appends `untrusted_content` itself.
       return ok(searchData(ctx.api, result), {
-        hints: searchHints(result, {
-          callerReconciled: args.reconcileIssues !== undefined,
-        }),
+        hints: [
+          ...searchHints(result, {
+            callerReconciled: args.reconcileIssues !== undefined,
+          }),
+          ...page.hints,
+        ],
         untrusted: true,
       });
     } catch (error) {

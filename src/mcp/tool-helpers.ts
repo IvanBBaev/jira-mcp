@@ -6,11 +6,12 @@
 // the annotation quadruples of TOOLS.md §Annotations reference, and the paging
 // surface of TOOLS.md §Read shaping (D27).
 //
-// Nothing here is Jira-specific: no endpoint, no field name, no hint prose.
-// Prose that differs per package — the `fields_defaulted` wording, the `clamped`
-// caps, the per-package `PARTIAL_NOTES` — stays in the package that owns it,
-// because unifying wording is a documentation decision, not a refactor. What is
-// shared is the SHAPE.
+// Nothing here is Jira-specific: no endpoint, no field name. Prose that differs
+// per package — the `fields_defaulted` wording, the per-package `PARTIAL_NOTES` —
+// stays in the package that owns it, because unifying wording is a documentation
+// decision, not a refactor. What is shared is the SHAPE. The one exception is
+// the `maxResults` page-size argument and its `clamped` hint (D508): that
+// decision was taken, so the argument, the clamp and the hint live here once.
 //
 // Layering: `core ← api ← mcp ← tools`. This file sits in `mcp` and imports from
 // `mcp` and `core` only — in particular it never names `PageStopReason`, which
@@ -19,6 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Clock, JiraError, JiraRequestFn } from '../core/types.js';
+import { z } from './define.js';
 import { errorResult, isJiraError } from './errors.js';
 import type { Hint, ToolAnnotations, ToolCtx, ToolResult } from './types.js';
 
@@ -244,4 +246,86 @@ export function pagingOf<Reason extends string>(
     ...(loop.nextStartAt === undefined ? {} : { nextStartAt: loop.nextStartAt }),
     ...(note === undefined ? {} : { note }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// 5. The page-size argument (D508)
+// ---------------------------------------------------------------------------
+//
+// Before D508 a `maxResults` above a tool's cap met one of five behaviours
+// depending on which package owned the tool: clamped with a hint (search,
+// users, the issue lists), refused by the schema (agile, collab, the bulk
+// changelog) or passed through unchecked. A model cannot learn five rules, and a
+// refusal for "too many rows" costs a whole round trip to say "ask for fewer".
+// Now every capped `maxResults` takes the same path: the schema accepts any
+// positive integer, the handler clamps it to the cap, and the envelope carries
+// one `clamped` hint naming the cap and the continuation to page on with.
+
+/** What a `clamped` hint tells the model to page on with. */
+export type PageContinuation = 'startAt' | 'nextPageToken';
+
+/** How a tool describes its `maxResults` argument. */
+export interface PageSizeArgOptions {
+  /** The largest page this tool sends; anything above is clamped to it. */
+  readonly cap: number;
+  /** Prose for the default when the argument is omitted, e.g. `50` or `Jira's default`. */
+  readonly defaultText: string;
+}
+
+/**
+ * The shared `maxResults` argument (D508): a positive integer with NO schema
+ * maximum, because an over-cap value is clamped by {@link clampPageSize}, not
+ * refused. The description names the cap, so a model that reads it never
+ * meets the hint at all.
+ */
+export function pageSizeArg(options: PageSizeArgOptions) {
+  const cap = String(options.cap);
+  return z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      `Rows per page, 1…${cap}; default ${options.defaultText}. Values above ${cap} ` +
+        `are clamped to ${cap} (hint clamped). One page is read per call.`,
+    );
+}
+
+/** The `clamped` hint (TOOLS.md hint catalog): one wording for every capped tool. */
+export function clampedHint(
+  requested: number,
+  cap: number,
+  continuation: PageContinuation,
+): Hint {
+  return {
+    code: 'clamped',
+    message:
+      `maxResults ${String(requested)} is above this tool's page cap of ${String(cap)}, ` +
+      `so ${String(cap)} was requested instead. Ask for ${String(cap)} or fewer and ` +
+      `page on with ${continuation}.`,
+  };
+}
+
+/** A requested page size, after {@link clampPageSize}. */
+export interface ClampedPageSize {
+  /** The page size to send; `undefined` when the caller sent none. */
+  readonly pageSize: number | undefined;
+  /** `[clampedHint]` when the request was above the cap, else empty. */
+  readonly hints: readonly Hint[];
+}
+
+/**
+ * Clamp a requested page size to the tool's cap (D508). An omitted value stays
+ * omitted — the api ring owns the default — and a value at or under the cap is
+ * passed through unchanged with no hint.
+ */
+export function clampPageSize(
+  requested: number | undefined,
+  cap: number,
+  continuation: PageContinuation,
+): ClampedPageSize {
+  if (requested === undefined || requested <= cap) {
+    return { pageSize: requested, hints: [] };
+  }
+  return { pageSize: cap, hints: [clampedHint(requested, cap, continuation)] };
 }

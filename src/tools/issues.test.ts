@@ -1132,5 +1132,25 @@ test('[CC-1552] jira_get_changelogs_bulk reads one page and brands it untrusted'
     false,
   );
   assert.equal(parse({ issues: [KEY], nextPageToken: '  ' }), false);
-  assert.equal(parse({ issues: [KEY], maxResults: 1001 }), false);
+  // D508: over the cap is clamped by the handler, not refused by the schema.
+  assert.equal(parse({ issues: [KEY], maxResults: 1001 }), true);
+  assert.equal(parse({ issues: [KEY], maxResults: 0 }), false);
+});
+
+test('[CC-5057] jira_get_changelogs_bulk clamps maxResults above 1000 and says so', async () => {
+  const fake = createFakeJiraRequest().on(
+    'POST /rest/api/3/changelog/bulkfetch',
+    jiraOk({ issueChangeLogs: [] }),
+  );
+
+  const result = await getChangelogsBulkTool.handler(
+    { issues: [KEY], maxResults: 5000 },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fake.lastRequest()?.body, { issueIdsOrKeys: [KEY], maxResults: 1000 });
+  const clamped = result.hints?.find((hint) => hint.code === 'clamped');
+  assert.match(String(clamped?.message), /maxResults 5000 .*cap of 1000/);
+  assert.match(String(clamped?.message), /page on with nextPageToken/);
 });
