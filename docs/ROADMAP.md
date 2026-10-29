@@ -315,26 +315,26 @@ and are not started.
 | V3-05 | `maxResults` above the cap is clamped with a hint instead of rejected, one shared arg helper (five behaviours today) | `src/tools/agile.ts`, `src/tools/collab.ts`, `src/tools/issues.ts` and the other `maxResultsArg` sites, `src/mcp/tool-helpers.ts` | D508, CC-5050–5069 | V3-01, V3-07 | todo | 2 |
 | V3-06 | Call-time enforcement proof: tests showing that a call to a tool that is not listed is refused at invocation. Covers packages, read-only mode, `JIRA_PROJECTS` and plan-only mode | `src/mcp/call-time-guard.test.ts` (new) | CC-5070–5089 | — | done 306d322 | 1.5 |
 | V3-07 | `_meta["anthropic/alwaysLoad"]` on the ~4 hottest reads; keyword-first descriptions for exactly those tools | `src/mcp/registry.ts` (meta emission), `src/tools/search.ts`, `src/tools/issues.ts` (descriptions only) | D509 | — | todo | 1.5 |
-| V3-08 | Surface ratchet: a per-profile `tools/list` byte budget and a per-tool size cap as a test | `src/mcp/surface.test.ts` (new), `test/surface-budget.json` (new) | D510 | V3-01, V3-07 | todo | 1.5 |
-| V3-09 | Server-wide `PlanStore`, bound to the session and credential that planned, so a stateless wire can find plans. Behaviour unchanged for stdio. A D-row defines the binding | `src/mcp/write-mode.ts`, `src/mcp/server.ts`, `src/mcp/transport-http.ts` | D511–D514, CC-5090–5119 | V3-04 | todo | 4 |
-| V3-10 | Split `core/http.ts` into stages (request build, send, retry, response). Retry semantics are frozen by tests first; extract, never rewrite | `src/core/http.ts` → `src/core/http/*` | D515 | V3-02 | todo | 4 |
+| V3-08 | Surface ratchet: a per-profile `tools/list` byte budget and a per-tool size cap as a test. Panel 2026-10-29 (MCP-R1): budget model-visible characters, refresh the D124 "~94k" figure to the measured 145k, README guidance for tool-capped clients | `src/mcp/surface.test.ts` (new), `test/surface-budget.json` (new) | D510 | V3-01, V3-07 | todo | 1.5 |
+| V3-09 | Server-wide `PlanStore`, bound to the session and credential that planned, so a stateless wire can find plans. Behaviour unchanged for stdio. A D-row defines the binding. Panel 2026-10-29 (ARC-R3, SEC-R5): plan ids from a CSPRNG (`src/core/rng.ts`), bound to session and credential, TTL and per-session quota | `src/mcp/write-mode.ts`, `src/mcp/server.ts`, `src/mcp/transport-http.ts`, `src/core/rng.ts` | D511–D514, CC-5090–5119 | V3-04, V3-40 | todo | 6 |
+| V3-10 | Split `core/http.ts` into stages (request build, send, retry, response). Retry semantics are frozen by tests first; extract, never rewrite. Panel 2026-10-29 (TSN-R1): not a pure move — first extract pure `classifyOutcome`/`decideNext` with table tests, then move the stages | `src/core/http.ts` → `src/core/http/*`, `src/core/http-util.ts` | D515 | V3-02 | todo | 6 |
 | V3-11 | Split `loadSettings` into per-domain loaders | `src/core/settings.ts` → `src/core/settings/*` | D516 | V3-03 | todo | 3 |
-| V3-12 | Split `api/issues.ts` (3350 lines) by sub-domain; `issues.ts` stays as a barrel | `src/api/issues.ts` → `src/api/issues/*` | D517 | — | todo | 3 |
-| V3-13 | Move the Data Center twins into `src/api/datacenter/` and add an eslint zone for it | `src/api/datacenter.ts` → `src/api/datacenter/*`, DC twins inside `src/api/*.ts`, `eslint.config.js` | D518 | V3-01, V3-12 | todo | 3 |
-| V3-14 | Lazy tool schemas; move the probe/example checks into a test (startup target < 300 ms) | `src/mcp/define.ts`, `src/mcp/schema.ts`, `src/mcp/registry.ts` | D519, CC-5120–5129 | V3-07 | todo | 2 |
+| V3-12 | Split `api/issues.ts` (3350 lines) by sub-domain; `issues.ts` stays as a barrel. Panel 2026-10-29 (ARC): split by concern, not only by sub-domain | `src/api/issues.ts` → `src/api/issues/*` | D517 | V3-50, V3-56 | todo | 4 |
+| V3-13 | Move the Data Center twins into `src/api/datacenter/` and add an eslint zone for it | `src/api/datacenter.ts` → `src/api/datacenter/*`, DC twins inside `src/api/*.ts`, `eslint.config.js` | D518 | V3-01, V3-12, V3-54, V3-79 | todo | 3 |
+| V3-14 | Lazy tool schemas; move the probe/example checks into a test (startup target < 300 ms). Panel 2026-10-29 (TSN-R9): measure first — commit `scripts/bench-startup.mjs` and a baseline; schemas cost 25–34 ms against ~110 ms for the SDK import, so lazy schemas only if over budget | `src/mcp/define.ts`, `src/mcp/schema.ts`, `src/mcp/registry.ts`, `scripts/bench-startup.mjs` (new) | D519, CC-5120–5129 | V3-07 | todo | 1.5 |
 | V3-15 | De-flake timing tests: `clock.test.ts` (:55, :80) and `rehearse-live.test.ts` CC-1105 (the never-exiting driver fails under a load average ≈ 55, passes alone) | `src/core/clock.test.ts`, `src/testing/rehearse-live.test.ts` | — | — | todo | 1 |
-| V3-16 | Docker image: `Dockerfile`, a ghcr build workflow, and a README install section. The workflow builds only; publishing is R-row V3-23 | `Dockerfile` (new), `.github/workflows/docker.yml` (new), `.dockerignore` (new), `README.md` (install section only) | D520 | — | todo | 2 |
+| V3-16 | Docker image: `Dockerfile`, a ghcr build workflow, and a README install section. The workflow builds only; publishing is R-row V3-23 | `Dockerfile` (new), `.github/workflows/docker.yml` (new), `.dockerignore` (new), `README.md` (install section only) | D520 | V3-32, V3-44 | todo | 2 |
 | V3-17 | MCPB Desktop bundle: manifest and a pack script, built in CI | `mcpb/` (new), `scripts/pack-mcpb.mjs` (new), `package.json` (scripts only) | D521 | — | todo | 2 |
-| V3-18 | Typed fake-jira split per domain under `src/testing/` | `scripts/fake-jira.mjs` → `src/testing/fake-jira/*` | D522 | V3-01, V3-05 | todo | 6 |
-| V3-19 | Write gate as an explicit, ordered middleware list | `src/mcp/write-mode.ts`, `src/mcp/registry.ts`, `src/mcp/project-scope.ts` | D523–D524 | V3-09, V3-14 | todo | 4 |
-| V3-20 | Docs split: `docs/decisions/Dnnn.md` plus an index; archive the IMPLEMENTATION-PLAN phases 0–16; split CORNER-CASES by domain. **Solo**: runs only when no other WP is open | `docs/DECISIONS.md`, `docs/CORNER-CASES.md`, `docs/IMPLEMENTATION-PLAN.md`, `docs/decisions/` (new) | — | V3-01, V3-02, V3-04, V3-05, V3-06, V3-07, V3-08, V3-09, V3-10, V3-11, V3-12, V3-13, V3-14, V3-18, V3-19 | todo | 4 |
-| V3-21 | Live check of `/rest/software/1.0` under Basic auth, a scoped token and OAuth 3LO (a 403 has been reported); keep a fallback to `/agile` while it still answers | — (live run) | — | V3-01 | blocked-external | 1 |
-| V3-22 | Release `main` as 1.1.0 (or V3-01 alone as 1.0.1) | release | — | V3-01 | blocked-owner | 1.5 |
+| V3-18 | Typed fake-jira split per domain under `src/testing/` | `scripts/fake-jira.mjs` → `src/testing/fake-jira/*` | D522 | V3-01, V3-05, V3-48 | todo | 6 |
+| V3-19 | Write gate as an explicit, ordered middleware list. Panel 2026-10-29 (ARC-R5): one write-pipeline constructor, so it also owns `server.ts` | `src/mcp/write-mode.ts`, `src/mcp/registry.ts`, `src/mcp/project-scope.ts`, `src/mcp/server.ts` | D523–D524 | V3-09, V3-14, V3-57 | todo | 6 |
+| V3-20 | Docs split: `docs/decisions/Dnnn.md` plus an index; archive the IMPLEMENTATION-PLAN phases 0–16; split CORNER-CASES by domain. **Solo**: runs only when no other WP is open. Panel 2026-10-29 (DOC, ARC-R10): contributor-corpus hygiene only — user/admin docs are V3-69…V3-71; the DECISIONS split may run early as a docs-only solo job | `docs/DECISIONS.md`, `docs/CORNER-CASES.md`, `docs/IMPLEMENTATION-PLAN.md`, `docs/decisions/` (new) | — | V3-01, V3-02, V3-04, V3-05, V3-06, V3-07, V3-08, V3-09, V3-10, V3-11, V3-12, V3-13, V3-14, V3-18, V3-19 | todo | 4 |
+| V3-21 | Live check of `/rest/software/1.0` under Basic auth, a scoped token and OAuth 3LO (a 403 has been reported); the fallback itself is V3-29. Panel 2026-10-29 (OPS, JIR-R8): the Basic-auth read half of `verify-live.mjs` is owner-runnable today, before the tag; scoped token and 3LO stay external | — (live run) | — | V3-01 | blocked-owner | 1 |
+| V3-22 | Release `main` as 1.1.0 before ~2026-11-01 (a 1.0.1 of V3-01 alone conflicts in 13 files — DevOps review). Docs checklist: V3-30, V3-34; fallback `1.1.0-rc.1` on `beta` | release | — | V3-01, V3-29, V3-38 | blocked-owner | 1.5 |
 | V3-23 | Distribution: official MCP registry entry, ghcr publish, Docker MCP Catalog, listings | registry, CI secrets | — | V3-16 | blocked-owner | 2 |
-| V3-24 | 2.0 contract cleanup: the open v2 §3 renames plus the new inconsistencies; old names stay hidden but callable through 2.x; env aliases print a warning | tool surface | — | V3-05, V3-09 | blocked-owner | 12 |
-| V3-25 | Default profile `standard` (≈50 tools); hide gated irreversible tools; `profile` param only when there is more than one profile | `src/mcp/registry.ts`, packages | — | V3-08 | blocked-owner | 4 |
-| V3-26 | JSM read package `jsm`, opt-in. It reverses the JSM item under "Considered and parked" | `src/api/jsm.ts`, `src/tools/jsm.ts` (new) | — | V3-12 | blocked-owner | 6 |
-| V3-27 | Data Center: decide between growing it (needs a live host) and removing it in 3.0, by 2027-06-30 | — | — | V3-13 | blocked-owner | — |
+| V3-24 | 2.0 contract cleanup: the open v2 §3 renames plus the new inconsistencies; old names stay hidden but callable through 2.x; env aliases print a warning | tool surface | — | V3-05, V3-09, V3-45, V3-46 | blocked-owner | 12 |
+| V3-25 | Default profile `standard` (≈50 tools); hide gated irreversible tools. Panel 2026-10-29 (MCP-R3/R4): omit `profile` from schemas when the profile is locked (the "more than one profile" trigger never fires) and tolerate it at call time; gate-aware listing with a plan-only prefix on write descriptions | `src/mcp/registry.ts`, packages | — | V3-08 | blocked-owner | 4 |
+| V3-26 | JSM read package `jsm`, opt-in. It reverses the JSM item under "Considered and parked" | `src/api/jsm.ts`, `src/tools/jsm.ts` (new) | — | V3-12, V3-42 | blocked-owner | 6 |
+| V3-27 | Data Center: decide between growing it (needs a live host) and removing it in 3.0, by 2027-06-30. Panel 2026-10-29: decide before V3-13, not after; base it on Atlassian's DC read-only date 2029-03-28 (see V3-79) | — | — | V3-79 | blocked-owner | — |
 | V3-28 | 3.0 wire: adopt the 2027-03-30 MCP spec, retire 2025-11-25, progressive discovery as default, Skills over MCP | `src/mcp/*` | — | V3-19, V3-24, V3-25 | blocked-external | 20 |
 
 Parallel lanes as of 2026-10-28. Rows in the same lane share files and run in
@@ -351,6 +351,142 @@ order; different lanes do not touch each other's files.
 
 The first seven rows that are free now (V3-01, 02, 03, 04, 06, 07, 12) can
 run at the same time. Add V3-15, 16 and 17 as cheap fillers.
+
+## Role panel work packages (2026-10-29)
+
+Nine senior reviewers (architect, TypeScript, security, QA, Jira platform,
+MCP/agent-DX, product, docs, DevOps) reviewed `main` at `6cd07bd`. The
+synthesis, verdicts and convergence are in
+[`reviews/2026-10-29-role-panel.md`](reviews/2026-10-29-role-panel.md); each
+role's full report sits next to it. Every proposed item (`ARC-R*`, `TSN-R*`,
+`SEC-R*`, `QA-R*`, `JIR-R*`, `MCP-R*`, `PRD-R*`, `DOC-R*`, `OPS-R*`) maps to a
+row below or to a re-scope of an existing row above (V3-08, 09, 10, 12, 14,
+19, 20, 21, 22, 25, 27). Duplicates across roles are merged into one row.
+The *Source* column names the report item, so each row's detail —
+evidence, file:line, acceptance criteria — is in that report.
+
+The same seven rules apply (file ownership, reserved IDs, append-only shared
+files, own-row status commits, stop-the-line contract changes, gate). The
+new reserved blocks are **D525–D560** and **CC-5130–5399**; nothing below
+takes a number outside its row.
+
+### Release lane — before ~2026-11-01 (P0)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-29 | Cloud software-root fallback: on 403/404 from `/rest/software/1.0`, retry the read once on `/rest/agile/1.0`, memoise per profile, add a degraded hint. Read-only | JIR-R1, ARC-R1 | `src/api/agile.ts`, `scripts/fake-jira.mjs` (agile routes), `docs/JIRA-API.md` | D525, CC-5130–5139 | V3-01 | todo | 3 |
+| V3-30 | Count and release-marker truth: every tool count generated from the manifest or docs-linted; released-vs-main marker in README; npm description and keywords | DOC-R1, PRD-R2 | `README.md` (status box), `docs/index.html` (count spans), `package.json` (description, keywords), `scripts/generate-readme.mjs`, `scripts/docs-lint.mjs` | D526 | — | todo | 3 |
+| V3-31 | THREAT-MODEL resync: the four data-at-rest sinks, tier lists bound to the manifest, `JIRA_PROJECTS` as a control, corrected plan/apply-vs-injection claim; a manifest-driven drift test | SEC-R3, DOC-R3, SEC-01 (doc half) | `docs/THREAT-MODEL.md`, `test/threat-model-drift.test.ts` (new) | CC-5140–5149 | — | todo | 3.5 |
+| V3-32 | Secret-safe per-client quick-start (Claude Code user scope, Desktop, Cursor, VS Code), `claude mcp add` one-liner, deeplinks, first-success prompt; drop the "inline token is preferred" line | DOC-R2, PRD-R5 | `README.md` (install section), `docs/CONFIGURATION.md` (registration), `docs/index.html` (#install), `docs/AUTH.md` (registration) | — | V3-30 | todo | 3 |
+| V3-33 | Project-scope matrix over the real catalogue; refusals name the offending key | QA-R3 | `src/mcp/project-scope.matrix.test.ts` (new), `src/mcp/project-scope.test.ts` | CC-5150–5169 | — | todo | 4 |
+| V3-34 | 1.1.0 release docs: CHANGELOG Highlights / Breaking / Upgrading in user language, internal IDs moved out; `server.json` env list; RELEASING docs checklist | DOC-R7 | `CHANGELOG.md`, `server.json`, `docs/RELEASING.md` | — | V3-30 | todo | 1.5 |
+| V3-35 | ARCHITECTURE.md drift fix (three drifts) plus a capabilities docs-lint probe | ARC-R2 | `docs/ARCHITECTURE.md`, `scripts/docs-lint.mjs` | — | V3-30 | todo | 1 |
+| V3-36 | Description hygiene: remove tracker IDs from model-visible descriptions, a lint against them, keyword-first on the rest | MCP-R2 | `src/tools/collab.ts`, `src/tools/meta.ts` (description strings), `src/mcp/description-lint.test.ts` (new), `src/tools/manifest.snapshot.json` | CC-5170–5179 | V3-07 | todo | 3 |
+| V3-37 | SDK floor `^1.32.1`, refresh the version comment, `npm audit fix` | TSN-R8, SEC-R6 (audit part) | `package.json`, `package-lock.json`, `src/mcp/transport-http.ts` (comment) | — | — | todo | 0.5 |
+| V3-38 | Owner release hygiene: register the npm trusted publisher, prove an OIDC publish, delete `NPM_TOKEN` and revoke it; rotate the API token pasted in chat; `main` and `v*` rulesets, `release` environment reviewer and tag policy, SHA pinning, private vulnerability reporting, secret scanning and push protection | OPS-R1, OPS-R3, SEC-R6 | `docs/RELEASING.md` (§1, §5); npm and GitHub settings | — | — | blocked-owner | 2 |
+
+### Proof lane — honest evidence (P0/P1)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-39 | Honest live job: JIRA_* secrets in the `live` environment, a scheduled run without credentials warns or fails instead of passing; rehearsals in CI with a staleness alarm | OPS-R5, QA-R2 | `.github/workflows/ci.yml` (`live` and rehearsal jobs), `docs/TESTING.md` (live section) | — | V3-21 | blocked-owner (secrets) | 3 |
+| V3-40 | Read-only seam: read tools get a request object that cannot write; catalogue-wide read-confinement test | QA-R4 | `src/mcp/write-mode.ts`, `src/tools/read-confinement.test.ts` (new) | D527, CC-5180–5189 | — | todo | 3 |
+| V3-41 | `safe: true` allowlist test and a real-catalogue wire test per profile | QA-R9, QA-R10 | `src/api/safe-allowlist.test.ts` (new), `src/mcp/catalogue-wire.test.ts` (new) | CC-5190–5199 | — | todo | 3 |
+| V3-45 | Frozen 1.x legacy-surface alias suite (must precede V3-24) | QA-R6 | `test/legacy-surface-1.x.json` (new), `src/tools/legacy-surface.test.ts` (new) | CC-5200–5209 | — | todo | 3 |
+| V3-46 | Tool-selection eval: deterministic tier in the gate, a documented model tier the owner runs (must precede V3-24, V3-25, V3-28) | MCP-R5 | `test/agent-evals/tasks.json` (new), `src/mcp/agent-eval.test.ts` (new), `scripts/agent-eval-model.mjs` (new) | D528, CC-5210–5219 | — | todo | 5 |
+| V3-47 | Full Gate C pass over all 82 tools under classic token, scoped token and 3LO (software root and inferred scopes included) and a generated live-proof ledger | QA-R1, JIR-R8, PRD-R9 | `scripts/verify-live.mjs`, `docs/LIVE-PROOF.md` (new, generated), `docs/RELEASING.md`, `docs/AUTH.md` (scopes) | — | V3-29, V3-33 | blocked-external (owner-admin sandbox, bulk permission) | 7 |
+| V3-48 | Recorded fixture corpus and a fake-vs-fixture shape contract test; V3-18 cannot merge without it | QA-R5 | `test/fixtures/**` (new), `src/testing/fake-contract.test.ts` (new) | CC-5220–5229 | V3-47 | blocked-external (live recording) | 6 |
+| V3-78 | Mutation-testing baseline on the safety core, scheduled job | QA-R7 | `stryker.config.json` (new), `.github/workflows/mutation.yml` (new) | — | V3-33, V3-40 | todo | 4 |
+
+### Security lane (P1/P2)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-42 | `JIRA_WRITE_CONFIRM`: opt-in elicitation for every write (optional taint trigger), not only irreversible ones; confirm prompt never quotes raw tenant text | SEC-R1, SEC-06 | `src/mcp/write-mode.ts`, `src/mcp/server.ts`, `src/core/settings.ts`, `docs/THREAT-MODEL.md`, `docs/CONFIGURATION.md` | D529–D530, CC-5230–5249 | V3-19, V3-31, V3-11 | todo | 7 |
+| V3-43 | Separate export directory, upload refuses server-written files; media byte quota; media store hardening (bounded read, partial writes, single download) | SEC-R2, SEC-R7, TSN-R12 | `src/mcp/exports.ts`, `src/tools/attachments.ts`, `src/core/settings.ts` (two keys) | D531, CC-5250–5269 | V3-11 | todo | 6 |
+| V3-44 | HTTP transport: `JIRA_HTTP_TOKEN` minimum strength, session bound to the token, container bind D-row (blocks V3-16) | SEC-R4 | `src/core/settings.ts` (one key), `src/mcp/transport-http.ts` | D532, CC-5270–5279 | V3-09, V3-11 | todo | 3 |
+
+### Jira platform lane (P1/P2)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-49 | October 2026 JQL refresh: text-field `=`/`IN` exact-phrase semantics, entity-property JQL removal (2026-11-16), direct validation on `/search/jql`; reposition `jira_parse_jql` | JIR-R2 | `docs/JIRA-API.md`, the JQL reference resource, `src/tools/search.ts` (descriptions), `docs/TOOLS.md` | — | V3-07, V3-29 | todo | 2 |
+| V3-50 | Bulkfetch cap to the published value (1000 since 2026-08-28) after re-reading the reference; D149 amended | JIR-R3 | `src/api/issues.ts`, `src/tools/issues.ts`, `docs/DECISIONS.md` (D149 note), `src/tools/manifest.snapshot.json` | D533, CC-5280–5289 | — | todo | 1.5 |
+| V3-51 | Retry alignment: honour `Retry-After` on 503, a quota circuit after a quota 429, documented 429-on-write rationale | JIR-R4 | `src/core/http/*`, `src/core/http-util.ts`, `docs/JIRA-API.md` | D534, CC-5290–5309 | V3-10 | todo | 4 |
+| V3-52 | Software-route correctness: truncation hint for the comment/changelog cap; `reconcileIssues` read-after-write ring for search and software reads | JIR-R5, JIR-R6 | `src/api/agile.ts`, `src/api/search.ts`, `src/tools/agile.ts`, `src/core/reconcile.ts` (new), `scripts/fake-jira.mjs` | D535, CC-5310–5329 | V3-29 | todo | 5 |
+| V3-53 | Plan-mode report of rich-content loss when a description is replaced | JIR-R9 | `src/tools/issues-write.ts`, `src/core/adf.ts` | CC-5330–5339 | — | todo | 3 |
+| V3-67 | DC `serverInfo` version gate | JIR-R7 | `src/api/datacenter/*`, `src/tools/capabilities.ts` | CC-5340–5349 | V3-13 | todo | 3 |
+
+### Type-safety and architecture lane (P1/P2)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-54 | Typed DC assembly via `satisfies JiraApi`; remove `Partial<JiraApi>` and `as unknown as` | TSN-R2 | `src/api/datacenter.ts` | — | — | todo | 2 |
+| V3-55 | `createJiraError` as the only constructor: convert the ~40 direct `new JiraError(` sites, `no-restricted-syntax` rule | TSN-R3 | `src/core/errors.ts`, `eslint.config.js`, the sites in `src/core`, `src/mcp`, `src/api`, `src/tools/index.ts` | D536 | V3-10, V3-12 | todo | 3 |
+| V3-56 | Shared `api/guards.ts` and `api/wire.ts` (dedupe `isRecord` ×12, `shapeError` ×10, `send*`, `abortError`) | TSN-R4 | `src/api/guards.ts` (new), `src/api/wire.ts` (new), `src/api/*.ts`, `src/core/clock.ts` | — | — | todo | 4 |
+| V3-57 | Split `createProjectScope` (612 lines) after its matrix lands | TSN-R5 | `src/mcp/project-scope.ts` | — | V3-33 | todo | 3 |
+| V3-58 | Structural signal/deadline binding in the registry and an all-tools abort contract test | TSN-R6 | `src/mcp/registry.ts`, `src/mcp/tool-helpers.ts`, `src/mcp/abort-contract.test.ts` (new) | CC-5350–5359 | — | todo | 3 |
+| V3-59 | Lint and compiler strictness: `switch-exhaustiveness-check`, `assertNever`, `consistent-type-imports`, a `strictTypeChecked` trial, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`; narrow the zod re-export and fix the stale quarantine message (D9 note). **Solo**: wide diff | TSN-R7, TSN-R10, TSN-R11 | `eslint.config.js`, `tsconfig.json`, `src/mcp/define.ts`, affected sites | D537 | V3-10, V3-11, V3-12, V3-13 | todo | 6 |
+| V3-60 | The port owns DTO types and `api.limits`; tools stop importing Cloud types from `api`; enforced by the port-boundary test | ARC-R6 | `src/api/port.ts`, `src/tools/*` (imports), `src/tools/port-boundary.test.ts` | D538 | V3-12 | todo | 3 |
+| V3-61 | `mcp/sdk.ts` anti-corruption module: one place imports the MCP SDK; eslint ban elsewhere | ARC-R7 | `src/mcp/sdk.ts` (new), the nine `src/mcp/*` SDK importers, `eslint.config.js` | D539 | V3-09, V3-19 | todo | 2 |
+| V3-62 | Process-scoped vs session-scoped `buildServer` | ARC-R4 | `src/mcp/server.ts`, `src/index.ts` | D540 | V3-14, V3-19 | todo | 3 |
+| V3-63 | Deployment-dependent schemas: Cloud tools drop DC-only arguments (`username`) | ARC-R9, MCP-R7 | `src/tools/collab.ts`, `src/mcp/registry.ts`, `src/tools/manifest.snapshot.json` | D541 | V3-79 | blocked-owner (schema change) | 2 |
+
+### Agent-DX lane (P1/P2)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-64 | Paging documentation: every paged description names its cap and continuation field, with a test | MCP-R6 | `src/tools/*.ts` (description strings), `src/mcp/paging-doc.test.ts` (new) | CC-5360–5369 | V3-05 | todo | 3 |
+| V3-65 | Changelog `order: "newest"` and key-or-id project arguments (additive) | MCP-R8 | `src/tools/issues.ts`, `src/tools/meta.ts`, `src/tools/agile.ts`, `src/api/projects.ts` (resolver) | D542, CC-5370–5389 | V3-12 | todo | 3.5 |
+| V3-66 | Completions stage B: `projectKey` from a TTL cache | MCP-R10 | `src/mcp/completions.ts`, `src/mcp/server.ts` | CC-5390–5399 | V3-62 | todo | 2 |
+| V3-68 | Reversible batch update `jira_update_issues` (≤ 50 issues, one plan) — reopens a parked item | MCP-R9 | `src/tools/issues-write.ts`, `src/api/issues/*` | D543–D544 | V3-09, V3-12 | blocked-owner | 6 |
+
+### Docs lane (P1/P2)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-69 | `docs/TROUBLESHOOTING.md`, one anchor per `ErrorKind`; a tag-pinned `docUrl()` helper for doctor, startup and `--help` remediations (no `blob/main`), with anchor tests | DOC-R4 | `docs/TROUBLESHOOTING.md` (new), `src/cli/doctor.ts`, `src/index.ts`, `src/core/doc-url.ts` (new) | D545 | V3-32, V3-11 | todo | 3.5 |
+| V3-70 | `docs/ADMIN-OVERVIEW.md` (controls matrix, identity, scopes, egress, data at rest, audit, revoke) and an AUTH scope map bound to the manifest, with read-only and core-writes presets | DOC-R5, DOC-R6 | `docs/ADMIN-OVERVIEW.md` (new), `docs/AUTH.md`, `src/tools/scope-map.test.ts` (new) | — | V3-31 | todo | 5.5 |
+| V3-71 | Audience-split doc map; remove D-/CC-IDs from user docs and runtime strings, with a lint ban | DOC-R8 | `docs/README.md`, `docs/CONFIGURATION.md`, `src/tools/issues-write.ts`, `src/tools/meta.ts` (strings), `scripts/docs-lint.mjs` | — | V3-69, V3-36 (before V3-20) | todo | 3 |
+
+### Release infrastructure lane (P1/P2)
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-73 | Publish pipeline v2: split build and publish jobs, publish the packed tgz with `--ignore-scripts`, GitHub Release, `mcp-publisher` OIDC step | OPS-R2 | `.github/workflows/publish.yml`, `docs/RELEASING.md` (§3–§4) | — | V3-38 | todo | 3.5 |
+| V3-74 | Audit as its own CI job with an expiring `audit-allowlist.json`; publish fails only on unlisted high/critical | OPS-R4 | `package.json` (scripts), `scripts/audit-gate.mjs` (new), `audit-allowlist.json` (new), `.github/workflows/ci.yml` (audit job) | D546 | — | todo | 2 |
+| V3-75 | Packed-tarball clean-install smoke and an SDK lower-bound job | OPS-R6 | `.github/workflows/ci.yml` (new job), `scripts/smoke-pack.mjs` (new) | — | V3-74 | todo | 2 |
+| V3-76 | Close the plugin version-pin window (atomic bump-and-tag push or a ref-pinned marketplace source); post-release checklist | OPS-R7 | `docs/RELEASING.md`, `.claude-plugin/marketplace.json` | — | V3-73 | todo | 1 |
+| V3-77 | CI, coverage and Dependabot hygiene: drop the duplicate coverage job, exclude the rehearsal script, per-file safety floors, derive counts in tests, `delete_branch_on_merge`, unstick #20/#21 | OPS-R8, QA-R8 | `.github/workflows/ci.yml` (`coverage` job), `.c8rc.json`, `src/tools/index.test.ts`; GitHub settings | — | V3-74, V3-15, V3-33 | todo (settings part blocked-owner) | 2.5 |
+| V3-81 | Supply-chain criteria for V3-16/17/23: digest-pinned, non-root, multi-arch image with SBOM and provenance; MCPB on the Release; OIDC-only distribution | OPS-R9 | `docs/DECISIONS.md` (D520/D521 amendment) | — | — | todo | 0.5 |
+
+### Product and owner lane
+
+| ID | Item | Source | Owns | IDs | Deps | Status | Est h |
+|---|---|---|---|---|---|---|---|
+| V3-72 | Positioning: hero and three proof bullets (enforced safety, not breadth), dated "Rovo / other servers / when to use which" table, GPL FAQ line; reproducible demo GIF against fake-jira (plan → refused out-of-scope call → apply) | PRD-R3, PRD-R4 | `README.md` (top + new section), `docs/index.html` (hero), `scripts/record-demo.mjs` (new), `docs/assets/demo.gif` (new) | — | V3-30, V3-32 | todo (owner reviews wording) | 6 |
+| V3-79 | Owner decision rows: feature freeze until distribution lands and 45 days of metrics (PRD-R15); DC freeze, decision by 2026-12-31 after an eval-host spike (ARC-R8, PRD-R13); complexity budget with V3-08 as the ceiling and V3-25 before V3-26 (ARC-R11) | PRD-R15, PRD-R13, ARC-R8, ARC-R11 | `docs/DECISIONS.md` | D547–D550 | — | blocked-owner | 6 |
+| V3-80 | Feedback and reach: GitHub Discussions and a weekly metrics script; plugin skills `standup` and `release-notes`; launch drafts via the `launch-marketing` skill (posting needs the owner's yes) | PRD-R11, PRD-R14, PRD-R12 | `.github/ISSUE_TEMPLATE/config.yml`, `scripts/metrics.mjs` (new), `.claude-plugin/` skills (new) | — | V3-22, V3-72 | todo (toggles and posting blocked-owner) | 7 |
+
+Rows V3-16, V3-17 and V3-23 (Docker, MCPB, distribution) already cover
+PRD-R6…R8; they now also carry V3-81's criteria. V3-07 + V3-25 cover
+PRD-R10 (1.2.0 `standard` profile). Unused reserve: D551–D560.
+
+### Priority order after the panel
+
+1. **Release before ~2026-11-01:** V3-29, V3-21 (owner), V3-30, V3-31,
+   V3-32, V3-33, V3-34, V3-36, V3-37, V3-38 (owner) → **V3-22 (owner's yes)**.
+   Fallback: `1.1.0-rc.1` on the `beta` dist-tag.
+2. **First two weeks after:** V3-23, V3-16, V3-17, V3-72, V3-25, V3-07,
+   V3-08; V3-39, V3-40, V3-41, V3-47; V3-49, V3-50; V3-74, V3-73.
+3. **Before any 2.0 contract change:** V3-45, V3-46, V3-48, V3-79.
+4. **Refactors** (V3-10…V3-14, V3-18…V3-20, V3-54…V3-62) after step 3, or
+   as the owner's feature-freeze decision allows.
+
+Lanes that run in parallel without touching each other's files: release
+docs (V3-30 → V3-32/34/35), proof tests (V3-33, V3-41, V3-45, V3-46), the
+agile fallback (V3-29 → V3-52), the HTTP lane (V3-10 → V3-51), and CI
+(V3-74 → V3-75/77).
 
 ## Considered and parked
 
