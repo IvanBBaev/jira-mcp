@@ -18,10 +18,11 @@
 #   4. A publishing credential exists: the bootstrap `NPM_TOKEN` secret today,
 #      the npm trusted publisher (OIDC) once it is registered — see below.
 #
-# The `release` environment is declared on the job; it has no required reviewer
-# today, and adding one is the single settings edit that puts a human in front
-# of every release. The registry itself is the last guard: it rejects a
-# re-publish of a version that already exists.
+# The `release` environment is declared on the job. Since 2026-10-30 it has a
+# required reviewer (the owner) and a ref policy (`v*` tags and `main` only), so
+# every release waits for one human approval in the Actions UI. The registry
+# itself is the last guard: it rejects a re-publish of a version that already
+# exists.
 #
 # The steady state is trusted publishing: GitHub OIDC and nothing else, npm CLI
 # >= 11.5.1 (hence the Node 24 runner and the explicit assertion below), and
@@ -84,8 +85,8 @@ jobs:
     # Guard 1. `vars.PUBLISH_ENABLED` has been `true` since O-9 was resolved
     # (2026-08-17). Unset it to make this job skip and the workflow a no-op.
     if: vars.PUBLISH_ENABLED == 'true'
-    # Give this a required reviewer in Settings > Environments if you want a
-    # human approval step in front of every release as well.
+    # Required reviewer + `v*`/`main` ref policy live in Settings > Environments
+    # (docs/RELEASING.md §1).
     environment: release
     permissions:
       contents: read
