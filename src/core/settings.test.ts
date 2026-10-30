@@ -9,6 +9,7 @@ import {
   DEFAULT_AUTH_MODE,
   DEFAULT_CALL_BUDGET_MS,
   DEFAULT_HOST_CONCURRENCY,
+  DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
   DEFAULT_LOG_LEVEL,
   DEFAULT_MAX_PAGES,
@@ -27,6 +28,7 @@ import {
   assertStartupOk,
   collectSecrets,
   formatStartupReport,
+  isLoopbackAddress,
   loadSettings,
   resolveExportDir,
   type LoadSettingsOptions,
@@ -48,6 +50,9 @@ const VALID = {
   JIRA_EMAIL: 'me@example.com',
   JIRA_API_TOKEN: 'token-active',
 } as const;
+
+/** An http bearer over the 32-character floor (D532). */
+const HTTP_TOKEN = 'token-http-0123456789abcdef0123456789';
 
 /** The oauth-mode counterpart: no email, no API token, an app instead. */
 const VALID_OAUTH = {
@@ -597,13 +602,13 @@ describe('loadSettings — secrets for the redactor', () => {
     const { secrets } = load({
       ...VALID,
       JIRA_TRANSPORT: 'http',
-      JIRA_HTTP_TOKEN: 'token-http',
+      JIRA_HTTP_TOKEN: HTTP_TOKEN,
       [profileVar('work', 'API_TOKEN')]: 'token-work',
       [profileVar('personal', 'API_TOKEN')]: 'token-personal',
     });
     assert.deepEqual([...secrets].sort(), [
       'token-active',
-      'token-http',
+      HTTP_TOKEN,
       'token-personal',
       'token-work',
     ]);
@@ -860,10 +865,85 @@ describe('loadSettings — packages and transport', () => {
     const { report, settings } = load({
       ...VALID,
       JIRA_TRANSPORT: 'http',
-      JIRA_HTTP_TOKEN: 'token-http',
+      JIRA_HTTP_TOKEN: HTTP_TOKEN,
     });
     assert.equal(report.ok, true);
     assert.equal(settings.transport, 'http');
+  });
+});
+
+describe('loadSettings — http token floor and bind (D532)', () => {
+  it('[CC-5274] refuses a token under 32 characters under http, counted in characters', () => {
+    const short = load({
+      ...VALID,
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: 'a'.repeat(31),
+    });
+    assert.deepEqual(codes(short.report), ['http_token_too_short']);
+    assert.equal(short.report.ok, false);
+    assert.equal(short.report.errors[0]?.field, 'JIRA_HTTP_TOKEN');
+    assert.equal(short.report.errors[0]?.message.includes('a'.repeat(31)), false);
+    assert.match(short.report.errors[0]?.message ?? '', /openssl rand -hex 32/);
+
+    const floor = load({
+      ...VALID,
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: 'a'.repeat(32),
+    });
+    assert.equal(floor.report.ok, true);
+
+    // 31 key emoji are 62 UTF-16 units but 31 characters.
+    const astral = load({
+      ...VALID,
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: '\u{1F511}'.repeat(31),
+    });
+    assert.deepEqual(codes(astral.report), ['http_token_too_short']);
+  });
+
+  it('[CC-5275] leaves a short token alone under stdio, where nothing serves it', () => {
+    const { report } = load({ ...VALID, JIRA_HTTP_TOKEN: 'a'.repeat(31) });
+    assert.equal(report.ok, true);
+    assert.deepEqual(codes(report), []);
+  });
+
+  it('[CC-5276] binds 127.0.0.1 by default and refuses a hostname', () => {
+    assert.equal(load(VALID).settings.httpBind, DEFAULT_HTTP_BIND);
+    const named = load({
+      ...VALID,
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: HTTP_TOKEN,
+      JIRA_HTTP_BIND: 'localhost',
+    });
+    assert.deepEqual(codes(named.report), ['http_bind_invalid']);
+    assert.equal(named.report.ok, false);
+    assert.equal(named.settings.httpBind, DEFAULT_HTTP_BIND);
+  });
+
+  it('[CC-5277] warns about a bind beyond loopback under http only', () => {
+    const wide = load({
+      ...VALID,
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: HTTP_TOKEN,
+      JIRA_HTTP_BIND: '0.0.0.0',
+    });
+    assert.deepEqual(codes(wide.report), ['http_bind_not_loopback']);
+    assert.equal(wide.report.ok, true);
+    assert.equal(wide.settings.httpBind, '0.0.0.0');
+
+    for (const loopback of ['127.0.0.5', '::1']) {
+      const quiet = load({
+        ...VALID,
+        JIRA_TRANSPORT: 'http',
+        JIRA_HTTP_TOKEN: HTTP_TOKEN,
+        JIRA_HTTP_BIND: loopback,
+      });
+      assert.deepEqual(codes(quiet.report), [], loopback);
+    }
+    assert.deepEqual(codes(load({ ...VALID, JIRA_HTTP_BIND: '0.0.0.0' }).report), []);
+    assert.equal(isLoopbackAddress('127.1.2.3'), true);
+    assert.equal(isLoopbackAddress('::'), false);
+    assert.equal(isLoopbackAddress('::ffff:127.0.0.1'), false);
   });
 });
 
@@ -1017,7 +1097,6 @@ describe('loadSettings — placeholder credentials that shred the output', () =>
   it('names every affected variable, profile and transport tokens included', () => {
     const { report } = load({
       ...VALID,
-      JIRA_TRANSPORT: 'http',
       JIRA_HTTP_TOKEN: 'dev',
       [profileVar('work', 'API_TOKEN')]: 'x',
     });

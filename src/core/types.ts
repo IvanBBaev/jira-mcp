@@ -551,7 +551,16 @@ export interface Settings {
   readonly transport: TransportKind;
   /** `JIRA_HTTP_PORT` (default 3334). Loopback-only Streamable HTTP port. */
   readonly httpPort: number;
-  /** `JIRA_HTTP_TOKEN`. Required for http transport; secret (CC-30). */
+  /**
+   * `JIRA_HTTP_BIND` (default `127.0.0.1`, D532). The IP literal the http
+   * transport listens on. The loader always sets it; absent means the
+   * loopback default, so hand-built settings need not name it.
+   */
+  readonly httpBind?: string;
+  /**
+   * `JIRA_HTTP_TOKEN`. Required for http transport, at least 32 characters
+   * there (D532); secret (CC-30).
+   */
   readonly httpToken?: string;
 
   /** `JIRA_LOG_LEVEL` (default `info`). All output to stderr. */

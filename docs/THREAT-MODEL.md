@@ -393,13 +393,20 @@ attachment *metadata* keeps working — it needs no directory (CC-58).
 
 ### Transport
 - stdio: console guard; protocol on stdout, diagnostics on stderr.
-- HTTP (D101): loopback bind only (CC-115); fails closed without
-  `JIRA_HTTP_TOKEN` — twice, in settings (CC-30) and again in the transport;
+- HTTP (D101): loopback bind by default (CC-115); `JIRA_HTTP_BIND` can move
+  the socket to another IP literal for a container, with a startup warning
+  and a doctor warning, and moves only the socket — the `Host` and `Origin`
+  checks stay loopback, so the one supported container publish is
+  `-p 127.0.0.1:<port>:<port>` (D532); fails closed without
+  `JIRA_HTTP_TOKEN` — twice, in settings (CC-30) and again in the transport —
+  and the same way on a token under 32 characters (D532);
   constant-time `timingSafeEqual` bearer comparison on every request (CC-114);
   `Host` checked against the bound loopback authority and `Origin`, when
   present, against loopback origins before any JSON-RPC is processed (CC-116);
   one session per `Mcp-Session-Id`, whose teardown takes its armed plans with
-  it (CC-117); one plan store for all sessions, each plan bound to the
+  it (CC-117), and bound to a digest of the bearer that opened it, so a
+  request naming it with any other bearer is answered as if it did not exist
+  (D532); one plan store for all sessions, each plan bound to the
   session and to a SHA-256 fingerprint of the bearer that planned it, so
   another session or credential is refused without burning the plan, with
   128-bit CSPRNG plan ids, a 60-minute TTL and a per-session quota that one

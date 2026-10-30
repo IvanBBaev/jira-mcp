@@ -421,7 +421,10 @@ test('a broken configuration exits 2 and skips the network probes', async () => 
 
 test('the http transport is a supported loopback bind, not a failure (D101)', async () => {
   const r = rig({
-    env: baseEnv({ JIRA_TRANSPORT: 'http', JIRA_HTTP_TOKEN: 'loopback-token' }),
+    env: baseEnv({
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: 'loopback-token-0123456789abcdef0123',
+    }),
   });
   const code = await run({ ...r.options, argv: ['--offline'] });
 
@@ -429,6 +432,25 @@ test('the http transport is a supported loopback bind, not a failure (D101)', as
   assert.equal(code, EXIT_OK, out);
   assert.match(out, /\[ ok \] gating: transport http \(loopback 127\.0\.0\.1:3334\)/);
   assert.doesNotMatch(out, /not available/);
+});
+
+test('[CC-5278] a bind beyond loopback is a doctor warning with a publish hint (D532)', async () => {
+  const r = rig({
+    env: baseEnv({
+      JIRA_TRANSPORT: 'http',
+      JIRA_HTTP_TOKEN: 'loopback-token-0123456789abcdef0123',
+      JIRA_HTTP_BIND: '0.0.0.0',
+    }),
+  });
+  await run({ ...r.options, argv: ['--offline'] });
+
+  const out = r.stdout();
+  assert.match(
+    out,
+    /\[warn] gating: transport http \(bound to 0\.0\.0\.0:3334, beyond loopback\)/,
+  );
+  assert.match(out, /-p 127\.0\.0\.1:<port>:<port>/);
+  assert.match(out, /JIRA_HTTP_BIND=0\.0\.0\.0 listens beyond loopback/);
 });
 
 test('an unwritable journal path fails the journal probe', async () => {

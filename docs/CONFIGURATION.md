@@ -185,8 +185,9 @@ host, never by IP, so nothing in its configuration changes.
 | Variable | Default | Description |
 |---|---|---|
 | `JIRA_TRANSPORT` | `stdio` | `stdio` (default) or `http` — the loopback Streamable HTTP transport (D101). |
-| `JIRA_HTTP_PORT` | `3334` | Loopback port the `http` transport binds — `127.0.0.1` only, never another interface (CC-115). Integer in 1–65535. |
-| `JIRA_HTTP_TOKEN` | — | Bearer token (secret; registered with the redactor) required on every `http` request (CC-114). Required whenever `http` is selected — settings refuse that combination without it (CC-30). |
+| `JIRA_HTTP_PORT` | `3334` | Port the `http` transport binds on `JIRA_HTTP_BIND` (CC-115). Integer in 1–65535. |
+| `JIRA_HTTP_BIND` | `127.0.0.1` | IP address the `http` transport listens on (D532). An IP literal only — a hostname is a startup error. Leave it at loopback; `0.0.0.0` exists for a container and is warned about at startup and by `doctor`. It moves the socket only: `Host` must still be `127.0.0.1:<port>` or `localhost:<port>`, so publish the container port to the host loopback with the same number on both sides (`-p 127.0.0.1:3334:3334`). |
+| `JIRA_HTTP_TOKEN` | — | Bearer token (secret; registered with the redactor) required on every `http` request (CC-114). Required whenever `http` is selected, and at least 32 characters there — settings refuse a missing or shorter one (CC-30, D532). Generate one with `openssl rand -hex 32`. Each session is bound to the token that opened it. |
 
 ## Diagnostics
 

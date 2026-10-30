@@ -66,7 +66,8 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
    `JIRA_OAUTH_GRANT`, `JIRA_REPORT_DIR` and `JIRA_EXPORT_DIR` are unset or
    off by default; `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300
    seconds by default, `0` turns it off); `JIRA_MEDIA_MAX_BYTES` caps each
-   output directory at 1 GiB by default (`0` turns it off).
+   output directory at 1 GiB by default (`0` turns it off);
+   `JIRA_HTTP_BIND` keeps the http transport on `127.0.0.1` by default.
 4. If your API token sits inside a client config such as `.mcp.json`, move
    it out: `npx -y jira-mcp-ai@1.1.0 doctor --save` stores it in
    `~/.config/jira-mcp-ai/.env` with mode `0600`.
@@ -86,6 +87,9 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
      on the first export), not in `JIRA_MEDIA_DIR` itself.
      `jira_upload_attachment` refuses export-named files and files this
      server downloaded; copy a downloaded file to a new name to attach it.
+   - Under `JIRA_TRANSPORT=http`, a `JIRA_HTTP_TOKEN` shorter than 32
+     characters stops the server at startup. Replace it with
+     `openssl rand -hex 32` and update the client that sends it.
 
 ### Added
 
@@ -253,8 +257,14 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   alone), an unapplied plan expires after 60 minutes, and each session keeps
   up to 64 unapplied plans without pushing out another session's. stdio is
   unchanged.
+- The http transport refuses a `JIRA_HTTP_TOKEN` under 32 characters, binds
+  each session to the token that opened it, and gains `JIRA_HTTP_BIND`
+  (default `127.0.0.1`) for running in a container. A bind beyond loopback is
+  warned about at startup and by `doctor`; requests must still name
+  `127.0.0.1` or `localhost` in `Host`, so publish the port to the host
+  loopback only (`-p 127.0.0.1:3334:3334`).
 
-Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527, D531.
+Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527, D531, D532.
 
 ### Fixed
 

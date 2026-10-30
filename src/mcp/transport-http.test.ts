@@ -38,11 +38,12 @@ import {
   HTTP_SESSION_IDLE_TIMEOUT_MS,
   connectHttpTransport,
   hostAllowed,
+  sessionCredentialMatches,
 } from './transport-http.js';
 import type { HttpTransportDeps } from './transport-http.js';
 import type { ConnectableServer, TransportHandle } from './transport.js';
 import type { PackageSpec, ToolResult } from './types.js';
-import { createPlanStore, PLAN_TTL_MS } from './write-mode.js';
+import { createPlanStore, credentialFingerprint, PLAN_TTL_MS } from './write-mode.js';
 
 const LOOPBACK_HOST = '127.0.0.1';
 
@@ -517,7 +518,7 @@ test('CC-114: a request without a valid bearer token is refused with 401', async
 });
 
 test('CC-407: a non-ASCII bearer token sent as UTF-8 opens a session', async () => {
-  const token = 'pässwörd-2026-ключ';
+  const token = 'pässwörd-2026-ключ-0123456789abcdef';
   const harness = await makeHarness({ httpToken: token });
   await withHandle(harness, async () => {
     const url = mcpUrl(harness.port);
@@ -964,6 +965,80 @@ test('a missing JIRA_HTTP_TOKEN is refused with a config error, and nothing bind
     },
   );
   assert.equal(await accepts(LOOPBACK_HOST, port), false);
+});
+
+test('[CC-5270] a JIRA_HTTP_TOKEN under 32 characters is refused, and nothing binds', async () => {
+  const port = await freePort();
+  const settings: Settings = {
+    ...BASE_SETTINGS,
+    transport: 'http',
+    httpPort: port,
+    httpToken: 'x'.repeat(31),
+  };
+  await assert.rejects(
+    connectHttpTransport({
+      settings,
+      logger: createFakeLogger(),
+      clock: createFakeClock(0),
+      createServer: () => {
+        throw new Error('createServer must not be called with a short token');
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'config');
+      assert.match(error.message, /32 characters/);
+      assert.equal(error.message.includes('x'.repeat(31)), false);
+      return true;
+    },
+  );
+  assert.equal(await accepts(LOOPBACK_HOST, port), false);
+});
+
+test('[CC-5271] a session credential matches only the digest it was opened with', () => {
+  const bound = credentialFingerprint(TOKEN);
+  assert.equal(sessionCredentialMatches(bound, credentialFingerprint(TOKEN)), true);
+  assert.equal(
+    sessionCredentialMatches(bound, credentialFingerprint(WRONG_TOKEN)),
+    false,
+  );
+  // A different length is a mismatch, not a `timingSafeEqual` throw.
+  assert.equal(sessionCredentialMatches(bound, 'sha256:'), false);
+  assert.equal(sessionCredentialMatches(bound, ''), false);
+});
+
+test('[CC-5272] a live session id presented with another bearer is refused, and the session survives', async () => {
+  const harness = await makeHarness();
+  await withHandle(harness, async () => {
+    const sid = await openSession(harness);
+    const foreign = await send(
+      'POST',
+      mcpUrl(harness.port),
+      rpc('tools/list', {}),
+      rpcHeaders({ 'mcp-session-id': sid, authorization: `Bearer ${WRONG_TOKEN}` }),
+    );
+    assert.equal(foreign.status, 401);
+    assert.equal(foreign.body.includes(sid), false);
+    const deleted = await send(
+      'DELETE',
+      mcpUrl(harness.port),
+      undefined,
+      rpcHeaders({ 'mcp-session-id': sid, authorization: `Bearer ${WRONG_TOKEN}` }),
+    );
+    assert.equal(deleted.status, 401);
+    // The owner's session is untouched.
+    assert.ok((await listToolNames(harness, sid)).length > 0);
+  });
+});
+
+test('[CC-5273] JIRA_HTTP_BIND moves the listener, and a bind failure names that address', async () => {
+  const harness = await makeHarness({ httpBind: '192.0.2.1' });
+  await assert.rejects(connectHttpTransport(harness.deps), (error: unknown) => {
+    assert.ok(error instanceof JiraError);
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, new RegExp(`192\\.0\\.2\\.1:${String(harness.port)}`));
+    return true;
+  });
 });
 
 test('a port already in use rejects with a config error naming host and port', async () => {

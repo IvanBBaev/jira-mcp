@@ -6,7 +6,9 @@
 // transport runs, `buildServer` decides what a session can do. One process, one
 // `http.Server` bound to `127.0.0.1:JIRA_HTTP_PORT` — host and port together,
 // because a bare port binds every interface and publishes the tool surface on
-// the machine's LAN address (CC-115).
+// the machine's LAN address (CC-115). `JIRA_HTTP_BIND` can move the socket to
+// another IP literal for a container (D532); it moves the socket only — the
+// Host and Origin checks below stay loopback whatever the bind.
 //
 // EVERY REQUEST WALKS THE SAME GATE LINE, in this order: path, Host, Origin
 // (DNS-rebinding defense, CC-116), bearer token (constant-time, CC-114), and
@@ -22,7 +24,9 @@
 // `onSessionClosed` drops a session's plans as it ends, so an armed plan from a
 // dead session can never be applied. Sessions end on HTTP DELETE (the SDK
 // handles it and calls `onsessionclosed`) or when the clock-driven sweeper
-// finds them idle.
+// finds them idle. A session is also bound to the digest of the bearer that
+// opened it (D532): a request naming a session with any other bearer is
+// answered as if the session did not exist.
 //
 // INBOUND, NOT OUTBOUND. "Only `core/http.ts` touches the network" is about
 // outbound requests to Jira; this module accepts loopback connections the same
@@ -45,6 +49,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
+import { DEFAULT_HTTP_BIND, MIN_HTTP_TOKEN_LENGTH } from '../core/settings.js';
 import { JiraError } from '../core/types.js';
 import type { Clock, Logger, Settings } from '../core/types.js';
 import type { ConnectableServer, ShutdownReason, TransportHandle } from './transport.js';
@@ -140,6 +145,8 @@ async function readJsonBody(req: IncomingMessage): Promise<BodyResult> {
 interface SessionEntry {
   readonly server: ConnectableServer;
   readonly transport: StreamableHTTPServerTransport;
+  /** `credentialFingerprint` of the bearer that opened the session (D532). */
+  readonly credential: string;
   lastActivity: number;
   /** Responses not yet closed; a live SSE stream keeps this above zero. */
   open: number;
@@ -210,23 +217,40 @@ function originAllowed(origin: string | undefined): boolean {
 /**
  * CC-114: `Authorization: Bearer <token>` compared in constant time — the
  * length gate first because `timingSafeEqual` throws on unequal lengths (the
- * login CLI's `sameState` pattern). `expected` is encoded once, at bind time;
- * the presented value is never logged, echoed, or kept.
+ * login CLI's `sameState` pattern). `expected` is encoded once, at bind time.
+ * Returns the presented token's bytes on a match, `undefined` otherwise; the
+ * caller keeps only their digest, and the value is never logged or echoed.
  */
-function bearerMatches(header: string | undefined, expected: Buffer): boolean {
+function bearerMatches(header: string | undefined, expected: Buffer): Buffer | undefined {
   // The scheme is case-insensitive (RFC 7235 §2.1); the token is not.
   if (
     header === undefined ||
     header.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX.toLowerCase()
   ) {
-    return false;
+    return undefined;
   }
   // Node hands header values over as latin1, one char per wire byte; reading
   // them back the same way restores the bytes a client sent, so a non-ASCII
   // token sent as UTF-8 matches its UTF-8 encoding below (CC-407).
   const presented = Buffer.from(header.slice(BEARER_PREFIX.length), 'latin1');
-  if (presented.length !== expected.length) return false;
-  return timingSafeEqual(presented, expected);
+  if (presented.length !== expected.length) return undefined;
+  return timingSafeEqual(presented, expected) ? presented : undefined;
+}
+
+/**
+ * D532: does a request's credential digest match the one its session was
+ * opened with? Both are `credentialFingerprint` strings (fixed length), still
+ * compared in constant time; a length difference is a plain mismatch.
+ *
+ * Exported for the mismatch case alone: the listener accepts exactly one
+ * token, so a second bearer that passes the bearer check cannot be produced
+ * at the socket — the binding is what keeps a session private the day the
+ * accepted set grows (rotation, more than one client).
+ */
+export function sessionCredentialMatches(bound: string, presented: string): boolean {
+  const a = Buffer.from(bound, 'utf8');
+  const b = Buffer.from(presented, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** Node folds duplicate headers into arrays; a duplicated one is ignored. */
@@ -274,17 +298,19 @@ export async function connectHttpTransport(
         'Set a random bearer token in JIRA_HTTP_TOKEN or use the stdio transport.',
     });
   }
+  // Same double gate for the floor (settings error `http_token_too_short`).
+  if ([...token].length < MIN_HTTP_TOKEN_LENGTH) {
+    throw new JiraError({
+      kind: 'config',
+      message: `JIRA_HTTP_TOKEN is shorter than ${String(MIN_HTTP_TOKEN_LENGTH)} characters; the HTTP transport refuses it (D532).`,
+      retryable: false,
+      remediation: 'Generate one with `openssl rand -hex 32`.',
+    });
+  }
 
   const port = settings.httpPort;
+  const bindHost = settings.httpBind ?? DEFAULT_HTTP_BIND;
   const expectedToken = Buffer.from(token, 'utf8');
-  // D512: the credential half of a plan's owner. A digest, so the bearer never
-  // reaches the SDK's request context or the plan store. Every request that
-  // gets past the bearer check presented exactly this token.
-  const auth: AuthInfo = {
-    token: credentialFingerprint(token),
-    clientId: 'http-bearer',
-    scopes: [],
-  };
   const sessions = new Map<string, SessionEntry>();
   // Set by `close()` before its teardown loop (CC-164): a keep-alive socket
   // can still deliver an initialize while the loop awaits, and a session
@@ -371,10 +397,22 @@ export async function connectHttpTransport(
 
     // 4. Bearer (CC-114). The refusal names neither the expected nor the
     // presented value.
-    if (!bearerMatches(headerValue(req.headers.authorization), expectedToken)) {
+    const presented = bearerMatches(
+      headerValue(req.headers.authorization),
+      expectedToken,
+    );
+    if (presented === undefined) {
       refuse(res, 401, -32000, 'Unauthorized: missing or invalid bearer token.');
       return;
     }
+    // D512: the credential half of a plan's owner, and D532: the credential a
+    // session is bound to. A digest of the bytes THIS request presented, so
+    // the bearer never reaches the SDK's request context or the plan store.
+    const auth: AuthInfo = {
+      token: credentialFingerprint(presented.toString('utf8')),
+      clientId: 'http-bearer',
+      scopes: [],
+    };
 
     // 5. Body (CC-139): a POST is read here, under the cap, and handed to the
     // SDK parsed. The refusal matches the SDK's own parse-error shape.
@@ -442,6 +480,7 @@ export async function connectHttpTransport(
             void teardown(sessionId);
           },
         }),
+        credential: auth.token,
         lastActivity: clock.now(),
         open: 0,
         closed: false,
@@ -478,7 +517,10 @@ export async function connectHttpTransport(
     }
 
     const entry = sessions.get(sid);
-    if (entry === undefined) {
+    // D532: a session opened under another bearer answers exactly like one
+    // that does not exist — no oracle for which ids are live — and its owner
+    // is not disturbed: no activity stamp, no teardown.
+    if (entry === undefined || !sessionCredentialMatches(entry.credential, auth.token)) {
       refuse(res, 404, -32001, 'Session not found');
       return;
     }
@@ -511,7 +553,7 @@ export async function connectHttpTransport(
       reject(
         new JiraError({
           kind: 'config',
-          message: `The HTTP transport could not bind ${LOOPBACK_HOST}:${String(port)}: ${
+          message: `The HTTP transport could not bind ${bindHost}:${String(port)}: ${
             error instanceof Error ? error.message : 'unknown error'
           }.`,
           retryable: false,
@@ -523,7 +565,8 @@ export async function connectHttpTransport(
     httpServer.once('error', onListenError);
     // Host and port together: passing only a port binds every interface, which
     // would publish a tool-executing endpoint on the machine's LAN address.
-    httpServer.listen({ host: LOOPBACK_HOST, port }, () => {
+    // `bindHost` is loopback unless JIRA_HTTP_BIND says otherwise (D532).
+    httpServer.listen({ host: bindHost, port }, () => {
       httpServer.removeListener('error', onListenError);
       resolve();
     });

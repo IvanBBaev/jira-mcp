@@ -302,6 +302,7 @@ const CODE_DEFAULTS: ReadonlyMap<string, DefaultProbe> = new Map([
   ['JIRA_REPORT_DIR', (s: Settings) => s.reportDir],
   ['JIRA_TRANSPORT', (s: Settings) => s.transport],
   ['JIRA_HTTP_PORT', (s: Settings) => String(s.httpPort)],
+  ['JIRA_HTTP_BIND', (s: Settings) => s.httpBind],
   ['JIRA_HTTP_TOKEN', (s: Settings) => s.httpToken],
   ['JIRA_LOG_LEVEL', (s: Settings) => s.logLevel],
   ['JIRA_JOURNAL_PATH', (s: Settings) => s.journalPath],

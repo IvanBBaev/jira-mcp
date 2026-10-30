@@ -733,7 +733,7 @@ test('redirects a dependency console.log to stderr (the console guard)', async (
 // stay on stderr as NDJSON, exactly as under stdio.
 // ---------------------------------------------------------------------------
 
-const HTTP_CHILD_TOKEN = 'http-bearer-not-real';
+const HTTP_CHILD_TOKEN = 'http-bearer-not-real-0123456789abcdef';
 
 /** A port nothing is listening on right now (suite-11's helper, same race). */
 function freePort(): Promise<number> {

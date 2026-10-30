@@ -4232,3 +4232,30 @@ fake handles, and the download peak is measured on the byte sink.
   cap is used; negative, exponent, list, hex and over-cap values are ignored.
 - **CC-5269** — a download through the HTTP client comes back byte-exact
   whether its `Content-Length` is right, too short or too long.
+
+### HTTP token floor, session binding, bind address (V3-44, D532)
+
+- **CC-5270** — the transport itself refuses a `JIRA_HTTP_TOKEN` under 32
+  characters with `config` (message names the floor, never the value), and
+  nothing binds.
+- **CC-5271** — `sessionCredentialMatches` is true only for the digest the
+  session was opened with; a different digest or a different length is a
+  mismatch, never a throw.
+- **CC-5272** — a live session id sent with another bearer is refused (401,
+  the id not echoed), DELETE included, and the owner's session keeps
+  working.
+- **CC-5273** — `JIRA_HTTP_BIND` is the address the listener binds; a bind
+  failure names that address and the port.
+- **CC-5274** — under `http`, settings refuse a token under 32 characters
+  (`http_token_too_short`, field `JIRA_HTTP_TOKEN`, an `openssl` hint, no
+  value); exactly 32 passes; length counts characters, so 31 astral
+  characters still fail.
+- **CC-5275** — under `stdio` a short `JIRA_HTTP_TOKEN` is not reported:
+  nothing serves it.
+- **CC-5276** — `JIRA_HTTP_BIND` defaults to `127.0.0.1`; a hostname is
+  `http_bind_invalid` and the default is substituted.
+- **CC-5277** — a non-loopback bind under `http` is the warning
+  `http_bind_not_loopback`; 127/8 and `::1` are silent, and so is any bind
+  under `stdio`. `::ffff:127.0.0.1` counts as non-loopback.
+- **CC-5278** — `doctor` reports a non-loopback bind as `warn` with the
+  `-p 127.0.0.1:<port>:<port>` hint, next to the settings warning.

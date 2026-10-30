@@ -211,8 +211,15 @@
           "format": "number"
         },
         {
+          "name": "JIRA_HTTP_BIND",
+          "description": "IP address the http transport listens on. Keep loopback; 0.0.0.0 is for a container published to the host loopback.",
+          "isRequired": false,
+          "default": "127.0.0.1",
+          "format": "string"
+        },
+        {
           "name": "JIRA_HTTP_TOKEN",
-          "description": "Bearer token for the http transport. Required for it; unused under stdio.",
+          "description": "Bearer token for the http transport, at least 32 characters. Required for it; unused under stdio.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"

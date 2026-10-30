@@ -66,7 +66,9 @@ import {
 import { createRedactor } from '../core/redact.js';
 import { systemRng } from '../core/rng.js';
 import {
+  DEFAULT_HTTP_BIND,
   isIsoDate,
+  isLoopbackAddress,
   loadSettings,
   profileVar,
   TOKEN_EXPIRY_WARNING_DAYS,
@@ -1388,16 +1390,25 @@ const PROBES: readonly Probe[] = [
         ...selectionProblems(settings),
       ];
 
-      // Both transports are served (D101). A missing JIRA_HTTP_TOKEN is a
-      // settings-level failure (`http_token_missing`, CC-30) and is already
-      // reported by the settings probe — not duplicated here.
+      // Both transports are served (D101). A missing or short JIRA_HTTP_TOKEN
+      // is a settings-level failure (`http_token_missing`,
+      // `http_token_too_short`, CC-30, D532) and a non-loopback JIRA_HTTP_BIND a
+      // settings warning — the settings probe reports them, not duplicated here.
+      const bind = settings.httpBind ?? DEFAULT_HTTP_BIND;
       findings.push(
         settings.transport === 'stdio'
           ? { status: 'ok', text: 'transport stdio' }
-          : {
-              status: 'ok',
-              text: `transport http (loopback 127.0.0.1:${String(settings.httpPort)})`,
-            },
+          : isLoopbackAddress(bind)
+            ? {
+                status: 'ok',
+                text: `transport http (loopback ${bind}:${String(settings.httpPort)})`,
+              }
+            : {
+                status: 'warn',
+                text: `transport http (bound to ${bind}:${String(settings.httpPort)}, beyond loopback)`,
+                remediation:
+                  'Publish it to the host loopback only, e.g. `docker run -p 127.0.0.1:<port>:<port>` (D532).',
+              },
       );
 
       const profile = settings.activeProfile;

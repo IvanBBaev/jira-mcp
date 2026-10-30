@@ -2345,8 +2345,17 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                       <td><code>JIRA_HTTP_PORT</code></td>
                       <td><code>3334</code></td>
                       <td>
-                        Loopback port the <code>http</code> transport binds —
-                        <code>127.0.0.1</code> only, never another interface.
+                        Port the <code>http</code> transport binds on
+                        <code>JIRA_HTTP_BIND</code>.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>JIRA_HTTP_BIND</code></td>
+                      <td><code>127.0.0.1</code></td>
+                      <td>
+                        IP address the <code>http</code> transport listens on.
+                        Keep loopback; <code>0.0.0.0</code> is for a container
+                        published to the host loopback, and is warned about.
                       </td>
                     </tr>
                     <tr>
@@ -2354,8 +2363,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                       <td>—</td>
                       <td>
                         <strong>Secret.</strong> Bearer token required on every
-                        <code>http</code> request; without it the server refuses to
-                        start.
+                        <code>http</code> request, at least 32 characters; without
+                        it the server refuses to start.
                       </td>
                     </tr>
                     <tr>

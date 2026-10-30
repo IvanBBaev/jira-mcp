@@ -47,6 +47,17 @@ export const DEFAULT_EXPORT_SUBDIR = 'exports';
 export const DEFAULT_TRANSPORT: TransportKind = 'stdio';
 /** `JIRA_HTTP_PORT` default. */
 export const DEFAULT_HTTP_PORT = 3334;
+/**
+ * `JIRA_HTTP_BIND` default (D532): loopback by address, never by name and
+ * never a wildcard (CC-115).
+ */
+export const DEFAULT_HTTP_BIND = '127.0.0.1';
+/**
+ * The shortest `JIRA_HTTP_TOKEN` the http transport accepts, in characters
+ * (D532, SEC-04). 32 hex characters carry 128 bits; anything shorter is a
+ * password someone typed, not a bearer.
+ */
+export const MIN_HTTP_TOKEN_LENGTH = 32;
 /** `JIRA_LOG_LEVEL` default. */
 export const DEFAULT_LOG_LEVEL: LogLevel = 'info';
 /**

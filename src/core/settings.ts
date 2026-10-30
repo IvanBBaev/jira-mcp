@@ -28,6 +28,7 @@ export {
   DEFAULT_DEPLOYMENT,
   DEFAULT_EXPORT_SUBDIR,
   DEFAULT_HOST_CONCURRENCY,
+  DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
   DEFAULT_IRREVERSIBLE_CONFIRM,
   DEFAULT_LOCK_PROFILE,
@@ -47,9 +48,11 @@ export {
   DEFAULT_TOOL_PACKAGES,
   DEFAULT_TRANSPORT,
   DEFAULT_WRITE_MODE,
+  MIN_HTTP_TOKEN_LENGTH,
   TOKEN_EXPIRY_WARNING_DAYS,
 } from './settings/defaults.js';
 export { splitAllowedHosts } from './settings/hosts.js';
+export { isLoopbackAddress } from './settings/transport.js';
 export { resolveExportDir } from './settings/limits.js';
 export type { ExportDirResolution } from './settings/limits.js';
 export { loadSettings } from './settings/load.js';
