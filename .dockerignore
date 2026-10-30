@@ -1,0 +1,33 @@
+# The build context is an allow-list in spirit: the Dockerfile copies only
+# package.json, the lockfile, .npmrc, the tsconfigs, bin/, src/ and the three
+# files the tarball ships. Everything below is kept out so a local secret, a
+# stale build or the harness files can never reach a layer.
+
+# Credentials and environment
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output (rebuilt inside the image)
+node_modules/
+build/
+*.tgz
+*.tsbuildinfo
+coverage/
+.stryker-tmp/
+reports/
+mcpb/dist/
+
+# VCS, CI and local AI-harness files
+.git/
+.github/
+CLAUDE.md
+CLAUDE.local.md
+WORKLOG.md
+.claude/
+docs/ai/
+
+# Logs and OS junk
+*.log
+.DS_Store
+Thumbs.db

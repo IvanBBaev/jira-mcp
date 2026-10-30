@@ -99,6 +99,45 @@ available.
 search. Then ask it to comment on one of those issues: in the default `plan`
 mode it shows the comment it would post and posts nothing.
 
+### Docker
+
+No image is published yet, so build it from a checkout. The image runs the
+same files as the npm package, on Node 24, as the unprivileged `node` user:
+
+```sh
+git clone https://github.com/IvanBBaev/jira-mcp.git && cd jira-mcp
+docker build -t jira-mcp-ai .
+```
+
+**stdio** (the default) — the client starts the container itself. Pass the
+credentials with `--env-file` (the file `doctor --save` writes works as is,
+unless a value needed quoting), so the token stays out of the client config:
+
+```sh
+claude mcp add --scope user jira -- \
+  docker run -i --rm --env-file ~/.config/jira-mcp-ai/.env \
+  -e JIRA_WRITE_MODE=plan jira-mcp-ai
+```
+
+**http** — one long-running container that clients connect to. Inside a
+container the server must listen on `0.0.0.0`, so publish the port to the
+host's loopback only, with the same port on both sides; the `Host` and `Origin`
+checks stay loopback either way. Expect the `http_bind_not_loopback` warning
+at startup: it describes the bind inside the container, not what the host
+exposes.
+
+```sh
+export JIRA_HTTP_TOKEN="$(openssl rand -hex 32)"   # keep it: clients need it
+docker run -d --name jira-mcp --env-file ~/.config/jira-mcp-ai/.env \
+  -e JIRA_TRANSPORT=http -e JIRA_HTTP_BIND=0.0.0.0 -e JIRA_HTTP_TOKEN \
+  -p 127.0.0.1:3334:3334 jira-mcp-ai
+```
+
+`JIRA_HTTP_TOKEN` must be at least 32 characters; clients send it as
+`Authorization: Bearer <token>`. File output (`JIRA_MEDIA_DIR`,
+`JIRA_REPORT_DIR`) needs a mounted volume writable by uid 1000. See
+[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for both transports.
+
 ## Configuration
 
 Every setting is an environment variable with the `JIRA_` prefix. The full table

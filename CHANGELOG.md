@@ -187,8 +187,12 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
 - A Claude Desktop bundle, `jira-mcp-ai-<version>.mcpb`: runs on Desktop's
   own Node and asks for the site, email, API token, write mode, tool packages
   and an optional attachment directory at install.
+- A `Dockerfile`: a non-root image on Node 24 that runs the same files as the
+  npm package, over stdio by default or over http published to the host's
+  loopback. No image is published yet; build it from a checkout (README
+  §Docker).
 
-Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
+Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, D521.
 
 ### Changed
 
