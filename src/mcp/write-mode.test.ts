@@ -20,18 +20,24 @@ import { createRedactor } from '../core/redact.js';
 import { JiraError } from '../core/types.js';
 import type { ControlFields } from './types.js';
 import type { AnyToolSpec, PlannedRequest, ToolCtx, ToolResult } from './types.js';
-import type { JiraRequestFn, Rng } from '../core/types.js';
+import type { SecureRandom } from '../core/rng.js';
+import type { JiraRequestFn } from '../core/types.js';
 import { defineTool, toolInput, writeToolInput, z } from './define.js';
 import { ok } from './result.js';
 import {
   CONFIRM_BEFORE_MAX_CHARS,
   CONFIRM_ENV_VAR,
   IRREVERSIBLE_ENV_VAR,
+  LOCAL_PLAN_OWNER,
   MAX_EVICTED_TOMBSTONES,
   MAX_OUTSTANDING_PLANS,
+  MAX_STORE_PLANS,
+  PLAN_ID_BYTES,
   PLAN_ID_PATTERN,
+  PLAN_TTL_MS,
   PLAN_NOTICE_LINE,
   createPlanStore,
+  credentialFingerprint,
   confirmSummary,
   createWriteGate,
   isPlanResult,
@@ -51,17 +57,19 @@ import type {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** Distinct, reproducible draws — never `Math.random` [eslint]. */
-function countingRng(start = 1): Rng {
+/** Distinct, reproducible byte draws — never `Math.random` [eslint]. */
+function countingBytes(start = 1): SecureRandom {
   let n = start;
-  return (): number => {
+  return (byteLength: number): Uint8Array => {
     n += 1;
-    return (n % 4096) / 4096;
+    const bytes = new Uint8Array(byteLength);
+    new DataView(bytes.buffer).setUint32(0, n);
+    return bytes;
   };
 }
 
-function constantRng(value = 0): Rng {
-  return (): number => value;
+function constantBytes(value = 0): SecureRandom {
+  return (byteLength: number): Uint8Array => new Uint8Array(byteLength).fill(value);
 }
 
 function makeCtx(jira: JiraRequestFn): ToolCtx {
@@ -331,9 +339,24 @@ test('splitControlFields ignores wrongly-typed control values and non-objects', 
 // Plan ids and the binding fingerprint
 // ---------------------------------------------------------------------------
 
-test('newPlanId draws from the injected rng and matches the id shape', () => {
-  assert.equal(newPlanId(constantRng(0)), 'plan_000000000000000000000000');
-  assert.match(newPlanId(countingRng()), PLAN_ID_PATTERN);
+test('[CC-5090] newPlanId is 128 bits from the injected byte source, hex-encoded', () => {
+  assert.equal(PLAN_ID_BYTES * 8, 128);
+  assert.equal(newPlanId(constantBytes(0)), `plan_${'0'.repeat(32)}`);
+  assert.equal(newPlanId(constantBytes(0xab)), `plan_${'ab'.repeat(16)}`);
+  assert.match(newPlanId(countingBytes()), PLAN_ID_PATTERN);
+});
+
+test('[CC-5091] the production plan ids come from the CSPRNG and do not repeat', () => {
+  // No byte source injected: the store draws from `systemSecureRandom` (D511).
+  const store = createPlanStore();
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const ids = new Set<string>();
+  for (let n = 0; n < 200; n += 1) {
+    const id = store.issue(binding);
+    assert.match(id, PLAN_ID_PATTERN);
+    ids.add(id);
+  }
+  assert.equal(ids.size, 200);
 });
 
 test('planFingerprint ignores key order but tracks tool, args and profile', () => {
@@ -377,27 +400,19 @@ test('[CC-145] an own __proto__ key is fingerprinted like any other key', () => 
   );
 });
 
-test('newPlanId clamps a wild draw and treats a non-finite one as zero', () => {
-  // A misbehaving rng must never produce an id outside the shape the store
-  // and the apply path agree on — 24 lowercase hex digits, no more, no less.
+test('[CC-5092] newPlanId keeps its shape when a byte source returns too few bytes', () => {
+  // A misbehaving source must never produce an id outside the shape the store
+  // and the apply path agree on — 32 lowercase hex digits, no more, no less.
   assert.equal(
-    newPlanId(() => Number.NaN),
-    'plan_000000000000000000000000',
+    newPlanId(() => new Uint8Array(0)),
+    `plan_${'0'.repeat(32)}`,
   );
   assert.equal(
-    newPlanId(() => Number.POSITIVE_INFINITY),
-    'plan_000000000000000000000000',
-  );
-  assert.equal(
-    newPlanId(() => -1),
-    'plan_000000000000000000000000',
-  );
-  assert.equal(
-    newPlanId(() => 2),
-    'plan_ffffffffffffffffffffffff',
+    newPlanId(() => new Uint8Array([0xff])),
+    `plan_ff${'0'.repeat(30)}`,
   );
   assert.match(
-    newPlanId(() => 2),
+    newPlanId(() => new Uint8Array(64).fill(0xff)),
     PLAN_ID_PATTERN,
   );
 });
@@ -420,7 +435,7 @@ test('planFingerprint binds an absent field and an explicit undefined the same w
 // ---------------------------------------------------------------------------
 
 test('a plan id is single-use, and a mismatched apply burns it too', () => {
-  const store = createPlanStore(countingRng());
+  const store = createPlanStore({ random: countingBytes() });
   const binding = { tool: 'jira_test_write', fingerprint: 'fp-1' };
 
   const id = store.issue(binding);
@@ -440,7 +455,7 @@ test('a plan id is single-use, and a mismatched apply burns it too', () => {
 });
 
 test('the store is bounded — the oldest outstanding plan is evicted', () => {
-  const store = createPlanStore(countingRng(), 3);
+  const store = createPlanStore({ random: countingBytes(), maxPerSession: 3 });
   const ids = [0, 1, 2, 3].map((n) =>
     store.issue({ tool: 'jira_test_write', fingerprint: `fp-${String(n)}` }),
   );
@@ -458,18 +473,18 @@ test('the store is bounded — the oldest outstanding plan is evicted', () => {
 });
 
 test('CC-1000: an evicted id is reported as evicted once, then as unknown', () => {
-  const store = createPlanStore(countingRng(), 1);
+  const store = createPlanStore({ random: countingBytes(), maxPerSession: 1 });
   const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
   const first = store.issue(binding);
   store.issue(binding);
 
   assert.equal(store.consume(first, binding), 'evicted');
   assert.equal(store.consume(first, binding), 'unknown', 'the tombstone is spent too');
-  assert.equal(store.consume('plan_ffffffffffffffffffffffff', binding), 'unknown');
+  assert.equal(store.consume(`plan_${'f'.repeat(32)}`, binding), 'unknown');
 });
 
 test('CC-1000: the tombstones are bounded — the oldest evicted id becomes unknown', () => {
-  const store = createPlanStore(countingRng(), 1);
+  const store = createPlanStore({ random: countingBytes(), maxPerSession: 1 });
   const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
   const ids = Array.from({ length: MAX_EVICTED_TOMBSTONES + 2 }, () =>
     store.issue(binding),
@@ -482,18 +497,19 @@ test('CC-1000: the tombstones are bounded — the oldest evicted id becomes unkn
   assert.equal(MAX_EVICTED_TOMBSTONES, 256);
 });
 
-test('a colliding plan id is drawn again; a stuck rng lets the newer plan win', () => {
-  // Eight zero draws (two ids' worth) then a counting sequence: the second
+test('a colliding plan id is drawn again; a stuck source lets the newer plan win', () => {
+  // Two zero draws (two ids' worth) then a counting sequence: the second
   // issue lands on the first id, notices the collision and draws a fresh one.
   let draws = 0;
-  const stuckThenCounting: Rng = () => {
+  const counting = countingBytes();
+  const stuckThenCounting: SecureRandom = (byteLength) => {
     draws += 1;
-    return draws <= 8 ? 0 : (draws % 4096) / 4096;
+    return draws <= 2 ? new Uint8Array(byteLength) : counting(byteLength);
   };
-  const store = createPlanStore(stuckThenCounting);
+  const store = createPlanStore({ random: stuckThenCounting });
   const first = store.issue({ tool: 'jira_test_write', fingerprint: 'fp-1' });
   const second = store.issue({ tool: 'jira_test_write', fingerprint: 'fp-2' });
-  assert.equal(first, 'plan_000000000000000000000000');
+  assert.equal(first, `plan_${'0'.repeat(32)}`);
   assert.notEqual(second, first);
   assert.equal(store.size, 2, 'both plans stay outstanding');
   assert.equal(
@@ -505,9 +521,9 @@ test('a colliding plan id is drawn again; a stuck rng lets the newer plan win', 
     'ok',
   );
 
-  // An rng that never moves cannot escape the collision. The id then binds
+  // A source that never moves cannot escape the collision. The id then binds
   // the NEWER request only — it must never authorize two different ones.
-  const stuck = createPlanStore(constantRng(0));
+  const stuck = createPlanStore({ random: constantBytes(0) });
   const older = stuck.issue({ tool: 'jira_test_write', fingerprint: 'fp-old' });
   const newer = stuck.issue({ tool: 'jira_test_write', fingerprint: 'fp-new' });
   assert.equal(newer, older);
@@ -521,6 +537,141 @@ test('a colliding plan id is drawn again; a stuck rng lets the newer plan win', 
 });
 
 // ---------------------------------------------------------------------------
+// The plan store — owners, TTL and quotas (D512–D514)
+// ---------------------------------------------------------------------------
+
+const ALICE = { session: 'session-a', credential: credentialFingerprint('token-a') };
+const BOB = { session: 'session-b', credential: credentialFingerprint('token-a') };
+const ALICE_OTHER_TOKEN = {
+  session: 'session-a',
+  credential: credentialFingerprint('token-b'),
+};
+
+test('[CC-5093] another session cannot claim a plan, and its try does not burn it', () => {
+  const store = createPlanStore({ random: countingBytes() });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const id = store.issue(binding, ALICE);
+
+  assert.equal(store.consume(id, binding, BOB), 'foreign');
+  assert.equal(store.size, 1, 'the owner still holds the plan');
+  // Not even a wrong binding is compared for a foreign claim: no probing.
+  assert.equal(store.consume(id, { ...binding, fingerprint: 'other' }, BOB), 'foreign');
+  assert.equal(
+    store.consume(id, binding),
+    'foreign',
+    'the local owner is just another owner',
+  );
+  assert.equal(store.consume(id, binding, ALICE), 'ok');
+});
+
+test('[CC-5094] the same session with another credential cannot claim a plan', () => {
+  const store = createPlanStore({ random: countingBytes() });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const id = store.issue(binding, ALICE);
+
+  assert.equal(store.consume(id, binding, ALICE_OTHER_TOKEN), 'foreign');
+  assert.equal(store.consume(id, binding, { ...ALICE }), 'ok', 'owners compare by value');
+});
+
+test('[CC-5095] credentialFingerprint is a digest, never the secret, and tells secrets apart', () => {
+  const digest = credentialFingerprint('s3cret-token');
+  assert.match(digest, /^sha256:[0-9a-f]{64}$/);
+  assert.ok(!digest.includes('s3cret-token'));
+  assert.equal(digest, credentialFingerprint('s3cret-token'));
+  assert.notEqual(digest, credentialFingerprint('s3cret-tokeN'));
+});
+
+test('[CC-5096] a plan older than the TTL is refused as expired once, then unknown', () => {
+  const clock = createFakeClock();
+  const store = createPlanStore({ random: countingBytes(), clock, ttlMs: 1_000 });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+
+  const fresh = store.issue(binding, ALICE);
+  clock.advance(999);
+  assert.equal(store.consume(fresh, binding, ALICE), 'ok', 'inside the TTL');
+
+  const stale = store.issue(binding, ALICE);
+  clock.advance(1_000);
+  assert.equal(store.consume(stale, binding, ALICE), 'expired');
+  assert.equal(store.size, 0);
+  assert.equal(store.consume(stale, binding, ALICE), 'unknown');
+  assert.equal(PLAN_TTL_MS, 60 * 60_000);
+});
+
+test('[CC-5097] an expired plan is swept on issue, so it does not hold a quota slot', () => {
+  const clock = createFakeClock();
+  const store = createPlanStore({
+    random: countingBytes(),
+    clock,
+    ttlMs: 1_000,
+    maxPerSession: 1,
+  });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const old = store.issue(binding, ALICE);
+  clock.advance(1_000);
+  const next = store.issue(binding, ALICE);
+  assert.equal(store.size, 1);
+  assert.equal(store.consume(old, binding, ALICE), 'expired', 'expired, not evicted');
+  assert.equal(store.consume(next, binding, ALICE), 'ok');
+});
+
+test('[CC-5098] without a clock the store has no TTL (stdio is unchanged)', () => {
+  const store = createPlanStore({ random: countingBytes(), ttlMs: 1 });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const id = store.issue(binding);
+  assert.equal(store.consume(id, binding), 'ok');
+});
+
+test('[CC-5099] the quota is per session — a busy session evicts only its own plans', () => {
+  const store = createPlanStore({ random: countingBytes(), maxPerSession: 2 });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const bobs = store.issue(binding, BOB);
+  const alices = [0, 1, 2, 3, 4].map(() => store.issue(binding, ALICE));
+
+  assert.equal(store.size, 3, "two of Alice's, one of Bob's");
+  assert.equal(
+    store.consume(bobs, binding, BOB),
+    'ok',
+    "Bob's plan survived Alice's burst",
+  );
+  assert.equal(store.consume(String(alices[0]), binding, ALICE), 'evicted');
+  assert.equal(store.consume(String(alices[4]), binding, ALICE), 'ok');
+});
+
+test('[CC-5100] the whole store is bounded too — the globally oldest plan goes', () => {
+  const store = createPlanStore({
+    random: countingBytes(),
+    maxPerSession: 5,
+    maxTotal: 2,
+  });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const first = store.issue(binding, ALICE);
+  const second = store.issue(binding, BOB);
+  const third = store.issue(binding, ALICE);
+  assert.equal(store.size, 2);
+  assert.equal(store.consume(first, binding, ALICE), 'evicted');
+  assert.equal(store.consume(second, binding, BOB), 'ok');
+  assert.equal(store.consume(third, binding, ALICE), 'ok');
+  assert.equal(MAX_STORE_PLANS, 32 * MAX_OUTSTANDING_PLANS);
+});
+
+test("[CC-5101] dropSession forgets one session's plans and no other's", () => {
+  const store = createPlanStore({ random: countingBytes() });
+  const binding = { tool: 'jira_test_write', fingerprint: 'fp' };
+  const alices = store.issue(binding, ALICE);
+  const bobs = store.issue(binding, BOB);
+
+  store.dropSession(ALICE.session);
+  assert.equal(store.size, 1);
+  assert.equal(store.consume(alices, binding, ALICE), 'unknown');
+  assert.equal(store.consume(bobs, binding, BOB), 'ok');
+  // A dropped session's quota is free again.
+  store.dropSession('never-existed');
+  assert.equal(store.size, 0);
+  assert.deepEqual(LOCAL_PLAN_OWNER, { session: 'local', credential: 'local' });
+});
+
+// ---------------------------------------------------------------------------
 // The gate — reads
 // ---------------------------------------------------------------------------
 
@@ -531,7 +682,6 @@ test('a read tool is not gated in either write mode', async () => {
     const gate = createWriteGate({
       writeMode,
       allowIrreversible: false,
-      rng: countingRng(),
     });
 
     const result = await gate.execute(callOf(readTool, { key: 'ABC-1' }, {}, fake.fn));
@@ -551,7 +701,6 @@ test('CC-20: plan mode captures the write, returns a plan and touches no network
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -584,7 +733,6 @@ test('plan mode still performs the reads a truthful plan is built from', async (
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -605,7 +753,6 @@ test('the plan shows the query the URL would carry, minus the entries it drops',
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -627,7 +774,6 @@ test('a query whose every value is undefined leaves no query key on the plan', a
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(callOf(queryWriteTool, {}, {}, fake.fn));
@@ -646,7 +792,6 @@ test('plan mode redacts string query values and leaves the scalars alone', async
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
     redact: (value) => redactor.redact(value),
   });
 
@@ -666,7 +811,6 @@ test('plan mode redacts the captured body through the injected redactor', async 
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
     redact: (value) => redactor.redact(value),
   });
 
@@ -739,7 +883,6 @@ test('the plan shows the WHOLE body, not a depth-capped summary of it', async ()
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
     redact: (value) => redactor.redact(value),
   });
 
@@ -791,7 +934,6 @@ test('CC-86: the plan of a multipart upload names the file, without the bytes', 
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -844,7 +986,6 @@ test('the plan of a multipart upload redacts the filename and skips an absent co
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
     redact: (value) => redactor.redact(value),
   });
 
@@ -899,7 +1040,6 @@ test('[CC-426] an upload whose file changed after the plan is refused and sends 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { issue: 'ABC-1' };
   const planAndApply = async (): Promise<ToolResult<unknown>> => {
@@ -937,7 +1077,6 @@ test('a handler that swallows the capture still yields a plan, not a fake succes
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -954,7 +1093,6 @@ test('apply: true in plan mode is ignored, and the hint says so', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -972,7 +1110,6 @@ test('[CC-552] a handler that sorts its arguments in place does not void its own
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const planned = await gate.execute(
@@ -996,7 +1133,6 @@ test('[CC-550] the plan-mode hint names the operator restart, not a re-invocatio
   const planGate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const planned = await planGate.execute(
     callOf(writeTool, { summary: 'Ship it' }, {}, fake.fn),
@@ -1020,7 +1156,6 @@ test('[CC-550] the plan-mode hint names the operator restart, not a re-invocatio
   const applyGate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const applyPlan = await applyGate.execute(
     callOf(writeTool, { summary: 'Ship it' }, {}, fake.fn),
@@ -1039,7 +1174,6 @@ test('apply mode without a plan_id refuses and sends nothing', async () => {
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -1058,7 +1192,6 @@ test('apply mode without apply: true produces a plan instead of a write', async 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -1074,7 +1207,6 @@ test('apply mode with an unknown plan_id refuses', async () => {
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -1097,7 +1229,6 @@ test('plan then apply with identical arguments executes exactly once', async () 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'Ship it' };
 
@@ -1127,7 +1258,6 @@ test('argument drift between plan and apply invalidates the plan_id (CC-32)', as
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const planResult = await gate.execute(
@@ -1156,7 +1286,6 @@ test('a plan bound to one profile does not authorize another', async () => {
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'Ship it' };
 
@@ -1178,8 +1307,7 @@ test('CC-1000: applying a plan the bound evicted is refused as evicted, nothing 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
-    store: createPlanStore(countingRng(), 1),
+    store: createPlanStore({ random: countingBytes(), maxPerSession: 1 }),
   });
 
   const first = await gate.execute(callOf(writeTool, { summary: 'One' }, {}, fake.fn));
@@ -1198,8 +1326,71 @@ test('CC-1000: applying a plan the bound evicted is refused as evicted, nothing 
   assert.deepEqual(fake.calls, []);
 });
 
+test("[CC-5102] a gate refuses another owner's plan as foreign and leaves it appliable", async () => {
+  const fake = createFakeJiraRequest();
+  fake.on('POST /rest/api/3/issue', jiraOk({ id: '10001', key: 'ABC-1' }));
+  let owner = ALICE;
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    store: createPlanStore({ random: countingBytes() }),
+    owner: () => owner,
+  });
+
+  const planned = await gate.execute(callOf(writeTool, { summary: 'One' }, {}, fake.fn));
+  const control = { apply: true, plan_id: planIdOf(planned) };
+
+  for (const intruder of [BOB, ALICE_OTHER_TOKEN]) {
+    owner = intruder;
+    const refused = await gate.execute(
+      callOf(writeTool, { summary: 'One' }, control, fake.fn),
+    );
+    assert.equal(refused.error?.kind, 'write_gated');
+    assert.ok(refused.error?.message.includes('another session or credential'));
+    assert.ok(refused.error?.message.includes('NOT consumed'));
+  }
+  assert.deepEqual(fake.calls, [], 'nothing reached Jira for the intruders');
+  assert.equal(gate.outstandingPlans, 1);
+
+  owner = ALICE;
+  const applied = await gate.execute(
+    callOf(writeTool, { summary: 'One' }, control, fake.fn),
+  );
+  assert.equal(applied.ok, true, 'the owner still applies its plan');
+});
+
+test('[CC-5103] a gate refuses an expired plan with its own message, nothing sent', async () => {
+  const fake = createFakeJiraRequest();
+  const clock = createFakeClock();
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+    store: createPlanStore({ random: countingBytes(), clock, ttlMs: PLAN_TTL_MS }),
+  });
+  const planned = await gate.execute(callOf(writeTool, { summary: 'One' }, {}, fake.fn));
+  clock.advance(PLAN_TTL_MS);
+  const applied = await gate.execute(
+    callOf(
+      writeTool,
+      { summary: 'One' },
+      { apply: true, plan_id: planIdOf(planned) },
+      fake.fn,
+    ),
+  );
+  assert.equal(applied.error?.kind, 'write_gated');
+  assert.ok(applied.error?.message.includes('within 60 minutes'));
+  assert.deepEqual(fake.calls, []);
+});
+
 test('writeGatedResult is never retryable and always names the replan path', () => {
-  for (const reason of ['missing', 'unknown', 'mismatch', 'evicted'] as const) {
+  for (const reason of [
+    'missing',
+    'unknown',
+    'mismatch',
+    'evicted',
+    'expired',
+    'foreign',
+  ] as const) {
     const result = writeGatedResult(reason);
     assert.equal(result.ok, false);
     assert.equal(result.error?.kind, 'write_gated');
@@ -1233,7 +1424,6 @@ test('CC-61: an irreversible plan works WITHOUT the opt-in and warns that apply 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn));
@@ -1258,7 +1448,6 @@ test('CC-64: an irreversible plan carries the before-state and is tainted', asyn
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn));
@@ -1281,7 +1470,6 @@ test('the before-state goes through the injected redactor', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
     redact: (value) => redactor.redact(value),
   });
 
@@ -1302,7 +1490,6 @@ test('CC-60: an irreversible apply without the opt-in is gated and burns nothing
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { key: 'ABC-1' };
 
@@ -1330,7 +1517,6 @@ test('with the opt-in, plan then apply deletes once and echoes the before-state'
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
   const args = { key: 'ABC-1' };
 
@@ -1367,7 +1553,6 @@ test('the standard tier is untouched by the irreversible switch', async () => {
     const gate = createWriteGate({
       writeMode: 'apply',
       allowIrreversible,
-      rng: countingRng(),
     });
     const args = { summary: 'Ship it' };
 
@@ -1414,7 +1599,6 @@ function confirmingGate(confirmer: IrreversibleConfirmer | undefined) {
     allowIrreversible: true,
     irreversibleConfirm: 'elicit',
     confirmer,
-    rng: countingRng(),
   });
 }
 
@@ -1550,7 +1734,6 @@ test('[CC-3017] nobody is asked for a standard write, under off, or for a plan t
     allowIrreversible: true,
     irreversibleConfirm: 'off',
     confirmer: never,
-    rng: countingRng(),
   });
   const offId = planIdOf(
     await off.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn)),
@@ -1577,7 +1760,6 @@ test('[CC-3017] nobody is asked for a standard write, under off, or for a plan t
     allowIrreversible: false,
     irreversibleConfirm: 'elicit',
     confirmer: never,
-    rng: countingRng(),
   });
   const lockedId = planIdOf(
     await locked.execute(callOf(deleteTool, { key: 'ABC-1' }, {}, fake.fn)),
@@ -1614,7 +1796,6 @@ test('CC-62: noteBeforeState is a no-op outside plan mode and keeps the first sn
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
   const result = await gate.execute(
     callOf(doubleNoteTool, { key: 'ABC-1' }, {}, fake.fn),
@@ -1699,7 +1880,6 @@ test('CC-1465: a plan carries the context diff, tainted, and sends nothing', asy
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const planned = await gate.execute(editCallOf({ summary: 'New title' }, {}, fake.fn));
@@ -1719,7 +1899,6 @@ test('CC-1466: an apply against an unchanged issue writes once', async () => {
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'New title' };
 
@@ -1740,7 +1919,6 @@ test('CC-1467: an issue changed after the plan is refused as stale and the plan 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'New title' };
 
@@ -1773,7 +1951,6 @@ test('CC-1468: a failed context read in plan mode still issues a plan, without a
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'New title' };
 
@@ -1800,7 +1977,6 @@ test('CC-1469: a plan bound to no version applies without a stale check', async 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'New title' };
   let reads = 0;
@@ -1824,7 +2000,6 @@ test('CC-1470: a context that tries to write is refused before the network', asy
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const sneaky: WriteGateCall['context'] = async (seam) => {
     await seam({ method: 'DELETE', path: '/issue/ABC-1', pathTemplate: '/issue/{key}' });
@@ -1843,7 +2018,6 @@ test('CC-1471: a handler that refuses locally costs no context read', async () =
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   let reads = 0;
   const call: WriteGateCall = {
@@ -1871,7 +2045,6 @@ test('CC-4003: [D400] a plan-mode mutation the preflight refuses issues no plan'
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const seen: string[] = [];
   // The refusal reaches the handler as its write's failure, as on apply.
@@ -1901,7 +2074,6 @@ test('[D400] a plan-mode mutation the preflight admits is planned as before', as
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const result = await gate.execute({
     ...callOf(writeTool, { summary: 's' }, {}, fake.fn),
@@ -1950,7 +2122,6 @@ async function planAndApply(
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const args = { summary: 'Ship it' };
   const plan = await gate.execute(callOf(tool, args, {}, fake.fn));

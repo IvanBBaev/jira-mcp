@@ -369,7 +369,11 @@ attachment *metadata* keeps working — it needs no directory (CC-58).
   `Host` checked against the bound loopback authority and `Origin`, when
   present, against loopback origins before any JSON-RPC is processed (CC-116);
   one session per `Mcp-Session-Id`, whose teardown takes its armed plans with
-  it (CC-117); a POST body read under a 4 MiB cap, after the bearer check, so
+  it (CC-117); one plan store for all sessions, each plan bound to the
+  session and to a SHA-256 fingerprint of the bearer that planned it, so
+  another session or credential is refused without burning the plan, with
+  128-bit CSPRNG plan ids, a 60-minute TTL and a per-session quota that one
+  session cannot use to evict another's plans (D511–D514); a POST body read under a 4 MiB cap, after the bearer check, so
   an authenticated client still cannot make the process buffer an unbounded
   body (CC-139); and at most 32 sessions at once, so an initialize loop that
   never sends DELETE cannot grow the server set either (CC-209).

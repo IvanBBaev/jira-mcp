@@ -10,13 +10,17 @@
 // tools contain no plan-mode branch at all, and why "nothing hit the wire" is a
 // property of the seam instead of a discipline every tool author must keep.
 //
-// SINGLE-USE IDS. A plan returns a `plan_id` minted from the injected Rng and
-// bound to (tool, profile, normalized arguments). Applying consumes it — on a
-// match, on a mismatch, on a stale id, always — so a plan can authorize exactly
-// one write and an argument that drifted between plan and apply surfaces as
-// `write_gated` rather than as a surprise mutation (CC-32). The store is a plain
-// Map: the ids die with the process, deliberately, because a plan that outlives
-// the session it was reviewed in is no longer a reviewed plan.
+// SINGLE-USE IDS. A plan returns a `plan_id` of 128 CSPRNG bits (D511) bound to
+// (tool, profile, normalized arguments) and to its OWNER, the session and
+// credential that planned it (D512). Applying consumes it — on a match, on a
+// mismatch, on a stale id, always — so a plan can authorize exactly one write
+// and an argument that drifted between plan and apply surfaces as `write_gated`
+// rather than as a surprise mutation (CC-32). Only a claim by another owner
+// leaves the plan alone: it is refused before anything is compared. The store
+// is a plain Map and the ids die with the process, deliberately, because a plan
+// that outlives the session it was reviewed in is no longer a reviewed plan.
+// Under HTTP one store serves every session (D513), so it also drops a closed
+// session's plans, expires plans by age and caps each session on its own (D514).
 //
 // TOOLS.md also specifies "a stable hash of tool name + normalized arguments"
 // for the id itself. D14 and the WP brief supersede that: a hash is reproducible
@@ -45,6 +49,7 @@
 import { createHash } from 'node:crypto';
 
 import type {
+  Clock,
   JiraMultipartFile,
   JiraRequestFn,
   JiraRequestSpec,
@@ -52,9 +57,10 @@ import type {
   QueryParams,
   QueryValue,
   IrreversibleConfirm,
-  Rng,
   WriteMode,
 } from '../core/types.js';
+import { systemSecureRandom } from '../core/rng.js';
+import type { SecureRandom } from '../core/rng.js';
 import { CONTROL_FIELD_NAMES } from './define.js';
 import { errorResult, errorResultOf } from './errors.js';
 import { markExecuted, ok } from './result.js';
@@ -188,11 +194,27 @@ export function splitControlFields(args: unknown): SplitArgs {
 // Plan ids and the binding fingerprint
 // ---------------------------------------------------------------------------
 
-/** Shape of every id this module mints; asserted by the tests and by `consume`. */
-export const PLAN_ID_PATTERN = /^plan_[0-9a-f]{24}$/;
+/** Bytes of CSPRNG output in one plan id: 128 bits (D511). */
+export const PLAN_ID_BYTES = 16;
 
-/** How many outstanding plans one process keeps before evicting the oldest. */
+/** Shape of every id this module mints; asserted by the tests. */
+export const PLAN_ID_PATTERN = /^plan_[0-9a-f]{32}$/;
+
+/** How many outstanding plans one session keeps before evicting its own oldest. */
 export const MAX_OUTSTANDING_PLANS = 64;
+
+/**
+ * The whole store's backstop (D514): a server-wide store holds every session's
+ * plans, and a closed session's are dropped, so this only binds if sessions are
+ * never closed. 32 sessions (`HTTP_MAX_SESSIONS`) at the per-session quota.
+ */
+export const MAX_STORE_PLANS = 32 * MAX_OUTSTANDING_PLANS;
+
+/**
+ * How long a server-wide plan waits for its apply (D514). The HTTP transport's
+ * store uses it; the stdio store has no TTL, as before.
+ */
+export const PLAN_TTL_MS = 60 * 60_000;
 
 /**
  * How many evicted ids the store still recognizes, so an apply of one is told
@@ -202,22 +224,47 @@ export const MAX_OUTSTANDING_PLANS = 64;
 export const MAX_EVICTED_TOMBSTONES = 256;
 
 /**
- * Mint a plan id from the injected Rng — never `Math.random`, so a test can
- * assert the exact id a call returns. Four 24-bit draws; this is a handle, not
- * a capability token (the store is in-process and unreachable from the wire).
+ * Mint a plan id from the CSPRNG seam (D511). Under a server-wide store an id is
+ * a handle another session could try, so it must be unguessable; the owner
+ * binding (D512) is the second lock, not a substitute. A short or missing byte
+ * from an injected source reads as zero, so the shape never varies.
  */
-export function newPlanId(rng: Rng): string {
+export function newPlanId(random: SecureRandom): string {
+  const bytes = random(PLAN_ID_BYTES);
   let hex = '';
-  for (let draw = 0; draw < 4; draw += 1) {
-    const raw = rng();
-    const unit = Number.isFinite(raw)
-      ? Math.min(Math.max(raw, 0), 1 - Number.EPSILON)
-      : 0;
-    hex += Math.floor(unit * 0x100_0000)
-      .toString(16)
-      .padStart(6, '0');
+  for (let index = 0; index < PLAN_ID_BYTES; index += 1) {
+    hex += (bytes[index] ?? 0).toString(16).padStart(2, '0');
   }
   return `plan_${hex}`;
+}
+
+/**
+ * Who may apply a plan (D512): the session that planned it, holding the same
+ * credential. Both are opaque strings; the credential is a digest, never the
+ * secret itself ({@link credentialFingerprint}).
+ */
+export interface PlanOwner {
+  readonly session: string;
+  readonly credential: string;
+}
+
+/**
+ * The owner of every plan when nothing names one: stdio (one process, one
+ * client) and a gate built without a server. Equal to itself, so nothing changes
+ * for those callers.
+ */
+export const LOCAL_PLAN_OWNER: PlanOwner = Object.freeze({
+  session: 'local',
+  credential: 'local',
+});
+
+/**
+ * The credential half of a {@link PlanOwner}: a SHA-256 of the secret the caller
+ * authenticated with, so the store never holds the secret and two different
+ * secrets cannot share plans.
+ */
+export function credentialFingerprint(secret: string): string {
+  return `sha256:${createHash('sha256').update(secret, 'utf8').digest('hex')}`;
 }
 
 /** Key order is normalized so `{a,b}` and `{b,a}` are the same request. */
@@ -290,8 +337,13 @@ export interface PlanBinding {
   readonly summary?: string;
 }
 
-/** Outcome of an apply's id check; `ok` is the only one that lets a write run. */
-export type PlanConsumeOutcome = 'ok' | 'unknown' | 'mismatch' | 'evicted';
+/**
+ * Outcome of an apply's id check; `ok` is the only one that lets a write run.
+ * `foreign`: another owner planned it (D512). `expired`: older than the store's
+ * TTL (D514).
+ */
+export type PlanConsumeOutcome =
+  'ok' | 'unknown' | 'mismatch' | 'evicted' | 'expired' | 'foreign';
 
 /** A consumed plan: the outcome, and on `ok` what the plan was issued with. */
 export interface PlanClaim {
@@ -300,80 +352,176 @@ export interface PlanClaim {
 }
 
 /**
- * In-memory, single-use plan ids (D14). No TTL: the lifetime IS the process, and
- * a sweep timer would need a real clock the fake clock cannot drive.
+ * Single-use plan ids (D14), each bound to an owner (D512). One per gate under
+ * stdio; one per process under HTTP, shared by every session (D513).
  */
 export interface PlanStore {
-  /** Register a binding and return its id. */
-  issue(binding: PlanBinding): string;
-  /** Check and consume `planId`; the id is spent whatever the answer is. */
-  consume(planId: string, binding: PlanBinding): PlanConsumeOutcome;
+  /** Register a binding for `owner` (default {@link LOCAL_PLAN_OWNER}) and return its id. */
+  issue(binding: PlanBinding, owner?: PlanOwner): string;
+  /**
+   * Check and consume `planId`; the id is spent whatever the answer is, except
+   * `foreign`: a claim by another owner leaves the owner's plan alone.
+   */
+  consume(planId: string, binding: PlanBinding, owner?: PlanOwner): PlanConsumeOutcome;
   /** `consume`, plus the binding the id was issued with when the answer is `ok`. */
-  claim(planId: string, binding: PlanBinding): PlanClaim;
-  /** Outstanding plans — a leak check for the tests. */
+  claim(planId: string, binding: PlanBinding, owner?: PlanOwner): PlanClaim;
+  /** Forget every plan of a session that ended; its ids then read as `unknown`. */
+  dropSession(session: string): void;
+  /** Outstanding plans, all sessions — a leak check for the tests. */
   readonly size: number;
 }
 
-export function createPlanStore(
-  rng: Rng,
-  maxOutstanding: number = MAX_OUTSTANDING_PLANS,
-): PlanStore {
-  const plans = new Map<string, PlanBinding>();
-  // Ids pushed out by the bound below, oldest first. Without them an evicted id
-  // read as "unknown, already used, or from an earlier process" — none of which
-  // was true for a model that planned a batch of more than 64 writes and then
-  // applied it in order, and nothing told it to apply as it plans (CC-1000).
-  const evicted = new Set<string>();
+export interface PlanStoreOptions {
+  /** Where ids come from. Production leaves it to the CSPRNG (D511). */
+  readonly random?: SecureRandom | undefined;
+  /** Outstanding plans per session before that session's oldest is evicted. */
+  readonly maxPerSession?: number | undefined;
+  /** Outstanding plans in the whole store; the globally oldest loses (D514). */
+  readonly maxTotal?: number | undefined;
+  /**
+   * With `ttlMs`, plans older than it are dropped as `expired` (D514). Both or
+   * neither: the stdio store has no clock and no TTL.
+   */
+  readonly clock?: Clock | undefined;
+  readonly ttlMs?: number | undefined;
+}
+
+interface StoredPlan {
+  readonly binding: PlanBinding;
+  readonly owner: PlanOwner;
+  readonly issuedAt: number;
+}
+
+type Tombstone = 'evicted' | 'expired';
+
+function sameOwner(left: PlanOwner, right: PlanOwner): boolean {
+  return left.session === right.session && left.credential === right.credential;
+}
+
+export function createPlanStore(options: PlanStoreOptions = {}): PlanStore {
+  const random = options.random ?? systemSecureRandom;
+  const perSession = Math.max(1, options.maxPerSession ?? MAX_OUTSTANDING_PLANS);
+  const total = Math.max(1, options.maxTotal ?? MAX_STORE_PLANS);
+  const { clock } = options;
+  const ttlMs = clock === undefined ? undefined : options.ttlMs;
+  const plans = new Map<string, StoredPlan>();
+  const perSessionCount = new Map<string, number>();
+  // Ids pushed out by a bound or the TTL, oldest first. Without them an evicted
+  // id read as "unknown, already used, or from an earlier process" — none of
+  // which was true for a model that planned a batch of more than 64 writes and
+  // then applied it in order, and nothing told it to apply as it plans (CC-1000).
+  const tombstones = new Map<string, Tombstone>();
+
+  const forget = (id: string): void => {
+    const entry = plans.get(id);
+    if (entry === undefined) return;
+    plans.delete(id);
+    const left = (perSessionCount.get(entry.owner.session) ?? 1) - 1;
+    if (left <= 0) perSessionCount.delete(entry.owner.session);
+    else perSessionCount.set(entry.owner.session, left);
+  };
+
+  const bury = (id: string, why: Tombstone): void => {
+    forget(id);
+    tombstones.delete(id);
+    tombstones.set(id, why);
+    while (tombstones.size > MAX_EVICTED_TOMBSTONES) {
+      const stalest = tombstones.keys().next();
+      if (stalest.done === true) break;
+      tombstones.delete(stalest.value);
+    }
+  };
+
+  const sweep = (): void => {
+    if (clock === undefined || ttlMs === undefined) return;
+    const now = clock.now();
+    for (const [id, entry] of plans) {
+      if (now - entry.issuedAt >= ttlMs) bury(id, 'expired');
+    }
+  };
+
+  /** The oldest plan, of one session or of any; Map iterates in insertion order. */
+  const oldest = (session?: string): string | undefined => {
+    for (const [id, entry] of plans) {
+      if (session === undefined || entry.owner.session === session) return id;
+    }
+    return undefined;
+  };
 
   return {
     get size(): number {
       return plans.size;
     },
 
-    issue(binding: PlanBinding): string {
-      // Bounded memory: the oldest unapplied plan loses. Map iterates in
-      // insertion order, so "oldest" needs no timestamp and therefore no clock.
-      while (plans.size >= Math.max(1, maxOutstanding)) {
-        const oldest = plans.keys().next();
-        if (oldest.done === true) break;
-        plans.delete(oldest.value);
-        evicted.add(oldest.value);
-        while (evicted.size > MAX_EVICTED_TOMBSTONES) {
-          const stalest = evicted.values().next();
-          if (stalest.done === true) break;
-          evicted.delete(stalest.value);
-        }
+    issue(binding: PlanBinding, owner: PlanOwner = LOCAL_PLAN_OWNER): string {
+      sweep();
+      // Bounded memory, per session first (D514): a session over its quota
+      // loses its OWN oldest plan, never another session's. Insertion order is
+      // the age, so "oldest" needs no timestamp.
+      while ((perSessionCount.get(owner.session) ?? 0) >= perSession) {
+        const id = oldest(owner.session);
+        if (id === undefined) break;
+        bury(id, 'evicted');
+      }
+      while (plans.size >= total) {
+        const id = oldest();
+        if (id === undefined) break;
+        bury(id, 'evicted');
       }
 
-      let id = newPlanId(rng);
+      let id = newPlanId(random);
       for (let attempt = 0; plans.has(id) && attempt < 8; attempt += 1) {
-        id = newPlanId(rng);
+        id = newPlanId(random);
       }
-      // A deterministic (test) rng can repeat forever; the newer plan wins so an
-      // id never authorizes two different requests.
-      plans.delete(id);
-      evicted.delete(id);
-      plans.set(id, binding);
+      // A deterministic (test) source can repeat forever; the newer plan wins
+      // so an id never authorizes two different requests.
+      forget(id);
+      tombstones.delete(id);
+      plans.set(id, { binding, owner, issuedAt: clock?.now() ?? 0 });
+      perSessionCount.set(owner.session, (perSessionCount.get(owner.session) ?? 0) + 1);
       return id;
     },
 
-    consume(planId: string, binding: PlanBinding): PlanConsumeOutcome {
-      return this.claim(planId, binding).outcome;
+    consume(
+      planId: string,
+      binding: PlanBinding,
+      owner: PlanOwner = LOCAL_PLAN_OWNER,
+    ): PlanConsumeOutcome {
+      return this.claim(planId, binding, owner).outcome;
     },
 
-    claim(planId: string, binding: PlanBinding): PlanClaim {
+    claim(
+      planId: string,
+      binding: PlanBinding,
+      owner: PlanOwner = LOCAL_PLAN_OWNER,
+    ): PlanClaim {
+      sweep();
       const found = plans.get(planId);
       if (found === undefined) {
         // Reported once, like any other spent id: the next try is `unknown`.
-        return { outcome: evicted.delete(planId) ? 'evicted' : 'unknown' };
+        const why = tombstones.get(planId);
+        tombstones.delete(planId);
+        return { outcome: why ?? 'unknown' };
       }
-      // Single-use is unconditional: a mismatched apply burns the id too, so a
-      // caller cannot probe arguments against a live plan.
-      plans.delete(planId);
-      if (found.tool !== binding.tool || found.fingerprint !== binding.fingerprint) {
+      // Before anything is compared or spent (D512): another session cannot
+      // learn whether its arguments match, and cannot burn the owner's plan.
+      if (!sameOwner(found.owner, owner)) return { outcome: 'foreign' };
+      // Single-use is unconditional for the owner: a mismatched apply burns the
+      // id too, so a caller cannot probe arguments against a live plan.
+      forget(planId);
+      if (
+        found.binding.tool !== binding.tool ||
+        found.binding.fingerprint !== binding.fingerprint
+      ) {
         return { outcome: 'mismatch' };
       }
-      return { outcome: 'ok', issued: found };
+      return { outcome: 'ok', issued: found.binding };
+    },
+
+    dropSession(session: string): void {
+      for (const [id, entry] of plans) {
+        if (entry.owner.session === session) forget(id);
+      }
     },
   };
 }
@@ -699,12 +847,24 @@ export interface WriteGateDeps {
    * construction site would silently arm the deletes, so the compiler asks.
    */
   readonly allowIrreversible: boolean;
-  /** Source of plan ids; the same seam correlation ids use. */
-  readonly rng: Rng;
+  /**
+   * Source of plan ids when the gate builds its own store; the CSPRNG when
+   * absent (D511). Tests inject a scripted one to assert exact ids.
+   */
+  readonly random?: SecureRandom | undefined;
   /** Redaction choke point applied to a captured body (`PlannedRequest.body`). */
   readonly redact?: ((value: unknown) => unknown) | undefined;
-  /** Injectable for tests; one store per gate otherwise. */
+  /**
+   * The plan store. The HTTP transport passes one store shared by every session
+   * (D513); a gate built without one keeps its own, as stdio does.
+   */
   readonly store?: PlanStore | undefined;
+  /**
+   * Who is calling, read at call time (D512): the server resolves it from the
+   * request's session and credential. Absent, or answering `undefined`, means
+   * {@link LOCAL_PLAN_OWNER}.
+   */
+  readonly owner?: (() => PlanOwner | undefined) | undefined;
   /** `JIRA_IRREVERSIBLE_CONFIRM` (D303). Absent means `off`. */
   readonly irreversibleConfirm?: IrreversibleConfirm | undefined;
   /** How the question reaches a human; the server binds it to elicitation. */
@@ -808,9 +968,21 @@ function refusal(reason: GateRefusal): string {
     case 'evicted':
       return (
         'That plan_id expired unused: the server keeps at most ' +
-        `${String(MAX_OUTSTANDING_PLANS)} unapplied plans and drops the oldest ` +
-        'when a newer plan would exceed that. Apply each plan before planning that ' +
+        `${String(MAX_OUTSTANDING_PLANS)} unapplied plans per session and drops the ` +
+        'oldest when a newer plan would exceed that. Apply each plan before planning that ' +
         'many more. Nothing was sent to Jira.'
+      );
+    case 'expired':
+      return (
+        'That plan_id expired unused: this server drops a plan that is not ' +
+        `applied within ${String(Math.round(PLAN_TTL_MS / 60_000))} minutes. ` +
+        'Nothing was sent to Jira.'
+      );
+    case 'foreign':
+      return (
+        'That plan_id was issued to another session or credential: only the ' +
+        'session that planned a write can apply it. The plan_id was NOT consumed. ' +
+        'Nothing was sent to Jira.'
       );
     case 'unknown':
       return (
@@ -907,7 +1079,8 @@ export function confirmSummary(
 }
 
 export function createWriteGate(deps: WriteGateDeps): WriteGate {
-  const store = deps.store ?? createPlanStore(deps.rng);
+  const store = deps.store ?? createPlanStore({ random: deps.random });
+  const ownerNow = (): PlanOwner => deps.owner?.() ?? LOCAL_PLAN_OWNER;
   const confirming = deps.irreversibleConfirm === 'elicit';
 
   const plan = async (call: WriteGateCall): Promise<ToolResult<unknown>> => {
@@ -943,13 +1116,16 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
             value: redact(capture.before.value),
           })
         : undefined;
-    const planId = store.issue({
-      tool: call.tool.name,
-      fingerprint,
-      ...(digest === undefined ? {} : { payload: digest }),
-      ...(version === undefined ? {} : { version }),
-      ...(summary === undefined ? {} : { summary }),
-    });
+    const planId = store.issue(
+      {
+        tool: call.tool.name,
+        fingerprint,
+        ...(digest === undefined ? {} : { payload: digest }),
+        ...(version === undefined ? {} : { version }),
+        ...(summary === undefined ? {} : { summary }),
+      },
+      ownerNow(),
+    );
     const base: PlanPayload = { executed: false, planned, plan_id: planId };
     const noted = capture.before.noted;
     const withBefore: PlanPayload | IrreversiblePlanPayload = noted
@@ -1025,10 +1201,14 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
         }
       }
 
-      const { outcome, issued } = store.claim(planId, {
-        tool: call.tool.name,
-        fingerprint: planFingerprint(call.tool.name, call.args, call.control.profile),
-      });
+      const { outcome, issued } = store.claim(
+        planId,
+        {
+          tool: call.tool.name,
+          fingerprint: planFingerprint(call.tool.name, call.args, call.control.profile),
+        },
+        ownerNow(),
+      );
       if (outcome !== 'ok') return writeGatedResult(outcome);
       // A plan built without a stamp (its context read failed) has nothing to
       // compare; one built with a stamp needs the same stamp now.

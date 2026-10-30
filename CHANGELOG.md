@@ -229,8 +229,15 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   ARCHITECTURE.md lists every capability the server declares (completions
   was missing; the docs linter now compares the two) and says what is true of
   HTTP sessions: each has its own recent-write registry.
+- `plan_id` values are longer (`plan_` plus 32 hex digits) and drawn from a
+  cryptographic random source. Under `JIRA_TRANSPORT=http` one plan store
+  serves every session: a plan can be applied only by the session and token
+  that planned it (another session's try is refused and leaves the plan
+  alone), an unapplied plan expires after 60 minutes, and each session keeps
+  up to 64 unapplied plans without pushing out another session's. stdio is
+  unchanged.
 
-Decisions: D124, D127, D500–D505, D508, D525–D527.
+Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527.
 
 ### Fixed
 

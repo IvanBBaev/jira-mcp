@@ -377,12 +377,16 @@ async function serve(): Promise<void> {
     // WHICH transport is this file's one branch on `settings.transport` (D101).
     // stdio builds its single Server eagerly — one process, one session. http
     // hands over the FACTORY instead: each MCP session gets its own `buildServer`
-    // product (plans and their write gate die with the session, CC-117), so no
-    // eager Server is constructed here.
+    // product, so no eager Server is constructed here. Plans live in ONE store
+    // shared by those servers (D513), each bound to the session and credential
+    // that planned it (D512), with a TTL and a per-session quota (D514); a
+    // session's plans are dropped as it ends (CC-117).
     let handle: TransportHandle;
     if (settings.transport === 'http') {
       const { connectHttpTransport } = await import('./mcp/transport-http.js');
       const { createRecentWrites } = await import('./mcp/recent-writes.js');
+      const { createPlanStore, PLAN_TTL_MS } = await import('./mcp/write-mode.js');
+      const planStore = createPlanStore({ clock, ttlMs: PLAN_TTL_MS });
       handle = await connectHttpTransport({
         settings,
         logger,
@@ -390,7 +394,10 @@ async function serve(): Promise<void> {
         // Each session also gets its own recent-writes registry, so one client's
         // writes never widen another client's searches (CC-244).
         createServer: () =>
-          buildServer({ ...serverDeps, recentWrites: createRecentWrites() }),
+          buildServer({ ...serverDeps, planStore, recentWrites: createRecentWrites() }),
+        onSessionClosed: (sessionId) => {
+          planStore.dropSession(sessionId);
+        },
       });
     } else {
       const { connectTransport } = await import('./mcp/transport.js');

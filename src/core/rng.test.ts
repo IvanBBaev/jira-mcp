@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { createSystemRng, systemRng } from './rng.js';
+import {
+  createSecureRandom,
+  createSystemRng,
+  systemRng,
+  systemSecureRandom,
+} from './rng.js';
 
 describe('createSystemRng', () => {
   it('returns floats inside the [0, 1) contract', () => {
@@ -25,5 +30,25 @@ describe('createSystemRng', () => {
     assert.equal(typeof systemRng, 'function');
     const value = systemRng();
     assert.ok(value >= 0 && value < 1);
+  });
+});
+
+describe('createSecureRandom (D511, CC-5090)', () => {
+  it('returns exactly the bytes asked for', () => {
+    const random = createSecureRandom();
+    for (const length of [0, 1, 16, 32]) {
+      const bytes = random(length);
+      assert.ok(bytes instanceof Uint8Array);
+      assert.equal(bytes.length, length);
+    }
+  });
+
+  it('does not repeat a 128-bit draw', () => {
+    const seen = new Set(
+      Array.from({ length: 200 }, () =>
+        Buffer.from(systemSecureRandom(16)).toString('hex'),
+      ),
+    );
+    assert.equal(seen.size, 200);
   });
 });

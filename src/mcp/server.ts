@@ -30,6 +30,7 @@
 
 import type { MediaStore } from '../api/attachments.js';
 import type { JiraApi } from '../api/port.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CompleteRequestSchema,
@@ -82,11 +83,12 @@ import { toInputSchema } from './schema.js';
 import type { ConnectableServer } from './transport.js';
 import type { AnyToolSpec, PackageSpec, ToolResult } from './types.js';
 import {
+  LOCAL_PLAN_OWNER,
   createWriteGate,
   planFingerprint,
   type IrreversibleConfirmer,
 } from './write-mode.js';
-import type { WriteGate, WriteGateCall } from './write-mode.js';
+import type { PlanOwner, PlanStore, WriteGate, WriteGateCall } from './write-mode.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -138,6 +140,14 @@ export interface BuildServerDeps {
    */
   readonly recentWrites?: RecentWrites | undefined;
   /**
+   * D513 — the plan store the write gate keeps its plan ids in. The HTTP
+   * transport passes ONE store to every session's server, so a plan can be
+   * found by the session that made it whichever server instance answers; each
+   * plan is bound to the session and credential that planned it (D512). Absent
+   * = the gate keeps its own, as stdio does.
+   */
+  readonly planStore?: PlanStore | undefined;
+  /**
    * JIRA_MEDIA_DIR as a store (D152): where `output: "file"` writes and what
    * `jira://exports/{name}` reads. Absent = file output is refused.
    */
@@ -147,6 +157,24 @@ export interface BuildServerDeps {
 // ---------------------------------------------------------------------------
 // SDK adapters
 // ---------------------------------------------------------------------------
+
+/** The plan owner of the tool call in flight (D512); read by the write gate. */
+const planOwnerScope = new AsyncLocalStorage<PlanOwner>();
+
+/**
+ * Who planned (or is applying) a write: the transport session and the
+ * credential it authenticated with. Stdio has neither and is
+ * {@link LOCAL_PLAN_OWNER}, so nothing changes there.
+ */
+export function planOwnerOf(extra: {
+  readonly sessionId?: string | undefined;
+  readonly authInfo?: { readonly token: string } | undefined;
+}): PlanOwner {
+  return {
+    session: extra.sessionId ?? LOCAL_PLAN_OWNER.session,
+    credential: extra.authInfo?.token ?? LOCAL_PLAN_OWNER.credential,
+  };
+}
 
 /**
  * Convert one frozen {@link AnyToolSpec} into the SDK's `tools/list` shape.
@@ -494,7 +522,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
       allowIrreversible: settings.allowIrreversible,
       irreversibleConfirm: settings.irreversibleConfirm,
       confirmer,
-      rng: deps.rng,
+      store: deps.planStore,
+      owner: () => planOwnerScope.getStore(),
       redact: (value: unknown) => deps.redactor.redact(value),
     });
 
@@ -633,13 +662,18 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
       token === undefined
         ? undefined
         : createProgressSink(token, (n) => extra.sendNotification(n), deps.clock);
-    const rendered = await withRecentWrites(recent, () =>
-      registry.call(
-        request.params.name,
-        request.params.arguments ?? {},
-        // Client cancellation and request timeouts arrive on this signal; the
-        // registry forwards it into `ToolCtx.signal` and thence to fetch.
-        { signal: extra.signal, progress: progress?.sink },
+    // The plan owner (D512) is this request's session and credential; the gate
+    // reads it at call time. The HTTP transport puts a digest of the bearer in
+    // `authInfo.token`, never the bearer itself.
+    const rendered = await planOwnerScope.run(planOwnerOf(extra), () =>
+      withRecentWrites(recent, () =>
+        registry.call(
+          request.params.name,
+          request.params.arguments ?? {},
+          // Client cancellation and request timeouts arrive on this signal; the
+          // registry forwards it into `ToolCtx.signal` and thence to fetch.
+          { signal: extra.signal, progress: progress?.sink },
+        ),
       ),
     );
     // The newest update the throttle held back goes out before the result.

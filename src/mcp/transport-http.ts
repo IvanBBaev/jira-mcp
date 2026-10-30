@@ -14,12 +14,15 @@
 // body, so a hostile page in a local browser gets a 403, not a parser.
 //
 // ONE MCP SESSION PER `Mcp-Session-Id` (CC-117). Each session gets its own
-// `Server` from the injected factory: the SDK binds one `Server` to one
-// transport, and — more importantly — the write-gate's plan_id table lives
-// inside the `buildServer` product, so a session's plans die with its `Server`
-// and an armed plan from a dead session can never be applied. Sessions end on
-// HTTP DELETE (the SDK handles it and calls `onsessionclosed`) or when the
-// clock-driven sweeper finds them idle.
+// `Server` from the injected factory, because the SDK binds one `Server` to
+// one transport. The plan_id table is NOT per session any more (D513): the
+// composition root gives every session's server one shared store, and each
+// plan is bound to the session id and to a digest of the bearer that planned
+// it (D512), so another session — or another credential — is refused, and
+// `onSessionClosed` drops a session's plans as it ends, so an armed plan from a
+// dead session can never be applied. Sessions end on HTTP DELETE (the SDK
+// handles it and calls `onsessionclosed`) or when the clock-driven sweeper
+// finds them idle.
 //
 // INBOUND, NOT OUTBOUND. "Only `core/http.ts` touches the network" is about
 // outbound requests to Jira; this module accepts loopback connections the same
@@ -39,11 +42,13 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import { JiraError } from '../core/types.js';
 import type { Clock, Logger, Settings } from '../core/types.js';
 import type { ConnectableServer, ShutdownReason, TransportHandle } from './transport.js';
+import { credentialFingerprint } from './write-mode.js';
 
 export interface HttpTransportDeps {
   /** `transport === 'http'`; the port and token both come from here. */
@@ -51,8 +56,13 @@ export interface HttpTransportDeps {
   /** Root logger (cid `-`); the `shutdown` event is not part of a tool call. */
   readonly logger: Logger;
   readonly clock: Clock;
-  /** One fresh `Server` per MCP session; plans/gate state live inside it. */
+  /** One fresh `Server` per MCP session; the plan store is shared (D513). */
   readonly createServer: () => ConnectableServer;
+  /**
+   * Called once as a session ends, however it ends (DELETE, idle sweep,
+   * shutdown), so the shared plan store can drop that session's plans (D514).
+   */
+  readonly onSessionClosed?: ((sessionId: string) => void) | undefined;
 }
 
 /**
@@ -67,7 +77,7 @@ export const HTTP_IDLE_SWEEP_INTERVAL_MS = 60_000;
 
 /**
  * CC-209: the most sessions held at once. Each is a whole `buildServer`
- * product with its own plan store, reaped only after the idle timeout, so an
+ * product with up to its own quota of plans in the shared store, reaped only after the idle timeout, so an
  * initialize loop that never sends DELETE was the one per-client growth axis
  * left unbounded. A single-user loopback server needs a handful.
  */
@@ -233,10 +243,21 @@ function headerValue(value: string | string[] | undefined): string | undefined {
  * before any session exists — `main` turns the `JiraError` into a stderr
  * message and a non-zero exit.
  */
+/**
+ * The SDK reads `req.auth` into each handler's `extra.authInfo`, which is where
+ * the server takes a plan owner's credential from (D512).
+ */
+function withAuth(
+  req: IncomingMessage,
+  auth: AuthInfo,
+): IncomingMessage & { auth: AuthInfo } {
+  return Object.assign(req, { auth });
+}
+
 export async function connectHttpTransport(
   deps: HttpTransportDeps,
 ): Promise<TransportHandle> {
-  const { settings, logger, clock, createServer } = deps;
+  const { settings, logger, clock, createServer, onSessionClosed } = deps;
 
   // Defense in depth: `assertStartupOk` already refused this configuration
   // (settings error `http_token_missing`, CC-30), but the gate that keeps an
@@ -256,6 +277,14 @@ export async function connectHttpTransport(
 
   const port = settings.httpPort;
   const expectedToken = Buffer.from(token, 'utf8');
+  // D512: the credential half of a plan's owner. A digest, so the bearer never
+  // reaches the SDK's request context or the plan store. Every request that
+  // gets past the bearer check presented exactly this token.
+  const auth: AuthInfo = {
+    token: credentialFingerprint(token),
+    clientId: 'http-bearer',
+    scopes: [],
+  };
   const sessions = new Map<string, SessionEntry>();
   // Set by `close()` before its teardown loop (CC-164): a keep-alive socket
   // can still deliver an initialize while the loop awaits, and a session
@@ -271,6 +300,13 @@ export async function connectHttpTransport(
     if (entry === undefined || entry.closed) return;
     entry.closed = true;
     sessions.delete(sid);
+    // Before the closes: a plan of this session must not be appliable for a
+    // moment longer than the session exists (D514). Guarded like them.
+    try {
+      onSessionClosed?.(sid);
+    } catch {
+      /* a plan-store hiccup must not keep the session's Server alive */
+    }
     // Transport first: its `onclose` runs the Protocol's `_onclose`, which
     // aborts every in-flight request handler (verified in SDK 1.32.1 source) —
     // the `server.close()` after it is then a settled no-op, kept because the
@@ -416,7 +452,7 @@ export async function connectHttpTransport(
         trackResponse(entry, res);
         // The SDK refuses a non-initialize POST without a session on its
         // own (400).
-        await entry.transport.handleRequest(req, res, parsedBody);
+        await entry.transport.handleRequest(withAuth(req, auth), res, parsedBody);
       } finally {
         uncount();
         if (entry.transport.sessionId === undefined) {
@@ -450,7 +486,7 @@ export async function connectHttpTransport(
     trackResponse(entry, res);
     // DELETE is the SDK's to handle: it answers 200 and fires
     // `onsessionclosed`, which runs `teardown` above.
-    await entry.transport.handleRequest(req, res, parsedBody);
+    await entry.transport.handleRequest(withAuth(req, auth), res, parsedBody);
   };
 
   const httpServer = createHttpServer((req, res) => {

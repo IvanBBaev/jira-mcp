@@ -47,6 +47,7 @@ import {
   JOURNAL_UNAVAILABLE_MESSAGE,
   buildServer,
   journalingGate,
+  planOwnerOf,
   recordingGate,
 } from './server.js';
 import type { BuildServerDeps } from './server.js';
@@ -1095,7 +1096,6 @@ test('the gate wrappers report the plans the gate holds, not their own idea of i
   const base = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: false,
-    rng: countingRng(),
   });
   const wrapped = recordingGate(journalingGate(base, { journal }), { recent });
 
@@ -1462,5 +1462,17 @@ test('[CC-1565] an export travels as a resource_link and reads back through reso
         (t) => !t.uriTemplate.startsWith('jira://exports/'),
       ),
     );
+  });
+});
+
+test('[CC-5105] a plan owner is the request session and credential; stdio is local', () => {
+  assert.deepEqual(planOwnerOf({}), { session: 'local', credential: 'local' });
+  assert.deepEqual(
+    planOwnerOf({ sessionId: 'sid-1', authInfo: { token: 'sha256:abc' } }),
+    { session: 'sid-1', credential: 'sha256:abc' },
+  );
+  assert.deepEqual(planOwnerOf({ sessionId: 'sid-1' }), {
+    session: 'sid-1',
+    credential: 'local',
   });
 });

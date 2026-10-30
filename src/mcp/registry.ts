@@ -396,7 +396,6 @@ export function createRegistry(
       // No confirmer here: a registry built without a server has no client to
       // ask, so under `elicit` an irreversible apply fails closed (D303).
       irreversibleConfirm: settings.irreversibleConfirm,
-      rng: deps.rng,
       redact: (value: unknown) => deps.redactor.redact(value),
     });
   // One cache per registry, applied to the plain seam once: every tool call

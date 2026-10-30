@@ -4028,3 +4028,39 @@ CC-5154. Project ABC is in scope, XYZ is not.
 - **CC-5186** — `POST /issue/bulkfetch`, `POST /changelog/bulkfetch` and
   `POST /search/jql` are recorded as `safe`.
 - **CC-5187** — read tools answer the same in `plan` mode as in `apply` mode.
+
+## Server-wide plan store (V3-09, 2026-10-30)
+
+- **CC-5090** — a plan id is `plan_` plus 32 hex digits: 128 bits from the
+  injected byte source, the CSPRNG in production (D511); `createSecureRandom`
+  returns exactly the bytes asked for.
+- **CC-5091** — with no source injected the store's ids come from the CSPRNG
+  and 200 of them do not repeat.
+- **CC-5092** — a byte source that returns too few bytes still yields a
+  32-digit id (missing bytes read as zero).
+- **CC-5093** — another session's claim is refused as `foreign`, whatever the
+  arguments, and does not consume the plan; the owner then applies it (D512).
+- **CC-5094** — the same session with another credential is refused as
+  `foreign`; owners compare by value.
+- **CC-5095** — `credentialFingerprint` is a `sha256:` digest, never contains
+  the secret, and tells two secrets apart.
+- **CC-5096** — a plan older than the TTL is refused as `expired` once, then
+  `unknown` (D514).
+- **CC-5097** — an expired plan is swept when the session plans again, so it
+  holds no quota slot and is reported as `expired`, not `evicted`.
+- **CC-5098** — a store without a clock has no TTL: stdio is unchanged.
+- **CC-5099** — a session over its quota evicts only its own oldest plan;
+  another session's plan survives.
+- **CC-5100** — the store-wide backstop evicts the globally oldest plan.
+- **CC-5101** — `dropSession` forgets one session's plans, with no tombstone,
+  and no other session's.
+- **CC-5102** — through the gate, a foreign apply is `write_gated` with its own
+  message ("another session or credential", "NOT consumed"), nothing reaches
+  Jira, and the owner still applies the plan.
+- **CC-5103** — through the gate, an expired apply is `write_gated` naming the
+  60-minute limit, and nothing reaches Jira.
+- **CC-5104** — over HTTP, with one store shared by all sessions, session B
+  cannot apply session A's live plan and does not burn it; A then applies it
+  and exactly one request reaches Jira.
+- **CC-5105** — the server takes a plan's owner from the request's session id
+  and `authInfo.token`; without them (stdio) the owner is `local/local`.

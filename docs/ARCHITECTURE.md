@@ -241,6 +241,9 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
 - **RNG**: retry jitter (and correlation ids) come from an injected `rng: () =>
   number`, never `Math.random()` [eslint] — backoff sequences are asserted
   exactly in tests (CC-11…CC-14).
+  Plan ids, which a caller must not guess, draw bytes from the separate
+  `SecureRandom` seam (`core/rng.ts`, `randomBytes`), injected the same way
+  (D511).
 - **Timeout**: `clock.sleep(timeoutMs)` raced against the fetch promise, with an
   explicit `AbortController` aborted by whichever side loses. `AbortSignal.timeout`
   is banned — it owns a real timer the fake clock cannot drive, which would make
@@ -317,10 +320,12 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   Sessions: one MCP session per `Mcp-Session-Id`, created on `initialize` and
   destroyed on `DELETE` or idle timeout. One SDK `Server` binds one transport,
   so each session gets its own `buildServer` product from an injected
-  factory — which is what makes plan death structural rather than a cleanup
-  chore: the write gate's plan_id table lives inside each session's `Server`,
-  so tearing the session down aborts its in-flight calls and takes its armed
-  plans with it (CC-117). The idle sweeper is an async sleep-loop on the
+  factory; tearing a session down aborts its in-flight calls. The plan_id
+  table is one store for the whole process (D513), so a wire that answers a
+  session from another `Server` still finds its plans; each plan is bound to
+  the session and credential fingerprint that planned it (D512), and the
+  transport's `onSessionClosed` drops a session's plans as it ends, with a
+  TTL and a per-session quota on top (D514, CC-117). The idle sweeper is an async sleep-loop on the
   injected `Clock` (no raw timers, same rule as everywhere else);
   SIGINT/SIGTERM close the listener, tear down every live session and resolve
   (CC-118). Under http the protocol rides the socket and stdout carries

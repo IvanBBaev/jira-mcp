@@ -229,15 +229,6 @@ const NO_CONTENT = jiraOk(undefined, { status: 204 });
 
 type FakeJira = ReturnType<typeof createFakeJiraRequest>;
 
-/** Distinct, reproducible plan-id draws — never `Math.random` [eslint]. */
-function countingRng(): () => number {
-  let n = 0;
-  return (): number => {
-    n += 1;
-    return (n % 4096) / 4096;
-  };
-}
-
 /** The `ToolCtx` the registry would build, with every seam faked. */
 function ctxOf(jira: JiraRequestFn): ToolCtx {
   return {
@@ -446,7 +437,6 @@ test('the plan of an issue delete reads the issue and shows what would be lost',
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(callOf(deleteIssueTool, { issue: KEY }, {}, fake.fn));
@@ -487,7 +477,6 @@ test('CC-63: the plan states the blast radius twice: in the query and in the sna
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -519,7 +508,6 @@ test('CC-65: an applied issue delete echoes the same snapshot the plan showed', 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -554,7 +542,6 @@ test('a long summary is excerpted and the subtask list is capped', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -575,7 +562,6 @@ test('the issue snapshot names its fields — no wire object is spread (D41)', a
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -614,7 +600,6 @@ test('CC-66: a thin issue degrades to the keys it really has', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -657,7 +642,6 @@ test('CC-87: a subtask row Jira did not name still COUNTS toward what is destroy
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -693,7 +677,6 @@ test('a status and a type without a name drop out, and no subtasks key means non
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -729,7 +712,6 @@ test('the subtask refusal survives the tool ring with its remediation', async ()
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { applied } = await planThenApply(gate, deleteIssueTool, { issue: KEY }, fake);
@@ -750,7 +732,6 @@ test('the comment snapshot flattens the ADF body and drops the author PII', asyn
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -792,7 +773,6 @@ test('a long comment body is excerpted and says so', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -816,7 +796,6 @@ test('[CC-860] an excerpt never cuts through a surrogate pair', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -851,7 +830,6 @@ test('a comment with no author and no timestamps still plans, with only its body
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -871,7 +849,7 @@ test('a comment with no author and no timestamps still plans, with only its body
 
 test('the author projection keeps the halves Jira actually sent', async () => {
   const gateOf = (): WriteGate =>
-    createWriteGate({ writeMode: 'plan', allowIrreversible: true, rng: countingRng() });
+    createWriteGate({ writeMode: 'plan', allowIrreversible: true });
   const planWith = async (author: Record<string, unknown>): Promise<unknown> => {
     const fake = createFakeJiraRequest().on(
       COMMENT_ROUTE,
@@ -909,7 +887,6 @@ test('the worklog snapshot keeps the time and the started instant verbatim', asy
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -949,7 +926,6 @@ test('a worklog with no comment yields a snapshot without the comment keys', asy
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -984,7 +960,6 @@ test('a worklog whose fields arrive in the wrong shape plans without inventing t
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1009,7 +984,6 @@ test('CC-121: the component plan shows the blast radius, and no DELETE escapes',
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -1059,7 +1033,6 @@ test('an applied component delete echoes the snapshot and the reassignment', asy
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -1099,7 +1072,6 @@ test('a thin component and a countless answer degrade to what Jira sent (CC-66)'
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1117,7 +1089,6 @@ test('a lead with no display name is named by accountId; one with no accountId d
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   // synthetic — a lead Jira sent as an accountId alone (the display name is
@@ -1176,7 +1147,6 @@ test('CC-123: the version plan carries all three related-issue counts', async ()
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: false,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -1233,7 +1203,6 @@ test('an applied version delete echoes the snapshot and both swap targets', asyn
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -1275,7 +1244,6 @@ test('CC-125: an absent target reads as stripped or cleared, never as an error',
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   // Component: no target ⇒ no `moveIssuesTo` query key — `?moveIssuesTo=`
@@ -1324,7 +1292,6 @@ test('a version that is only an id and a name plans without inventing its flags'
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1349,7 +1316,6 @@ test('CC-124: the sprint snapshot records the state — an audit trail, not a gu
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -1396,7 +1362,6 @@ test('a sprint that is only an id and a name still plans honestly', async () => 
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1420,7 +1385,6 @@ test('a closed sprint keeps its completeDate in the snapshot', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1451,7 +1415,6 @@ test('CC-127 [CC-183, CC-964]: a 201 means ENQUEUED — the receipt carries the 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -1548,7 +1511,6 @@ test('[CC-242] bulk edit ids are trimmed in validation, so the plan echoes what 
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
   const plan = await gate.execute(
     callOf(bulkEditIssuesTool, parsed.data, {}, createFakeJiraRequest().fn),
@@ -1586,7 +1548,6 @@ test('[CC-403] bulk edit drops repeated labels and fix versions, so the plan ech
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
   const plan = await gate.execute(
     callOf(bulkEditIssuesTool, parsed.data, {}, createFakeJiraRequest().fn),
@@ -1608,7 +1569,6 @@ test('[CC-243] duplicate bulk targets are dropped before the count and the 1000 
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
   const plan = await gate.execute(
     callOf(bulkDeleteIssuesTool, parsed.data, {}, createFakeJiraRequest().fn),
@@ -1665,7 +1625,6 @@ test('CC-129: the bulk plan is the request itself — zero reads, a count and a 
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const plan = await gate.execute(callOf(bulkDeleteIssuesTool, { issues }, {}, fake.fn));
@@ -1693,7 +1652,6 @@ test('a bulk plan of exactly twenty issues echoes them all and claims no truncat
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1709,7 +1667,6 @@ test('CC-130: the edit posts to /bulk/issues/fields and DERIVES selectedActions 
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -1766,7 +1723,6 @@ test('the fixVersions family rides through the tool into the wire and the before
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -1802,7 +1758,6 @@ test('CC-131: notifyUsers maps to sendBulkNotification, and absent means omitted
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const muted = createFakeJiraRequest().on(BULK_DELETE_SUBMIT_ROUTE, BULK_SUBMIT_RECEIPT);
@@ -1891,7 +1846,6 @@ test('an explicit null assignee survives into the before-state as the unassign i
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -1955,7 +1909,6 @@ test('without the opt-in every delete plans and none of them applies', async () 
     const gate = createWriteGate({
       writeMode: 'apply',
       allowIrreversible: false,
-      rng: countingRng(),
     });
 
     const plan = await gate.execute(callOf(tool, args, {}, fake.fn));
@@ -1988,7 +1941,7 @@ test('an applied delete leaves exactly one journal line; a plan leaves none', as
     .on(DELETE_ISSUE_ROUTE, NO_CONTENT)
     .on(ISSUE_ROUTE, jiraOk(issueBody([])));
   const gate = journalingGate(
-    createWriteGate({ writeMode: 'apply', allowIrreversible: true, rng: countingRng() }),
+    createWriteGate({ writeMode: 'apply', allowIrreversible: true }),
     { journal },
   );
 
@@ -2027,7 +1980,6 @@ test('a read that fails before the delete never reaches the DELETE', async () =>
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(callOf(deleteIssueTool, { issue: KEY }, {}, fake.fn));
@@ -2052,7 +2004,6 @@ test('[CC-861] a restricted comment or worklog states its audience in the plan',
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const comment = beforeOf(
@@ -2076,7 +2027,6 @@ test('[CC-861] a public comment carries no visibility key', async () => {
   const gate = createWriteGate({
     writeMode: 'plan',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const before = beforeOf(
@@ -2124,7 +2074,6 @@ test('CC-1528: the link plan names both ends; the receipt echoes the same snapsh
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -2173,7 +2122,6 @@ test('CC-1528: a missing link is the 404 of its read, and nothing is deleted', a
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -2190,7 +2138,6 @@ test('CC-1528: a non-numeric link id never reaches the wire', async () => {
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -2229,7 +2176,6 @@ test('CC-1530: the attachment plan names the file; the receipt echoes the same s
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -2284,7 +2230,6 @@ test('CC-1530: a missing attachment is the 404 of its read, and nothing is delet
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(
@@ -2340,7 +2285,6 @@ test('CC-1533: the remote link plan names the title and target; the receipt echo
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const { plan, applied } = await planThenApply(
@@ -2397,7 +2341,6 @@ test('CC-1533: a missing remote link is the 404 of its read, and nothing is dele
   const gate = createWriteGate({
     writeMode: 'apply',
     allowIrreversible: true,
-    rng: countingRng(),
   });
 
   const result = await gate.execute(

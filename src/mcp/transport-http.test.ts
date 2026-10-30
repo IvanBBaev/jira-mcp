@@ -21,7 +21,7 @@ import { networkInterfaces } from 'node:os';
 import test from 'node:test';
 
 import { createFakeClock } from '../core/fakes/fakeClock.js';
-import { createFakeJiraRequest } from '../core/fakes/fakeJiraRequest.js';
+import { createFakeJiraRequest, jiraOk } from '../core/fakes/fakeJiraRequest.js';
 import { createFakeLogger } from '../core/fakes/fakeLogger.js';
 import { createFakeRedactor } from '../core/fakes/fakeRedactor.js';
 import { FAKE_AUTH_SETTINGS } from '../core/fakes/fakeSettings.js';
@@ -42,6 +42,7 @@ import {
 import type { HttpTransportDeps } from './transport-http.js';
 import type { ConnectableServer, TransportHandle } from './transport.js';
 import type { PackageSpec, ToolResult } from './types.js';
+import { createPlanStore, PLAN_TTL_MS } from './write-mode.js';
 
 const LOOPBACK_HOST = '127.0.0.1';
 
@@ -358,6 +359,9 @@ async function makeHarness(overrides: Partial<Settings> = {}): Promise<Harness> 
   const serverLogger = createFakeLogger();
   const jira = createFakeJiraRequest();
   const rng = countingRng();
+  // As the composition root wires it (D513): one plan store for every session,
+  // a session's plans dropped as it ends.
+  const planStore = createPlanStore({ clock, ttlMs: PLAN_TTL_MS });
   const settings: Settings = {
     ...BASE_SETTINGS,
     transport: 'http',
@@ -380,8 +384,12 @@ async function makeHarness(overrides: Partial<Settings> = {}): Promise<Harness> 
         redactor: createFakeRedactor([]),
         clock,
         rng,
+        planStore,
         recentWrites: createRecentWrites(),
       }),
+    onSessionClosed: (sessionId) => {
+      planStore.dropSession(sessionId);
+    },
   };
   return { port, clock, logger, jira, deps };
 }
@@ -760,7 +768,7 @@ test('CC-117: a plan dies with its session — no cross-session apply', async ()
     const planId = plannedEnvelope.data?.['plan_id'];
     assert.equal(typeof planId, 'string');
 
-    // Kill A: its Server — and the plan table inside it — die together.
+    // Kill A: its Server dies, and the shared store drops its plans (D514).
     const del = await send(
       'DELETE',
       mcpUrl(harness.port),
@@ -785,6 +793,44 @@ test('CC-117: a plan dies with its session — no cross-session apply', async ()
 
     // Nothing left the process at any point.
     assert.equal(harness.jira.calls.length, 0);
+  });
+});
+
+test('[CC-5104] a live plan in the shared store is refused to another session, not burned', async () => {
+  const harness = await makeHarness({ writeMode: 'apply' });
+  harness.jira.on('PUT /rest/api/3/issue/ABC-1', jiraOk(undefined, { status: 204 }));
+  await withHandle(harness, async () => {
+    const a = await openSession(harness);
+    const b = await openSession(harness);
+    const args = { issue: 'ABC-1', summary: 'planned in A' };
+    const planId = envelopeOf(await callTool(harness, a, 'jira_fx_update', args)).data?.[
+      'plan_id'
+    ];
+    assert.equal(typeof planId, 'string');
+
+    // A is alive and its plan is in the one store B's server reads too.
+    const stolen = envelopeOf(
+      await callTool(harness, b, 'jira_fx_update', {
+        ...args,
+        apply: true,
+        plan_id: planId,
+      }),
+    );
+    assert.equal(stolen.ok, false);
+    assert.equal(stolen.error?.kind, 'write_gated');
+    assert.match(stolen.error?.message ?? '', /another session or credential/);
+    assert.equal(harness.jira.calls.length, 0, 'nothing was sent for B');
+
+    // B's try did not spend it: A still applies its own plan.
+    const applied = envelopeOf(
+      await callTool(harness, a, 'jira_fx_update', {
+        ...args,
+        apply: true,
+        plan_id: planId,
+      }),
+    );
+    assert.equal(applied.ok, true, JSON.stringify(applied));
+    assert.equal(harness.jira.calls.length, 1);
   });
 });
 
