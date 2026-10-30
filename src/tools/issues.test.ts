@@ -1054,9 +1054,22 @@ test('[CC-1547] jira_get_issue takes exactly one of issue or issues', () => {
   assert.equal(parse({}), false);
   assert.equal(parse({ issue: KEY, issues: [KEY] }), false);
   assert.equal(parse({ issues: [] }), false);
+  // 101 passes the schema since D533: the shape decides between 100 and 1000.
   assert.equal(
     parse({ issues: Array.from({ length: 101 }, (_, i) => `P-${String(i)}`) }),
-    false,
+    true,
+  );
+});
+
+test('[CC-5289] jira_get_issue issues takes 1000 entries, refuses 1001, and states both caps', () => {
+  const parse = (value: unknown): boolean => getIssueTool.input.safeParse(value).success;
+  const many = (count: number): string[] =>
+    Array.from({ length: count }, (_, i) => `P-${String(i)}`);
+  assert.equal(parse({ issues: many(1000), fields: ['summary'] }), true);
+  assert.equal(parse({ issues: many(1001), fields: ['summary'] }), false);
+  assert.match(
+    getIssueTool.description,
+    /up to 100 \(1000 with named single-value fields\)/,
   );
 });
 

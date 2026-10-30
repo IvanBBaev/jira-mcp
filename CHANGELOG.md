@@ -125,7 +125,8 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
     shared hotspots — and `jira_portfolio_report` writes the same analysis
     as a Markdown report into `JIRA_REPORT_DIR`. Neither changes Jira.
 - Wider existing tools: `jira_get_issue` takes `issues` (up to 100 keys in
-  one request; keys Jira could not serve are listed instead of failing the
+  one request, or up to 1000 when `fields` names single-value fields and
+  `expand` adds no per-issue sections; keys Jira could not serve are listed instead of failing the
   call), and `jira_list_versions` takes `issueCounts` (to do / in progress /
   done per version).
 - `JIRA_PROJECTS`: a comma list of project keys every tool is confined to.

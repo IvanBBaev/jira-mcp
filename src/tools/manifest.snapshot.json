@@ -375,7 +375,7 @@
               },
               "issues": {
                 "minItems": 1,
-                "maxItems": 100,
+                "maxItems": 1000,
                 "type": "array",
                 "items": {
                   "type": "string",

@@ -52,6 +52,7 @@ import {
   MAX_BULK_CHANGELOG_ISSUES,
   MAX_BULK_CHANGELOG_RESULTS,
   MAX_BULK_ISSUES,
+  MAX_BULK_ISSUES_EFFICIENT,
   MAX_PAGE_SIZE,
 } from '../api/issues.js';
 import type {
@@ -157,12 +158,15 @@ const getIssueInput = toolInput({
   issues: z
     .array(z.string().trim().min(1))
     .min(1)
-    .max(MAX_BULK_ISSUES)
+    .max(MAX_BULK_ISSUES_EFFICIENT)
     .optional()
     .describe(
       `Up to ${String(MAX_BULK_ISSUES)} issue keys or ids read in ONE request ` +
-        '(Cloud only). Returns data.issues plus data.errors and data.unmatched ' +
-        'for the refs Jira could not serve. Pass this or issue, not both.',
+        `(Cloud only); up to ${String(MAX_BULK_ISSUES_EFFICIENT)} when fields names ` +
+        'single-value fields (no wildcard, no comment/worklog/attachment) and expand ' +
+        'has no changelog, editmeta, operations, renderedFields, transitions or ' +
+        'versionedRepresentations. Returns data.issues plus data.errors and ' +
+        'data.unmatched for the refs Jira could not serve. Pass this or issue, not both.',
     ),
   fields: z
     // Entries are trimmed so a blank one is refused here instead of reaching
@@ -201,7 +205,7 @@ const getIssueInput = toolInput({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['issue'],
-      message: 'Pass exactly one of issue (one key) or issues (up to 100 keys).',
+      message: 'Pass exactly one of issue (one key) or issues (a list of keys).',
     });
   }
   // Both answer "how do I want the rich text?" and they answer it differently.
@@ -222,7 +226,7 @@ export const getIssueTool = defineTool({
   name: 'jira_get_issue',
   title: 'Get issue',
   description:
-    'Get a Jira issue by key or id, or up to 100 in one request with issues: [...]. ' +
+    'Get a Jira issue by key or id, or up to 100 (1000 with named single-value fields) with issues: [...]. ' +
     'Name the fields you need — omitting fields returns ' +
     "Jira's whole navigable set and burns the result budget. Rich text is flattened to " +
     'plain text; raw: true returns the ADF trees instead (only this tool can), format: ' +

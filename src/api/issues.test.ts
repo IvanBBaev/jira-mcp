@@ -35,6 +35,7 @@ import {
   MAX_BULK_CHANGELOG_ISSUES,
   MAX_BULK_CHANGELOG_RESULTS,
   MAX_BULK_ISSUES,
+  MAX_BULK_ISSUES_EFFICIENT,
   MAX_PAGE_SIZE,
   MAX_SHAPE_DEPTH,
   ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
@@ -3115,6 +3116,168 @@ test('[CC-1545] getIssuesBulk refuses an empty or over-long ref list before send
     issues: [...tooMany.slice(0, MAX_BULK_ISSUES), KEY],
   });
   assert.equal(result.requested.length, MAX_BULK_ISSUES);
+});
+
+// ---------------------------------------------------------------------------
+// getIssuesBulk — the conditional 1000 cap (D533)
+// ---------------------------------------------------------------------------
+
+const refs = (count: number): string[] =>
+  Array.from({ length: count }, (_, i) => `PROJ-${String(i + 1)}`);
+
+/** Runs a bulk read that must be refused before the wire; returns the reason. */
+async function refusedBulk(options: {
+  readonly issues: readonly string[];
+  readonly fields?: readonly string[];
+  readonly expand?: readonly string[];
+}): Promise<string> {
+  const fake = createFakeJiraRequest();
+  let reason = '';
+  await assert.rejects(getIssuesBulk({ jira: fake.fn, ...options }), (error: unknown) => {
+    assert.ok(error instanceof JiraError);
+    assert.equal(error.kind, 'validation');
+    reason = error.reason ?? '';
+    return true;
+  });
+  assert.equal(fake.calls.length, 0);
+  return reason;
+}
+
+test('[CC-5280] getIssuesBulk sends 1000 refs in one request when the shape qualifies', async () => {
+  assert.equal(MAX_BULK_ISSUES_EFFICIENT, 1000);
+  const fake = createFakeJiraRequest().on(BULK_ROUTE, jiraOk({ issues: [] }));
+  const result = await getIssuesBulk({
+    jira: fake.fn,
+    issues: refs(MAX_BULK_ISSUES_EFFICIENT),
+    fields: ['summary', 'status', '-description'],
+    expand: ['names', 'schema'],
+  });
+  assert.equal(fake.calls.length, 1);
+  const body = fake.lastRequest()?.body as { issueIdsOrKeys: string[] };
+  assert.equal(body.issueIdsOrKeys.length, MAX_BULK_ISSUES_EFFICIENT);
+  assert.equal(result.requested.length, MAX_BULK_ISSUES_EFFICIENT);
+});
+
+test('[CC-5281] getIssuesBulk refuses 1001 refs whatever the shape', async () => {
+  const reason = await refusedBulk({
+    issues: refs(MAX_BULK_ISSUES_EFFICIENT + 1),
+    fields: ['summary'],
+  });
+  assert.match(reason, /1 to 1000 distinct keys or ids, received 1001/);
+});
+
+test('[CC-5282] getIssuesBulk sends 100 refs with any shape and refuses 101 without fields', async () => {
+  assert.equal(MAX_BULK_ISSUES, 100);
+  const fake = createFakeJiraRequest().on(BULK_ROUTE, jiraOk({ issues: [] }));
+  await getIssuesBulk({
+    jira: fake.fn,
+    issues: refs(MAX_BULK_ISSUES),
+    expand: ['changelog'],
+  });
+  assert.equal(fake.calls.length, 1);
+
+  const reason = await refusedBulk({ issues: refs(MAX_BULK_ISSUES + 1) });
+  assert.match(reason, /101 distinct keys or ids is over 100/);
+  assert.match(reason, /at least one field to include/);
+});
+
+test('[CC-5283] getIssuesBulk refuses over 100 refs when fields holds only exclusions', async () => {
+  const reason = await refusedBulk({
+    issues: refs(MAX_BULK_ISSUES + 1),
+    fields: ['-description', '-comment'],
+  });
+  assert.match(reason, /at least one field to include/);
+});
+
+test('[CC-5284] getIssuesBulk refuses over 100 refs with a wildcard include', async () => {
+  for (const wildcard of ['*all', '*navigable']) {
+    const reason = await refusedBulk({
+      issues: refs(MAX_BULK_ISSUES + 1),
+      fields: ['summary', wildcard],
+    });
+    assert.ok(reason.includes(`the ${wildcard} wildcard`), reason);
+  }
+});
+
+test('[CC-5285] getIssuesBulk caps the included fields at 100; exclusions do not count', async () => {
+  const hundred = Array.from(
+    { length: 100 },
+    (_, i) => `customfield_${String(10000 + i)}`,
+  );
+  const fake = createFakeJiraRequest().on(BULK_ROUTE, jiraOk({ issues: [] }));
+  await getIssuesBulk({
+    jira: fake.fn,
+    issues: refs(MAX_BULK_ISSUES + 1),
+    fields: [...hundred, '-description'],
+  });
+  assert.equal(fake.calls.length, 1);
+
+  const reason = await refusedBulk({
+    issues: refs(MAX_BULK_ISSUES + 1),
+    fields: [...hundred, 'summary'],
+  });
+  assert.match(reason, /names 101 fields, over 100/);
+});
+
+test('[CC-5286] getIssuesBulk refuses over 100 refs that include a named multi-value field', async () => {
+  for (const field of ['comment', 'worklog', 'Attachment']) {
+    const reason = await refusedBulk({
+      issues: refs(MAX_BULK_ISSUES + 1),
+      fields: ['summary', field],
+    });
+    assert.ok(
+      reason.includes(`includes ${field}, which returns multiple values`),
+      reason,
+    );
+  }
+});
+
+test('[CC-5287] getIssuesBulk refuses over 100 refs with a restricted expand section', async () => {
+  for (const section of [
+    'changelog',
+    'editmeta',
+    'operations',
+    'renderedFields',
+    'transitions',
+    'versionedRepresentations',
+    'RENDEREDFIELDS',
+  ]) {
+    const reason = await refusedBulk({
+      issues: refs(MAX_BULK_ISSUES + 1),
+      fields: ['summary'],
+      expand: ['names', section],
+    });
+    assert.ok(reason.includes(`expand includes ${section}`), reason);
+  }
+});
+
+test('[CC-5288] a 400 for an over-100 batch Jira will not serve surfaces as validation, in one request', async () => {
+  // A multi-value custom field cannot be told apart locally; Jira answers it. // synthetic
+  const message =
+    'Requests with more than 100 issues must meet the efficient request criteria.';
+  const rejected = errorFromResponse({
+    status: 400,
+    body: { errorMessages: [message], errors: {} },
+    method: 'POST',
+    pathTemplate: ISSUE_BULKFETCH_PATH,
+  });
+  const fake = createFakeJiraRequest().on(BULK_ROUTE, jiraErr(rejected));
+  await assert.rejects(
+    getIssuesBulk({
+      jira: fake.fn,
+      issues: refs(MAX_BULK_ISSUES + 1),
+      fields: ['summary', 'customfield_10500'],
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof JiraError);
+      assert.equal(error.kind, 'validation');
+      assert.ok(
+        JSON.stringify(error).includes(message) || String(error.reason).includes(message),
+      );
+      return true;
+    },
+  );
+  assert.equal(fake.calls.length, 1);
 });
 
 test('[CC-1546] getIssuesBulk matches refs by key (any case) or id and keeps issueErrors as messages', async () => {

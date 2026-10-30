@@ -3589,14 +3589,15 @@ Prompts (D125):
   `POST /issue/bulkfetch` with the trimmed, de-duplicated refs and the
   `fields`/`expand` lists as arrays, and shapes every returned issue exactly
   as `getIssue` would; `raw`, `fieldsRequested` and `expand` are echoed once.
-- **CC-1545** — zero refs, more than 100 distinct refs, or a blank ref is a
+- **CC-1545** — zero refs, more than 1000 distinct refs (more than 100 for
+  a request shape that does not qualify, D533), or a blank ref is a
   `validation` error with nothing sent; duplicates collapse before the cap.
 - **CC-1546** — a ref is matched by current key (any case) or id; one no
   returned issue answers to is listed in `unmatched` — including a moved
   issue that came back under its new key. `issueErrors` entries keep only
   status, failed element number and message strings.
-- **CC-1547** — the schema takes exactly one of `issue` or `issues` (1–100
-  entries); neither or both is refused before the handler runs.
+- **CC-1547** — the schema takes exactly one of `issue` or `issues` (1–1000
+  entries since D533); neither or both is refused before the handler runs.
 - **CC-1548** — the Data Center adapter refuses `issues` as a `validation`
   error with nothing sent.
 
@@ -4264,3 +4265,28 @@ fake handles, and the download peak is measured on the byte sink.
   does not match it. A mismatch is answered 404 "Session not found", like an
   unknown id; with one accepted token that path is pinned at the
   `sessionCredentialMatches` seam.
+
+## Bulk issue read cap (D533, 2026-10-30)
+
+- **CC-5280** — 1000 distinct refs with `fields` naming single-value fields
+  and no restricted `expand` are sent in one `POST /issue/bulkfetch`.
+- **CC-5281** — 1001 distinct refs are a `validation` error with nothing
+  sent, whatever the request shape.
+- **CC-5282** — 100 distinct refs are sent with any shape, `fields` absent
+  included; 101 without `fields` are refused with nothing sent.
+- **CC-5283** — over 100 refs with only exclusions in `fields` (`-description`)
+  are refused: exclusions alone do not qualify.
+- **CC-5284** — over 100 refs with a `*all` or `*navigable` include are
+  refused, naming the wildcard.
+- **CC-5285** — over 100 refs with more than 100 included fields are refused;
+  exactly 100 qualify, and exclusions do not count toward the 100.
+- **CC-5286** — over 100 refs including `comment`, `worklog` or `attachment`
+  (any case) are refused, naming the field.
+- **CC-5287** — over 100 refs with `changelog`, `editmeta`, `operations`,
+  `renderedFields`, `transitions` or `versionedRepresentations` in `expand`
+  (any case) are refused; `names` and `schema` qualify.
+- **CC-5288** — a 400 Jira returns for an over-100 batch this server let
+  through (a multi-value custom field) surfaces as `validation` with Jira's
+  message, in one request.
+- **CC-5289** — the `jira_get_issue` schema accepts 1000 entries in `issues`
+  and refuses 1001; the description states both caps and the conditions.

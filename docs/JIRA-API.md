@@ -320,9 +320,20 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   call per version. Cloud only here; claim C60 checks the paginated route.
 - Bulk issue read (D149): `POST /issue/bulkfetch` with
   `{issueIdsOrKeys, fields?, expand?, properties?}` (arrays, not CSV) returns
-  `{issues, issueErrors}` — one request for up to 100 refs; refs Jira cannot
-  serve are reported, not fatal. The cap and the `issueErrors` shape are from
-  memory, unverified; claim C61 checks a batch with one absent key. Cloud only.
+  `{issues, issueErrors}` — one request for up to 100 refs, or up to 1000
+  when the request is shaped for efficient serving; refs Jira cannot serve
+  are reported, not fatal. The caps are from the operation reference
+  (re-read 2026-10-30; Software changelog 2026-08-28): the 1000 cap needs
+  `fields` with at least one positive include, no `*all`/`*navigable`, at
+  most 100 includes, none multi-value (`comment`, `worklog`, `attachment`
+  are the named examples), and no `changelog`, `editmeta`, `operations`,
+  `renderedFields`, `transitions` or `versionedRepresentations` in
+  `expand`; an over-100 request that misses any condition is a 400. This
+  server checks those conditions before the wire (D533); a multi-value
+  custom field it cannot recognise gets Jira's 400 as `validation`. The
+  reference does not say whether `properties` affects eligibility. The
+  `issueErrors` shape is still unverified; claim C61 checks a batch with one
+  absent key. Cloud only.
   A pure read, so the request is `safe: true` (D527).
 - Bulk changelog read (D150): `POST /changelog/bulkfetch` with
   `{issueIdsOrKeys, fieldIds?, maxResults?, nextPageToken?}` returns
@@ -975,7 +986,7 @@ CHANGELOG.md.
 | 2026-11-16 | User entity-property JQL on voter, watcher and creator removed | Platform changelog, 2026-10-07 | §JQL semantics changes, JQL resource — done |
 | In effect since 2026-10-06 | Text-field `=` / `IN` / `NOT IN` are exact-phrase searches | Platform changelog, 2026-10-06 | §JQL semantics changes, JQL resource, `jira_search` description — done |
 | In effect since 2026-10-08 | `/search/jql` validates JQL directly (custom functions included) | Platform changelog, 2026-10-08 | §JQL semantics changes, `jira_parse_jql` repositioned — done |
-| In effect since 2026-08-28 | `/issue/bulkfetch` accepts up to 1000 issues | Software changelog | ROADMAP V3-50 — open |
+| In effect since 2026-08-28 | `/issue/bulkfetch` accepts up to 1000 issues for a qualifying request shape | Software changelog, operation reference | D533, §Bulk issue read — done |
 | 2027-01-01 | Egress range 131.162.88.0/21 must be allowlisted by IP-allowlisting customers | Platform changelog, 2026-10-16 | CONFIGURATION.md, allow-listing by IP (V3-03) — done |
 | 2027-02-01 | `portfolioChildIssuesOf()` includes team-managed hierarchies | Platform changelog, 2026-10-27 | JQL resource note — done |
 | Experimental, no date | `/rest/api/3/policies`: admins may block field and status creation | Platform changelog, 2026-10-15 | No tool creates fields or statuses — watch only |

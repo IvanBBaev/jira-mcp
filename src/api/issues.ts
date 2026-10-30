@@ -384,11 +384,49 @@ export interface GetIssueBase extends IssueRequestBase {
 
 export type GetIssueOptions = GetIssueBase & BudgetGuard;
 
-/** Most issues one `POST /issue/bulkfetch` accepts (D149). */
+/**
+ * Most issues one `POST /issue/bulkfetch` accepts for any request shape
+ * (D149). Jira's operation reference: "By default you can request up to 100
+ * issues in a single call."
+ */
 export const MAX_BULK_ISSUES = 100;
 
+/**
+ * Most issues one `POST /issue/bulkfetch` accepts when the request is shaped
+ * so Jira can serve it efficiently (D149 amendment, 2026-10-30; Jira Software
+ * changelog 2026-08-28). See {@link bulkFetchIneligibility} for the shape.
+ */
+export const MAX_BULK_ISSUES_EFFICIENT = 1000;
+
+/** Most explicitly included fields a request may name and still qualify for 1000. */
+export const MAX_BULK_EFFICIENT_FIELDS = 100;
+
+/** `expand` sections that hold a bulk read to {@link MAX_BULK_ISSUES} (published list). */
+export const BULK_RESTRICTED_EXPANDS: ReadonlySet<string> = new Set([
+  'changelog',
+  'editmeta',
+  'operations',
+  'renderedfields',
+  'transitions',
+  'versionedrepresentations',
+]);
+
+/**
+ * The multi-value fields the reference names as examples. Others exist (a
+ * custom multi-select, say) and cannot be known without the field catalogue —
+ * Jira refuses those with a 400, which surfaces as `validation` verbatim.
+ */
+const BULK_MULTI_VALUE_FIELDS: ReadonlySet<string> = new Set([
+  'comment',
+  'worklog',
+  'attachment',
+]);
+
 export interface GetIssuesBulkBase extends Omit<GetIssueBase, 'issue'> {
-  /** Issue keys or numeric ids, 1–{@link MAX_BULK_ISSUES} after de-duplication. */
+  /**
+   * Issue keys or numeric ids, 1–{@link MAX_BULK_ISSUES} after de-duplication,
+   * or up to {@link MAX_BULK_ISSUES_EFFICIENT} for a qualifying shape.
+   */
   readonly issues: readonly string[];
 }
 
@@ -536,7 +574,8 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
 }
 
 /**
- * Read up to {@link MAX_BULK_ISSUES} issues in one call —
+ * Read up to {@link MAX_BULK_ISSUES} issues in one call, or up to
+ * {@link MAX_BULK_ISSUES_EFFICIENT} when the request shape qualifies —
  * `POST /rest/api/3/issue/bulkfetch` (D149). Each issue is shaped exactly like
  * {@link getIssue}; the refs Jira could not serve come back in `errors` and
  * `unmatched` instead of failing the whole read. Cloud only.
@@ -551,19 +590,36 @@ export async function getIssuesBulk(
       ),
     ),
   ];
-  if (requested.length === 0 || requested.length > MAX_BULK_ISSUES) {
+  if (requested.length === 0 || requested.length > MAX_BULK_ISSUES_EFFICIENT) {
     throw createJiraError({
       kind: 'validation',
       reason:
-        `A bulk issue read takes 1 to ${String(MAX_BULK_ISSUES)} distinct keys or ids, ` +
+        `A bulk issue read takes 1 to ${String(MAX_BULK_ISSUES_EFFICIENT)} distinct keys or ids, ` +
         `received ${String(requested.length)}. Nothing was sent.`,
-      remediation: `Split the keys into batches of at most ${String(MAX_BULK_ISSUES)}.`,
+      remediation: `Split the keys into batches of at most ${String(MAX_BULK_ISSUES_EFFICIENT)}.`,
     });
   }
   const fields = normalizeList(options.fields);
   const expand = normalizeList(
     typeof options.expand === 'string' ? options.expand.split(',') : options.expand,
   );
+  if (requested.length > MAX_BULK_ISSUES) {
+    const why = bulkFetchIneligibility(fields, expand);
+    if (why !== undefined) {
+      throw createJiraError({
+        kind: 'validation',
+        reason:
+          `${String(requested.length)} distinct keys or ids is over ${String(MAX_BULK_ISSUES)}, ` +
+          `and only a request Jira can serve efficiently may name up to ` +
+          `${String(MAX_BULK_ISSUES_EFFICIENT)}: ${why} Nothing was sent.`,
+        remediation:
+          `Name the single-value fields you need (at most ${String(MAX_BULK_EFFICIENT_FIELDS)}, ` +
+          'no comment/worklog/attachment) and drop changelog, editmeta, operations, ' +
+          'renderedFields, transitions and versionedRepresentations from expand — or ' +
+          `split the keys into batches of at most ${String(MAX_BULK_ISSUES)}.`,
+      });
+    }
+  }
   const properties = normalizeList(options.properties);
   const raw = options.raw === true;
 
@@ -606,6 +662,45 @@ export async function getIssuesBulk(
     ...(fields.length === 0 ? {} : { fieldsRequested: fields }),
     expand,
   };
+}
+
+/**
+ * Why a bulk read may not use the 1000-issue cap, or `undefined` when its
+ * shape qualifies. The published conditions (operation reference, 2026-10-30):
+ * `fields` names at least one positive include, no `*all`/`*navigable`
+ * wildcard, at most {@link MAX_BULK_EFFICIENT_FIELDS} includes, none of them
+ * multi-value; `expand` holds none of {@link BULK_RESTRICTED_EXPANDS}. Only
+ * the multi-value fields the reference names are checked here; Jira judges
+ * the rest and answers a 400.
+ */
+export function bulkFetchIneligibility(
+  fields: readonly string[],
+  expand: readonly string[],
+): string | undefined {
+  const includes = fields.filter((field) => !field.startsWith('-'));
+  if (includes.length === 0) {
+    return "fields must name at least one field to include (exclusions alone and Jira's default set do not qualify).";
+  }
+  const wildcard = includes.find((field) => field.startsWith('*'));
+  if (wildcard !== undefined) {
+    return `fields may not use the ${wildcard} wildcard.`;
+  }
+  if (includes.length > MAX_BULK_EFFICIENT_FIELDS) {
+    return `fields names ${String(includes.length)} fields, over ${String(MAX_BULK_EFFICIENT_FIELDS)}.`;
+  }
+  const multi = includes.find((field) =>
+    BULK_MULTI_VALUE_FIELDS.has(field.toLowerCase()),
+  );
+  if (multi !== undefined) {
+    return `fields includes ${multi}, which returns multiple values.`;
+  }
+  const restricted = expand.find((section) =>
+    BULK_RESTRICTED_EXPANDS.has(section.toLowerCase()),
+  );
+  if (restricted !== undefined) {
+    return `expand includes ${restricted}.`;
+  }
+  return undefined;
 }
 
 /** The shaped body of one issue bean — shared by the single and bulk reads. */
