@@ -215,6 +215,9 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   tool, documents `JIRA_PROJECTS` and `JIRA_LOCK_PROFILE` as controls, and
   no longer overstates plan/apply: in `apply` mode it guards against
   accidents, not against a model steered by injected issue text.
+  ARCHITECTURE.md lists every capability the server declares (completions
+  was missing; the docs linter now compares the two) and says what is true of
+  HTTP sessions: each has its own recent-write registry.
 
 Decisions: D124, D127, D500–D505, D508, D525, D526.
 

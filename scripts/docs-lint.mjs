@@ -2,7 +2,7 @@
 /**
  * docs-lint — mechanical enforcement of the rules docs/README.md states in prose.
  *
- * Nine checks:
+ * Ten checks:
  *   1. link      — every relative markdown link inside docs/** resolves, and a
  *                  `#anchor` names a heading that actually exists in the target.
  *   2. banner    — every spec doc carries a `> Status:` banner in its first lines,
@@ -29,6 +29,8 @@
  *                  Pages site sits in a `<!-- count:KEY -->` / `<!-- version:KEY -->`
  *                  marker that matches the manifest and src/tools/released.json,
  *                  and no count is left unmarked (D526). Needs `npm run build`.
+ *  10. capabilities — the server capabilities docs/ARCHITECTURE.md states are
+ *                  the ones `src/mcp/server.ts` declares (ARC-12).
  *
  * Run standalone (`node scripts/docs-lint.mjs`) or as part of `npm run check`.
  * Exit code 1 with one `path:line: message` per finding; 0 when clean.
@@ -870,6 +872,75 @@ async function checkCounts() {
   }
 }
 
+// --- check 10: the capabilities ARCHITECTURE.md states ---------------------
+
+/**
+ * docs/ARCHITECTURE.md is the document agents read first, and its capabilities
+ * line once lagged the code (`completions` missing, ARC-12). The probe reads
+ * the object literal passed as `capabilities:` in `src/mcp/server.ts` — the one
+ * place the server declares them — and the `Capabilities:` line of the doc, and
+ * compares both after dropping comments, whitespace and trailing commas. A
+ * structural reading is enough: the literal is static by design, and anything
+ * else (a spread, a computed value) would fail the comparison loudly, which is
+ * the right outcome for a capability set the doc can no longer state.
+ */
+const CAPABILITIES_DOC = join(DOCS_DIR, 'ARCHITECTURE.md');
+const CAPABILITIES_SRC = join(REPO_ROOT, 'src', 'mcp', 'server.ts');
+const CAPABILITIES_DOC_RE = /^- Capabilities: `(\{[^`]*\})`/m;
+const CAPABILITIES_SRC_RE = /\bcapabilities:\s*\{/;
+
+/** The balanced `{…}` starting at `open` (an index of `{`), or undefined. */
+function balancedObject(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) return text.slice(open, i + 1);
+  }
+  return undefined;
+}
+
+function normaliseLiteral(literal) {
+  return literal
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, '')
+    .replace(/,\}/g, '}');
+}
+
+function checkCapabilities() {
+  const doc = readFileSync(CAPABILITIES_DOC, 'utf8');
+  const src = readFileSync(CAPABILITIES_SRC, 'utf8');
+  const docMatch = CAPABILITIES_DOC_RE.exec(doc);
+  if (!docMatch) {
+    report(
+      CAPABILITIES_DOC,
+      1,
+      'no "- Capabilities: `{ … }`" line to compare with src/mcp/server.ts',
+    );
+    return;
+  }
+  const srcMatch = CAPABILITIES_SRC_RE.exec(src);
+  const declared =
+    srcMatch && balancedObject(src, srcMatch.index + srcMatch[0].length - 1);
+  if (!declared) {
+    report(
+      CAPABILITIES_SRC,
+      1,
+      'no `capabilities: { … }` literal found for docs-lint check 10',
+    );
+    return;
+  }
+  const stated = normaliseLiteral(docMatch[1]);
+  const actual = normaliseLiteral(declared);
+  if (stated !== actual) {
+    report(
+      CAPABILITIES_DOC,
+      lineOf(doc, docMatch.index),
+      `capabilities ${stated} drifted from src/mcp/server.ts, which declares ${actual}`,
+    );
+  }
+}
+
 // --- run -----------------------------------------------------------------
 
 if (!existsSync(DOCS_DIR)) {
@@ -892,6 +963,7 @@ checkCornerCaseBindings(cornerCases);
 checkPendingTestClaims();
 checkResolvedStatus(files);
 checkSourceCornerCaseRefs(cornerCases);
+checkCapabilities();
 await checkCounts();
 
 const parked = OWNED_LITERALS.filter((r) => r.enabled === false).length;

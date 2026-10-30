@@ -174,7 +174,9 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
   loses the `structuredContent` envelope.
 - JSON Schema derived from zod via the SDK's own `toJsonSchemaCompat`
   (`@modelcontextprotocol/sdk/server/zod-json-schema-compat.js`).
-- Capabilities: `{ tools: { listChanged: true }, resources: {}, prompts: {}, logging: {} }`;
+- Capabilities: `{ tools: { listChanged: true }, resources: {}, prompts: {}, completions: {}, logging: {} }`
+  (docs-lint check 10 compares this line with `src/mcp/server.ts`); completions are
+  pure, drawn from the manifest (D154, `mcp/completions.ts`);
   `instructions` come from `serverInstructions` (TOOLS.md §Reference resources);
   prompts are listed only when every tool they name is registered (TOOLS.md
   §Prompts).
@@ -196,13 +198,19 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
 - the spec is `Object.freeze`d.
 
 The ordered `PACKAGES: PackageSpec[]` manifest in `src/tools/index.ts` is the
-**single source of truth** consumed by exactly five readers: server registration
+**single source of truth**. Its readers include server registration
 (`src/index.ts` → `mcp/registry.ts`), the reference catalogue
 (`mcp/resources.ts`, which also reads `PackageSpec.references`), the prompt
-catalogue (`mcp/prompts.ts`, which reads `PackageSpec.prompts`), the manifest
-snapshot test (`src/tools/index.test.ts`), and README generation
-(`scripts/generate-readme.mjs`). It does **not** generate the distribution
-manifests: `server.json` is hand-maintained and *checked* against
+catalogue (`mcp/prompts.ts`, which reads `PackageSpec.prompts`), completions
+(`mcp/server.ts` hands every manifest tool name from `deps.packages` to
+`mcp/completions.ts`), the manifest snapshot test (`src/tools/index.test.ts`),
+and the surface facts (`scripts/surface-facts.mjs`, which feeds README
+generation and docs-lint's count check) plus the startup benchmark
+(`scripts/bench-startup.mjs`). `cli/doctor.ts` validates the package env vars
+with `mcp/registry.ts`'s `expandSelection`, which reads the package ids
+(`mcp/types.ts`), not the manifest. The list is not closed: a new consumer reads
+`PACKAGES` (or `createPackages`) rather than restating tool names. It does
+**not** generate the distribution manifests: `server.json` is hand-maintained and *checked* against
 docs/CONFIGURATION.md by `src/manifest-sync.test.ts` (D78). Empty packages are
 listed deliberately as visible roadmap holes.
 
@@ -321,11 +329,13 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
   `core/http.ts` touches the network" is a rule about outbound egress, and
   neither listener makes an outbound call.
 
-  One honest exception to per-session isolation: `sessionRecentWrites`
-  (`mcp/recent-writes.ts`) is a module singleton, so the recent-write registry
-  (CC-02) is shared by every session in the process. For a loopback
-  single-user server that is accepted, not overlooked — the sessions belong to
-  the same human.
+  The recent-write registry (CC-02, `mcp/recent-writes.ts`) is per session
+  too: `src/index.ts` builds each session's server with its own
+  `createRecentWrites()`, and `buildServer` runs every tool call inside
+  `withRecentWrites`, so one client's writes never widen another client's
+  searches (CC-244). The module-level `sessionRecentWrites` remains only as the
+  fallback for stdio (one process, one session) and for handlers called outside
+  a server, as unit tests do.
 
 ## Package gating and write safety
 
