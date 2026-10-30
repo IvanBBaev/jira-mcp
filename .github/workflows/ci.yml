@@ -66,6 +66,35 @@ jobs:
       - run: npm ci
       - run: npm run coverage
 
+  # The Claude Desktop bundle (D521), built the way a release would build it:
+  # the publish build, the tarball assertion on it, then `npm pack` and the
+  # bundle from that same tarball. The `.mcpb` and its sha256 are kept as a
+  # workflow artifact; attaching them to a GitHub Release is a release step,
+  # not this job's. `npm ci` inside the script needs the registry, which is why
+  # this lives here and not in `npm run check`.
+  mcpb:
+    name: mcpb bundle
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build:publish
+      - run: npm run tarball:publish
+      - name: Pack the tarball and the bundle from it
+        run: |
+          tarball="$(npm pack --json --pack-destination "$RUNNER_TEMP" | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename)')"
+          npm run mcpb -- --tarball "$RUNNER_TEMP/$tarball" --out mcpb/dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcpb
+          path: mcpb/dist/
+          if-no-files-found: error
+
   # Suite 9 (docs/TESTING.md): the read-only half of Gate C against the scratch
   # site, asking the one question fixtures cannot — has Atlassian changed the
   # wire? It runs `scripts/verify-live.mjs` WITHOUT --write/--irreversible/

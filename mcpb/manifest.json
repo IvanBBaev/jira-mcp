@@ -1,0 +1,85 @@
+{
+  "manifest_version": "0.3",
+  "name": "jira-mcp-ai",
+  "display_name": "Jira Cloud (jira-mcp-ai)",
+  "description": "Jira Cloud over MCP: JQL search, issue reads, and writes behind a plan/apply gate.",
+  "long_description": "Jira Cloud tools for Claude Desktop: JQL search, issue reads, comments, worklogs, boards and sprints. Read-only by default: write tools only describe the change until you set the write mode to \"apply\". The irreversible deletes are never offered here. No telemetry; the server talks only to your Jira site.",
+  "author": {
+    "name": "Ivan Baev",
+    "email": "ivanbbaev@gmail.com",
+    "url": "https://github.com/IvanBBaev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IvanBBaev/jira-mcp"
+  },
+  "homepage": "https://ivanbbaev.github.io/jira-mcp/",
+  "documentation": "https://github.com/IvanBBaev/jira-mcp#readme",
+  "support": "https://github.com/IvanBBaev/jira-mcp/issues",
+  "license": "GPL-3.0-only",
+  "keywords": ["mcp", "jira", "jira-cloud", "atlassian", "jql", "issue-tracker"],
+  "privacy_policies": ["https://www.atlassian.com/legal/privacy-policy"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/bin/jira-mcp-ai.cjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/bin/jira-mcp-ai.cjs"],
+      "env": {
+        "JIRA_SITE": "${user_config.jira_site}",
+        "JIRA_EMAIL": "${user_config.jira_email}",
+        "JIRA_API_TOKEN": "${user_config.jira_api_token}",
+        "JIRA_WRITE_MODE": "${user_config.jira_write_mode}",
+        "JIRA_TOOL_PACKAGES": "${user_config.jira_tool_packages}",
+        "JIRA_MEDIA_DIR": "${user_config.jira_media_dir}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  },
+  "user_config": {
+    "jira_site": {
+      "type": "string",
+      "title": "Jira site",
+      "description": "\"mycompany\", \"mycompany.atlassian.net\", or the full site URL.",
+      "required": true
+    },
+    "jira_email": {
+      "type": "string",
+      "title": "Atlassian account email",
+      "description": "The account the API token belongs to. Used for Basic auth.",
+      "required": true
+    },
+    "jira_api_token": {
+      "type": "string",
+      "title": "Atlassian API token",
+      "description": "Create one at id.atlassian.com > Security > API tokens. Stored in the operating system's secure storage.",
+      "required": true,
+      "sensitive": true
+    },
+    "jira_write_mode": {
+      "type": "string",
+      "title": "Write mode",
+      "description": "\"plan\" (default) makes write tools describe the change instead of performing it. \"apply\" lets a call that passes apply: true execute. Leave it on plan unless you mean it.",
+      "default": "plan"
+    },
+    "jira_tool_packages": {
+      "type": "string",
+      "title": "Tool packages",
+      "description": "Which tool packages to register: \"all\", \"reader\" (reads only), \"core\", or an explicit comma list.",
+      "default": "all"
+    },
+    "jira_media_dir": {
+      "type": "directory",
+      "title": "Attachment directory",
+      "description": "One directory the server may read and write attachment bytes in; it never touches anything outside it. Leave empty to keep attachment download and upload disabled — listing what is attached works either way.",
+      "default": ""
+    }
+  }
+}

@@ -27,3 +27,6 @@ Thumbs.db
 # NOTE: the AI-harness files (CLAUDE.md, CLAUDE.local.md, WORKLOG.md, .claude/,
 # docs/ai/) are deliberately NOT listed here — they are excluded via
 # .git/info/exclude so the exclusion itself never gets committed.
+
+# MCPB bundles built by scripts/pack-mcpb.mjs
+mcpb/dist/

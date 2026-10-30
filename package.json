@@ -58,6 +58,7 @@
     "readme": "npm run build && node scripts/generate-readme.mjs",
     "tarball": "node scripts/check-tarball.mjs",
     "tarball:publish": "node scripts/check-tarball.mjs --publish",
+    "mcpb": "node scripts/pack-mcpb.mjs",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "check:publish": "npm run typecheck && npm run lint && npm run format:check && npm run build && npm run tarball && npm run test:coverage && npm run docs:lint",
     "check": "npm run check:publish && npm run audit:prod",

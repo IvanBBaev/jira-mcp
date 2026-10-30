@@ -24,6 +24,11 @@ env var names — not internal refactors.
 
 ### Added
 
+- A Claude Desktop bundle, `jira-mcp-ai-<version>.mcpb` (D521): the npm
+  package with its production dependencies, run on Desktop's own Node, so
+  no Node on your PATH is needed. Install asks for the site, email, API
+  token, write mode (default `plan`), tool packages and an optional
+  attachment directory. `npm run mcpb` builds it; CI builds it on every push.
 - Claude Code loads the four hottest reads upfront (D509): `jira_search`,
   `jira_count`, `jira_get_issue` and `jira_search_users` carry
   `_meta["anthropic/alwaysLoad"]: true`, so they need no tool-search step. Their
