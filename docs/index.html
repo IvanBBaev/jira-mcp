@@ -6,7 +6,7 @@
     <title>jira-mcp-ai — Jira Cloud MCP Server for AI assistants</title>
     <meta
       name="description"
-      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. 82 tools, TypeScript, GPL-3.0, Node 22+."
+      content="An open-source, local-first MCP server for Jira Cloud — JQL search, issue reads, transitions, comments, worklogs, attachments, boards and sprints from your AI assistant, with headless API-token auth and plan-and-apply write safety. TypeScript, GPL-3.0, Node 22+."
     />
     <meta name="author" content="Ivan Baev" />
     <meta name="color-scheme" content="light dark" />
@@ -66,7 +66,7 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "MCP Server",
             "operatingSystem": "Cross-platform (Node.js 22+)",
-            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud: 82 tools across JQL search, issue reads and writes, transitions, comments, worklogs, attachments, watchers, components, versions, project and field metadata, boards and sprints, bulk edits and deletes, and cross-project portfolio analysis — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write and a second opt-in for deletes.",
+            "description": "A local-first Model Context Protocol (MCP) server for Jira Cloud covering JQL search, issue reads and writes, transitions, comments, worklogs, attachments, watchers, components, versions, project and field metadata, boards and sprints, bulk edits and deletes, and cross-project portfolio analysis — operated locally with the operator's own API token, read-only by default, with a plan-and-apply gate on every write and a second opt-in for deletes.",
             "url": "https://ivanbbaev.github.io/jira-mcp/",
             "codeRepository": "https://github.com/IvanBBaev/jira-mcp",
             "license": "https://www.gnu.org/licenses/gpl-3.0.html",
@@ -123,7 +123,7 @@
                 "name": "What actually works today?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "The whole surface, offline. All 82 tools across 11 packages are implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,700+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. And now online too, in part: two runs against a real Atlassian tenant have proven 40 of the 58 tools against the live API — 27 of the 28 reads and 13 of the 30 writes. Of the 18 still unproven, seven need a project administrator — the watcher pair, the version pair, the component pair and issue delete — five are the sprint writes, which that run never reached because the gate itself asked Jira for an over-long sprint name, three are the component, version and sprint deletes, which landed after the last live run, and three are the bulk operations — bulk edit, bulk delete and the queue-status read — which landed after it too and additionally need the site-wide Make bulk changes permission."
+                  "text": "The whole surface, offline. Every tool, released and on main, is implemented, along with the plan-and-apply write gate, the error catalog and the corner cases — the spec in docs/ stays normative and the code is checked against it by 1,700+ hermetic tests behind a network fence, with layering, coverage floors and docs consistency all enforced in CI. And now online too, in part: two runs against a real Atlassian tenant have proven most of the latest release against the live API — every read but one, and the everyday writes. The rest of that release — the writes that need a project administrator, the sprint writes, the component, version and sprint deletes and the bulk operations — and every tool added on main since are verified offline only."
                 }
               },
               {
@@ -131,7 +131,7 @@
                 "name": "Is it on npm?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Yes — jira-mcp-ai, currently 1.0.0. It is published from a git tag by GitHub Actions with provenance attestation, so the artifact on npm is verifiably built from this repository; npm audit signatures will say so. From 1.0.0 the tool surface follows semver: a breaking change to a tool's name, input or output needs a major version. 40 of the 82 tools have been proven against a live tenant; the other 42 are verified offline only. Pin the exact version in your client configuration — the changelog is written for someone deciding whether to move that pin."
+                  "text": "Yes — jira-mcp-ai, currently 1.0.0. It is published from a git tag by GitHub Actions with provenance attestation, so the artifact on npm is verifiably built from this repository; npm audit signatures will say so. From 1.0.0 the tool surface follows semver: a breaking change to a tool's name, input or output needs a major version. Most of the latest release has been proven against a live tenant; the rest of it, and every tool added on main since, is verified offline only. Pin the exact version in your client configuration — the changelog is written for someone deciding whether to move that pin."
                 }
               },
               {
@@ -1361,8 +1361,8 @@
             <span class="badge">GPL-3.0</span>
             <span class="badge">Node 22+</span>
             <span class="badge">Jira Cloud REST v3</span>
-            <span class="badge">82 tools · 11 packages</span>
-            <span class="badge">1.0.0 · on npm</span>
+            <span class="badge"><!-- count:tools -->82<!-- /count --> tools · <!-- count:packages -->11<!-- /count --> packages</span>
+            <span class="badge"><!-- version:released -->1.0.0<!-- /version --> · on npm</span>
           </div>
 
           <div class="cta">
@@ -1414,22 +1414,23 @@
           </div>
 
           <div class="stats">
-            <div><b>82</b><span>tools in 11 packages</span></div>
-            <div><b>42 / 40</b><span>read tools / write tools</span></div>
+            <div><b><!-- count:tools -->82<!-- /count --></b><span>tools in <!-- count:packages -->11<!-- /count --> packages on main</span></div>
+            <div><b><!-- count:reads -->42<!-- /count --> / <!-- count:writes -->40<!-- /count --></b><span>read tools / write tools</span></div>
             <div><b>1</b><span>host the process may reach</span></div>
             <div><b>0</b><span>telemetry calls, by design</span></div>
           </div>
 
           <p class="note warn" style="margin-top: 32px">
             <strong>Status, honestly.</strong> The surface is complete and green
-            offline: all 82 tools, the write gate, the error catalog and the corner
+            offline: all <!-- count:tools -->82<!-- /count --> tools on main, the write gate, the error catalog and the corner
             cases are implemented against the spec in <code>docs/</code>, which stays
             normative — 1,700+ hermetic tests behind a network fence, with layering,
             coverage floors and docs consistency enforced in CI. The package is on npm
             as <code>jira-mcp-ai</code>, and two runs against a real Atlassian tenant
-            have proven 40 of the 82 tools live. The 42 still unproven live — 17 writes,
-            the bulk queue-status read, the permission check, the two portfolio
-            tools and the v2 additions — ship verified
+            have proven <!-- count:live -->40<!-- /count --> of the <!-- count:tools@released -->58<!-- /count --> tools in its latest
+            release, <!-- version:released -->1.0.0<!-- /version -->, live. The other <!-- count:unproven@released -->18<!-- /count --> —
+            mostly permission-gated, irreversible and bulk writes — and the
+            <!-- count:unreleased -->24<!-- /count --> tools added on <code>main</code> since ship verified
             offline only.
           </p>
         </div>
@@ -1451,8 +1452,9 @@
           <p class="note warn">
             <strong>On npm as <code>jira-mcp-ai@1.0.0</code>.</strong> The surface is
             complete, the offline gate is green, and the build has been run against a
-            real Atlassian tenant — 40 of the 82 tools have been proven live, and the
-            bugs those runs found are fixed. The other 21 ship verified offline only;
+            real Atlassian tenant — <!-- count:live -->40<!-- /count --> of its <!-- count:tools@released -->58<!-- /count --> tools have been
+            proven live, and the bugs those runs found are fixed. The other
+            <!-- count:unproven@released -->18<!-- /count --> ship verified offline only;
             most need a permission the test account did not have — project
             administrator for the older ones, the site-wide Make bulk changes for the
             three bulk tools — so try them on a sandbox project first. The
@@ -1665,7 +1667,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
         <div class="wrap stack-lg">
           <div>
             <span class="eyebrow">Capabilities</span>
-            <h2 id="h-capabilities">Eleven packages, 82 tools</h2>
+            <h2 id="h-capabilities"><!-- count:packages -->11<!-- /count --> packages, <!-- count:tools -->82<!-- /count --> tools</h2>
             <p class="sub">
               Packages are the unit of exposure: <code>JIRA_TOOL_PACKAGES</code> picks a
               profile (<code>core</code>, <code>reader</code>, <code>all</code> — the
@@ -1693,7 +1695,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
               <tbody>
                 <tr>
                   <td><code>core</code></td>
-                  <td><span class="tag read">3 read</span></td>
+                  <td><span class="tag read"><!-- count:reads:core -->3<!-- /count --> read</span></td>
                   <td>—</td>
                   <td>
                     <code>jira_capabilities</code> self-describes the running surface;
@@ -1705,8 +1707,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 </tr>
                 <tr>
                   <td><code>search</code></td>
-                  <td><span class="tag read">5 read</span></td>
-                  <td><span class="tag write">2 write</span></td>
+                  <td><span class="tag read"><!-- count:reads:search -->5<!-- /count --> read</span></td>
+                  <td><span class="tag write"><!-- count:writes:search -->2<!-- /count --> write</span></td>
                   <td>
                     JQL search and approximate count over the current
                     <code>/rest/api/3/search/jql</code> endpoint — the legacy search API
@@ -1718,7 +1720,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 </tr>
                 <tr>
                   <td><code>issues</code></td>
-                  <td><span class="tag read">7 read</span></td>
+                  <td><span class="tag read"><!-- count:reads:issues -->8<!-- /count --> read</span></td>
                   <td>—</td>
                   <td>
                     One issue with ADF flattened to plain text (raw on request),
@@ -1728,7 +1730,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 </tr>
                 <tr>
                   <td><code>issues-write</code></td>
-                  <td><span class="tag write">10 write</span></td>
+                  <td><span class="tag write"><!-- count:writes:issues-write -->10<!-- /count --> write</span></td>
                   <td><code>plan</code></td>
                   <td>
                     Create, update, transition, comment, edit a comment, assign, log
@@ -1738,7 +1740,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 </tr>
                 <tr>
                   <td><code>issues-delete</code></td>
-                  <td><span class="tag irr">11 irreversible</span></td>
+                  <td><span class="tag irr"><!-- count:irreversible:issues-delete -->11<!-- /count --> irreversible</span></td>
                   <td><code>plan</code> + opt-in</td>
                   <td>
                     Delete an issue, a comment, a worklog, an issue link, an attachment,
@@ -1751,8 +1753,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 <tr>
                   <td><code>attachments</code></td>
                   <td>
-                    <span class="tag read">2 read</span>
-                    <span class="tag write">1 write</span>
+                    <span class="tag read"><!-- count:reads:attachments -->2<!-- /count --> read</span>
+                    <span class="tag write"><!-- count:writes:attachments -->1<!-- /count --> write</span>
                   </td>
                   <td><code>plan</code></td>
                   <td>
@@ -1764,8 +1766,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 <tr>
                   <td><code>collab</code></td>
                   <td>
-                    <span class="tag read">4 read</span>
-                    <span class="tag write">8 write</span>
+                    <span class="tag read"><!-- count:reads:collab -->4<!-- /count --> read</span>
+                    <span class="tag write"><!-- count:writes:collab -->8<!-- /count --> write</span>
                   </td>
                   <td><code>plan</code></td>
                   <td>
@@ -1775,7 +1777,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 </tr>
                 <tr>
                   <td><code>meta</code></td>
-                  <td><span class="tag read">11 read</span></td>
+                  <td><span class="tag read"><!-- count:reads:meta -->11<!-- /count --> read</span></td>
                   <td>—</td>
                   <td>
                     Projects, fields, create-meta, statuses, link types, priorities,
@@ -1785,7 +1787,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 </tr>
                 <tr>
                   <td><code>users</code></td>
-                  <td><span class="tag read">1 read</span></td>
+                  <td><span class="tag read"><!-- count:reads:users -->1<!-- /count --> read</span></td>
                   <td>—</td>
                   <td>
                     User search: the only path from a human name to the
@@ -1796,8 +1798,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 <tr>
                   <td><code>agile</code></td>
                   <td>
-                    <span class="tag read">5 read</span>
-                    <span class="tag write">8 write</span>
+                    <span class="tag read"><!-- count:reads:agile -->6<!-- /count --> read</span>
+                    <span class="tag write"><!-- count:writes:agile -->8<!-- /count --> write</span>
                   </td>
                   <td><code>plan</code></td>
                   <td>
@@ -1809,7 +1811,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 <tr>
                   <td><code>portfolio</code></td>
                   <td>
-                    <span class="tag read">2 read</span>
+                    <span class="tag read"><!-- count:reads:portfolio -->2<!-- /count --> read</span>
                   </td>
                   <td>—</td>
                   <td>
@@ -1872,14 +1874,14 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
             <div class="tier">
               <div>
                 <h3>read</h3>
-                <span class="tag read">42 tools</span>
+                <span class="tag read"><!-- count:reads -->42<!-- /count --> tools</span>
               </div>
               <p>Never mutates anything. Safe to expose first, and to leave on.</p>
             </div>
             <div class="tier">
               <div>
                 <h3>standard</h3>
-                <span class="tag write">29 tools</span>
+                <span class="tag write"><!-- count:standard -->29<!-- /count --> tools</span>
               </div>
               <p>
                 Every reversible write. Governed by <code>JIRA_WRITE_MODE</code>: under
@@ -1892,7 +1894,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
             <div class="tier">
               <div>
                 <h3>irreversible</h3>
-                <span class="tag irr">11 tools</span>
+                <span class="tag irr"><!-- count:irreversible -->11<!-- /count --> tools</span>
               </div>
               <p>
                 Deleting an issue, a comment, a worklog, an issue link, an attachment, a
@@ -2391,7 +2393,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
               the phases below are gates with exit criteria, not vibes. All eight are
               closed, and 1.0.0 is on npm. What is left is mostly not code: one more
               gate run for the sprint tools, and a Jira site where the test account may
-              administer a project, to prove the last 40 tools live.
+              administer a project, to prove the rest live.
             </p>
           </div>
 
@@ -2495,7 +2497,7 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                   <td><span class="tag on">done</span></td>
                   <td>
                     First contact with a real Atlassian tenant, 2026-08-17. Every one of
-                    the 27 read tools proven against the live API, and three bugs found
+                    the <!-- count:reads@0.9.0 -->27<!-- /count --> read tools proven against the live API, and three bugs found
                     that no fixture could have produced — all three fixed in 0.9.4.
                   </td>
                 </tr>
@@ -2503,9 +2505,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                   <td>Live verification · write half</td>
                   <td><span class="tag write">partial</span></td>
                   <td>
-                    Run 2026-08-18 against a sandbox project: 13 write tools applied
-                    successfully, taking the live-proven surface to 40 — of today's 55
-                    tools. Seven of the writes still unproven wait on permissions the
+                    Run 2026-08-18 against a sandbox project: <!-- count:live-writes -->13<!-- /count --> write tools applied
+                    successfully, taking the live-proven surface to <!-- count:live -->40<!-- /count -->. Seven of the writes still unproven wait on permissions the
                     test account does not hold — both watcher writes, both version
                     writes, both component writes and issue delete, each answering with
                     a correctly shaped refusal rather than a result. Five are the sprint
@@ -2530,7 +2531,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                   <td><span class="tag on">done</span></td>
                   <td>
                     Released 2026-10-19 by owner decision, with the semver promise made
-                    and 40 of 59 tools proven live. Still to do: prove the other 19 —
+                    and <!-- count:live -->40<!-- /count --> of its <!-- count:tools@1.0.0 -->58<!-- /count --> tools proven live. Still to do: prove the
+                    other <!-- count:unproven@1.0.0 -->18<!-- /count --> —
                     the sprint five on any site with a Scrum board, the permission-gated
                     writes and the deletes on a site where the account may administer a
                     project, the bulk tools with Make bulk changes — and move to OIDC
@@ -2633,8 +2635,8 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
             <summary>What actually works today?</summary>
             <div class="details-body">
               <p>
-                The whole surface, offline. All 82 tools across 11 packages are
-                implemented, along with the plan-and-apply write gate, the error catalog
+                The whole surface, offline. All <!-- count:tools -->82<!-- /count --> tools across
+                <!-- count:packages -->11<!-- /count --> packages on <code>main</code> are implemented, along with the plan-and-apply write gate, the error catalog
                 and the corner cases — the spec in
                 <a href="https://github.com/IvanBBaev/jira-mcp/tree/main/docs"
                   ><code>docs/</code></a
@@ -2645,23 +2647,33 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
               </p>
               <p>
                 And now online too, in part. Two runs against a real Atlassian tenant
-                have proven 40 of the 82 tools against the live API — 27 of the 42
-                reads, and 13 of the 40 writes: issue create and update, comments and
+                have proven <!-- count:live -->40<!-- /count --> of the <!-- count:tools@released -->58<!-- /count --> tools in
+                <!-- version:released -->1.0.0<!-- /version --> against the live API — <!-- count:live-reads -->27<!-- /count --> of its
+                <!-- count:reads@released -->28<!-- /count --> reads, and <!-- count:live-writes -->13<!-- /count --> of its
+                <!-- count:writes@released -->30<!-- /count --> writes: issue create and update, comments and
                 comment edit, worklogs, transitions, links, assignment, votes,
-                attachment upload and the comment and worklog deletes. Of the 42 still
-                unproven, seven need a project administrator — the watcher pair, the
-                version pair, the component pair and issue delete — five are the sprint
-                writes, which that run never reached because the gate itself asked Jira
-                for an over-long sprint name, three are the component, version and
-                sprint deletes, which landed after the last live run, and three are the
-                bulk operations — bulk edit, bulk delete and the queue-status read —
-                which landed after it too and additionally need the site-wide Make bulk
-                changes permission, one is the permission check, which landed
-                after 1.0.0, two are the portfolio tools, which landed after it
-                too, and nineteen are v2 additions — the board configuration and backlog reads, the sprint edit, the rank, the estimate, the priority, resolution and issue type catalogues, the label list, the time tracking settings, the remote link read and add, the worklog edit, the issue unlink, the attachment delete, the remote link delete, the JQL check and the filter create and update —
-                which landed after 1.0.0 too. All 40 are implemented and tested offline; the sprint
-                five, the permission check, the portfolio pair and the v2 additions need only another run, and the rest
-                need a site where the account holds the permission.
+                attachment upload and the comment and worklog deletes. Of the
+                <!-- count:unproven@released -->18<!-- /count --> still unproven, seven need a project
+                administrator — the watcher pair, the version pair, the component pair
+                and issue delete — five are the sprint writes, which that run never
+                reached because the gate itself asked Jira for an over-long sprint
+                name, three are the component, version and sprint deletes, which landed
+                after the last live run, and three are the bulk operations — bulk edit,
+                bulk delete and the queue-status read — which landed after it too and
+                additionally need the site-wide Make bulk changes permission. All of
+                them are implemented and tested offline; the sprint five need only
+                another run, and the rest need a site where the account holds the
+                permission.
+              </p>
+              <p>
+                The <!-- count:unreleased -->24<!-- /count --> tools added on <code>main</code> since then
+                ship in <!-- version:next -->1.1.0<!-- /version --> and have not been run live yet: the
+                permission check, the JQL check and the filter create and update, the
+                bulk changelog and remote link reads, the worklog edit and the remote
+                link add, the issue unlink, the attachment delete and the remote link
+                delete, the priority, resolution, issue type, label and time tracking
+                catalogues, the board configuration and backlog reads, the sprint edit,
+                the rank, the estimate and the sprint summary, and the portfolio pair.
               </p>
             </div>
           </details>
@@ -2678,8 +2690,11 @@ JIRA_ALLOW_IRREVERSIBLE=true <span class="c"># and only this adds the deletes an
                 this repository; <code>npm audit signatures</code> will say so.
               </p>
               <p>
-                From 1.0.0 the tool surface follows semver. 40 of the 82 tools are proven
-                against a live tenant; the other 42 are verified offline only. Pin the exact version in your client
+                From 1.0.0 the tool surface follows semver. <!-- count:live -->40<!-- /count --> of the
+                <!-- count:tools@released -->58<!-- /count --> tools in the latest release are proven against
+                a live tenant; the other <!-- count:unproven@released -->18<!-- /count -->, and the
+                <!-- count:unreleased -->24<!-- /count --> added on <code>main</code> since, are verified
+                offline only. Pin the exact version in your client
                 configuration — the
                 <a href="https://github.com/IvanBBaev/jira-mcp/blob/main/CHANGELOG.md"
                   >changelog</a

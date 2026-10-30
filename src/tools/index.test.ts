@@ -645,12 +645,22 @@ test('[CC-216] the site tier cards count the tools the manifest holds', () => {
   const site = readFileSync(SITE_PATH, 'utf8');
   for (const [tag, count] of Object.entries(expected)) {
     const shown = [
-      ...site.matchAll(new RegExp(`<span class="tag ${tag}">(\\d+) tools</span>`, 'gu')),
+      ...site.matchAll(
+        new RegExp(
+          `<span class="tag ${tag}">(?:<!-- count:[^ ]+ -->)?(\\d+)(?:<!-- /count -->)? tools</span>`,
+          'gu',
+        ),
+      ),
     ];
     assert.equal(shown.length, 1, `one "${tag}" tier card`);
     assert.equal(Number(shown[0]?.[1]), count, `the "${tag}" tier card`);
   }
 });
+
+/** The released-surface baseline (D526); never copied to `build/`, so resolved from the repo root. */
+const RELEASED_PATH = fileURLToPath(
+  new URL('../../src/tools/released.json', import.meta.url),
+);
 
 /** `README.md`, resolved the same way whether this file runs from `src/` or `build/`. */
 const README_PATH = fileURLToPath(new URL('../../README.md', import.meta.url));
@@ -752,6 +762,37 @@ describe('the README tool tables', () => {
     assert.match(result.stderr, /^generate-readme: README\.md is missing the /u);
     assert.match(result.stderr, /restore them before generating/u);
     assert.equal(readFileSync(copy, 'utf8'), original.replace(end, ''));
+  });
+
+  test('[D526] mark each row with the release that shipped it, or the next one', () => {
+    // An install from npm has only the released rows; a reader comparing the
+    // README on `main` against it needs to see which rows those are.
+    const released = JSON.parse(readFileSync(RELEASED_PATH, 'utf8')) as {
+      next: string;
+      since: Record<string, string>;
+    };
+    const readme = readFileSync(README_PATH, 'utf8');
+    const tools = PACKAGES.flatMap((pkg) => pkg.tools);
+    assert.ok(tools.some((tool) => released.since[tool.name] === undefined));
+    for (const tool of tools) {
+      const row = readme
+        .split('\n')
+        .find((line) => line.startsWith(`| \`${tool.name}\` |`));
+      assert.ok(row, `a README row for ${tool.name}`);
+      const since = row.split(' | ')[3];
+      assert.equal(
+        since,
+        released.since[tool.name] ?? `${released.next} (unreleased)`,
+        tool.name,
+      );
+    }
+  });
+
+  test('[D526] --released refuses to run with --check', async () => {
+    // Stamping a release writes src/tools/released.json; a check never writes.
+    const result = await runGenerator(['--check', '--released', '9.9.9']);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /--released/u);
   });
 
   test('refuse --readme without a path', async () => {

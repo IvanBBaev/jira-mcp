@@ -11,6 +11,10 @@
  *   node scripts/generate-readme.mjs            rewrite README.md in place
  *   node scripts/generate-readme.mjs --check    exit 1 if README.md is stale
  *   ... --readme <path>                         operate on another copy instead
+ *   ... --released <X.Y.Z> [--next <X.Y.Z>]     after a release: stamp every
+ *                                               unreleased tool with that version
+ *                                               in src/tools/released.json, then
+ *                                               regenerate (D526)
  *
  * `--check` is what the drift test runs. It never writes, so it is safe in CI.
  * `--readme` exists for the tests that exercise the WRITE path: they run it
@@ -22,13 +26,20 @@
  * means it sees exactly the values the server will register.
  */
 
-import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import {
+  loadPackages,
+  loadReleased,
+  resolveCount,
+  saveReleased,
+  sinceOf,
+  stampRelease,
+} from './surface-facts.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const README_PATH = resolve(REPO_ROOT, 'README.md');
-const MANIFEST_PATH = resolve(REPO_ROOT, 'build/tools/index.js');
 
 const START = '<!-- GENERATED:TOOLS:START -->';
 const END = '<!-- GENERATED:TOOLS:END -->';
@@ -86,12 +97,18 @@ function access(tool) {
   return tool.writeTier === 'irreversible' ? 'write · irreversible' : 'write · standard';
 }
 
-function renderPackage(pkg) {
+/** The release that first shipped the tool, or the version it will ship in. */
+function since(tool, released) {
+  return sinceOf(released, tool.name) ?? `${released.next} (unreleased)`;
+}
+
+function renderPackage(pkg, released) {
   const rows = pkg.tools.map(
     (tool) =>
-      `| \`${tool.name}\` | ${cell(tool.title)} | ${access(tool)} | ${cell(
-        summarize(tool.description),
-      )} |`,
+      `| \`${tool.name}\` | ${cell(tool.title)} | ${access(tool)} | ${since(
+        tool,
+        released,
+      )} | ${cell(summarize(tool.description))} |`,
   );
 
   return [
@@ -99,8 +116,8 @@ function renderPackage(pkg) {
     '',
     cell(pkg.description),
     '',
-    '| Tool | Title | Access | What it does |',
-    '| --- | --- | --- | --- |',
+    '| Tool | Title | Access | Since | What it does |',
+    '| --- | --- | --- | --- | --- |',
     ...rows,
     '',
   ].join('\n');
@@ -114,12 +131,28 @@ function renderPackage(pkg) {
  * off, and a table that ignored them would not answer "what do I lose if I only
  * enable `core` and `search`?".
  */
-export function renderTools(packages) {
+export function renderTools(packages, released) {
   const toolCount = packages.reduce((sum, pkg) => sum + pkg.tools.length, 0);
   const writeCount = packages.reduce(
     (sum, pkg) => sum + pkg.tools.filter((tool) => !tool.annotations.readOnlyHint).length,
     0,
   );
+  const unreleased = resolveCount('unreleased', packages, released).value;
+  const shipped = resolveCount('tools@released', packages, released).value;
+  // The pinned install is the latest release, not `main` (DOC-02): say which
+  // rows a reader who copies the registration example will not have.
+  const releaseLine =
+    unreleased === 0
+      ? [
+          `The Since column names the release that first shipped each tool; all of`,
+          `them are in the latest release, ${released.version}.`,
+        ]
+      : [
+          `The Since column names the release that first shipped each tool. The latest`,
+          `release, ${released.version}, has ${shipped} of them; the ${unreleased} rows marked`,
+          `\`${released.next} (unreleased)\` are on \`main\` only, so the published package`,
+          'does not have them yet.',
+        ];
 
   return [
     START,
@@ -133,7 +166,9 @@ export function renderTools(packages) {
     '`core` package is always registered. Full input and output shapes are in',
     '[`docs/TOOLS.md`](docs/TOOLS.md).',
     '',
-    ...packages.map(renderPackage),
+    ...releaseLine,
+    '',
+    ...packages.map((pkg) => renderPackage(pkg, released)),
     END,
   ].join('\n');
 }
@@ -154,16 +189,6 @@ export function spliceReadme(readme, block) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-async function loadPackages() {
-  if (!existsSync(MANIFEST_PATH)) {
-    throw new Error(
-      `The built manifest ${MANIFEST_PATH} does not exist. Run \`npm run build\` first.`,
-    );
-  }
-  const module = await import(pathToFileURL(MANIFEST_PATH).href);
-  return module.PACKAGES;
-}
-
 /** The README to operate on: `--readme <path>` (resolved against cwd), else the repo's. */
 function readmePath(argv) {
   const at = argv.indexOf('--readme');
@@ -175,12 +200,42 @@ function readmePath(argv) {
   return resolve(value);
 }
 
+/** The value after `flag`, or `undefined` when the flag is absent. */
+function flagValue(argv, flag) {
+  const at = argv.indexOf(flag);
+  if (at === -1) return undefined;
+  const value = argv[at + 1];
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`${flag} needs a value.`);
+  }
+  return value;
+}
+
+/** `1.1.0` → `1.2.0`: the default next version after a release. */
+function nextMinor(version) {
+  const [major, minor] = version.split('.').map(Number);
+  return `${major}.${minor + 1}.0`;
+}
+
 async function run(argv) {
   const check = argv.includes('--check');
   const target = readmePath(argv);
   const packages = await loadPackages();
+  let released = loadReleased();
+
+  const releasedVersion = flagValue(argv, '--released');
+  if (releasedVersion !== undefined) {
+    if (check) throw new Error('--released and --check do not combine.');
+    const nextVersion = flagValue(argv, '--next') ?? nextMinor(releasedVersion);
+    released = stampRelease(released, packages, releasedVersion, nextVersion);
+    saveReleased(released);
+    process.stderr.write(
+      `src/tools/released.json: ${releasedVersion} released, next ${nextVersion}.\n`,
+    );
+  }
+
   const current = readFileSync(target, 'utf8');
-  const next = spliceReadme(current, renderTools(packages));
+  const next = spliceReadme(current, renderTools(packages, released));
 
   if (next === current) {
     if (!check) process.stderr.write('README.md is already up to date.\n');

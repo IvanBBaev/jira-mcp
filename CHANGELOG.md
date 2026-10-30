@@ -22,6 +22,13 @@ env var names — not internal refactors.
   `clamped` hint now names the value you asked for, the cap and the cursor to
   page on with. The caps are unchanged.
 
+- The README tool tables gain a **Since** column (D526): the release that
+  first shipped each tool, or `1.1.0 (unreleased)` for a tool that is on
+  `main` but not yet on npm. The README status box names both the latest
+  release and `main`, and every tool count in the README and on the project
+  site is checked against the tool manifest. The npm description and keywords
+  now describe the safety model and the bulk and agile tools.
+
 ### Added
 
 - A Claude Desktop bundle, `jira-mcp-ai-<version>.mcpb` (D521): the npm

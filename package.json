@@ -2,7 +2,7 @@
   "name": "jira-mcp-ai",
   "version": "1.0.0",
   "mcpName": "io.github.IvanBBaev/jira-mcp-ai",
-  "description": "MCP server for Jira Cloud: JQL search, issue reads and gated writes, comments, worklogs, boards and sprints. API-token or OAuth 2.0 (3LO) auth, plan/apply write safety, read-only by default, no telemetry.",
+  "description": "Jira Cloud MCP server with enforced safety: plan/apply writes, call-time project scope, bulk edit, sprints and rank. Self-hosted, your own token, no telemetry.",
   "license": "GPL-3.0-only",
   "author": "Ivan Baev <ivanbbaev@gmail.com>",
   "repository": {
@@ -82,12 +82,20 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "jira",
     "jira-cloud",
+    "jira-mcp",
     "atlassian",
+    "atlassian-jira",
     "jql",
     "issue-tracker",
+    "claude",
+    "claude-code",
+    "cursor",
+    "agent",
+    "rovo",
     "llm",
     "ai"
   ]

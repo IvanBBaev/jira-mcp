@@ -2,7 +2,7 @@
 /**
  * docs-lint — mechanical enforcement of the rules docs/README.md states in prose.
  *
- * Eight checks:
+ * Nine checks:
  *   1. link      — every relative markdown link inside docs/** resolves, and a
  *                  `#anchor` names a heading that actually exists in the target.
  *   2. banner    — every spec doc carries a `> Status:` banner in its first lines,
@@ -25,6 +25,10 @@
  *   8. cc-src    — the same as check 4, over `src/**`, `scripts/**`, `bin/**`
  *                  and the root README / CHANGELOG / CONTRIBUTING / SECURITY:
  *                  they may cite a corner case only if the ledger defines it.
+ *   9. count     — every tool count and release version in README.md and the
+ *                  Pages site sits in a `<!-- count:KEY -->` / `<!-- version:KEY -->`
+ *                  marker that matches the manifest and src/tools/released.json,
+ *                  and no count is left unmarked (D526). Needs `npm run build`.
  *
  * Run standalone (`node scripts/docs-lint.mjs`) or as part of `npm run check`.
  * Exit code 1 with one `path:line: message` per finding; 0 when clean.
@@ -36,6 +40,12 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  loadPackages,
+  loadReleased,
+  resolveCount,
+  resolveVersion,
+} from './surface-facts.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS_DIR = join(REPO_ROOT, 'docs');
@@ -747,6 +757,119 @@ function checkPendingTestClaims() {
   }
 }
 
+// --- check 9: tool counts and release versions -----------------------------
+
+/**
+ * The README status box and the Pages site restate the size of the tool
+ * surface in prose, and prose drifts: the 2026-10-29 review found six
+ * different totals on one page (DOC-01). Every such number now sits in a
+ * marker naming the fact it states — `<!-- count:tools@released -->58<!-- /count -->`
+ * — and this check recomputes it from the built manifest and
+ * src/tools/released.json (key grammar: scripts/surface-facts.mjs).
+ *
+ * A marker only helps if it is used, so the second half looks for count-like
+ * phrases left outside a marker. The phrase list is narrow on purpose: it names
+ * the shapes the review found ("N tools", "N of the M", "the other N",
+ * "N writes"), not every number on the page.
+ */
+const COUNT_FILES = ['README.md', 'docs/index.html'];
+const COUNT_MARKER_RE = /<!-- count:([^\s>]+) -->([^<]*)<!-- \/count -->/g;
+const VERSION_MARKER_RE = /<!-- version:([^\s>]+) -->([^<]*)<!-- \/version -->/g;
+const UNMARKED_COUNT_RES = [
+  /\b\d+ (?:tools|packages|reads|writes|read tools|write tools)\b/,
+  /\b\d+ of (?:the |its )?\d+\b/,
+  /\b(?:other|last) \d+\b/,
+  /\b\d+ still\b/,
+  /<span class="tag (?:read|write|irr)">\d+ /,
+];
+const GENERATED_BLOCK_RE =
+  /<!-- GENERATED:TOOLS:START -->[\s\S]*?<!-- GENERATED:TOOLS:END -->/;
+
+async function checkCounts() {
+  let packages;
+  let released;
+  try {
+    packages = await loadPackages();
+    released = loadReleased();
+  } catch (error) {
+    report(
+      join(REPO_ROOT, 'src/tools/released.json'),
+      1,
+      `count check: ${error.message}`,
+    );
+    return;
+  }
+
+  const onMain = new Set(packages.flatMap((pkg) => pkg.tools.map((tool) => tool.name)));
+  for (const name of Object.keys(released.since)) {
+    if (!onMain.has(name)) {
+      report(
+        join(REPO_ROOT, 'src/tools/released.json'),
+        1,
+        `since lists ${name}, which the manifest no longer registers`,
+      );
+    }
+  }
+
+  // The pin users copy is the latest release; the baseline must say the same.
+  const pin = (readFileSync(join(DOCS_DIR, 'CONFIGURATION.md'), 'utf8').match(PIN_RE) ??
+    [])[0];
+  if (pin && pin !== `jira-mcp-ai@${released.version}`) {
+    report(
+      join(REPO_ROOT, 'src/tools/released.json'),
+      1,
+      `version ${released.version} disagrees with the pinned ${pin} — after a release ` +
+        'run `node scripts/generate-readme.mjs --released <version>`',
+    );
+  }
+
+  for (const rel of COUNT_FILES) {
+    const file = join(REPO_ROOT, rel);
+    if (!existsSync(file)) continue;
+    const text = readFileSync(file, 'utf8');
+
+    for (const [re, resolveKey] of [
+      [COUNT_MARKER_RE, (key) => resolveCount(key, packages, released)],
+      [VERSION_MARKER_RE, (key) => resolveVersion(key, released)],
+    ]) {
+      for (const m of text.matchAll(re)) {
+        const line = lineOf(text, m.index);
+        const resolved = resolveKey(m[1]);
+        if (resolved.error) {
+          report(file, line, resolved.error);
+        } else if (m[2] !== String(resolved.value)) {
+          report(
+            file,
+            line,
+            `${m[1]} is ${resolved.value}, the marker says ${JSON.stringify(m[2])}`,
+          );
+        }
+      }
+    }
+
+    // Blank out what is already accounted for — markers and the generated
+    // block — keeping line breaks so reported line numbers stay right.
+    const blank = (s) => s.replace(/[^\n]/g, ' ');
+    const rest = text
+      .replace(GENERATED_BLOCK_RE, blank)
+      .replace(COUNT_MARKER_RE, blank)
+      .replace(VERSION_MARKER_RE, blank);
+    rest.split('\n').forEach((lineText, i) => {
+      for (const re of UNMARKED_COUNT_RES) {
+        const hit = re.exec(lineText);
+        if (!hit) continue;
+        report(
+          file,
+          i + 1,
+          `unmarked count ${JSON.stringify(hit[0].trim())} — wrap the number in a ` +
+            '`<!-- count:KEY -->` marker (scripts/surface-facts.mjs) or drop it',
+        );
+        break;
+      }
+    });
+  }
+}
+
 // --- run -----------------------------------------------------------------
 
 if (!existsSync(DOCS_DIR)) {
@@ -769,6 +892,7 @@ checkCornerCaseBindings(cornerCases);
 checkPendingTestClaims();
 checkResolvedStatus(files);
 checkSourceCornerCaseRefs(cornerCases);
+await checkCounts();
 
 const parked = OWNED_LITERALS.filter((r) => r.enabled === false).length;
 const pendingBindings =
