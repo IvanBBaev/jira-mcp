@@ -4143,3 +4143,40 @@ JSON Schema cannot express.
   `issue` is refused as `permission` for an issue in XYZ, and the refusal
   names XYZ. `jira_upload_attachment` is refused earlier, because the harness
   has no `JIRA_MEDIA_DIR`. Nothing is written.
+
+## Tool-selection eval (V3-46, 2026-10-30)
+
+`test/agent-evals/tasks.json` holds 48 golden tasks: the task text, the
+expected first tool and its key arguments. `src/tools/agent-eval.test.ts`
+replays them against a simulated keyword search over the emitted
+`tools/list` and pins the hit counts to the recorded baseline (D528).
+`scripts/agent-eval-model.mjs` is the model tier; the owner runs it by hand.
+
+- **CC-5210** — every task id is unique, every expected tool is in
+  `tools/list` with all packages on, and the set holds at least 40 tasks.
+- **CC-5211** — every golden argument is a property of the expected tool's
+  input schema, and every `required` property is present. A renamed or newly
+  required parameter fails the test instead of rotting the golden set.
+- **CC-5212** — the baseline task count equals the golden set size; a task
+  added or removed without a re-baseline fails with the re-baseline command.
+- **CC-5213** — a top-1 or top-3 hit count below the baseline fails and lists
+  the tasks outside the top 3.
+- **CC-5214** — a hit count above the baseline fails too, asking for a
+  re-baseline (`UPDATE_AGENT_EVAL_BASELINE=1`), so an improvement is locked in.
+- **CC-5215** — ties rank pessimistically: every other tool with the same
+  score ranks ahead of the expected one. A tool that scores 0 has rank
+  infinity, never a lucky position.
+- **CC-5216** — only the tool name and the first 160 description characters
+  count; a word past the prefix does not.
+- **CC-5217** — tokenizing drops stopwords (including `jira`, which every tool
+  name carries), pure numbers and one-letter tokens, and strips plural and
+  `-ed`/`-ing` suffixes without stemming `class` to `clas`.
+- **CC-5218** — the model tier refuses to run when `CI` is set or
+  `ANTHROPIC_API_KEY` is missing; the key is read from the environment only.
+- **CC-5219** — the model tier refuses an unknown flag and a `--only` that
+  selects no task, before it loads the tools or sends a request.
+
+The model tier's live behaviour is not tested offline: it sends
+`tool_choice: auto` (current models refuse a forced tool choice) and records a
+task with no `tool_use` block as a miss with its `stop_reason`, so a refusal
+shows up in the report instead of crashing the run.

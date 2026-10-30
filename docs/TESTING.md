@@ -283,6 +283,14 @@ minimum set is recorded.
     three bulk tools has ever run against a real Jira site — they join the
     unproven writes above, and both submits additionally need the global Bulk
     Change permission no fake can prove a tenant grants.
+16. **Tool selection (D528, offline)** — `src/tools/agent-eval.test.ts` replays
+    the 48 golden tasks in `test/agent-evals/tasks.json` against a simulated
+    keyword search over `tools/list` and pins the top-1/top-3 hit counts to the
+    recorded baseline in both directions (CC-5210–CC-5217). It is a proxy for a
+    client's tool search, not a model. The model tier,
+    `scripts/agent-eval-model.mjs`, sends the same tasks to the Anthropic API;
+    the owner runs it by hand with `ANTHROPIC_API_KEY` in the environment, it
+    refuses to run under `CI`, and it is not part of the gate (CC-5218, CC-5219).
 
 **What the OAuth suite cannot prove.** The same honesty the live gate gets
 below. Every OAuth test asserts *this* code against a fake modelled on

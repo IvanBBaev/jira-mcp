@@ -1,0 +1,410 @@
+{
+  "about": "Tool-selection eval (D528, V3-46). Each task is a natural-language request with the tool an agent should call first and the key arguments of that call. The deterministic tier (src/tools/agent-eval.test.ts) scores keyword search over tools/list against `baseline`; the model tier (scripts/agent-eval-model.mjs) is owner-run.",
+  "baseline": {
+    "tasks": 48,
+    "top1": 30,
+    "top3": 42
+  },
+  "tasks": [
+    {
+      "id": "search-open-bugs",
+      "task": "Find all open bugs in project ABC",
+      "expected": "jira_search",
+      "args": {
+        "jql": "project = ABC AND issuetype = Bug AND statusCategory != Done"
+      }
+    },
+    {
+      "id": "count-unresolved",
+      "task": "How many unresolved issues are there in project ABC?",
+      "expected": "jira_count",
+      "args": {
+        "jql": "project = ABC AND resolution = EMPTY"
+      }
+    },
+    {
+      "id": "parse-jql",
+      "task": "Check whether this JQL query is valid: project = ABC AND sttus = Done",
+      "expected": "jira_parse_jql",
+      "args": {
+        "queries": ["project = ABC AND sttus = Done"]
+      }
+    },
+    {
+      "id": "create-filter",
+      "task": "Save the query 'assignee = currentUser()' as a filter called My work",
+      "expected": "jira_create_filter",
+      "args": {
+        "name": "My work",
+        "jql": "assignee = currentUser()"
+      }
+    },
+    {
+      "id": "list-filters",
+      "task": "Show the saved filter named Team bugs",
+      "expected": "jira_list_filters",
+      "args": {
+        "filterName": "Team bugs"
+      }
+    },
+    {
+      "id": "get-issue",
+      "task": "Show me issue ABC-123 with its details",
+      "expected": "jira_get_issue",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "get-transitions",
+      "task": "Which transitions are available for ABC-123 right now?",
+      "expected": "jira_get_transitions",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "get-changelog",
+      "task": "Show the change history of ABC-123",
+      "expected": "jira_get_changelog",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "add-comment",
+      "task": "Add a comment to ABC-123 saying the fix is deployed",
+      "expected": "jira_add_comment",
+      "args": {
+        "issue": "ABC-123",
+        "body": "The fix is deployed."
+      }
+    },
+    {
+      "id": "update-comment",
+      "task": "Edit comment 10001 on ABC-123 to fix a typo",
+      "expected": "jira_update_comment",
+      "args": {
+        "issue": "ABC-123",
+        "commentId": "10001",
+        "body": "The fix is deployed to production."
+      }
+    },
+    {
+      "id": "transition-issue",
+      "task": "Transition ABC-123 to Done",
+      "expected": "jira_transition_issue",
+      "args": {
+        "issue": "ABC-123",
+        "transition": "Done"
+      }
+    },
+    {
+      "id": "create-bug",
+      "task": "Create a bug in project ABC titled Login page crashes",
+      "expected": "jira_create_issue",
+      "args": {
+        "project": "ABC",
+        "issueType": "Bug",
+        "summary": "Login page crashes"
+      }
+    },
+    {
+      "id": "add-worklog",
+      "task": "Log 2 hours of work on ABC-123",
+      "expected": "jira_add_worklog",
+      "args": {
+        "issue": "ABC-123",
+        "timeSpent": "2h"
+      }
+    },
+    {
+      "id": "link-issues",
+      "task": "Link ABC-1 so that it blocks ABC-2",
+      "expected": "jira_link_issues",
+      "args": {
+        "linkType": "Blocks",
+        "inwardIssue": "ABC-2",
+        "outwardIssue": "ABC-1"
+      }
+    },
+    {
+      "id": "remote-link",
+      "task": "Add a remote link to ABC-123 pointing at the pull request https://github.com/acme/app/pull/42",
+      "expected": "jira_add_remote_link",
+      "args": {
+        "issue": "ABC-123",
+        "url": "https://github.com/acme/app/pull/42",
+        "title": "PR 42"
+      }
+    },
+    {
+      "id": "delete-issue",
+      "task": "Delete issue ABC-99",
+      "expected": "jira_delete_issue",
+      "args": {
+        "issue": "ABC-99"
+      }
+    },
+    {
+      "id": "bulk-edit",
+      "task": "Bulk edit ABC-1, ABC-2 and ABC-3 to add the label release-12",
+      "expected": "jira_bulk_edit_issues",
+      "args": {
+        "issues": ["ABC-1", "ABC-2", "ABC-3"],
+        "labels": ["release-12"]
+      }
+    },
+    {
+      "id": "find-user-for-assign",
+      "task": "Find the user Maria Petrova so I can assign her an issue",
+      "expected": "jira_search_users",
+      "args": {
+        "query": "Maria Petrova"
+      }
+    },
+    {
+      "id": "search-users-email",
+      "task": "Search users by the email maria@example.com",
+      "expected": "jira_search_users",
+      "args": {
+        "query": "maria@example.com"
+      }
+    },
+    {
+      "id": "assign-issue",
+      "task": "Assign ABC-123 to account id 5b10ac8d82e05b22cc7d4ef5",
+      "expected": "jira_assign_issue",
+      "args": {
+        "issue": "ABC-123",
+        "accountId": "5b10ac8d82e05b22cc7d4ef5"
+      }
+    },
+    {
+      "id": "list-watchers",
+      "task": "List the watchers of ABC-123",
+      "expected": "jira_list_watchers",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "add-watcher",
+      "task": "Add a watcher to ABC-123",
+      "expected": "jira_add_watcher",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "add-vote",
+      "task": "Vote for ABC-123",
+      "expected": "jira_add_vote",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "list-attachments",
+      "task": "List the attachments on ABC-123",
+      "expected": "jira_list_attachments",
+      "args": {
+        "issue": "ABC-123"
+      }
+    },
+    {
+      "id": "upload-attachment",
+      "task": "Upload report.pdf as an attachment to ABC-123",
+      "expected": "jira_upload_attachment",
+      "args": {
+        "issue": "ABC-123",
+        "name": "report.pdf"
+      }
+    },
+    {
+      "id": "list-fields",
+      "task": "What is the field id of the Story Points field?",
+      "expected": "jira_list_fields",
+      "args": {
+        "query": "Story Points"
+      }
+    },
+    {
+      "id": "list-projects",
+      "task": "List the projects I can see",
+      "expected": "jira_list_projects",
+      "args": {}
+    },
+    {
+      "id": "create-meta",
+      "task": "Which fields are required to create a Task in project ABC? Get the create metadata",
+      "expected": "jira_get_create_meta",
+      "args": {
+        "project": "ABC"
+      }
+    },
+    {
+      "id": "list-statuses",
+      "task": "List all workflow statuses",
+      "expected": "jira_list_statuses",
+      "args": {}
+    },
+    {
+      "id": "list-link-types",
+      "task": "Which issue link types exist?",
+      "expected": "jira_list_link_types",
+      "args": {}
+    },
+    {
+      "id": "create-component",
+      "task": "Create a component called Backend in project ABC",
+      "expected": "jira_create_component",
+      "args": {
+        "project": "ABC",
+        "name": "Backend"
+      }
+    },
+    {
+      "id": "release-version",
+      "task": "Update version 10020 and mark it released",
+      "expected": "jira_update_version",
+      "args": {
+        "versionId": "10020",
+        "released": true
+      }
+    },
+    {
+      "id": "list-versions",
+      "task": "List the versions of project ABC",
+      "expected": "jira_list_versions",
+      "args": {
+        "project": "ABC"
+      }
+    },
+    {
+      "id": "myself",
+      "task": "Who am I logged in as?",
+      "expected": "jira_get_myself",
+      "args": {}
+    },
+    {
+      "id": "my-permissions",
+      "task": "Do I have permission to delete issues in project ABC?",
+      "expected": "jira_get_my_permissions",
+      "args": {
+        "project": "ABC",
+        "permissions": ["DELETE_ISSUES"]
+      }
+    },
+    {
+      "id": "capabilities",
+      "task": "What capabilities does this Jira server have enabled?",
+      "expected": "jira_capabilities",
+      "args": {}
+    },
+    {
+      "id": "list-boards",
+      "task": "List the boards of project ABC",
+      "expected": "jira_list_boards",
+      "args": {
+        "projectKeyOrId": "ABC"
+      }
+    },
+    {
+      "id": "list-sprints",
+      "task": "List the active sprints on board 12",
+      "expected": "jira_list_sprints",
+      "args": {
+        "boardId": 12,
+        "state": "active"
+      }
+    },
+    {
+      "id": "sprint-summary",
+      "task": "Summarise sprint 34: progress, scope and blockers",
+      "expected": "jira_sprint_summary",
+      "args": {
+        "sprintId": 34
+      }
+    },
+    {
+      "id": "sprint-issues",
+      "task": "Get the issues in sprint 34",
+      "expected": "jira_get_sprint_issues",
+      "args": {
+        "sprintId": 34
+      }
+    },
+    {
+      "id": "backlog",
+      "task": "Show the backlog of board 12",
+      "expected": "jira_get_backlog",
+      "args": {
+        "boardId": 12
+      }
+    },
+    {
+      "id": "move-to-sprint",
+      "task": "Move ABC-1 and ABC-2 into sprint 34",
+      "expected": "jira_move_to_sprint",
+      "args": {
+        "sprintId": 34,
+        "issues": ["ABC-1", "ABC-2"]
+      }
+    },
+    {
+      "id": "create-sprint",
+      "task": "Create a sprint named Sprint 35 on board 12",
+      "expected": "jira_create_sprint",
+      "args": {
+        "name": "Sprint 35",
+        "originBoardId": 12
+      }
+    },
+    {
+      "id": "start-sprint",
+      "task": "Start sprint 35 on 2026-11-02, ending 2026-11-16",
+      "expected": "jira_start_sprint",
+      "args": {
+        "sprintId": 35,
+        "startDate": "2026-11-02T09:00:00.000+02:00",
+        "endDate": "2026-11-16T18:00:00.000+02:00"
+      }
+    },
+    {
+      "id": "close-sprint",
+      "task": "Close sprint 34",
+      "expected": "jira_close_sprint",
+      "args": {
+        "sprintId": 34
+      }
+    },
+    {
+      "id": "rank-issues",
+      "task": "Rank ABC-5 above ABC-2 in the backlog",
+      "expected": "jira_rank_issues",
+      "args": {
+        "issues": ["ABC-5"],
+        "rankBeforeIssue": "ABC-2"
+      }
+    },
+    {
+      "id": "set-estimate",
+      "task": "Set the story point estimate of ABC-123 to 5 on board 12",
+      "expected": "jira_set_estimate",
+      "args": {
+        "issue": "ABC-123",
+        "boardId": 12,
+        "value": 5
+      }
+    },
+    {
+      "id": "portfolio",
+      "task": "Give me a portfolio overview across projects ABC and XYZ",
+      "expected": "jira_portfolio_analyze",
+      "args": {
+        "projects": ["ABC", "XYZ"]
+      }
+    }
+  ]
+}
