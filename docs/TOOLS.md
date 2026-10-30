@@ -4,7 +4,8 @@
 > drift is a bug. This document owns **tool names, counts and per-tool
 > defaults**; the `PACKAGES` manifest snapshot test locks the names, counts,
 > annotations and input shapes against drift, and the per-tool tests pin the
-> defaults (the snapshot strips prose, so descriptions are checked by eye).
+> defaults (the snapshot strips prose; `tools/description-lint.test.ts` checks the
+> descriptions for tracker ids and the keyword-first rule).
 
 Naming: `jira_<verb>_<noun>` matching `^jira_[a-z0-9]+(_[a-z0-9]+)*$` (asserted at
 import time). Every tool carries the full annotation quadruple; write tools carry a
@@ -14,7 +15,11 @@ import time). Every tool carries the full annotation quadruple; write tools carr
 Tool descriptions are written for the model: one sentence of purpose, then the
 non-obvious constraints (accountId not username, fields must be requested, JQL
 quoting), then a pointer to the discovery tool when relevant. Budget: ≤ 500 chars
-per description. What a model needs rarely — the full write-gate contract, a
+per description. Keyword-first: a description opens with an imperative verb
+("List", "Read", "Permanently delete") and names the tool's Jira noun within
+its first 80 characters, where a model or a client's tool search looks first.
+No description or argument description carries an internal tracker id
+(`CC-…`, `D…`, `V3-…`); the model cannot resolve one. What a model needs rarely — the full write-gate contract, a
 worked example, JQL idioms, the markdown subset — is not in a description at
 all; it is served behind `resources/read` (§Reference resources, D124).
 

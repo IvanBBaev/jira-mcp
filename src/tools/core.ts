@@ -196,7 +196,8 @@ export function capabilitiesTool(
     name: 'jira_capabilities',
     title: 'Describe this server',
     description:
-      'Describe this server without calling Jira: the packages and tools that are ' +
+      "Describe this server's capabilities without calling Jira: the packages and tools " +
+      'that are ' +
       'registered, the site, the active profile, the write mode (plan vs apply) and ' +
       'the per-call limits. Local only — no network, no permissions. Call it first ' +
       'when a tool name, a package or the write mode is unclear, and when a tool you ' +

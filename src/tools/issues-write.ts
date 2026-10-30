@@ -872,7 +872,7 @@ export const updateCommentTool = defineTool({
   name: 'jira_update_comment',
   title: 'Update comment',
   description:
-    'Edit one existing comment. CC-31 REPLACE semantics: body overwrites the WHOLE ' +
+    'Edit one existing comment. REPLACE semantics: body overwrites the WHOLE ' +
     'comment, so anything the old one contained (tables, panels, mentions) is lost ' +
     'unless you resend it — read the comment with jira_get_comments first and pass ' +
     'the full new text, never just the sentence you wanted to add. commentId is the ' +
@@ -1058,7 +1058,7 @@ export const addWorklogTool = defineTool({
   name: 'jira_add_worklog',
   title: 'Add worklog',
   description:
-    'Log work against one issue. Pass exactly one of timeSpentSeconds (preferred) ' +
+    'Log work against one issue as a new worklog. Pass exactly one of timeSpentSeconds (preferred) ' +
     'or timeSpent ("2h 30m"). started defaults to now and takes ' +
     'YYYY-MM-DDTHH:mm:ss with or without an offset: without one it is read in the ' +
     "authenticated user's Jira timezone, not the server's, and the request always " +

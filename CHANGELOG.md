@@ -204,6 +204,11 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
 - `tools/list` is smaller: schemas lost their `$schema` and integer bounds,
   shared arguments got one-line descriptions, and long ones point at
   `jira://reference/markdown`. No argument, default or result shape changed.
+- Tool descriptions open with the action and the Jira noun ("List the
+  watchers of an issue …", "Read the changelogs of up to 1000 issues …"), so
+  a model or a client's tool search finds the right tool from the first
+  words, and two descriptions no longer carry internal reference numbers. A
+  test holds every description to both rules.
 - The MCP SDK floor is `^1.32.1` (was `^1.30.0`).
 - Documentation: install steps keep the API token out of every client config
   (`doctor --save`, then a user-scope `claude mcp add`, Claude Desktop, and

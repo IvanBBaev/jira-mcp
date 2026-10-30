@@ -284,7 +284,7 @@ export const listBoardsTool = defineTool<z.infer<typeof listBoardsInput>, BoardL
   name: 'jira_list_boards',
   title: 'List boards',
   description:
-    'Lists the Jira Software boards you can see — id, name, type and the project ' +
+    'List the Jira Software boards you can see — id, name, type and the project ' +
     'each belongs to. The board id is what jira_list_sprints takes, so this is the ' +
     'first call of any sprint workflow. Filter with projectKeyOrId or type. A site ' +
     'without Jira Software fails here with kind=unsupported rather than an empty ' +
@@ -337,7 +337,7 @@ export const getBoardConfigTool = defineTool<
   name: 'jira_get_board_config',
   title: 'Get board configuration',
   description:
-    "Reads one board's configuration: the saved filter behind it (filterId), its " +
+    "Read one board's configuration: the saved filter behind it (filterId), its " +
     'columns with the status ids each one holds, the column constraint, the ' +
     'estimation field (estimation.fieldId — the story-points field on most scrum ' +
     'boards) and the rank field. Use it to map a status to its board column, or to ' +
@@ -392,7 +392,7 @@ export const listSprintsTool = defineTool<
   name: 'jira_list_sprints',
   title: 'List sprints',
   description:
-    "Lists a board's sprints with their id, name, state, goal and dates. Filter " +
+    "List a board's sprints with their id, name, state, goal and dates. Filter " +
     'with state ("active" for the sprint in flight, "future" for the ones planned). ' +
     'The sprint id is what jira_get_sprint_issues and jira_move_to_sprint take. ' +
     'Kanban boards have no sprints. One page per call: when paging.partial is true, ' +
@@ -692,7 +692,7 @@ export const moveToSprintTool = defineTool<
   name: 'jira_move_to_sprint',
   title: 'Move issues to sprint',
   description:
-    `Moves up to ${String(MAX_MOVE_ISSUES)} issues into a sprint — the only way to ` +
+    `Move up to ${String(MAX_MOVE_ISSUES)} issues into a sprint — the only way to ` +
     'set a sprint, which is not an editable field on jira_update_issue. Ranking is ' +
     'unchanged; issues land at the bottom of the sprint. A batch larger than the cap ' +
     'is refused outright, with nothing sent. Jira may accept some issues and reject ' +
@@ -757,7 +757,7 @@ export const moveToBacklogTool = defineTool<
   name: 'jira_move_to_backlog',
   title: 'Move issues to backlog',
   description:
-    `Sends up to ${String(MAX_MOVE_ISSUES)} issues back to the backlog — Jira defines ` +
+    `Send up to ${String(MAX_MOVE_ISSUES)} issues back to the backlog — Jira defines ` +
     'it as "remove the future and active sprints from these issues", so it is the ' +
     'inverse of jira_move_to_sprint and the only way to clear a sprint field. Status, ' +
     'assignee and project are untouched; the board is decided by the project, not by ' +
@@ -838,7 +838,7 @@ export const createSprintTool = defineTool<
   name: 'jira_create_sprint',
   title: 'Create sprint',
   description:
-    'Creates a sprint on a Scrum board and returns its id. The sprint is created in ' +
+    'Create a sprint on a Scrum board and returns its id. The sprint is created in ' +
     'the "future" state — this does NOT start it, jira_start_sprint does, and only a ' +
     'started sprint is the work in flight. startDate and endDate here only plan the ' +
     'window; the start requires both. Running this twice creates two sprints with the ' +
@@ -949,7 +949,7 @@ export const closeSprintTool = defineTool<
   name: 'jira_close_sprint',
   title: 'Close sprint',
   description:
-    'Completes the active sprint. Jira stamps completeDate, closes the sprint for ' +
+    'Complete the active sprint. Jira stamps completeDate, closes the sprint for ' +
     'good — a closed sprint cannot be reopened or edited through this API — and moves ' +
     'every issue that is NOT done out of it, to the backlog or the next sprint ' +
     'according to the board\'s configuration. Only an "active" sprint can be closed. ' +
@@ -1041,7 +1041,7 @@ export const updateSprintTool = defineTool<
   name: 'jira_update_sprint',
   title: 'Update sprint',
   description:
-    "Edits a sprint's name, goal or dates and leaves every other field as it is; at " +
+    "Edit a sprint's name, goal or dates and leaves every other field as it is; at " +
     'least one is required. It never changes the state — jira_start_sprint and ' +
     'jira_close_sprint do. A future sprint can take any edit and an active one can move ' +
     'its end date; Jira refuses edits to a closed sprint.',
@@ -1130,7 +1130,7 @@ export const rankIssuesTool = defineTool<z.infer<typeof rankIssuesInput>, RankIs
     name: 'jira_rank_issues',
     title: 'Rank issues',
     description:
-      'Moves issues directly above or below another issue in the board order, keeping ' +
+      'Move issues directly above or below another issue in the board order, keeping ' +
       'their given order. Give exactly one of rankBeforeIssue or rankAfterIssue. Jira can ' +
       'rank some issues and refuse others: outcome is then partial and failed names them ' +
       'with the reason. Fix those and rank only them — do not resend the whole batch.',
@@ -1200,7 +1200,7 @@ export const setEstimateTool = defineTool<
   name: 'jira_set_estimate',
   title: 'Set estimate',
   description:
-    "Sets an issue's estimate in the field its board estimates with — story points " +
+    "Set an issue's estimate in the field its board estimates with — story points " +
     'or a time estimate — so no custom field id is needed. jira_get_board_config ' +
     'shows which field that is. Jira refuses an issue that is not on the board or a ' +
     'board with no estimation field.',

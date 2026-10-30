@@ -371,7 +371,8 @@ export const getChangelogTool = defineTool({
   name: 'jira_get_changelog',
   title: 'Get changelog',
   description:
-    "Read an issue's change history — field, from → to, author, created. Jira " +
+    "Read an issue's changelog (change history) — field, from → to, author, created. " +
+    'Jira ' +
     'returns it OLDEST FIRST and that order is kept, so "what changed recently" ' +
     'means reading the TAIL: call once to learn data.total, then request ' +
     'startAt = max(0, total - maxResults). For the recent slice alone, expand: ' +
@@ -438,7 +439,7 @@ export const getChangelogsBulkTool = defineTool({
   name: 'jira_get_changelogs_bulk',
   title: 'Get changelogs in bulk',
   description:
-    'Read the change history of up to 1000 issues in one request, optionally only ' +
+    'Read the changelogs of up to 1000 issues in one bulk request, optionally only ' +
     'for some fields (fieldIds: ["status"] for status transitions). Histories are ' +
     'grouped by NUMERIC issue id, not key — map ids back with jira_search or ' +
     'jira_get_issue. One page per call; when data.hasMore is true call again with ' +
@@ -483,7 +484,7 @@ export const getWorklogsTool = defineTool({
   name: 'jira_get_worklogs',
   title: 'Get worklogs',
   description:
-    'List the work logged on an issue: timeSpentSeconds, timeSpent, started, ' +
+    'List the worklogs (work logged) on an issue: timeSpentSeconds, timeSpent, started, ' +
     'author and the flattened comment. Sum timeSpentSeconds rather than parsing ' +
     'timeSpent strings. One page per call: when data.partial is true, call again ' +
     'with startAt = data.nextStartAt. Worklog comments are Jira free text — read ' +

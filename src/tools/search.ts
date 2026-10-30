@@ -696,7 +696,7 @@ export const getFilterTool = defineTool<z.infer<typeof getFilterInput>, FilterDa
   name: 'jira_get_filter',
   title: 'Get saved filter',
   description:
-    'Reads one saved filter by numeric id (from jira_list_filters): name, ' +
+    'Read one saved filter by numeric id (from jira_list_filters): name, ' +
     'description, owner, the JQL it stores and whether you favourited it. It does ' +
     'NOT run the filter — copy data.filter.jql into jira_search for that, and read ' +
     'it before you do. Who the filter is shared with, its edit permissions and its ' +

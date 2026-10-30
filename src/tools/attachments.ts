@@ -446,7 +446,7 @@ export const listAttachmentsTool = defineTool<
   name: 'jira_list_attachments',
   title: 'List attachments',
   description:
-    'Lists the files attached to one issue: id, filename, size in bytes, mime type, ' +
+    'List the attachments (files) of one issue: id, filename, size in bytes, mime type, ' +
     'author and creation time. Metadata only — no bytes are transferred and no local ' +
     'directory is needed. The id is what jira_download_attachment takes. An issue ' +
     'with no attachments, and a project with attachments disabled, both answer with ' +
@@ -610,7 +610,7 @@ function uploadAttachmentTool(
     name: 'jira_upload_attachment',
     title: 'Upload attachment',
     description:
-      "Attaches a file from this server's media directory to an issue. `name` is a " +
+      "Upload an attachment to an issue from this server's media directory. `name` is a " +
       'plain file name inside JIRA_MEDIA_DIR — paths, ".." and subdirectories are ' +
       'refused, so nothing else on the host can be uploaded. Requires JIRA_MEDIA_DIR ' +
       'and a file no larger than 50 MiB. A timeout is reported as ambiguous_write and ' +

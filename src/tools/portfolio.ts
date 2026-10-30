@@ -337,7 +337,7 @@ export const analyzePortfolioTool = defineTool<AnalyzeArgs, PortfolioAnalyzeData
   name: 'jira_portfolio_analyze',
   title: 'Analyze portfolio',
   description:
-    'Compares the work of several projects or boards in one sweep: the epic/story/' +
+    'Analyze a portfolio — the work of several projects or boards — in one sweep: the epic/story/' +
     'subtask hierarchy per project, likely duplicate and overlapping open work across ' +
     'boards, open issues that resemble finished work elsewhere (reuse candidates), ' +
     'cross-project blockers and components or labels several projects are changing. ' +
@@ -500,7 +500,8 @@ function reportTool(
     name: 'jira_portfolio_report',
     title: 'Write portfolio report',
     description:
-      'Runs the jira_portfolio_analyze sweep and writes the result as a Markdown file ' +
+      'Write a portfolio report: runs the jira_portfolio_analyze sweep and saves the ' +
+      'result as a Markdown file ' +
       'into JIRA_REPORT_DIR: per-project tables, Mermaid hierarchy and findings ' +
       'diagrams, and tables of duplicate, overlapping and reusable work, blockers and ' +
       'shared hotspots. Returns the file path and counts, not the document. Needs ' +

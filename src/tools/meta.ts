@@ -143,7 +143,7 @@ export const listProjectsTool = defineTool<
   name: 'jira_list_projects',
   title: 'List projects',
   description:
-    'Lists the Jira projects you can see — id, key, name, project type and lead. ' +
+    'List the Jira projects you can see — id, key, name, project type and lead. ' +
     'This is how a project NAME becomes the KEY every other tool wants. `query` ' +
     'is matched server-side against project name and key. The read is paged ' +
     'internally: when `paging.partial` is true more projects exist upstream, so ' +
@@ -204,7 +204,7 @@ export const getProjectTool = defineTool<
   name: 'jira_get_project',
   title: 'Get project',
   description:
-    'Reads one project in detail: description, lead, issue types, components and ' +
+    'Read one project in detail: description, lead, issue types, components and ' +
     'versions — what you need before creating an issue, because issue type ids ' +
     'and component/version names are per-project. `project` is a key or a numeric ' +
     'id. A project that does not exist and one you may not see are the same 404 ' +
@@ -296,8 +296,8 @@ export const listFieldsTool = defineTool<z.infer<typeof listFieldsInput>, FieldL
   name: 'jira_list_fields',
   title: 'List fields',
   description:
-    'THE discovery tool for field ids: every field with id, name, schema type and ' +
-    'custom flag, so "Story Points" resolves to customfield_10016 and back. query ' +
+    'List every field with id, name, schema type and custom flag — THE discovery ' +
+    'tool for field ids, so "Story Points" resolves to customfield_10016 and back. query ' +
     'filters by name or id. duplicateNames lists names carried by more than one id — ' +
     'then ask which field is meant instead of picking one. Not paginated: the result ' +
     'is complete unless a `truncated` hint says the character budget cut it.',
@@ -421,7 +421,7 @@ export const getCreateMetaTool = defineTool<
   name: 'jira_get_create_meta',
   title: 'Get create metadata',
   description:
-    'Reads what jira_create_issue accepts for a project. Call it WITHOUT ' +
+    'Read the create metadata for a project: what jira_create_issue accepts. Call it WITHOUT ' +
     '`issueTypeId` to list the issue types you may create there, then again WITH ' +
     'one to get that screen: field id, name, required flag, allowed values and the ' +
     'update operations each field takes. Issue type and custom field ids are ' +
@@ -519,7 +519,7 @@ export const listStatusesTool = defineTool<
   name: 'jira_list_statuses',
   title: 'List statuses',
   description:
-    'Lists workflow statuses — id, name, category and scope — so JQL like ' +
+    'List workflow statuses — id, name, category and scope — so JQL like ' +
     'status = "In Review" names a status that really exists on this site. ' +
     '`projectId` narrows the list to one project and is the NUMERIC id, not the ' +
     'key. Note that statusCategory here is a plain string (TODO / IN_PROGRESS / ' +
@@ -566,11 +566,11 @@ export const listLinkTypesTool = defineTool<
   name: 'jira_list_link_types',
   title: 'List issue link types',
   description:
-    'Lists the issue link types configured on this site with their inward and ' +
+    'List the issue link types configured on this site with their inward and ' +
     'outward phrases (for example "blocks" / "is blocked by"). jira_link_issues ' +
     'takes the `name` from this list, so read it first rather than guessing a link ' +
     'type name. The endpoint is not paginated, so this result is complete unless a ' +
-    '`truncated` hint says the character budget cut it (CC-253).',
+    '`truncated` hint says the character budget cut it.',
   package: 'meta',
   annotations: READ_ANNOTATIONS,
   input: listLinkTypesInput,
@@ -606,7 +606,7 @@ export const listPrioritiesTool = defineTool<
   name: 'jira_list_priorities',
   title: 'List priorities',
   description:
-    'Lists the priorities configured on this site — id, name, colour and which one ' +
+    'List the priorities configured on this site — id, name, colour and which one ' +
     'is the default — so JQL like priority = High and the priority field of a ' +
     'create or update name a priority that really exists. Priority names are ' +
     'tenant-specific; read this instead of guessing "Critical" or "P1". Served ' +
@@ -647,7 +647,7 @@ export const listResolutionsTool = defineTool<
   name: 'jira_list_resolutions',
   title: 'List resolutions',
   description:
-    "Lists the resolutions configured on this site (Done, Won't Do, Duplicate, ...) " +
+    "List the resolutions configured on this site (Done, Won't Do, Duplicate, ...) " +
     'with their ids. A transition screen that asks for a resolution takes one of ' +
     'these names, and JQL like resolution = Duplicate must match one exactly. ' +
     'Served from the metadata cache (JIRA_META_CACHE_TTL_S).',
@@ -686,7 +686,7 @@ export const listIssueTypesTool = defineTool<
   name: 'jira_list_issue_types',
   title: 'List issue types',
   description:
-    'Lists every issue type the caller can see, site-wide: id, name, subtask flag, ' +
+    'List every issue type the caller can see, site-wide: id, name, subtask flag, ' +
     "hierarchy level, and scopeProjectId for a team-managed project's own type — " +
     'two rows can share a name, so pick by id. For the types ONE project can ' +
     'create, with their fields, use jira_get_create_meta instead. Unpaginated; ' +
@@ -734,7 +734,7 @@ export const listLabelsTool = defineTool<z.infer<typeof listLabelsInput>, LabelL
   name: 'jira_list_labels',
   title: 'List labels',
   description:
-    'Lists the labels already in use on this site, so a create, an update or JQL ' +
+    'List the labels already in use on this site, so a create, an update or JQL ' +
     'like labels = backend reuses an existing label instead of minting a near-duplicate ' +
     '("Backend" vs "backend"). query filters by substring, case-insensitively. Labels ' +
     'are site-wide and change whenever someone tags an issue, so this read is never ' +
@@ -771,7 +771,7 @@ export const getTimeTrackingConfigTool = defineTool<
   name: 'jira_get_timetracking_config',
   title: 'Get time tracking settings',
   description:
-    'Reads whether time tracking is on and how this site counts time: working hours ' +
+    'Read the time tracking config: whether it is on and how this site counts time: working hours ' +
     'per day, days per week, display format and default unit, plus secondsPerDay and ' +
     'secondsPerWeek — what "1d" and "1w" mean here, before logging work or setting an ' +
     'estimate. Needs no admin permission. Cached for the metadata TTL ' +

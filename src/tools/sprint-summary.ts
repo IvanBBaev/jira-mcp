@@ -498,7 +498,7 @@ export const sprintSummaryTool = defineTool<SprintSummaryArgs, SprintSummaryData
   name: 'jira_sprint_summary',
   title: 'Summarise a sprint',
   description:
-    "One sprint in one call, in place of Jira's velocity / sprint report: issue counts " +
+    "Summarise one sprint in one call, in place of Jira's velocity / sprint report: issue counts " +
     "and the board's estimate (story points) summed by status category, the " +
     'completion ratio, the issues added after the start (from the Sprint-field ' +
     'history) and the committed scope. Statuses are as they stand now; issues ' +

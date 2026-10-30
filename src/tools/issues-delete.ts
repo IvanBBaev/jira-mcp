@@ -1457,8 +1457,8 @@ export const bulkEditIssuesTool = defineTool({
   name: 'jira_bulk_edit_issues',
   title: 'Bulk edit issues',
   description:
-    'Apply one change set — labels, priority, assignee, fix versions — to up to 1000 ' +
-    'issues in one asynchronous bulk operation. IRREVERSIBLE tier: nothing records the ' +
+    'Edit up to 1000 issues in one asynchronous bulk operation: one change set — ' +
+    'labels, priority, assignee, fix versions — applied to every issue. IRREVERSIBLE tier: nothing records the ' +
     'per-issue values it overwrites. Needs JIRA_ALLOW_IRREVERSIBLE=true on top of plan ' +
     '→ apply, plus the global Bulk Change permission and Edit issues in every affected ' +
     'project. The result is a task id, not a finished edit — poll ' +

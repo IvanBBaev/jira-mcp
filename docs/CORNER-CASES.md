@@ -3989,3 +3989,21 @@ CC-5154. Project ABC is in scope, XYZ is not.
   older than the notes, and the exemption fails once server.json drops it.
 - **CC-5167** — the `server.json` description is 1–100 characters, the
   registry schema's limit.
+
+## Description hygiene (V3-36, 2026-10-30)
+
+- **CC-5170** — no tool description or input-schema string in `tools/list`
+  carries an internal tracker id (`CC-31`, `D124`, `V3-07`, a review item):
+  a model cannot resolve one and may search for it as an issue or a tool.
+- **CC-5171** — the tracker pattern catches the dashed and undashed decision
+  forms and review ids, and leaves issue keys (`PROJ-123`, `SAN-1204`) and
+  standards (`UTF-8`, `ISO-8601`) alone.
+- **CC-5172** — every tool description is keyword-first: an imperative verb
+  from the allowed list opens it (an optional `Permanently` may precede it),
+  and one of the nouns of the tool's name appears in its first 80 characters.
+- **CC-5173** — the rule rejects a context-first opening ("THE discovery tool
+  …"), a third-person verb ("Lists …") and a noun outside the window.
+- **CC-5174** — a name's nouns are its tokens after `jira_` minus the leading
+  verb and fillers (`my`, `to`), stemmed; `jira_count` and `jira_get_myself`
+  name theirs explicitly.
+- **CC-5175** — every explicit noun override names a tool that exists.
