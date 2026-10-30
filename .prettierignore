@@ -1,6 +1,8 @@
 node_modules/
 build/
 coverage/
+.stryker-tmp/
+reports/
 package-lock.json
 *.tgz
 

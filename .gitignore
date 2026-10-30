@@ -30,3 +30,7 @@ Thumbs.db
 
 # MCPB bundles built by scripts/pack-mcpb.mjs
 mcpb/dist/
+
+# Mutation testing (Stryker, `npm run mutation`): the sandbox and the reports
+.stryker-tmp/
+reports/

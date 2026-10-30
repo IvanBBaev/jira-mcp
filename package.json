@@ -59,6 +59,7 @@
     "tarball": "node scripts/check-tarball.mjs",
     "tarball:publish": "node scripts/check-tarball.mjs --publish",
     "mcpb": "node scripts/pack-mcpb.mjs",
+    "mutation": "stryker run",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "check:publish": "npm run typecheck && npm run lint && npm run format:check && npm run build && npm run tarball && npm run test:coverage && npm run docs:lint",
     "check": "npm run check:publish && npm run audit:prod",
@@ -70,6 +71,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/tap-runner": "10.1.1",
     "@types/node": "^22.20.5",
     "c8": "^12.0.0",
     "eslint": "^10.12.0",

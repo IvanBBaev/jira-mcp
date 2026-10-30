@@ -1,0 +1,58 @@
+name: Mutation
+
+# Mutation testing of the safety core (docs/TESTING.md §Mutation testing,
+# QA-11). Coverage says the safety code runs; this job asks whether the
+# assertions would notice if a condition in it changed. Stryker mutates the
+# files listed under `mutate` in `stryker.config.json` and reruns the tests that
+# cover each mutant; `thresholds.break` there is the score floor, and Stryker
+# exits non-zero below it, which turns this job red.
+#
+# It is deliberately NOT part of `npm run check` or of the per-push CI: a full
+# run takes tens of minutes, and the gate must stay fast. Scheduled weekly and
+# runnable by hand. Saturdays 03:29 UTC — a different day and an odd minute from
+# CI (Mon 04:17) and CodeQL (Wed 05:43).
+#
+# It needs no secret and touches no Jira site: the suite runs behind the same
+# network fence as `npm test`.
+
+on:
+  schedule:
+    - cron: '29 3 * * 6'
+  workflow_dispatch:
+
+concurrency:
+  group: mutation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Same determinism knobs as CI (docs/TESTING.md §Determinism knobs).
+  TZ: UTC
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  mutation:
+    name: mutation (safety core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      # Stryker builds its own instrumented copy in a sandbox (`buildCommand`);
+      # nothing needs to be built here first.
+      - run: npm run mutation
+      # The HTML report lists every surviving mutant with its diff; kept even
+      # when the score is under the floor, because that is when it is needed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: warn

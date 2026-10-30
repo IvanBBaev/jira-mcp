@@ -65,7 +65,16 @@ const noZodRuntimeImport = {
 };
 
 export default tseslint.config(
-  { ignores: ['build/', 'coverage/', 'node_modules/', 'docs/'] },
+  {
+    ignores: [
+      'build/',
+      'coverage/',
+      'node_modules/',
+      'docs/',
+      '.stryker-tmp/',
+      'reports/',
+    ],
+  },
 
   js.configs.recommended,
 

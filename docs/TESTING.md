@@ -460,6 +460,28 @@ the small coverage differences between the two Node versions CI runs.
 `npm run check` runs the suite under c8 (`test:coverage`); plain `npm run test`
 stays uninstrumented for quick loops.
 
+## Mutation testing
+
+Coverage says the safety code runs; mutation testing asks whether the
+assertions would notice if a condition in it changed (QA-11). `npm run
+mutation` runs Stryker (`stryker.config.json`) over the safety core —
+`src/mcp/write-mode.ts`, `src/mcp/project-scope.ts`, `src/mcp/taint.ts`,
+`src/core/http-util.ts` and the never-replay decision in
+`src/core/http/decide.ts`. The tap runner reruns, per mutant, only the compiled
+test files that cover it, behind the same network fence as `npm test`. Two test
+files are left out because they inspect the checkout rather than behaviour:
+`manifest-sync.test.js` asserts the executable bit on `bin/`, which the
+sandbox copy drops, and `api/safe-allowlist.test.js` scans source text, which
+instrumentation rewrites.
+
+It is **not** part of `npm run check`: a full run takes several minutes even on
+a fast machine. `.github/workflows/mutation.yml` runs it weekly and on demand;
+`thresholds.break` is the score floor, and a run under it fails the job. The
+HTML and JSON reports land in `reports/mutation/` (git-ignored) and are
+uploaded as the job's artifact. The baseline, the floor's rationale and the
+justification of the surviving mutants are in
+`docs/reviews/2026-10-30-mutation-baseline.md`.
+
 ## Gate
 
 `npm run check` = `check:publish && audit:prod`, where `check:publish` =

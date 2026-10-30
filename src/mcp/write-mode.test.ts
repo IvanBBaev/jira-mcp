@@ -2179,3 +2179,32 @@ test('[CC-5033] an applied write that Jira refused stays an error envelope witho
     return true;
   });
 });
+
+// Mutation baseline (V3-78, docs/reviews/2026-10-30-mutation-baseline.md):
+// pins the half of the stale check that only fires when the plan had a stamp.
+test('[V3-78] a versionless plan applies even when the apply-time read finds a version', async () => {
+  const fake = createFakeJiraRequest();
+  fake.on(PUT_ROUTE, jiraOk(undefined, { status: 204 }));
+  const gate = createWriteGate({
+    writeMode: 'apply',
+    allowIrreversible: false,
+  });
+  const args = { summary: 'New title' };
+  let reads = 0;
+  // The plan-time read carries no version; the apply-time read does. Only a
+  // stamp taken at plan time can make a plan stale.
+  const laterVersioned: WriteGateCall['context'] = () => {
+    reads += 1;
+    return Promise.resolve(reads === 1 ? { diff: [] } : { diff: [], version: '7' });
+  };
+
+  const planId = planIdOf(
+    await gate.execute(editCallOf(args, {}, fake.fn, laterVersioned)),
+  );
+  const applied = await gate.execute(
+    editCallOf(args, { apply: true, plan_id: planId }, fake.fn, laterVersioned),
+  );
+
+  assert.equal(applied.ok, true);
+  assert.deepEqual(fake.routes(), [PUT_ROUTE]);
+});

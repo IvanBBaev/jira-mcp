@@ -7,7 +7,12 @@ import assert from 'node:assert/strict';
 
 import { isReplayable, shouldRetryStatus } from '../http-util.js';
 import type { HttpMethod } from '../types.js';
-import { classifyOutcome, decideNext, failureReasonOf } from './decide.js';
+import {
+  classifyOutcome,
+  decideNext,
+  failureReasonOf,
+  isSuccessStatus,
+} from './decide.js';
 import type { AttemptFacts, Decision, FailureReason } from './decide.js';
 
 interface Request {
@@ -327,4 +332,36 @@ test('[D515] failureReasonOf names timeouts, aborts and everything else', () => 
   assert.equal(failureReasonOf(named('AbortError')), 'aborted');
   assert.equal(failureReasonOf(new TypeError('fetch failed')), 'transport');
   assert.equal(failureReasonOf('not an error'), 'transport');
+});
+
+// Mutation baseline (V3-78, docs/reviews/2026-10-30-mutation-baseline.md): the
+// table above judges the final Decision, where a stray `landed` on a replayable
+// request and the 2xx band edges are invisible. These pin the Outcome itself.
+
+test('[D515] isSuccessStatus is exactly the 2xx band', () => {
+  assert.equal(isSuccessStatus(199), false);
+  assert.equal(isSuccessStatus(200), true);
+  assert.equal(isSuccessStatus(299), true);
+  assert.equal(isSuccessStatus(300), false);
+});
+
+test('[D515] a lost reply is "landed" only for an unsafe write that Jira answered 2xx', () => {
+  const failure = (answeredStatus?: number): AttemptFacts =>
+    answeredStatus === undefined
+      ? { kind: 'failure', reason: 'transport' }
+      : { kind: 'failure', reason: 'transport', answeredStatus };
+  assert.deepStrictEqual(classifyOutcome(failure(201), { replayable: false }), {
+    kind: 'lost',
+    reason: 'transport',
+    landed: 201,
+  });
+  // A replayable request is simply retried; nothing about it "landed".
+  assert.deepStrictEqual(classifyOutcome(failure(201), { replayable: true }), {
+    kind: 'lost',
+    reason: 'transport',
+  });
+  // No `landed` key at all when nothing landed — not `landed: undefined`.
+  const unanswered = classifyOutcome(failure(), { replayable: false });
+  assert.deepStrictEqual(unanswered, { kind: 'lost', reason: 'transport' });
+  assert.equal('landed' in unanswered, false);
 });
