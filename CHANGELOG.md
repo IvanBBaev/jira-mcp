@@ -267,6 +267,13 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, 
   warned about at startup and by `doctor`; requests must still name
   `127.0.0.1` or `localhost` in `Host`, so publish the port to the host
   loopback only (`-p 127.0.0.1:3334:3334`).
+- JQL guidance follows Atlassian's October 2026 changes: on text fields `=`,
+  `IN` and `NOT IN` now match an exact phrase and `~` matches words in any
+  order; voter, watcher and creator entity-property queries stop working on
+  2026-11-16. `jira_search` and `jira_count` report a bad query themselves,
+  so `jira_parse_jql` is now described as a diagnosis tool, not a step to run
+  first. `docs/JIRA-API.md` gains a dated Platform watch table that is
+  re-read before every release.
 
 Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527, D531, D532.
 

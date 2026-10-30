@@ -98,7 +98,13 @@ Relative dates are \`-1d\`, \`-2w\`, \`-1h\`, \`startOfDay()\`, \`startOfWeek()\
 ## Text
 
 - \`text ~ "payment timeout"\` searches summary, description and comments
-  (word-based, not substring); \`summary ~ "timeout"\` narrows to the title.
+  for those words in any order (word-based, not substring);
+  \`summary ~ "timeout"\` narrows to the title.
+- Since 2026-10-06, \`=\`, \`IN\` and \`NOT IN\` on a text field are
+  exact-PHRASE searches: \`summary = "payment timeout"\` matches a summary that
+  contains that phrase in that order, not only one equal to it. Still
+  case-insensitive and stemmed, so expect more rows than a whole-value match.
+  Use \`~\` when word order should not matter.
 - \`labels = backend\`, \`labels in (backend, api)\`; \`labels is EMPTY\`.
 - \`component = "Web App"\`, \`fixVersion = "2.1"\`, \`priority in (High, Highest)\`.
 - Custom fields go by name in quotes (\`"Story Points" > 5\`) or by id
@@ -109,10 +115,31 @@ Relative dates are \`-1d\`, \`-2w\`, \`-1h\`, \`startOfDay()\`, \`startOfWeek()\
 \`ORDER BY\` goes last: \`ORDER BY updated DESC\`, \`ORDER BY priority DESC, created ASC\`,
 \`ORDER BY Rank ASC\` (board order).
 
+## Hierarchy
+
+- \`issue in portfolioChildIssuesOf("PROJ-10")\` lists every descendant of
+  PROJ-10. From 2027-02-01 Atlassian also includes team-managed hierarchies,
+  so the same query (and its \`NOT IN\` form) may change size.
+
+## When Jira refuses a query
+
+- \`jira_search\` and \`jira_count\` validate the JQL themselves: a bad query
+  comes back as a \`validation\` error carrying Jira's own message (it names
+  the clause or character). Since 2026-10-08 that holds for app-provided JQL
+  functions too. Fix the query and run it again — no check is needed first.
+- \`jira_parse_jql\` is for diagnosis: several queries at once, errors and
+  warnings for each, nothing run. Reach for it when a refusal is unclear, or
+  to check JQL that will be saved rather than run.
+- From 2026-11-16 Jira rejects JQL that searches user entity properties
+  through \`voter\`, \`watcher\` or \`creator\`; \`assignee\` and \`reporter\`
+  are unaffected. There is no rewrite that keeps the meaning — say so instead
+  of retrying.
+
 ## Pitfalls
 
 - Quote any value with a space or a reserved word: \`status = "To Do"\`.
-- \`=\` is exact, \`~\` is a text search, \`in\` takes a parenthesised list.
+- \`=\` is exact on fields like status and project but a phrase search on text
+  fields; \`~\` is a word search; \`in\` takes a parenthesised list.
 - \`is EMPTY\` / \`is not EMPTY\` — never \`= null\`.
 - A field that is not on the project's screens makes the whole query fail, not
   just that clause.

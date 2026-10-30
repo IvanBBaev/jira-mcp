@@ -153,6 +153,10 @@ if it is skipped, and "unchecked" means only a reader will notice.
    `description`, `mcpb/manifest.json` and the `.claude-plugin/` plugin and marketplace
    manifests against what
    the release now does. [unchecked]
+7. **Platform watch.** Re-read the Jira Cloud platform and Jira Software
+   changelogs, update the table in
+   [JIRA-API.md §Platform watch](JIRA-API.md#platform-watch) and move its
+   "Last reviewed" date to the release day. [docs-lint check 11]
 
 ## 3. Publishing
 

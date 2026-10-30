@@ -2,7 +2,7 @@
 /**
  * docs-lint — mechanical enforcement of the rules docs/README.md states in prose.
  *
- * Ten checks:
+ * Eleven checks:
  *   1. link      — every relative markdown link inside docs/** resolves, and a
  *                  `#anchor` names a heading that actually exists in the target.
  *   2. banner    — every spec doc carries a `> Status:` banner in its first lines,
@@ -31,6 +31,9 @@
  *                  and no count is left unmarked (D526). Needs `npm run build`.
  *  10. capabilities — the server capabilities docs/ARCHITECTURE.md states are
  *                  the ones `src/mcp/server.ts` declares (ARC-12).
+ *  11. platform-watch — the "Last reviewed" date of docs/JIRA-API.md
+ *                  §Platform watch is not older than the newest release in
+ *                  CHANGELOG.md (JIR-10).
  *
  * Run standalone (`node scripts/docs-lint.mjs`) or as part of `npm run check`.
  * Exit code 1 with one `path:line: message` per finding; 0 when clean.
@@ -941,6 +944,45 @@ function checkCapabilities() {
   }
 }
 
+// --- check 11: the platform watch is re-read every release ----------------
+
+/**
+ * docs/JIRA-API.md was once "as of 2026-08" two months and one release later,
+ * with an Atlassian removal date nobody had re-checked (JIR-10). Its
+ * §Platform watch table carries a `**Last reviewed: YYYY-MM-DD.**` line, and
+ * RELEASING.md §2.1 asks for the changelogs to be re-read before each release.
+ * This check holds the two together: the review date may not be older than the
+ * newest `## [x.y.z] — YYYY-MM-DD` heading in CHANGELOG.md. ISO dates compare
+ * correctly as strings.
+ */
+const PLATFORM_WATCH_DOC = join(DOCS_DIR, 'JIRA-API.md');
+const PLATFORM_WATCH_RE = /^\*\*Last reviewed: (\d{4}-\d{2}-\d{2})\.\*\*$/m;
+const RELEASE_HEADING_RE = /^## \[[^\]]+\] — (\d{4}-\d{2}-\d{2})$/gm;
+
+function checkPlatformWatch() {
+  const doc = readFileSync(PLATFORM_WATCH_DOC, 'utf8');
+  const match = PLATFORM_WATCH_RE.exec(doc);
+  if (!match) {
+    report(
+      PLATFORM_WATCH_DOC,
+      1,
+      'no "**Last reviewed: YYYY-MM-DD.**" line in §Platform watch',
+    );
+    return;
+  }
+  const changelog = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
+  const released = [...changelog.matchAll(RELEASE_HEADING_RE)].map((m) => m[1]).sort();
+  const newest = released.at(-1);
+  if (newest !== undefined && match[1] < newest) {
+    report(
+      PLATFORM_WATCH_DOC,
+      lineOf(doc, match.index),
+      `platform watch last reviewed ${match[1]}, before the ${newest} release — ` +
+        're-read the Atlassian changelogs and move the date (RELEASING.md §2.1)',
+    );
+  }
+}
+
 // --- run -----------------------------------------------------------------
 
 if (!existsSync(DOCS_DIR)) {
@@ -964,6 +1006,7 @@ checkPendingTestClaims();
 checkResolvedStatus(files);
 checkSourceCornerCaseRefs(cornerCases);
 checkCapabilities();
+checkPlatformWatch();
 await checkCounts();
 
 const parked = OWNED_LITERALS.filter((r) => r.enabled === false).length;

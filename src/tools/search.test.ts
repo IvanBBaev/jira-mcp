@@ -33,6 +33,7 @@ import {
   type SearchIssuesResult,
 } from '../api/search.js';
 import { errorFromResponse } from '../core/errors.js';
+import { createJiraRequest } from '../core/http.js';
 import type { JiraError } from '../core/types.js';
 import {
   createFakeClock,
@@ -45,6 +46,7 @@ import { sessionRecentWrites } from '../mcp/recent-writes.js';
 import { renderResult } from '../mcp/result.js';
 import { TAINT_BEGIN, TAINT_END } from '../mcp/taint.js';
 import type { AnyToolSpec, Hint, ToolCtx, ToolResult } from '../mcp/types.js';
+import { withFetch } from '../testing/with-fetch.js';
 import {
   countTool,
   createFilterTool,
@@ -816,6 +818,99 @@ test('CC-05: a non-400 failure keeps the remediation its own layer wrote', async
   assert.equal(result.error?.kind, 'permission');
   assert.equal(result.error?.remediation, forbidden.remediation);
   assert.equal(String(result.error?.remediation).includes(JQL_REMEDIATION), false);
+});
+
+// ---------------------------------------------------------------------------
+// Wire tier: `/search/jql` validates JQL itself (platform changelog, 2026-10-08)
+// ---------------------------------------------------------------------------
+//
+// The CC-05 tests above build the JiraError by hand. These run the real HTTP
+// client against a mocked `fetch`, so the body Jira sends is parsed by
+// `core/http.ts` exactly as in production: since 2026-10-08 a query using an
+// app-provided JQL function is refused by `/search/jql` itself, and the model
+// must see Jira's message without a `/jql/parse` pre-flight in between.
+
+/** The 400 `/search/jql` answers an unknown custom JQL function with. // synthetic */
+const CUSTOM_FUNCTION_400 = {
+  errorMessages: [
+    "Error in the JQL Query: Unable to find JQL function 'linkedIssuesOfRecursive(ABC-1)'.",
+  ],
+  errors: {},
+};
+
+/** A ctx whose `jira` is the real HTTP client over the mocked `fetch`. */
+function wireCtx(): ToolCtx {
+  const clock = createFakeClock(NOW);
+  const log = createFakeLogger();
+  return {
+    jira: createJiraRequest({
+      credentials: {
+        kind: 'basic',
+        host: { origin: 'https://acme.atlassian.net', pathPrefix: '' },
+        email: 'me@example.com',
+        apiToken: 'wire-test-token',
+      },
+      clock,
+      rng: () => 0,
+      logger: log,
+    }),
+    api: CLOUD_API,
+    log,
+    clock,
+    cid: 'c-4f9a02',
+    limits: { maxResultChars: 100_000, maxPages: 20 },
+    deadlineAt: NOW + 30_000,
+  };
+}
+
+test("wire: a /search/jql 400 surfaces as validation with Jira's message verbatim, no pre-flight", async () => {
+  await withFetch(async (mock) => {
+    mock.on('/rest/api/3/search/jql', { status: 400, json: CUSTOM_FUNCTION_400 }, 1);
+
+    const result = await searchTool.handler(
+      { jql: 'issue in linkedIssuesOfRecursive(ABC-1)' },
+      wireCtx(),
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.kind, 'validation');
+    assert.equal(result.error?.httpStatus, 400);
+    assert.deepEqual(result.error?.jiraMessages, CUSTOM_FUNCTION_400.errorMessages);
+    assert.equal(result.error?.remediation, JQL_REMEDIATION);
+    // What the model reads carries Jira's wording, not a paraphrase.
+    const rendered = renderResult(result, { maxResultChars: 100_000 });
+    assert.ok(rendered.text.includes(String(CUSTOM_FUNCTION_400.errorMessages[0])));
+    // One request: the search itself. No `/jql/parse` pre-flight, no retry of a 400.
+    assert.equal(mock.requests.length, 1);
+    assert.equal(mock.requests[0]?.method, 'POST');
+    assert.ok(mock.requests[0]?.url.endsWith('/rest/api/3/search/jql'));
+  });
+});
+
+test('wire: jira_count passes the same /search/approximate-count 400 through', async () => {
+  await withFetch(async (mock) => {
+    mock.on(
+      '/rest/api/3/search/approximate-count',
+      { status: 400, json: CUSTOM_FUNCTION_400 },
+      1,
+    );
+
+    const result = await countTool.handler(
+      { jql: 'issue in linkedIssuesOfRecursive(ABC-1)' },
+      wireCtx(),
+    );
+
+    assert.equal(result.error?.kind, 'validation');
+    assert.deepEqual(result.error?.jiraMessages, CUSTOM_FUNCTION_400.errorMessages);
+    assert.equal(result.error?.remediation, JQL_REMEDIATION);
+    assert.equal(mock.requests.length, 1);
+  });
+});
+
+test('the parse tool is described as a diagnosis aid, not a required pre-flight', () => {
+  assert.match(parseJqlTool.description, /use it to explain a refusal/);
+  assert.match(parseJqlTool.description, /Not needed before jira_search or jira_count/);
+  assert.match(searchTool.description, /on text fields = matches a phrase, ~ words/);
 });
 
 test('an error envelope carries no rows, no brand and no read hints', async () => {

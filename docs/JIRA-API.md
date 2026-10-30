@@ -6,8 +6,9 @@
 > them.
 
 Everything in this file is a hard constraint discovered from Atlassian docs,
-changelogs and community reports as of 2026-08. The HTTP client and api/ layer
-must encode these rules.
+changelogs and community reports, first written as of 2026-08 and re-read
+against the platform changelog on the date §Platform watch records. The HTTP
+client and api/ layer must encode these rules.
 
 ## Base URLs and versions
 
@@ -147,6 +148,40 @@ Atlassian **removed** the legacy search endpoints (`GET/POST /rest/api/3/search`
 - **In oauth mode, JQL may not refer to entity properties** — a documented 3LO
   restriction, not a client limitation, and the one place where the same JQL
   string behaves differently between the two auth modes. See §OAuth 2.0 (3LO).
+
+### JQL semantics changes, October 2026
+
+Three platform changelog entries changed what a JQL string means or how a bad
+one is reported. None changes a wire constant here; each changes the guidance
+the model gets (the `jira://reference/jql` resource and the `jira_search` and
+`jira_parse_jql` descriptions).
+
+- **2026-10-06 — text fields: `=`, `IN` and `NOT IN` are exact-phrase
+  searches.** On a text field (`summary`, `description`, `comment`, `text`,
+  text custom fields) these operators now match the phrase anywhere in the
+  value, in order, rather than the whole value. Matching stays
+  case-insensitive and stemmed, so results are broader than a whole-value
+  match would be and saved filters may return more rows. `~` without escaped
+  quotes is the any-order word search. `=` on a non-text field (`status`,
+  `project`, a select list) is unchanged.
+- **2026-10-07 — user entity-property JQL on voter, watcher and creator is
+  deprecated; removal on 2026-11-16.** After that date a query that searches
+  user entity properties through the `voter`, `watcher` or `creator` fields is
+  rejected (Atlassian names an `UnsupportedOperationException`; the HTTP status
+  is not stated, and this server reports whatever 4xx arrives with Jira's
+  message verbatim). `assignee` and `reporter` are unaffected. Atlassian's
+  migration paths are custom fields, issue entity properties or app storage —
+  nothing this server can do on the caller's behalf. Under oauth mode entity
+  properties were never available in JQL at all (above).
+- **2026-10-08 — `/search/jql` validates JQL directly again**, including
+  queries that use custom (app-provided) JQL functions: an invalid query is a
+  400 with `errorMessages`, so a `POST /jql/parse` pre-flight before a search
+  is unnecessary. Native JQL was already validated this way. The 400 reaches
+  the model as a `validation` error carrying Jira's messages verbatim plus the
+  JQL remediation (CC-05). `jira_parse_jql` (D146) stays as the
+  diagnose-and-explain tool: several queries at once, `errors` and `warnings`
+  per query, nothing run — for a saved filter, a query the model cannot see
+  why Jira refused, or a check with no search to follow.
 
 ## Two pagination models
 
@@ -917,6 +952,35 @@ Jira is inconsistent; the extractor must read, in order:
 Permission quirk: Jira returns **404 for issues you cannot see** (not 403).
 Error remediation text must mention both possibilities ("not found or no
 permission").
+
+## Platform watch
+
+Dated changes on Atlassian's side that this server depends on or must document.
+Source: the Jira Cloud platform changelog,
+https://developer.atlassian.com/cloud/jira/platform/changelog/ (and the Jira
+Software changelog for the agile routes). The table was seeded from the
+2026-10-29 platform review's change calendar.
+
+**Last reviewed: 2026-10-30.**
+
+Refresh cadence: re-read both changelogs before every release (RELEASING.md
+§2.1) and at least monthly; move the date above when done, add new rows, and
+mark a row *done* when the code or docs that answer it ship. docs-lint
+(check 11) fails when the date is older than the newest release in
+CHANGELOG.md.
+
+| Date | Change | Source | What answers it here |
+|---|---|---|---|
+| ~2026-11-01 (**unconfirmed**) | Agile issue GETs removed in favour of `/rest/software/1.0` | RFC-127 / CHANGE-3193 | D500–D504, §Sprint and backlog issue reads — done |
+| 2026-11-16 | User entity-property JQL on voter, watcher and creator removed | Platform changelog, 2026-10-07 | §JQL semantics changes, JQL resource — done |
+| In effect since 2026-10-06 | Text-field `=` / `IN` / `NOT IN` are exact-phrase searches | Platform changelog, 2026-10-06 | §JQL semantics changes, JQL resource, `jira_search` description — done |
+| In effect since 2026-10-08 | `/search/jql` validates JQL directly (custom functions included) | Platform changelog, 2026-10-08 | §JQL semantics changes, `jira_parse_jql` repositioned — done |
+| In effect since 2026-08-28 | `/issue/bulkfetch` accepts up to 1000 issues | Software changelog | ROADMAP V3-50 — open |
+| 2027-01-01 | Egress range 131.162.88.0/21 must be allowlisted by IP-allowlisting customers | Platform changelog, 2026-10-16 | CONFIGURATION.md, allow-listing by IP (V3-03) — done |
+| 2027-02-01 | `portfolioChildIssuesOf()` includes team-managed hierarchies | Platform changelog, 2026-10-27 | JQL resource note — done |
+| Experimental, no date | `/rest/api/3/policies`: admins may block field and status creation | Platform changelog, 2026-10-15 | No tool creates fields or statuses — watch only |
+| No date (**unconfirmed**) | API tokens without scopes deprecated | Atlassian developer community | Scoped tokens (D301) — watch only |
+| 2028-03-30 / 2029-03-28 | Data Center end of sales, then end of life | DC end-of-life page | DC preview (ROADMAP V3-27) — open |
 
 ## Misc constraints
 

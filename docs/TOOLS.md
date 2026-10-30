@@ -315,7 +315,7 @@ a model always has a way to ask what it is talking to.
 |---|---|---|
 | `jira_search` | `POST /rest/api/3/search/jql` | Input: `jql` (required), `fields?` (string[], default `summary,status,assignee,priority,issuetype,updated`), `maxResults?` (default 25, cap 100), `nextPageToken?`, `expand?` (passed through — `changelog` included), `reconcileIssues?` (≤ 50 ids, read-after-write; when omitted, the session's recently-written ids are passed automatically — CC-02, D32). Output: issues (ADF fields flattened to text), `nextPageToken?`, `reconciledIssueIds?` (the ids actually reconciled, whoever supplied them; present without the `eventual_consistency` hint when they were auto-passed). No total — hint points at `jira_count`. |
 | `jira_count` | `POST /rest/api/3/search/approximate-count` | Input: `jql`. Output: approximate count + `approximate` hint. |
-| `jira_parse_jql` | `POST /rest/api/3/jql/parse?validation=strict` | Input: `queries` — 1 to 20 non-blank JQL strings. Output: `queries[]` of `{ query, valid, errors, warnings }` in the order sent, and `allValid`. Runs nothing and reads no issues; strict validation also checks that each field, function and value exists for the caller. Branded untrusted — Jira's messages quote tenant text (D146). |
+| `jira_parse_jql` | `POST /rest/api/3/jql/parse?validation=strict` | Input: `queries` — 1 to 20 non-blank JQL strings. Output: `queries[]` of `{ query, valid, errors, warnings }` in the order sent, and `allValid`. Runs nothing and reads no issues; strict validation also checks that each field, function and value exists for the caller. A diagnosis tool, not a pre-flight: `jira_search` and `jira_count` validate JQL themselves (custom functions included since 2026-10-08) and return Jira's 400 messages verbatim as a `validation` error, so the parse is for explaining a refusal, checking several queries at once, or vetting JQL for a saved filter (JIRA-API.md §JQL semantics changes). Branded untrusted — Jira's messages quote tenant text (D146). |
 | `jira_list_filters` | `GET /rest/api/3/filter/search` | Saved filters by `filterName?` (case-insensitive name substring) or `accountId?` (owner); classic pagination, one page per call (`maxResults?`, `startAt?`, `data.paging`). Expand is fixed to `description,owner,jql`. Output rows carry `id`, `name`, `description?`, `owner?` (`{ accountId, displayName }`), `jql?` only — share permissions, edit permissions, subscriptions and shared-user rosters are never returned. Content-bearing: `_untrusted: true` + `untrusted_content` (§Untrusted content). |
 | `jira_get_filter` | `GET /rest/api/3/filter/{id}` | One saved filter by numeric id (from `jira_list_filters`); adds `favourite?`. Does **not** execute the filter — the stored `jql` goes to `jira_search`, which is the only tool that runs JQL. A non-numeric id is refused before the request (D22). Content-bearing, same brand as above. |
 | `jira_create_filter` | `POST /rest/api/3/filter` | Write tier `standard`. Input: `name`, `jql` (both non-blank), `description?`. Saves the JQL as a filter owned by the caller and shared with no one — `sharePermissions` and `editPermissions` are never sent. Does not run the JQL. Returns `{ filter }` through the same allowlist as the reads, branded untrusted (D147, CC-1537, CC-1540). |
@@ -327,6 +327,11 @@ brute-forces into dozens of calls: `sprint in openSprints()`, `issue in
 `assignee = currentUser()`, `statusCategory != Done`, and the backlog
 approximation `sprint is EMPTY AND statusCategory != Done` (across projects;
 one board's backlog in rank order is `jira_get_backlog`). Quoting rule: values with spaces need double quotes.
+Since 2026-10-06 `=`, `IN` and `NOT IN` on a text field are exact-phrase
+searches and `~` is the any-order word search; the description says so in one
+clause, and `jira://reference/jql` carries the rest of the October 2026 JQL
+changes (the 2026-11-16 removal of user entity-property JQL on voter, watcher
+and creator, and direct validation on `/search/jql`).
 
 The filter pair is the "run the escalations filter" path: `jira_list_filters`
 finds the stored JQL, `jira_search` executes it. Keeping execution in a
