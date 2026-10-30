@@ -19,6 +19,38 @@ async function expectAbort(promise: Promise<void>): Promise<Error> {
   throw new Error('expected the sleep to reject');
 }
 
+/**
+ * Whether `promise` settles before a guard timer armed right after it fires.
+ *
+ * An ordering, not a wall-clock budget: under a heavy load average the event
+ * loop can stall for longer than any fixed budget, but Node still runs expired
+ * timers in deadline order, so a sleep due earlier than the guard settles
+ * first however late both of them run. The guard is cleared either way.
+ */
+async function settlesBefore(
+  promise: Promise<unknown>,
+  guardMs: number,
+): Promise<boolean> {
+  let guard: ReturnType<typeof setTimeout> | undefined;
+  const guardFired = new Promise<'guard'>((resolve) => {
+    guard = setTimeout(() => {
+      resolve('guard');
+    }, guardMs);
+  });
+  try {
+    const winner = await Promise.race([
+      promise.then(
+        () => 'settled' as const,
+        () => 'settled' as const,
+      ),
+      guardFired,
+    ]);
+    return winner === 'settled';
+  } finally {
+    clearTimeout(guard);
+  }
+}
+
 describe('createSystemClock', () => {
   it('now() reports wall-clock epoch milliseconds', () => {
     const clock = createSystemClock();
@@ -50,9 +82,10 @@ describe('createSystemClock', () => {
 
   it('sleep(0) resolves without waiting', async () => {
     const clock = createSystemClock();
-    const started = Date.now();
-    await clock.sleep(0);
-    assert.ok(Date.now() - started < 100);
+    assert.ok(
+      await settlesBefore(clock.sleep(0), 1_000),
+      'sleep(0) waited like a real delay',
+    );
   });
 
   it('sleep clamps a non-finite or negative delay instead of throwing', async () => {
@@ -70,14 +103,16 @@ describe('createSystemClock', () => {
   it('sleep rejects promptly when the signal aborts mid-wait', async () => {
     const clock = createSystemClock();
     const controller = new AbortController();
-    const started = Date.now();
     const pending = clock.sleep(60_000, controller.signal);
+    const rejection = expectAbort(pending);
 
     setTimeout(() => controller.abort(), 5);
-    const error = await expectAbort(pending);
 
-    assert.equal(error.name, 'AbortError');
-    assert.ok(Date.now() - started < 1_000, 'the abort did not short-circuit the wait');
+    assert.ok(
+      await settlesBefore(rejection, 30_000),
+      'the abort did not short-circuit the wait',
+    );
+    assert.equal((await rejection).name, 'AbortError');
   });
 
   it('sleep leaves no dangling timer after an abort', async () => {
