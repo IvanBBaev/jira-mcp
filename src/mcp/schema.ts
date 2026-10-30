@@ -50,11 +50,37 @@ export function trimJsonSchema(value: unknown): unknown {
 }
 
 /**
- * The input schema of one tool as a client sees it. The conversion is pure and
- * the manifest immutable, so callers convert once at startup and keep the
- * result (CC-81: no `$ref`; CC-1416: no `$schema`, no safe-integer bounds).
+ * One conversion per spec for the life of the process (D519). The manifest is
+ * frozen and the conversion pure, so `tools/list`, the per-tool reference and
+ * every HTTP session's `buildServer` share the result instead of each paying
+ * for it again. Keyed weakly on the spec object, so a test's throwaway spec
+ * leaves nothing behind.
+ */
+const converted = new WeakMap<AnyToolSpec, ToolInputSchema>();
+
+/**
+ * The input schema of one tool as a client sees it (CC-81: no `$ref`;
+ * CC-1416: no `$schema`, no safe-integer bounds). Converted on first use and
+ * memoised per spec (D519); the returned tree is frozen at every depth, because
+ * every caller now holds the same object.
  */
 export function toInputSchema(spec: AnyToolSpec): ToolInputSchema {
+  const cached = converted.get(spec);
+  if (cached !== undefined) return cached;
+  const schema = deepFreeze(convert(spec));
+  converted.set(spec, schema);
+  return schema;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function convert(spec: AnyToolSpec): ToolInputSchema {
   return trimJsonSchema(
     toJsonSchemaCompat(spec.input as AnyObjectSchema, {
       strictUnions: true,

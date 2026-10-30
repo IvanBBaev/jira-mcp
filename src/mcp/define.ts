@@ -11,9 +11,16 @@
 // docs/CONFIGURATION.md by `src/manifest-sync.test.ts` rather than generated.
 //
 // `defineTool` is an identity function for the type system plus a set of
-// assertions. They are deliberately eager: a malformed spec is a programming
-// error that must surface when the manifest module is loaded — in
+// structural assertions. They are deliberately eager: a malformed spec is a
+// programming error that must surface when the manifest module is loaded — in
 // `npm run check`, not on a user's `tools/call`.
+//
+// The assertions that have to PARSE something — the strictness and
+// control-field probes and the example check — live in `checkToolSchema`
+// instead, and run in a manifest-wide test (`src/tools/schema-probes.test.ts`)
+// rather than on every server start (D519). They depend only on source code,
+// so the gate proves them once; a process start that re-ran them would spend
+// CPU proving the same thing again.
 //
 // THE ZOD QUARANTINE LIVES HERE. `eslint.config.js` bans runtime `zod` imports
 // in every other file (ARCHITECTURE.md §MCP server style, D9), so the schema
@@ -27,7 +34,7 @@ import { z } from 'zod';
 
 import { JiraError } from '../core/types.js';
 import { PACKAGE_IDS, WRITE_TIERS } from './types.js';
-import type { ToolAnnotations, ToolSpec } from './types.js';
+import type { AnyToolSpec, ToolAnnotations, ToolSpec } from './types.js';
 
 /**
  * Re-exported so tool modules can build schemas without importing `zod`
@@ -205,10 +212,10 @@ function specError(name: string, problem: string): JiraError {
  * Assertions, in order: name pattern, non-empty title/description, known
  * package, the annotation quadruple present and boolean,
  * `readOnlyHint && destructiveHint` rejected, `writeTier ⇔ !readOnlyHint`,
- * handler callable, `.strict()` probed behaviourally, the auto-injected
- * control fields declared (`profile` always; `apply`/`plan_id` on write tools
- * and only there), and the example — when given — free of control fields and
- * accepted by the input schema (D124).
+ * handler callable, `fileOutput` only on a read tool and naming its rows, and
+ * the example — when given — a summary plus an arguments object free of
+ * control fields (D124). Everything that needs the input schema to parse a
+ * value is {@link checkToolSchema}'s job (D519).
  */
 export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> {
   const { name } = spec;
@@ -265,7 +272,59 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
     );
   }
 
+  const { fileOutput } = spec;
+  if (fileOutput !== undefined) {
+    if (isWrite) throw specError(name, 'only a read-only tool can declare fileOutput');
+    if (typeof fileOutput.rows !== 'string' || fileOutput.rows === '') {
+      throw specError(name, 'fileOutput.rows must name the row array in data');
+    }
+  }
+
+  const { example } = spec;
+  if (example !== undefined) {
+    if (typeof example.summary !== 'string' || example.summary.trim() === '') {
+      throw specError(name, 'example.summary is empty');
+    }
+    const args: unknown = example.arguments;
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      throw specError(name, 'example.arguments is not an object');
+    }
+    for (const key of CONTROL_FIELD_NAMES) {
+      if (key in args) {
+        throw specError(
+          name,
+          `example.arguments carries the control field "${key}" — an example shows ` +
+            "the tool's own arguments; the write gate is documented once, in the " +
+            'write-mode reference resource',
+        );
+      }
+    }
+    Object.freeze(example.arguments);
+    Object.freeze(example);
+  }
+
+  Object.freeze(spec.annotations);
+  return Object.freeze(spec);
+}
+
+/**
+ * The schema half of the spec contract (D519): every assertion that has to
+ * parse a value through the input schema. Run over the whole manifest by
+ * `src/tools/schema-probes.test.ts`, so a malformed schema still fails
+ * `npm run check` — just not on every server start, where it only re-proved
+ * what the gate had proved.
+ *
+ * Assertions, in order: `.strict()` probed behaviourally, the auto-injected
+ * control fields declared (`profile` always; `apply`/`plan_id` on write tools
+ * and only there), `output` declared exactly when `fileOutput` is, and the
+ * example — when given — accepted by the input schema (D124). Throws the same
+ * `kind: 'config'` error {@link defineTool} does; returns nothing.
+ */
+export function checkToolSchema(spec: AnyToolSpec): void {
+  const { name } = spec;
+  const isWrite = spec.annotations.readOnlyHint === false;
   const input: z.ZodTypeAny = spec.input;
+
   if (!rejectsUnknownKeys(input)) {
     throw specError(
       name,
@@ -298,20 +357,14 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
     }
   }
 
-  const { fileOutput } = spec;
   const declaresOutput = declaresKey(input, 'output', 'file');
-  if (fileOutput !== undefined) {
-    if (isWrite) throw specError(name, 'only a read-only tool can declare fileOutput');
-    if (typeof fileOutput.rows !== 'string' || fileOutput.rows === '') {
-      throw specError(name, 'fileOutput.rows must name the row array in data');
-    }
-    if (!declaresOutput) {
-      throw specError(
-        name,
-        'a tool that declares fileOutput must take the "output" argument — add outputArg',
-      );
-    }
-  } else if (declaresOutput) {
+  if (spec.fileOutput !== undefined && !declaresOutput) {
+    throw specError(
+      name,
+      'a tool that declares fileOutput must take the "output" argument — add outputArg',
+    );
+  }
+  if (spec.fileOutput === undefined && declaresOutput) {
     throw specError(
       name,
       'the input schema declares "output" but the tool does not declare fileOutput',
@@ -320,24 +373,7 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
 
   const { example } = spec;
   if (example !== undefined) {
-    if (typeof example.summary !== 'string' || example.summary.trim() === '') {
-      throw specError(name, 'example.summary is empty');
-    }
-    const args: unknown = example.arguments;
-    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
-      throw specError(name, 'example.arguments is not an object');
-    }
-    for (const key of CONTROL_FIELD_NAMES) {
-      if (key in args) {
-        throw specError(
-          name,
-          `example.arguments carries the control field "${key}" — an example shows ` +
-            "the tool's own arguments; the write gate is documented once, in the " +
-            'write-mode reference resource',
-        );
-      }
-    }
-    const parsed = input.safeParse(args);
+    const parsed = input.safeParse(example.arguments);
     if (!parsed.success) {
       const issues = parsed.error.issues
         .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
@@ -347,10 +383,5 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
         `example.arguments do not satisfy the input schema (${issues})`,
       );
     }
-    Object.freeze(example.arguments);
-    Object.freeze(example);
   }
-
-  Object.freeze(spec.annotations);
-  return Object.freeze(spec);
 }

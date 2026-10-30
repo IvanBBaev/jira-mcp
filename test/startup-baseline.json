@@ -1,0 +1,27 @@
+{
+  "measured": "2026-10-30",
+  "node": "v22.23.2",
+  "runs": 15,
+  "budgetMs": 300,
+  "endToEnd": {
+    "core": {
+      "cpuMs": 234.8,
+      "rssMb": 83.6,
+      "bytes": 3964
+    },
+    "all": {
+      "cpuMs": 257.4,
+      "rssMb": 88.3,
+      "bytes": 146343
+    }
+  },
+  "stages": {
+    "bootstrapMs": 33.8,
+    "sdkImportMs": 102,
+    "manifestImportMs": 33.7,
+    "schemaModuleMs": 0.6,
+    "schemaConvertAllMs": 41.5,
+    "schemaProbesAllMs": 32.9,
+    "tools": 82
+  }
+}

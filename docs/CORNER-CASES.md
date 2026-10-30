@@ -3900,3 +3900,17 @@ package tests and `src/tools/page-size.test.ts`.
   and points at `nextPageToken`.
 - **CC-5058** — no tool's `maxResults` schema carries a maximum, so a package
   that hand-rolls `.max()` again fails the surface test.
+
+## Startup cost: schema probes in the gate, schemas converted once (D519, 2026-10-30)
+
+`defineTool` runs no parse at import time; the probes are `checkToolSchema`
+in `src/mcp/define.ts`, and `toInputSchema` in `src/mcp/schema.ts` memoises.
+Proven in `src/tools/schema-probes.test.ts` and `src/mcp/define.test.ts`.
+
+- **CC-5120** — every tool in the unbound manifest passes `checkToolSchema`.
+- **CC-5121** — the manifest `main()` binds (report source, media and report
+  dirs) lists the same tools in the same order, and every one passes.
+- **CC-5122** — `toInputSchema` returns the same frozen tree on a second call
+  for the same spec.
+- **CC-5123** — `defineTool` accepts a schema that only the probes reject;
+  `checkToolSchema` rejects it.

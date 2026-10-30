@@ -317,12 +317,20 @@ export function createReferenceCatalogue(
     })),
   };
 
-  // Schemas are converted ONCE, like `tools/list` does: the manifest is
-  // immutable and the conversion pure.
+  // A reference is built on its first read, not here (D519): most sessions
+  // never read one, and building all of them converted every schema in the
+  // manifest — gated-out tools included — before the first `tools/list`. The
+  // schema itself is memoised per spec in `mcp/schema.ts`, shared with
+  // `tools/list`.
   const toolReferences = new Map<string, ToolReference>();
-  for (const [name, { spec, pkg }] of tools) {
+  const toolReference = (name: string): ToolReference | undefined => {
+    const cached = toolReferences.get(name);
+    if (cached !== undefined) return cached;
+    const entry = tools.get(name);
+    if (entry === undefined) return undefined;
+    const { spec, pkg } = entry;
     const excluded = deps.excludedTools.get(name);
-    toolReferences.set(name, {
+    const reference: ToolReference = {
       name,
       title: spec.title,
       package: pkg.id,
@@ -333,8 +341,10 @@ export function createReferenceCatalogue(
       ...(spec.example === undefined ? {} : { example: spec.example }),
       registered: excluded === undefined,
       ...(excluded === undefined ? {} : { excluded }),
-    });
-  }
+    };
+    toolReferences.set(name, reference);
+    return reference;
+  };
 
   const resources: readonly Resource[] = Object.freeze([
     {
@@ -378,7 +388,7 @@ export function createReferenceCatalogue(
         return { contents: [{ uri, mimeType: MARKDOWN_MIME, text: doc.text }] };
       }
       const match = TOOL_REFERENCE_PATTERN.exec(uri);
-      const tool = match?.[1] === undefined ? undefined : toolReferences.get(match[1]);
+      const tool = match?.[1] === undefined ? undefined : toolReference(match[1]);
       if (tool === undefined) throw notFound(uri);
       return jsonContents(uri, tool);
     },

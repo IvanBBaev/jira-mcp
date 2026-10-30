@@ -8,6 +8,7 @@ import {
   PLAN_ID_DESCRIPTION,
   PROFILE_DESCRIPTION,
   TOOL_NAME_PATTERN,
+  checkToolSchema,
   declaresKey,
   defineTool,
   outputArg,
@@ -59,6 +60,17 @@ function writeSpec(overrides: Record<string, unknown> = {}): AnyToolSpec {
     input: writeToolInput({ issue: z.string() }),
     ...overrides,
   });
+}
+
+/**
+ * `defineTool` plus the schema probes, the pair the manifest goes through
+ * (D519): the probes run in the gate, not at import, so a test of a schema
+ * assertion has to run both.
+ */
+function defineChecked(input: AnyToolSpec): AnyToolSpec {
+  const tool = defineTool(input);
+  checkToolSchema(tool);
+  return tool;
 }
 
 function assertSpecError(build: () => unknown, needle: string): void {
@@ -202,12 +214,12 @@ test('the probe sees through a .refine() wrapper', () => {
   assert.equal(rejectsUnknownKeys(refined), true);
   assert.equal(declaresKey(refined, 'profile', 'default'), true);
   assert.equal(declaresKey(refined, 'apply', true), false);
-  assert.doesNotThrow(() => defineTool(spec({ input: refined })));
+  assert.doesNotThrow(() => defineChecked(spec({ input: refined })));
 });
 
 test('an input schema that accepts unknown keys is rejected', () => {
   const loose = z.object({ issue: z.string(), profile: profileArg });
-  assertSpecError(() => defineTool(spec({ input: loose })), 'accepts unknown keys');
+  assertSpecError(() => defineChecked(spec({ input: loose })), 'accepts unknown keys');
 });
 
 test('toolInput() seals the object and injects only profile', () => {
@@ -240,7 +252,7 @@ test('writeToolInput() declares the whole plan-gate control triple', () => {
 
 test('profile must be declared on every tool', () => {
   const noProfile = z.object({ issue: z.string() }).strict();
-  assertSpecError(() => defineTool(spec({ input: noProfile })), '"profile"');
+  assertSpecError(() => defineChecked(spec({ input: noProfile })), '"profile"');
 });
 
 test('apply and plan_id are required on a write tool', () => {
@@ -251,7 +263,7 @@ test('apply and plan_id are required on a write tool', () => {
       .strict(),
   ]) {
     assertSpecError(
-      () => defineTool(writeSpec({ input: shape })),
+      () => defineChecked(writeSpec({ input: shape })),
       'write tool must declare',
     );
   }
@@ -259,7 +271,7 @@ test('apply and plan_id are required on a write tool', () => {
 
 test('apply and plan_id are refused on a read-only tool', () => {
   assertSpecError(
-    () => defineTool(spec({ input: writeToolInput({ issue: z.string() }) })),
+    () => defineChecked(spec({ input: writeToolInput({ issue: z.string() }) })),
     'write-only control field',
   );
 });
@@ -306,12 +318,15 @@ test('[CC-1417] an example that fails its own schema, carries a control field, o
     'control field "profile"',
   );
   assertSpecError(
-    () => defineTool(spec({ example: { summary: 'Fetch.', arguments: { issue: 7 } } })),
+    () =>
+      defineChecked(spec({ example: { summary: 'Fetch.', arguments: { issue: 7 } } })),
     'do not satisfy the input schema',
   );
   assertSpecError(
     () =>
-      defineTool(spec({ example: { summary: 'Fetch.', arguments: { nonsense: 'x' } } })),
+      defineChecked(
+        spec({ example: { summary: 'Fetch.', arguments: { nonsense: 'x' } } }),
+      ),
     'do not satisfy the input schema',
   );
 });
@@ -358,7 +373,7 @@ test('[CC-1562] fileOutput is a read-only declaration that must come with the ou
   assert.deepEqual(tool.fileOutput, { rows: 'comments' });
 
   assertSpecError(
-    () => defineTool(spec({ fileOutput: { rows: 'comments' } })),
+    () => defineChecked(spec({ fileOutput: { rows: 'comments' } })),
     'must take the "output" argument',
   );
   assertSpecError(
@@ -383,7 +398,23 @@ test('[CC-1562] fileOutput is a read-only declaration that must come with the ou
   );
   assertSpecError(
     () =>
-      defineTool(spec({ input: toolInput({ issue: z.string(), output: outputArg }) })),
+      defineChecked(spec({ input: toolInput({ issue: z.string(), output: outputArg }) })),
     'does not declare fileOutput',
+  );
+});
+
+test('[CC-5123] defineTool runs no schema probe: a malformed schema passes it and fails checkToolSchema (D519)', () => {
+  const loose = z.object({ issue: z.string(), profile: profileArg });
+  const tool = defineTool(
+    spec({ input: loose, example: { summary: 'Fetch.', arguments: { issue: 7 } } }),
+  );
+  assert.ok(Object.isFrozen(tool));
+  assertSpecError(() => checkToolSchema(tool), 'accepts unknown keys');
+  assertSpecError(
+    () =>
+      checkToolSchema(
+        defineTool(spec({ example: { summary: 'Fetch.', arguments: { issue: 7 } } })),
+      ),
+    'do not satisfy the input schema',
   );
 });
