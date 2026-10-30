@@ -3976,3 +3976,16 @@ CC-5154. Project ABC is in scope, XYZ is not.
   any request.
 - **CC-5163** — a sprint update whose `originBoardId` names an out-of-scope
   board is refused, naming the board and its project.
+
+## Release notes and registry entry (V3-34, 2026-10-30)
+
+- **CC-5164** — pending CHANGELOG notes with a `### Breaking` section carry
+  `### Highlights`, `### Breaking` and `### Upgrading from <version>` in that
+  order, ahead of Added/Changed/Fixed.
+- **CC-5165** — decision, corner-case and work-package ids in the pending notes
+  sit only on trailing `Decisions:` / `Corner cases:` lines, never in user text.
+- **CC-5166** — every `server.json` variable that no released CHANGELOG section
+  names is named in the pending Upgrading block; `JIRA_LOG_LEVEL` is exempt as
+  older than the notes, and the exemption fails once server.json drops it.
+- **CC-5167** — the `server.json` description is 1–100 characters, the
+  registry schema's limit.

@@ -12,251 +12,228 @@ env var names — not internal refactors.
 
 ## [Unreleased]
 
-### Changed
+The next release is **1.1.0**, a minor release with one announced breaking
+change that Atlassian forces: Jira Cloud is removing the agile routes 1.0.0
+reads sprint and backlog issues from (reported for 2026-11-01). After that
+date those reads fail on 1.0.0, so upgrade before or soon after it.
 
-- Under `JIRA_PROJECTS`, a refusal now names what it refused and where that
-  points: `Issue "XYZ-1" (project XYZ) is outside the project scope …`, or
-  `… could not be resolved to a project` when Jira gives no project for it.
-  The error kind (`permission`) is unchanged.
+### Highlights
 
-- The install instructions keep the API token out of every client config.
-  `doctor --save` stores it in `~/.config/jira-mcp-ai/.env` (mode `0600`) and
-  the registrations carry no secret: the Claude Code plugin, a user-scope
-  `claude mcp add` one-liner, Claude Desktop, and one-click install links for
-  Cursor and VS Code. The README, the project site and
-  `docs/CONFIGURATION.md` no longer show a token inside `.mcp.json` or
-  `.vscode/mcp.json`, and the docs end with a first prompt to try. The
-  client config paths, the PATH fix and the log locations now live only in
-  `docs/CONFIGURATION.md`.
+- **Sprint and backlog reads keep working through Atlassian's agile route
+  removal.** They move to Jira Cloud's new `/rest/software/1.0` routes and
+  fall back to the old ones on a tenant that refuses the new route.
+- **`JIRA_PROJECTS` confines every tool to the projects you name**, checked
+  at call time: searches are narrowed, anything outside is refused before a
+  write is planned.
+- **Safer writes.** An issue-write plan shows a field-by-field diff of what it
+  would overwrite, and an apply is refused if the issue changed since the
+  plan. Irreversible applies can also ask you directly
+  (`JIRA_IRREVERSIBLE_CONFIRM=elicit`), and Claude Code asks before every
+  irreversible tool runs.
+- **24 new tools**, among them multi-issue reads, bulk change history, sprint
+  summary, backlog, ranking, estimates, saved filters, JQL validation, remote
+  links and a cross-project portfolio analysis.
+- **More ways to authenticate:** scoped API tokens (`JIRA_CLOUD_ID`) and
+  Atlassian service accounts (`JIRA_OAUTH_GRANT=client_credentials`).
+- **More of MCP:** ready-made prompts, reference resources, argument
+  completion, progress notifications and file output for large reads.
+- **Easier, safer install:** a Claude Desktop bundle (`.mcpb`) that needs no
+  Node on your PATH, and install steps that keep the API token out of every
+  client config.
 
-- A `maxResults` above a tool's page cap is clamped to the cap with a
-  `clamped` hint on every tool (D508). The agile lists (`jira_list_boards`,
-  `jira_list_sprints`, `jira_get_sprint_issues`, `jira_get_backlog`), the
-  collab lists (`jira_list_components`, `jira_list_versions`) and
-  `jira_get_changelogs_bulk` used to refuse it as a validation error. The
-  `clamped` hint now names the value you asked for, the cap and the cursor to
-  page on with. The caps are unchanged.
+### Breaking
 
-- The README tool tables gain a **Since** column (D526): the release that
-  first shipped each tool, or `1.1.0 (unreleased)` for a tool that is on
-  `main` but not yet on npm. The README status box names both the latest
-  release and `main`, and every tool count in the README and on the project
-  site is checked against the tool manifest. The npm description and keywords
-  now describe the safety model and the bulk and agile tools.
+- **Sprint and backlog paging on Jira Cloud** (`jira_get_sprint_issues`,
+  `jira_get_backlog`; `jira_sprint_summary` pages internally). Forced by
+  Atlassian (CHANGE-3193): the new routes page by token and report no total.
+  When the new route answers, `paging.total` and `paging.nextStartAt` are
+  absent and the next page is `paging.nextPageToken`. A `startAt` above 0 is
+  still served by the old route while Atlassian keeps it, and refused with a
+  remediation to page by token once that route is gone. Calls without
+  `startAt`, `startAt: 0` and Data Center are unaffected.
 
-- `docs/THREAT-MODEL.md` is resynced with the shipped surface. It now lists
-  all four places tenant data is written to disk (write journal, attachment
-  downloads, `output: "file"` exports, portfolio reports), names every tool
-  of the `standard` and `irreversible` write tiers (a test keeps both lists
-  equal to the manifest), documents `JIRA_PROJECTS` and `JIRA_LOCK_PROFILE`
-  as controls with their limits, and corrects an overstated claim: in `apply`
-  mode plan/apply guards against accidents, not against a model steered by
-  injected issue text.
+### Upgrading from 1.0
+
+1. Change the pin in your client registration from `jira-mcp-ai@1.0.0` to
+   `jira-mcp-ai@1.1.0`.
+2. If a prompt or script pages sprint issues or a backlog: pass
+   `paging.nextPageToken` back as `nextPageToken` instead of computing
+   `startAt`. If it reads `paging.total`, count with `jira_sprint_summary`
+   or `jira_count` (`sprint = <id>`) instead. A token passed in `startAt`
+   still works.
+3. Nothing else is required. The new settings are optional:
+   `JIRA_PROJECTS`, `JIRA_IRREVERSIBLE_CONFIRM`, `JIRA_CLOUD_ID`,
+   `JIRA_OAUTH_GRANT` and `JIRA_REPORT_DIR` are unset or off by default;
+   `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300 seconds by
+   default, `0` turns it off).
+4. If your API token sits inside a client config such as `.mcp.json`, move
+   it out: `npx -y jira-mcp-ai@1.1.0 doctor --save` stores it in
+   `~/.config/jira-mcp-ai/.env` with mode `0600`.
+5. Behaviour you may notice:
+   - An apply against an issue that changed since its plan is refused as
+     `write_gated` ("changed in Jira after the plan was made"). Plan again.
+   - In Claude Code, the irreversible tools (the deletes and the bulk
+     delete/edit pair) ask for confirmation on every call, also in auto and
+     bypass-permission modes.
+   - A `maxResults` above a tool's cap is clamped with a `clamped` hint
+     instead of failing validation.
+   - A 429 for a spent hourly quota fails at once with the reset time
+     instead of retrying until the call budget runs out.
+   - Field, status, link-type, create-metadata and user-search answers are
+     cached for a few minutes; see `JIRA_META_CACHE_TTL_S`.
 
 ### Added
 
-- A Claude Desktop bundle, `jira-mcp-ai-<version>.mcpb` (D521): the npm
-  package with its production dependencies, run on Desktop's own Node, so
-  no Node on your PATH is needed. Install asks for the site, email, API
-  token, write mode (default `plan`), tool packages and an optional
-  attachment directory. `npm run mcpb` builds it; CI builds it on every push.
-- Claude Code loads the four hottest reads upfront (D509): `jira_search`,
-  `jira_count`, `jira_get_issue` and `jira_search_users` carry
-  `_meta["anthropic/alwaysLoad"]: true`, so they need no tool-search step. Their
-  descriptions now open with the verb and the Jira noun. Set `"alwaysLoad": false`
-  on the server in your MCP configuration to keep them deferred.
-- Applied writes say so: a write that reached Jira returns
-  `data.executed: true`, the twin of a plan's `executed: false` (D506).
-- Every error carries `error.reason`, the cause sentence without the
-  remediation; `message` is unchanged (D507).
-- `jira_sprint_summary` (D155, agile): one sprint in one call — issue counts
-  and story points by status category, completion, the issues added after
-  the start and the committed scope. A stand-in for the velocity / sprint
-  report, which has no public API. Statuses are current; issues removed from
-  the sprint are not counted. Jira Cloud only.
-- `JIRA_IRREVERSIBLE_CONFIRM=elicit` (D303): every irreversible apply (the
-  deletes and the bulk delete/edit pair) also asks you through the client's
-  MCP form elicitation and runs only when you tick yes. A client without
-  elicitation support is refused with the plan kept. Default `off`.
-- OAuth 2.0 client credentials for Atlassian service accounts (D302): with
-  `JIRA_AUTH_MODE=oauth`, set `JIRA_OAUTH_GRANT=client_credentials` and
-  `JIRA_OAUTH_CLOUD_ID`, and the server mints its own token from the client
-  id and secret — no `login`, no token file.
-- Scoped API tokens (D301): set `JIRA_CLOUD_ID` (the `cloudId` from
-  `https://<site>/_edge/tenant_info`) and basic auth goes through
-  `api.atlassian.com/ex/jira/<cloudId>`, the only route Atlassian accepts a
-  scoped token on. Doctor now explains a 401 that a scoped token gets on the
-  site URL, and a 403 for a missing scope.
-- `jira-mcp-ai doctor` gains a local `network` probe (D300): it warns when
-  `HTTPS_PROXY` is set but Node's `fetch` will bypass it (set
-  `NODE_USE_ENV_PROXY=1`), when `NO_PROXY` exempts the site, when
-  `NODE_EXTRA_CA_CERTS` is unreadable or not PEM, and when
-  `NODE_TLS_REJECT_UNAUTHORIZED=0` disables certificate checks.
-  CONFIGURATION.md gains a "Proxy and custom CA" section.
-- Argument completion (D154): the server advertises `completions`.
-  `completion/complete` offers the `action` values of `jira_bulk_preflight`
-  and every tool name for `jira://reference/tools/{name}`. Nothing is fetched
-  from Jira to complete a value.
-- Six prompts (D153): `jira_issue_brief`, `jira_worklog_summary`,
-  `jira_epic_progress`, `jira_my_work`, `jira_blocked_report` and
-  `jira_bulk_preflight` — read-only workflows over the existing tools, listed
-  when the tools they use are registered. The bulk preflight counts, samples
-  and checks permissions before a bulk change; it never makes one.
-- File output for large reads (D152): `jira_search`, `jira_get_comments`,
+- New tools:
+  - `core`: `jira_get_my_permissions` checks whether you hold given
+    permissions globally, in a project or on an issue — "may I do this?"
+    before a write instead of a 403 on apply.
+  - `search`: `jira_parse_jql` validates up to 20 JQL queries without
+    running them; `jira_create_filter` and `jira_update_filter` save JQL as
+    a private filter and edit it (sharing is never sent or changed).
+  - `issues`: `jira_get_changelogs_bulk` reads the change history of up to
+    1000 issues in one request, optionally for some fields only;
+    `jira_get_remote_links` lists the web links on an issue.
+  - `issues-write`: `jira_update_worklog` corrects a worklog's duration,
+    start or comment; `jira_add_remote_link` attaches a web link (a
+    `globalId` makes it repeatable instead of duplicating it).
+  - `issues-delete` (irreversible tier): `jira_unlink_issues`,
+    `jira_delete_attachment` and `jira_delete_remote_link`. Each plan names
+    what it will delete.
+  - `meta`: `jira_list_priorities`, `jira_list_resolutions`,
+    `jira_list_issue_types`, `jira_list_labels` and
+    `jira_get_timetracking_config`.
+  - `agile`: `jira_get_board_config` (columns, estimation and rank fields),
+    `jira_get_backlog`, `jira_update_sprint` (name, goal, dates),
+    `jira_rank_issues` (up to 50 issues before or after another),
+    `jira_set_estimate` (in whichever field the board estimates with) and
+    `jira_sprint_summary` (counts, story points, completion and scope added
+    after the start, in one call; a stand-in for the sprint report, which has
+    no public API).
+  - `portfolio` (new package, in the `all` profile): `jira_portfolio_analyze`
+    compares several projects or boards — epic/story hierarchy, likely
+    duplicates across boards, reuse candidates, cross-project blockers,
+    shared hotspots — and `jira_portfolio_report` writes the same analysis
+    as a Markdown report into `JIRA_REPORT_DIR`. Neither changes Jira.
+- Wider existing tools: `jira_get_issue` takes `issues` (up to 100 keys in
+  one request; keys Jira could not serve are listed instead of failing the
+  call), and `jira_list_versions` takes `issueCounts` (to do / in progress /
+  done per version).
+- `JIRA_PROJECTS`: a comma list of project keys every tool is confined to.
+  Searches are narrowed to them, project and board lists are filtered, and a
+  key or id outside them is refused with a `permission` error that names it.
+  Attachments by id are refused while a scope is set. Unset keeps 1.0
+  behaviour.
+- Plans for `jira_update_issue`, `jira_transition_issue`,
+  `jira_assign_issue` and `jira_update_filter` carry `data.diff`: the live
+  value of each field next to the one the apply would set.
+- `JIRA_IRREVERSIBLE_CONFIRM=elicit`: every irreversible apply also asks you
+  through the client's form elicitation and runs only on an explicit yes. A
+  client without elicitation is refused, and the plan is kept.
+- Authentication: scoped API tokens through `JIRA_CLOUD_ID` (the `cloudId`
+  from `https://<site>/_edge/tenant_info`), and Atlassian service accounts
+  through `JIRA_AUTH_MODE=oauth` plus `JIRA_OAUTH_GRANT=client_credentials`
+  and `JIRA_OAUTH_CLOUD_ID` — no `login`, no token file. `doctor` explains
+  the 401 a scoped token gets on the site URL and the 403 of a missing scope.
+- `doctor` checks your proxy and CA setup: `HTTPS_PROXY` that Node's `fetch`
+  would bypass (set `NODE_USE_ENV_PROXY=1`), a `NO_PROXY` that exempts the
+  site, an unreadable `NODE_EXTRA_CA_CERTS`, and
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`. CONFIGURATION.md gains a "Proxy and
+  custom CA" section.
+- MCP features beyond tools:
+  - Ten read-only prompts: `jira_sprint_review`, `jira_standup`,
+    `jira_triage_unassigned`, `jira_release_notes`, `jira_issue_brief`,
+    `jira_worklog_summary`, `jira_epic_progress`, `jira_my_work`,
+    `jira_blocked_report` and `jira_bulk_preflight` (counts, samples and
+    checks permissions before a bulk change; never makes one). A prompt is
+    listed only when every tool it uses is registered.
+  - Reference resources: `jira://reference/tools` and
+    `jira://reference/tools/{name}` (one tool's schema, tier and an example
+    call), `jira://reference/write-mode`, `jira://reference/jql` and
+    `jira://reference/markdown`.
+  - Argument completion for prompt arguments and tool names.
+  - Progress notifications for a call that sends `_meta.progressToken`.
+  - `initialize` returns server instructions: the write mode, the
+    irreversible flag, the reference URIs, paging and the untrusted-content
+    rule.
+- `output: "file"` on `jira_search`, `jira_get_comments`,
   `jira_get_changelog`, `jira_get_worklogs` and `jira_get_sprint_issues`
-  take `output: "file"`, which writes the page's rows (redacted) to a JSONL
-  file in `JIRA_MEDIA_DIR` and returns its path, a short preview and a
-  `resource_link` to `jira://exports/{name}`. Cursors stay inline, so paging
-  works as before. Without `JIRA_MEDIA_DIR` the call is refused before
-  anything is sent to Jira.
-- Progress notifications (D151): a client that sends `_meta.progressToken`
-  with a tool call receives `notifications/progress` — one step per Jira
-  request completed, at most four a second. Nothing changes for clients that
-  do not ask.
-- `jira_get_changelogs_bulk` (D150) in the `issues` package: the change
-  history of up to 1000 issues in one request, optionally only for some
-  fields (`fieldIds: ["status"]`), grouped by numeric issue id and paged
-  with `nextPageToken`. Jira Cloud only.
-- `jira_get_issue` takes `issues` (D149): up to 100 issue keys or ids read
-  in one request, each shaped exactly like a single read; keys Jira could not
-  serve are listed in `data.unmatched` and `data.errors` instead of failing
-  the call. Jira Cloud only.
-- `jira_list_versions` takes `issueCounts` (D148): each version then reports
-  how many fix-version issues are to do, in progress and done, in the same
-  request. Jira Cloud only.
-- `JIRA_PROJECTS` (D400): a comma-separated list of project keys that scopes
-  every tool. Searches are narrowed to those projects, anything addressed by
-  key or id outside them is refused with a `permission` error (before a write
-  plan is made), and project and board lists are filtered. Attachments by id
-  are refused while a scope is set. Unset keeps today's behaviour.
-- `jira_create_filter` and `jira_update_filter` (D147) in the `search`
-  package: save JQL as a new private filter, and change a filter's name, JQL
-  or description. Sharing is never sent or changed; the update plan shows a
-  before/after diff.
-- `jira_parse_jql` (D146) in the `search` package: check up to 20 JQL
-  queries against Jira's strict parser without running them; each comes back
-  with `valid`, `errors` and `warnings`.
-- `jira_delete_remote_link` (D145) in the `issues-delete` package: remove one
-  remote link from an issue by its id. Irreversible: the plan names the link's
-  title and target before anything is deleted.
-- `jira_delete_attachment` (D144) in the `issues-delete` package: delete one
-  attachment by id. Irreversible: the plan names the file, its size and its
-  author before anything is deleted. Needs no `JIRA_MEDIA_DIR`.
-- `jira_unlink_issues` (D143) in the `issues-delete` package: remove a link
-  between two issues by its id. Irreversible: the plan names the link type
-  and both issues before anything is deleted.
-- `jira_update_worklog` (D142) in the `issues-write` package: correct a
-  worklog entry's duration, start or comment. Only the fields you name are
-  sent, and the entry's visibility restriction is kept.
-- `jira_get_remote_links` (D141) in the `issues` package and
-  `jira_add_remote_link` in `issues-write`: read the web links on an issue,
-  and attach one — a pull request, a Confluence page. A `globalId` makes the
-  add repeatable: a link with the same `globalId` is replaced, not duplicated.
-  Only absolute `http`/`https` URLs are accepted.
-- `jira_get_timetracking_config` (D140) in the `meta` package: whether time
-  tracking is on, the working day and week, and what "1d" and "1w" are in
-  seconds. Needs no admin permission; served from the metadata cache.
-- `jira_list_labels` (D139) in the `meta` package: the labels already in use
-  on the site, with an optional case-insensitive substring filter. Never
-  cached.
-- `jira_list_priorities`, `jira_list_resolutions` and `jira_list_issue_types`
-  (D138) in the `meta` package: the site's priority, resolution and issue type
-  catalogues, served from the metadata cache.
-- `jira_set_estimate` (D137) in the `agile` package: sets an issue's estimate
-  in whichever field its board estimates with, so no custom field id is
-  needed.
-- `jira_rank_issues` (D136) in the `agile` package: ranks up to 50 issues
-  directly before or after another, and names the issues Jira refused when it
-  ranks only some of them.
-- `jira_update_sprint` (D135) in the `agile` package: edits a sprint's name,
-  goal or dates through the partial update, leaving the state to the
-  lifecycle tools.
-- `jira_get_backlog` (D134) in the `agile` package: one page of a board's
-  backlog in rank order, rows shaped like `jira_search`, with `fields`, `jql`
-  and `startAt` as on `jira_get_sprint_issues`.
-- `jira_get_board_config` (D133) in the `agile` package: a board's filter id,
-  columns with the status ids each one holds, column constraint, estimation
-  field (the story-point field on most Scrum boards) and rank field.
-- Prompts (D125): the server advertises `prompts` and serves four read-only
-  workflows on `prompts/list` — `jira_sprint_review` (optional `board`,
-  `sprint`), `jira_standup` (optional `project`, `since`),
-  `jira_triage_unassigned` (optional `project`) and `jira_release_notes`
-  (required `version`, optional `project`). A prompt is listed only when
-  every tool it uses is registered; the `initialize` instructions name the
-  listed prompts.
-- Package `portfolio` (D126), in the `all` profile: `jira_portfolio_analyze`
-  compares several projects or boards in one sweep and returns the epic/story
-  hierarchy per project, likely duplicate and overlapping open work across
-  boards, reuse candidates (open work resembling finished work elsewhere),
-  cross-project blockers and shared component/label hotspots, each finding with
-  the summary terms it rests on. `jira_portfolio_report` writes the same
-  analysis as a Markdown report with Mermaid diagrams and tables into the new
-  `JIRA_REPORT_DIR` setting and returns the file path. Neither changes Jira.
-- Reference resources (D124): the server advertises `resources` and serves
-  `jira://reference/tools` (every tool by package, whether this configuration
-  registered it, and the documents below), `jira://reference/tools/{name}`
-  (one tool's full schema, annotations, tier and an example call),
-  `jira://reference/write-mode` (the plan/apply contract),
-  `jira://reference/jql` (JQL idioms) and `jira://reference/markdown` (the
-  markdown subset the write tools accept). An unknown URI is the protocol's
-  resource-not-found error, not a tool envelope.
-- `initialize` returns server `instructions`: the product, the tool count, the
-  live write mode and irreversible flag, the profile-lock line, the reference
-  URIs, paging and the untrusted-content rule. The server used to send none.
-- Every tool carries an example call, checked against its own schema at import
-  time and served by the per-tool reference resource.
-- A session cache for the metadata catalogues (D123): a repeat `jira_list_fields`,
-  `jira_list_link_types`, `jira_list_statuses` or `jira_get_create_meta` within
-  `JIRA_META_CACHE_TTL_S` seconds (default `300`) is answered from memory instead
-  of a round trip. Per profile, in-process only, never a failed fetch; transitions,
-  projects, identity and permissions are never cached. `JIRA_META_CACHE_TTL_S=0`
-  switches it off. `jira_capabilities` reports the TTL under
-  `limits.metaCacheTtlS`.
-- `jira_get_my_permissions` (package `core`, read-only, D122): checks whether the
-  configured account holds the named permission keys globally, in a project or on
-  one issue — "what may I do here?" before a write, instead of a 403 on apply.
-  `issue` wins over `project`; a key Jira did not answer is listed under
-  `unanswered`, never reported as denied. 59 tools, 29 reads. Served on Data
-  Center too. Not yet proven live (Gate C claim C44 waits for the next run).
+  writes the page's rows (redacted) to a JSONL file in `JIRA_MEDIA_DIR` and
+  returns its path, a preview and a `jira://exports/{name}` link. Paging
+  works as before.
+- Envelope fields: an applied write returns `data.executed: true`, every
+  error carries `error.reason` (the cause without the remediation), and every
+  tool declares the envelope as its `outputSchema`.
+- A metadata cache: repeat field, link-type, status and create-metadata reads
+  within `JIRA_META_CACHE_TTL_S` (default 300 seconds) are answered from
+  memory; user search is cached for at most five minutes. Per profile,
+  in-process only; `0` turns it off. `jira_capabilities` reports the TTL and,
+  once Jira signals it, the rate-limit headroom.
+- Claude Code hints: the irreversible tools ask on every call, the four
+  most used reads (`jira_search`, `jira_count`, `jira_get_issue`,
+  `jira_search_users`) load without a tool-search step (set
+  `"alwaysLoad": false` on the server to keep them deferred), and a raised
+  `JIRA_MAX_RESULT_CHARS` is passed on so the client does not spill results
+  to a file.
+- A Claude Desktop bundle, `jira-mcp-ai-<version>.mcpb`: runs on Desktop's
+  own Node and asks for the site, email, API token, write mode, tool packages
+  and an optional attachment directory at install.
+
+Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
 
 ### Changed
 
-- `jira_get_sprint_issues`, `jira_get_backlog` and `jira_sprint_summary` read
-  Jira Cloud's new `/rest/software/1.0` routes (D500): Atlassian is removing
-  the old agile issue routes (CHANGE-3193, reported for 2026-11-01). Paging is
-  now by token: pass `paging.nextPageToken` back as the new `nextPageToken`
-  input. On Cloud `paging.total` and `paging.nextStartAt` are gone because
-  Jira no longer reports them, and a `startAt` above 0 is refused. `startAt`
-  still accepts 0 or a token as a deprecated alias (D503). Data Center is
-  unchanged. OAuth scopes are unchanged.
-- Rate-limit headers are read with or without the `Beta-` prefix Atlassian
-  is dropping (D505): `RateLimit-Reason` keeps the quota fail-fast working
-  either way, and the points-model `RateLimit` / `RateLimit-Policy` pair now
-  also feeds the near-limit flag (under 20 % left) and the reset instant in
-  the `jira_capabilities` counters.
-- `tools/list` is smaller (D124): schemas no longer carry `$schema` or the
-  `±(2^53 − 1)` bounds the converter put on every integer, the `apply`,
-  `plan_id` and `profile` descriptions are one line each, the `format` and
-  `resolveMentions` arguments point at `jira://reference/markdown` instead of
-  repeating it, and 19 tool descriptions were rewritten. No argument, default
-  or result shape changed. Measured over the full surface: 107,073 → 93,722
-  characters.
+- Sprint and backlog reads on Jira Cloud use `/rest/software/1.0`, with a
+  one-time fallback to `/rest/agile/1.0` when the new route refuses a first
+  page (the result then carries `rootFallback: true` and a `root_fallback`
+  hint); see Breaking. `nextPageToken` is the new resume input and `startAt`
+  stays as a deprecated alias. Data Center and the OAuth scopes are
+  unchanged.
+- A `maxResults` above a tool's page cap is clamped to the cap with a
+  `clamped` hint naming what you asked for, the cap and the cursor. The agile
+  and collab lists and `jira_get_changelogs_bulk` used to refuse it. The caps
+  are unchanged.
+- Rate limits: a 429 whose reason is a spent hourly quota fails after one
+  request, naming the reason and the reset time; burst and per-issue limits
+  retry as before. The headers are read with or without the `Beta-` prefix
+  Atlassian is dropping.
+- Under `JIRA_PROJECTS`, a refusal names what it refused and its project:
+  `Issue "XYZ-1" (project XYZ) is outside the project scope …`, or
+  `… could not be resolved to a project`. The error kind (`permission`) is
+  unchanged.
+- `tools/list` is smaller: schemas lost their `$schema` and integer bounds,
+  shared arguments got one-line descriptions, and long ones point at
+  `jira://reference/markdown`. No argument, default or result shape changed.
+- The MCP SDK floor is `^1.32.1` (was `^1.30.0`).
+- Documentation: install steps keep the API token out of every client config
+  (`doctor --save`, then a user-scope `claude mcp add`, Claude Desktop, and
+  one-click links for Cursor and VS Code), ending with a first prompt to try.
+  The README tool tables gain a **Since** column, every tool count in the
+  README and on the project site is checked against the tool manifest, and
+  the npm description now leads with the safety model. THREAT-MODEL.md lists
+  all four places tenant data is written to disk, names every write-tier
+  tool, documents `JIRA_PROJECTS` and `JIRA_LOCK_PROFILE` as controls, and
+  no longer overstates plan/apply: in `apply` mode it guards against
+  accidents, not against a model steered by injected issue text.
+
+Decisions: D124, D127, D500–D505, D508, D525, D526.
 
 ### Fixed
 
 - `jira_create_component`, `jira_create_version` and `jira_create_sprint`
-  report a 2xx answer whose echo cannot be read (no body, not an object, no
-  id or name) as `ambiguous_write`: the record was most likely created, the
-  request was not retried, and the remediation says to check the matching
-  list tool before creating it again. It used to be `unexpected_shape` — for
-  components and versions with "Re-run the call", which sends a second
-  create (CC-1220, CC-1221).
-- A credential holding a lone UTF-16 surrogate no longer breaks redaction: it
-  used to make every later credential registration fail, so a refresh token
-  stored after it reached the logs unmasked (CC-1300).
-- Redaction never throws on a value it cannot read (an array index getter, a
-  throwing or revoked proxy); that part becomes `[UNREADABLE]` and the rest of
-  the log line is kept (CC-1301).
+  report a success answer whose echo cannot be read as `ambiguous_write`:
+  the record was most likely created, the request was not retried, and the
+  remediation says to check the matching list tool first. It used to be
+  `unexpected_shape`, and for components and versions it said "Re-run the
+  call", which created a second record.
+- A credential holding a lone UTF-16 surrogate no longer breaks redaction;
+  it used to make later credential registrations fail, so a refresh token
+  stored after it reached the logs unmasked.
+- Redaction no longer throws on a value it cannot read (a throwing getter or
+  a revoked proxy); that part is logged as `[UNREADABLE]` and the rest of the
+  line is kept.
+
+Corner cases: CC-1220, CC-1221, CC-1300, CC-1301.
 
 ## [1.0.0] — 2026-10-19
 

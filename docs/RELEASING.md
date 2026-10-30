@@ -113,6 +113,47 @@ entry. (`"private": true` was dropped from `package.json` for 0.9.0 and does not
 come back — the mechanical stop against an accidental publish is now
 `PUBLISH_ENABLED` and the tag itself.)
 
+### 2.1 The release docs move with the version
+
+The version set is not the only thing that describes a release. Run this list
+in the same commit as the §2 edit; the bracket after each item names what fails
+if it is skipped, and "unchecked" means only a reader will notice.
+
+1. **CHANGELOG.** Rename `## [Unreleased]` to `## [<version>] — <date>` and
+   open an empty `## [Unreleased]` above it. A release with a `### Breaking`
+   section leads with `### Highlights` (five to seven lines), then Breaking,
+   then `### Upgrading from <previous minor>`: the pin change, what to do for
+   each break, every new setting, and the behaviour a user may notice. Added,
+   Changed and Fixed follow in user language. Decision and corner-case ids sit
+   only on a trailing `Decisions:` or `Corner cases:` line per section, never
+   in a bullet. [test: src/testing/release-notes.test.ts]
+2. **`server.json` environment list.** On `main` it lists the variables `main`
+   supports, so it is true for a release only once its version fields name that
+   release. Never submit it to the MCP registry from a commit whose version
+   names an older release. Every variable the latest release lacks must be named
+   in the pending Upgrading block, so the listing and the notes agree on the day
+   the version moves. The registry caps `description` at 100 characters.
+   The list and the version set are pinned by one suite, the announcement and
+   the length by another. [test: src/manifest-sync.test.ts]
+   [test: src/testing/release-notes.test.ts]
+3. **Registration pins.** Bump the canonical pin in
+   [CONFIGURATION.md](CONFIGURATION.md) and its mirrors, including the Cursor
+   and VS Code install links, whose pin is encoded. [docs-lint check 5;
+   test: src/testing/install-snippets.test.ts]
+4. **Since column and counts.** `node scripts/generate-readme.mjs --released
+   <version> --next <next>`, then `npm run readme`. That stamps every
+   `(unreleased)` tool with the version, moves `src/tools/released.json` on (and
+   with it the boundary the release-notes test reads), and lets docs-lint
+   recompute every count marker in the README and on the Pages site. [docs-lint
+   check 9]
+5. **Live-proof figures.** `released.json` `live` changes only after a Gate C
+   run against the released code; a release alone does not prove a tool live.
+   [unchecked]
+6. **Descriptions.** Re-read the `server.json` description, the npm
+   `description`, `mcpb/manifest.json` and the `.claude-plugin/` plugin and marketplace
+   manifests against what
+   the release now does. [unchecked]
+
 ## 3. Publishing
 
 1. Run `npm run check` locally and read it. Not the summary — the output.

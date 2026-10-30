@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.IvanBBaev/jira-mcp-ai",
   "title": "Jira Cloud",
-  "description": "Jira Cloud over MCP: JQL search, issue reads, and writes behind a plan/apply gate.",
+  "description": "Jira Cloud MCP server with enforced safety: plan/apply writes, project scope, bulk edit, sprints.",
   "version": "1.0.0",
   "websiteUrl": "https://github.com/IvanBBaev/jira-mcp#readme",
   "repository": {
