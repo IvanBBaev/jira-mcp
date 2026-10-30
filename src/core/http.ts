@@ -87,7 +87,19 @@ import {
   parseRetryAfterMs,
   shouldRetryStatus,
 } from './http-util.js';
-import type { SlotRelease } from './http-util.js';
+import type { RateLimitInfo, SlotRelease } from './http-util.js';
+import {
+  classifyOutcome,
+  decideNext,
+  failureReasonOf,
+  isSuccessStatus,
+} from './http/decide.js';
+import type {
+  AttemptFacts,
+  FailTag,
+  FailureReason,
+  ReplayPolicy,
+} from './http/decide.js';
 import { REMEDIATION, boundedJiraMessages, kindForStatus } from './errors.js';
 import { UNKNOWN_ERROR_KIND } from './telemetry.js';
 import type { Telemetry } from './telemetry.js';
@@ -168,8 +180,6 @@ export interface JiraHttpOptions {
   readonly telemetry?: Telemetry;
 }
 
-type FailureReason = 'timeout' | 'transport' | 'aborted';
-
 interface AttemptFailure {
   readonly reason: FailureReason;
   readonly cause: unknown;
@@ -235,11 +245,6 @@ interface AttemptResult {
   readonly text: string;
   /** Set only by a successful binary read. */
   readonly bytes?: Uint8Array;
-}
-
-/** `Response.ok`, decided from a status that has outlived its `Response`. */
-function isSuccessStatus(status: number): boolean {
-  return status >= 200 && status < 300;
 }
 
 /** A cancelled unsafe write whose outcome is unknown: bytes may have landed. */
@@ -1124,141 +1129,114 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
     // One logical request, whatever it costs in attempts (D12).
     telemetry?.recordRequest();
 
-    for (let attempt = 1; ; attempt += 1) {
-      if (remaining() <= 0) budgetExceeded();
+    const policy: ReplayPolicy = { replayable };
 
-      const release = await acquireSlot();
-      // Measured AFTER the slot: a queued wait spends budget, and an attempt
-      // timeout computed before it would let the attempt run past the deadline.
-      const left = remaining();
-      if (left <= 0) {
-        release();
-        budgetExceeded();
+    /**
+     * Log a 429 and work out how long a retry would wait. Emitted whether or
+     * not the loop then retries, because the operator asks about throttling,
+     * not about retries. A spent quota waits for nothing (D127).
+     */
+    const announceRateLimit = (
+      headers: JiraResponseHeaders,
+      limit: RateLimitInfo,
+      attempt: number,
+    ): number => {
+      const serverMs = parseRetryAfterMs(headers['retry-after'], clock.now());
+      const retryAfterS =
+        serverMs === undefined ? undefined : Math.round(serverMs / 1000);
+      if (limit.quota) {
+        logger.emit('rate_limited', { retryAfterS, waitS: 0, reason: limit.reason });
+        return 0;
       }
-      const attemptTimeoutMs = Math.min(timeoutMs, left);
-      const guard = armAttempt(clock, attemptTimeoutMs, spec.signal);
-      const attemptStartedAt = clock.now();
-      // No initializer: the try assigns and so does every non-throwing path of
-      // the catch, which is what proves there is no third state to guard.
-      let outcome: AttemptOutcome;
+      const cappedMs = serverMs === undefined ? undefined : capRetryAfterMs(serverMs);
+      // A zero (or past-date) Retry-After would retry back to back with no
+      // jitter, so it earns the same backoff as no header at all (CC-203).
+      const waitMs =
+        cappedMs === undefined || cappedMs === 0
+          ? backoffMs(attempt, rng)
+          : jitterMs(cappedMs, RETRY_AFTER_JITTER, rng);
+      logger.emit('rate_limited', {
+        retryAfterS,
+        waitS: Math.round(waitMs / 1000),
+        reason: limit.reason,
+      });
+      return waitMs;
+    };
 
-      try {
-        outcome = {
-          kind: 'result',
-          result: await runAttempt(guard, attempt, attemptStartedAt),
-        };
-      } catch (error) {
-        if (error instanceof JiraError) throw error;
-        const name = errorName(error);
-        const reason: FailureReason =
-          name === 'TimeoutError'
-            ? 'timeout'
-            : name === 'AbortError'
-              ? 'aborted'
-              : 'transport';
-        outcome = { kind: 'failure', failure: { reason, cause: error } };
-      } finally {
-        // The slot and the timeout cover the whole attempt, body included, and
-        // both end HERE — before any backoff wait, so a sleeping retry never
-        // sits on a slot another call could be using.
-        await guard.disarm();
-        release();
+    /** The error for a lost response (no status, or a body lost after one). */
+    const lostFailure = (
+      tag: FailTag,
+      failure: AttemptFailure,
+      landed: number | undefined,
+      attemptTimeoutMs: number,
+    ): JiraError => {
+      if (tag === 'cancelled') {
+        // The caller cancelled; the outcome of an unsafe write is still
+        // unknown, but this is not a failure we retry or dress up.
+        return fail({
+          kind: 'transport',
+          message: `${method} ${route} was cancelled by the caller.`,
+          retryable: false,
+          remediation: replayable
+            ? 'Call again if the result is still needed.'
+            : cancelledUnsent
+              ? WRITE_NOT_APPLIED
+              : WRITE_OUTCOME_UNKNOWN,
+          cause: failure.cause,
+        });
       }
-
-      if (outcome.kind === 'failure') {
-        const failure = outcome.failure;
+      if (tag === 'applied_reply_lost') {
         // Jira already said yes; only the reply is lost. Calling it ambiguous
         // invites a resend, and a resend of a create is a duplicate (CC-205) —
         // whether the body then timed out, failed, or the caller cancelled it
         // (CC-416).
-        const landed =
-          !replayable && answeredStatus !== undefined && isSuccessStatus(answeredStatus)
-            ? answeredStatus
-            : undefined;
-        if (failure.reason === 'aborted' && landed === undefined) {
-          // The caller cancelled; the outcome of an unsafe write is still
-          // unknown, but this is not a failure we retry or dress up.
-          throw fail({
-            kind: 'transport',
-            message: `${method} ${route} was cancelled by the caller.`,
-            retryable: false,
-            remediation: replayable
-              ? 'Call again if the result is still needed.'
-              : cancelledUnsent
-                ? WRITE_NOT_APPLIED
-                : WRITE_OUTCOME_UNKNOWN,
-            cause: failure.cause,
-          });
-        }
-
-        // A caller's cancel says nothing about the host's health.
-        if (failure.reason !== 'aborted') noteFailure();
-        const canRetry = replayable && attempt <= maxRetries;
-        if (canRetry) {
-          const delayMs = backoffMs(attempt, rng);
-          logger.emit('http_retry', {
-            method,
-            pathTemplate: route,
-            reason: 'transport',
-            attempt,
-            delayMs,
-          });
-          telemetry?.recordRetry();
-          await waitFor(delayMs);
-          continue;
-        }
-        if (landed !== undefined) {
-          logger.emit('ambiguous_write', { method, pathTemplate: route });
-          const lost =
-            failure.reason === 'timeout'
-              ? 'timed out'
-              : failure.reason === 'aborted'
-                ? 'was cancelled by the caller'
-                : 'failed in transit';
-          throw fail({
-            kind: 'ambiguous_write',
-            message: `${method} ${route} was applied (Jira answered ${String(landed)}), but its response body ${lost}, so the result it carried is unknown. It was NOT retried.`,
-            httpStatus: landed,
-            retryable: false,
-            remediation:
-              'Do not send it again. Read the issue back (or search for it) to get what the reply would have carried, such as a created key.',
-            cause: failure.cause,
-          });
-        }
-        if (!replayable) {
-          ambiguousWrite(
-            failure.reason === 'timeout'
-              ? 'timed out after the request was sent'
-              : 'failed in transit',
-            failure.cause,
-          );
-        }
-        throw fail({
-          kind: failure.reason === 'timeout' ? 'timeout' : 'transport',
-          message:
-            failure.reason === 'timeout'
-              ? `${method} ${route} timed out after ${String(attemptTimeoutMs)} ms.`
-              : `Could not reach Jira at ${creds.host.origin} for ${method} ${route}.`,
+        logger.emit('ambiguous_write', { method, pathTemplate: route });
+        const lost =
+          failure.reason === 'timeout'
+            ? 'timed out'
+            : failure.reason === 'aborted'
+              ? 'was cancelled by the caller'
+              : 'failed in transit';
+        return fail({
+          kind: 'ambiguous_write',
+          message: `${method} ${route} was applied (Jira answered ${String(landed)}), but its response body ${lost}, so the result it carried is unknown. It was NOT retried.`,
+          httpStatus: landed,
+          retryable: false,
           remediation:
-            failure.reason === 'timeout'
-              ? 'Ask for less in one request, or raise JIRA_REQUEST_TIMEOUT_MS.'
-              : 'Check network connectivity and any proxy configuration, then retry.',
+            'Do not send it again. Read the issue back (or search for it) to get what the reply would have carried, such as a created key.',
           cause: failure.cause,
         });
       }
-
-      const result = outcome.result;
-      const { status, headers } = result;
-      const limit = parseRateLimit(headers, clock.now());
-      telemetry?.recordRateLimit({
-        atMs: clock.now(),
-        limited: status === 429,
-        nearLimit: limit.nearLimit,
-        ...(limit.reason === undefined ? {} : { reason: limit.reason }),
-        ...(limit.resetAtMs === undefined ? {} : { resetAtMs: limit.resetAtMs }),
+      if (tag === 'ambiguous_write') {
+        return ambiguousWrite(
+          failure.reason === 'timeout'
+            ? 'timed out after the request was sent'
+            : 'failed in transit',
+          failure.cause,
+        );
+      }
+      return fail({
+        kind: tag === 'timeout' ? 'timeout' : 'transport',
+        message:
+          tag === 'timeout'
+            ? `${method} ${route} timed out after ${String(attemptTimeoutMs)} ms.`
+            : `Could not reach Jira at ${creds.host.origin} for ${method} ${route}.`,
+        remediation:
+          tag === 'timeout'
+            ? 'Ask for less in one request, or raise JIRA_REQUEST_TIMEOUT_MS.'
+            : 'Check network connectivity and any proxy configuration, then retry.',
+        cause: failure.cause,
       });
+    };
 
-      if (isRedirectStatus(status)) {
+    /** The error for an answered attempt the policy refuses. */
+    const answeredFailure = (
+      tag: FailTag,
+      result: AttemptResult,
+      limit: RateLimitInfo,
+    ): JiraError => {
+      const { status, headers } = result;
+      if (tag === 'redirect') {
         const location = headers['location'] ?? '';
         // No initializer: both arms of the try assign, so the compiler proves
         // it is set. A dead `''` here is what eslint 10's `init-declarations`
@@ -1269,8 +1247,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         } catch {
           targetHost = '';
         }
-        noteSuccess();
-        throw fail({
+        return fail({
           kind: 'config',
           message:
             targetHost === '' || targetHost === new URL(url).host
@@ -1282,59 +1259,24 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
             'Check JIRA_SITE: a redirect usually means the site name is wrong, or a proxy is intercepting the call. The Authorization header is never sent to a redirect target.',
         });
       }
-
-      if (status === 429) {
-        const serverMs = parseRetryAfterMs(headers['retry-after'], clock.now());
+      if (tag === 'quota') {
+        // An hourly points quota is spent: a 60 s wait cannot help, and every
+        // retry would be refused the same way while eating the call budget,
+        // so this one fails at once with the instant it lifts (D127).
         const resetAt =
           limit.resetAtMs === undefined ? '' : new Date(limit.resetAtMs).toISOString();
-        if (limit.quota) {
-          // An hourly points quota is spent: a 60 s wait cannot help, and every
-          // retry would be refused the same way while eating the call budget,
-          // so this one fails at once with the instant it lifts (D127).
-          logger.emit('rate_limited', {
-            retryAfterS: serverMs === undefined ? undefined : Math.round(serverMs / 1000),
-            waitS: 0,
-            reason: limit.reason,
-          });
-          throw fail({
-            kind: 'rate_limited',
-            message: `Jira refused ${method} ${route}: the ${String(limit.reason)} rate-limit quota is spent${resetAt === '' ? '' : ` until ${resetAt}`}.`,
-            httpStatus: 429,
-            remediation:
-              resetAt === ''
-                ? 'Do not retry now: the quota is hourly. Tell the user, and try again later with fewer calls.'
-                : `Do not retry before ${resetAt}. Tell the user; when the quota lifts, make fewer, narrower calls.`,
-          });
-        }
-        const cappedMs = serverMs === undefined ? undefined : capRetryAfterMs(serverMs);
-        // A zero (or past-date) Retry-After would retry back to back with no
-        // jitter, so it earns the same backoff as no header at all (CC-203).
-        const waitMs =
-          cappedMs === undefined || cappedMs === 0
-            ? backoffMs(attempt, rng)
-            : jitterMs(cappedMs, RETRY_AFTER_JITTER, rng);
-        logger.emit('rate_limited', {
-          retryAfterS: serverMs === undefined ? undefined : Math.round(serverMs / 1000),
-          waitS: Math.round(waitMs / 1000),
-          reason: limit.reason,
+        return fail({
+          kind: 'rate_limited',
+          message: `Jira refused ${method} ${route}: the ${String(limit.reason)} rate-limit quota is spent${resetAt === '' ? '' : ` until ${resetAt}`}.`,
+          httpStatus: 429,
+          remediation:
+            resetAt === ''
+              ? 'Do not retry now: the quota is hourly. Tell the user, and try again later with fewer calls.'
+              : `Do not retry before ${resetAt}. Tell the user; when the quota lifts, make fewer, narrower calls.`,
         });
-
-        if (attempt <= maxRetries) {
-          logger.emit('http_retry', {
-            method,
-            pathTemplate: route,
-            reason: '429',
-            attempt,
-            delayMs: waitMs,
-          });
-          // A 429 wait is a retry AND the throttling signal an operator asks
-          // about, so it lands in both counters (OBSERVABILITY.md §Counters).
-          telemetry?.recordRetry();
-          telemetry?.recordRateLimitWait();
-          await waitFor(waitMs);
-          continue;
-        }
-        throw fail({
+      }
+      if (tag === 'rate_limited') {
+        return fail({
           kind: 'rate_limited',
           message: `Jira rate limited ${method} ${route}${limit.reason === undefined ? '' : ` (${limit.reason})`} and the retry budget is spent.`,
           httpStatus: 429,
@@ -1344,46 +1286,30 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
               : 'Wait before calling again, and reduce how many issues this call asks for.',
         });
       }
-
-      if (status >= 500) {
-        noteFailure();
-        if (shouldRetryStatus(status, method, spec.safe) && attempt <= maxRetries) {
-          const delayMs = backoffMs(attempt, rng);
-          logger.emit('http_retry', {
-            method,
-            pathTemplate: route,
-            reason: '5xx',
-            attempt,
-            delayMs,
-          });
-          telemetry?.recordRetry();
-          await waitFor(delayMs);
-          continue;
-        }
-        if (!replayable) ambiguousWrite(`failed with HTTP ${String(status)}`);
-      } else {
-        noteSuccess();
+      if (tag === 'ambiguous_write') {
+        return ambiguousWrite(`failed with HTTP ${String(status)}`);
       }
-
-      if (!isSuccessStatus(status)) {
-        const body = projectErrorBody(result.text);
-        const mapping = describeStatus(status, headers, creds.kind);
-        if (mapping.kind === 'auth') {
-          logger.emit('auth_failure', { status, pathTemplate: route });
-        }
-        throw fail({
-          kind: mapping.kind,
-          message:
-            body.messages.length > 0
-              ? `Jira rejected ${method} ${route} with HTTP ${String(status)}: ${boundedJiraMessages(body.messages, options.redactor)}`
-              : `Jira rejected ${method} ${route} with HTTP ${String(status)}.`,
-          httpStatus: status,
-          jiraMessages: body.messages,
-          remediation: mapping.remediation,
-          detail: body.detail,
-        });
+      const body = projectErrorBody(result.text);
+      const mapping = describeStatus(status, headers, creds.kind);
+      if (mapping.kind === 'auth') {
+        logger.emit('auth_failure', { status, pathTemplate: route });
       }
+      return fail({
+        kind: mapping.kind,
+        message:
+          body.messages.length > 0
+            ? `Jira rejected ${method} ${route} with HTTP ${String(status)}: ${boundedJiraMessages(body.messages, options.redactor)}`
+            : `Jira rejected ${method} ${route} with HTTP ${String(status)}.`,
+        httpStatus: status,
+        jiraMessages: body.messages,
+        remediation: mapping.remediation,
+        detail: body.detail,
+      });
+    };
 
+    /** A 2xx body, as the caller's `data`. */
+    const successValue = (result: AttemptResult): JiraResponse<T> => {
+      const { status, headers } = result;
       if (wantsBinary) return { status, headers, data: result.bytes as T };
 
       const text = result.text;
@@ -1418,6 +1344,119 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
         });
       }
       return { status, headers, data: parsed.value as T };
+    };
+
+    for (let attempt = 1; ; attempt += 1) {
+      if (remaining() <= 0) budgetExceeded();
+
+      const release = await acquireSlot();
+      // Measured AFTER the slot: a queued wait spends budget, and an attempt
+      // timeout computed before it would let the attempt run past the deadline.
+      const left = remaining();
+      if (left <= 0) {
+        release();
+        budgetExceeded();
+      }
+      const attemptTimeoutMs = Math.min(timeoutMs, left);
+      const guard = armAttempt(clock, attemptTimeoutMs, spec.signal);
+      const attemptStartedAt = clock.now();
+      // No initializer: the try assigns and so does every non-throwing path of
+      // the catch, which is what proves there is no third state to guard.
+      let outcome: AttemptOutcome;
+
+      try {
+        outcome = {
+          kind: 'result',
+          result: await runAttempt(guard, attempt, attemptStartedAt),
+        };
+      } catch (error) {
+        if (error instanceof JiraError) throw error;
+        outcome = {
+          kind: 'failure',
+          failure: { reason: failureReasonOf(error), cause: error },
+        };
+      } finally {
+        // The slot and the timeout cover the whole attempt, body included, and
+        // both end HERE — before any backoff wait, so a sleeping retry never
+        // sits on a slot another call could be using.
+        await guard.disarm();
+        release();
+      }
+
+      // Decide (pure), then act: health first, then the retry or the error.
+      // The rate-limit headers ride along with the result they came on.
+      const seen =
+        outcome.kind === 'result'
+          ? {
+              kind: 'result' as const,
+              result: outcome.result,
+              limit: parseRateLimit(outcome.result.headers, clock.now()),
+            }
+          : outcome;
+      let facts: AttemptFacts;
+      if (seen.kind === 'failure') {
+        const { reason } = seen.failure;
+        facts =
+          answeredStatus === undefined
+            ? { kind: 'failure', reason }
+            : { kind: 'failure', reason, answeredStatus };
+      } else {
+        const { status } = seen.result;
+        const { limit } = seen;
+        telemetry?.recordRateLimit({
+          atMs: clock.now(),
+          limited: status === 429,
+          nearLimit: limit.nearLimit,
+          ...(limit.reason === undefined ? {} : { reason: limit.reason }),
+          ...(limit.resetAtMs === undefined ? {} : { resetAtMs: limit.resetAtMs }),
+        });
+        facts = {
+          kind: 'response',
+          status,
+          quota: limit.quota,
+          retryableStatus: shouldRetryStatus(status, method, spec.safe),
+        };
+      }
+      const classified = classifyOutcome(facts, policy);
+      const decision = decideNext(classified, { attempt, maxRetries }, policy);
+
+      if (decision.health === 'failure') noteFailure();
+      if (decision.health === 'success') noteSuccess();
+      const rateLimitWaitMs =
+        seen.kind === 'result' && classified.kind === 'rate_limited'
+          ? announceRateLimit(seen.result.headers, seen.limit, attempt)
+          : 0;
+
+      if (decision.kind === 'retry') {
+        const delayMs =
+          decision.reason === '429' ? rateLimitWaitMs : backoffMs(attempt, rng);
+        logger.emit('http_retry', {
+          method,
+          pathTemplate: route,
+          reason: decision.reason,
+          attempt,
+          delayMs,
+        });
+        telemetry?.recordRetry();
+        // A 429 wait is a retry AND the throttling signal an operator asks
+        // about, so it lands in both counters (OBSERVABILITY.md §Counters).
+        if (decision.reason === '429') telemetry?.recordRateLimitWait();
+        await waitFor(delayMs);
+        continue;
+      }
+      if (seen.kind === 'failure') {
+        // A lost response is never `done`: `decideNext` has no such arm.
+        throw lostFailure(
+          decision.kind === 'fail' ? decision.fail : 'transport',
+          seen.failure,
+          classified.kind === 'lost' ? classified.landed : undefined,
+          attemptTimeoutMs,
+        );
+      }
+      if (decision.kind === 'fail') {
+        throw answeredFailure(decision.fail, seen.result, seen.limit);
+      }
+      return successValue(seen.result);
     }
   };
 
@@ -1682,14 +1721,10 @@ export function createAuthRequest(options: AuthRequestOptions): AuthRequestFn {
         };
       } catch (error) {
         if (error instanceof JiraError) throw error;
-        const name = errorName(error);
-        const reason: FailureReason =
-          name === 'TimeoutError'
-            ? 'timeout'
-            : name === 'AbortError'
-              ? 'aborted'
-              : 'transport';
-        outcome = { kind: 'failure', failure: { reason, cause: error } };
+        outcome = {
+          kind: 'failure',
+          failure: { reason: failureReasonOf(error), cause: error },
+        };
       } finally {
         await guard.disarm();
       }
