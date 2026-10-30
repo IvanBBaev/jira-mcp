@@ -3914,3 +3914,19 @@ Proven in `src/tools/schema-probes.test.ts` and `src/mcp/define.test.ts`.
   for the same spec.
 - **CC-5123** — `defineTool` accepts a schema that only the probes reject;
   `checkToolSchema` rejects it.
+
+## Threat-model drift test (V3-31, 2026-10-30)
+
+- **CC-5140** — the `irreversible` list in THREAT-MODEL §Write safety equals
+  the manifest's irreversible tier; a missing, extra or repeated name fails.
+- **CC-5141** — the `standard` list equals the manifest's standard tier the
+  same way.
+- **CC-5142** — each sink row of THREAT-MODEL §Local filesystem names exactly
+  the tools that write into it, derived from the definitions: `fileOutput` is
+  an export, a read-only tool naming `JIRA_MEDIA_DIR` or `JIRA_REPORT_DIR` in
+  its description writes there.
+- **CC-5143** — every file-creating call site under `src/` (outside tests and
+  fakes) maps to a sink row or to a credential/operator file; an unmapped new
+  call site, or a mapped file that no longer creates one, fails.
+- **CC-5144** — every `jira_*` tool name the document mentions is on the
+  manifest.

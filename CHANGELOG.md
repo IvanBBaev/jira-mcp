@@ -29,6 +29,15 @@ env var names — not internal refactors.
   site is checked against the tool manifest. The npm description and keywords
   now describe the safety model and the bulk and agile tools.
 
+- `docs/THREAT-MODEL.md` is resynced with the shipped surface. It now lists
+  all four places tenant data is written to disk (write journal, attachment
+  downloads, `output: "file"` exports, portfolio reports), names every tool
+  of the `standard` and `irreversible` write tiers (a test keeps both lists
+  equal to the manifest), documents `JIRA_PROJECTS` and `JIRA_LOCK_PROFILE`
+  as controls with their limits, and corrects an overstated claim: in `apply`
+  mode plan/apply guards against accidents, not against a model steered by
+  injected issue text.
+
 ### Added
 
 - A Claude Desktop bundle, `jira-mcp-ai-<version>.mcpb` (D521): the npm

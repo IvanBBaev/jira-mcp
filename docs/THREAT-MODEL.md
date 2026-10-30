@@ -18,10 +18,12 @@
    without auth; DNS rebinding.
 5. **Prompt injection via Jira content** — issue descriptions/comments are
    untrusted input that flows into the model's context.
-6. **Local filesystem abuse** — attachments are the only local-disk surface: a
-   tenant-authored filename escaping `JIRA_MEDIA_DIR` or clobbering a file
-   already there, and an upload argument turning the server into a
-   read-anything-on-disk exfiltration primitive.
+6. **Local filesystem abuse and data at rest** — four sinks write tenant data
+   to disk (§Local filesystem: the write journal, attachment downloads, file
+   exports and portfolio reports): a tenant-authored filename escaping
+   `JIRA_MEDIA_DIR` or clobbering a file already there, an upload argument
+   turning the server into a read-anything-on-disk exfiltration primitive, and
+   tenant content left on disk where an operator does not expect it.
 7. **Irreversible data loss** — a delete the tenant cannot undo, reached either
    by a blanket `apply` mode or by a replay of an ambiguous failure.
 8. **Supply chain** — compromised dependencies.
@@ -181,16 +183,33 @@ the exposure is this document's.
   sent where) instead of executing. `apply` mode still requires per-call
   `apply: true`.
 - Write tiers: `standard` — writes a later call can put back, or that touch one
-  field of one record (issue writes, the sprint lifecycle, watchers, votes,
-  components, versions, attachment upload) — and `irreversible`: the six
-  deletes — issue, comment and worklog graduated by D45; component, version
-  and sprint by D102, each of which makes Jira rewrite or strip every issue
-  that referenced the deleted entity — plus the two bulk writes (D103), which
-  multiply the blast radius to as many as 1000 issues in a single call; the
-  tier's ceremony is exactly the mitigation that number demands. D7's blanket
-  v1 exclusion of deletes matured into this tier: what was missing was never
-  the endpoint, it was the ceremony. Which tool sits in which tier is
-  TOOLS.md's catalog.
+  field of one record — and `irreversible`: the deletes and unlinks Jira
+  cannot undo — issue, comment and worklog graduated by D45; component,
+  version and sprint by D102, each of which makes Jira rewrite or strip every
+  issue that referenced the deleted entity — plus the two bulk writes (D103),
+  which multiply the blast radius to as many as 1000 issues in a single call;
+  the tier's ceremony is exactly the mitigation that number demands. D7's
+  blanket v1 exclusion of deletes matured into this tier: what was missing was
+  never the endpoint, it was the ceremony. The two lists below are the whole
+  write surface; a test derives both from the tool manifest and fails when
+  either list here disagrees (CC-5140, CC-5141). TOOLS.md's catalog carries
+  the same tiers per package.
+  - `irreversible`: <!-- tools:irreversible -->`jira_delete_issue`,
+    `jira_delete_comment`, `jira_delete_worklog`, `jira_unlink_issues`,
+    `jira_delete_attachment`, `jira_delete_remote_link`,
+    `jira_delete_component`, `jira_delete_version`, `jira_delete_sprint`,
+    `jira_bulk_delete_issues`, `jira_bulk_edit_issues`<!-- /tools -->.
+  - `standard`: <!-- tools:standard -->`jira_create_filter`,
+    `jira_update_filter`, `jira_create_issue`, `jira_update_issue`,
+    `jira_transition_issue`, `jira_add_comment`, `jira_update_comment`,
+    `jira_assign_issue`, `jira_add_worklog`, `jira_update_worklog`,
+    `jira_link_issues`, `jira_add_remote_link`, `jira_upload_attachment`,
+    `jira_add_watcher`, `jira_remove_watcher`, `jira_add_vote`,
+    `jira_remove_vote`, `jira_create_component`, `jira_update_component`,
+    `jira_create_version`, `jira_update_version`, `jira_move_to_sprint`,
+    `jira_move_to_backlog`, `jira_create_sprint`, `jira_start_sprint`,
+    `jira_close_sprint`, `jira_update_sprint`, `jira_rank_issues`,
+    `jira_set_estimate`<!-- /tools -->.
 - **The irreversible tier's second gate is an environment variable —
   `JIRA_ALLOW_IRREVERSIBLE` (CONFIGURATION.md) — not a per-call confirm token
   (D56).** A blanket `JIRA_WRITE_MODE=apply` never covers the tier. The donor's
@@ -240,12 +259,81 @@ the exposure is this document's.
 - Optional write journal (`JIRA_JOURNAL_PATH`): JSONL audit of every executed
   write call, metadata only — a hash of the arguments, never their values (O-8;
   line shape in OBSERVABILITY.md §Write journal).
+- **What plan/apply is not: a human check against prompt injection (SEC-01).**
+  In `apply` mode the model that asks for a write receives the `plan_id` and
+  can spend it in its next call; nothing in that round trip involves the
+  human. The plan step defends against accidents — a write the model did not
+  mean, a retry of an ambiguous failure — and gives a client a diff to show
+  before the apply. It does not stop a model that injected text has steered:
+  for the `standard` tier the only checks between an injected instruction and
+  an executed write are the operator's choice of `apply` mode, the client's
+  own per-tool approval, `JIRA_PROJECTS` and the token's Jira permissions. The
+  `irreversible` tier adds two controls the model cannot reach —
+  `JIRA_ALLOW_IRREVERSIBLE` and, opt-in, the elicitation confirm above. A
+  deployment that reads text written by people outside the tenant (JSM
+  portals, mail handlers) and needs a human on every write should stay in
+  `plan` mode, or rely on a client that asks before each tool call, until an
+  elicitation gate for every write exists (roadmap V3-42).
+  `jira_add_remote_link` accepts any https URL, so a steered write can carry
+  data out in the URL itself.
+
+### Project scope and profile lock
+- **`JIRA_PROJECTS` (D400) confines every tool call to a list of project
+  keys.** Search JQL is rewritten to `project in (…) AND (<query>)`, project
+  and board lists are filtered, and every issue, project, board, sprint,
+  component, version and issue link a request names is resolved to its project
+  and refused (`kind=permission`) when outside the list — a write already at
+  plan time, so a refused write never yields a `plan_id`. Bulk routes resolve
+  their issue lists before anything is sent, a response that still carries an
+  out-of-scope issue is refused as a last check, and routes the guard cannot
+  place — attachments addressed by id, any unrecognised path — fail closed.
+- **Its limits.** It is a server-side guard against an agent wandering, not an
+  authorization boundary: the API token's own Jira permissions remain the
+  boundary, and anyone who can start the process can change the list. Global
+  metadata (fields, priorities, statuses, link types, the caller) and saved
+  filters stay unscoped, so a filter's name and JQL from another project are
+  still readable. Where the operator controls the Jira permission scheme, a
+  dedicated account with access to only those projects is the stronger
+  control.
+- **`JIRA_LOCK_PROFILE` (default on, O-6) pins the tenant.** Any call that
+  passes a per-call `profile` argument is refused (`kind=config`) before a
+  request is built, so a model cannot read issue text in one tenant and write
+  it into another. Unlocking is a deliberate operator act.
 
 ### Local filesystem
-Attachments are the only feature that touches local disk, and both directions
-are bounded by one directory: `JIRA_MEDIA_DIR` (CONFIGURATION.md). Unset, the
-two byte-moving tools refuse with `kind=config` having made zero Jira calls,
-while attachment *metadata* keeps working — it needs no directory (CC-58).
+Four sinks write tenant data to disk. Each is off until the operator sets its
+variable (CONFIGURATION.md); unset, the tools that need it refuse with
+`kind=config` before any Jira call, and everything else keeps working. Each
+file is created `0600` and none is ever deleted by the server — retention is
+the operator's job.
+
+<!-- sinks -->
+| Sink | Variable | Holds | Written by | Mode and naming | Retention |
+|---|---|---|---|---|---|
+| journal | `JIRA_JOURNAL_PATH` | Metadata of every executed write: time, correlation id, tool, argument hash, outcome, HTTP status, issue key. No field values, no JQL (O-8). | every executed write tool | `0600`, append-only JSONL, passed through the redactor | rotated at ~5 MiB to `<journal>.1`, one previous file kept |
+| media | `JIRA_MEDIA_DIR` | Attachment bytes exactly as stored in Jira — real tenant documents. | <!-- tools:media -->`jira_download_attachment`<!-- /tools --> | `0600`, opened `wx` (never overwrites), name sanitized from the Jira filename (D49) | until the operator deletes it |
+| exports | `JIRA_MEDIA_DIR` (same directory) | One page of issue, comment, changelog, worklog or sprint rows as JSONL — tenant content, redacted for secrets before it is written (D152). | <!-- tools:exports -->`jira_search`, `jira_get_comments`, `jira_get_changelog`, `jira_get_worklogs`, `jira_get_sprint_issues`<!-- /tools --> when called with `output: "file"` | `0600`, opened `wx`, `jira-export-<tool>-<UTC stamp>-<8 hex>.jsonl`; also readable as `jira://exports/{name}` | until the operator deletes it |
+| reports | `JIRA_REPORT_DIR` | A Markdown portfolio report: issue keys, summaries, blockers and duplicate findings across the swept projects (D126). Not passed through the redactor. | <!-- tools:reports -->`jira_portfolio_report`<!-- /tools --> | `0600`, opened `wx`, `portfolio-<UTC stamp>.md` | until the operator deletes it |
+<!-- /sinks -->
+
+A test binds this table to the code: the tools in each row are derived from
+the tool definitions, and every file-creating call site under `src/` must map
+to a row here or to the non-tenant files listed under *Data handling*
+(CC-5142, CC-5143). Note that `jira_download_attachment` and
+`jira_portfolio_report` are annotated `readOnlyHint: true` — they change
+nothing in Jira, but they do write to local disk.
+
+Uploads read from the same `JIRA_MEDIA_DIR`, so the export files and earlier
+downloads are readable by `jira_upload_attachment`. A steered model can
+therefore export a wide search and upload the file to an issue the attacker
+can read — one call's worth of rows instead of one comment's worth (SEC-02).
+Separating the export directory is roadmap V3-43; until then, an operator who
+enables `JIRA_MEDIA_DIR` together with `apply` mode accepts that residual
+risk.
+
+The attachment half is bounded as follows. Unset `JIRA_MEDIA_DIR`, the two
+byte-moving tools refuse with `kind=config` having made zero Jira calls, while
+attachment *metadata* keeps working — it needs no directory (CC-58).
 
 - **A Jira filename is untrusted tenant text (D15) and never reaches a path
   unsanitized** (D49): separators of both families, `..`, control characters,
@@ -297,9 +385,12 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
   comments, so "internal tool" does not mean "trusted input".
 - This is a visibility control, not a boundary — the server cannot sanitize
   intent, only bound size (truncation budget) and make provenance obvious. The
-  hard control against a text-driven write is the plan/apply gate above:
-  an injected instruction still needs `JIRA_WRITE_MODE=apply`, `apply: true`
-  and a `plan_id` the human's plan produced.
+  plan/apply gate above is **not** a hard control against a text-driven write:
+  `JIRA_WRITE_MODE=plan` refuses every apply, but in `apply` mode the steered
+  model plans the write and spends its own `plan_id` (§Write safety, "What
+  plan/apply is not"). What holds there is the irreversible tier's operator
+  gates, `JIRA_PROJECTS`, the client's per-tool approval and the token's Jira
+  permissions.
 - **A delete's before-state is the sharpest instance of the same problem**: it
   is tenant-authored prose (summary, comment body, display names) put in front
   of a model that is deciding whether to destroy it. Every delete result is
@@ -312,6 +403,15 @@ while attachment *metadata* keeps working — it needs no directory (CC-58).
   §Local filesystem.
 - Normative contract (which tools, what the envelope looks like): TOOLS.md
   §Untrusted content.
+- **Prompts, completions and export resources add no new channel.** Prompt
+  texts (D125, D153) are server-authored; their arguments are pinned by
+  pattern or length, and every text carries the read-only rule, so no prompt
+  asks for a write. Completions (D154) answer only from closed sets the server
+  already holds — declared prompt values and manifest tool names — and make no
+  Jira call. The `jira://exports/{name}` resource reads only names matching
+  the export pattern, so it is never a general reader over `JIRA_MEDIA_DIR`;
+  what it returns is the same redacted rows the export wrote, and they are as
+  untrusted as the read that produced them.
 - Markdown rendering does not widen the injection surface: `format: "markdown"`
   renders the same Jira-authored text inside the same taint fence, and the
   renderer emits link markup only for `http(s):` and `mailto:` hrefs — any
@@ -384,13 +484,13 @@ exists because an MCP server is a data conduit, not just a client:
   an AI context — same duty as with any Jira API script, but worth stating
   because the data flow is less obvious.
 - **Transcript persistence**: Jira content survives in MCP client transcripts
-  and logs outside this server's control. Server-side there are exactly two
-  places data lands: the write journal, if enabled, whose content form is
-  deliberately minimized (O-8), and files written by `jira_download_attachment`
-  into `JIRA_MEDIA_DIR` — real tenant documents, at `0600`, kept until the
-  operator deletes them. In oauth mode the token store is a third file the
-  server writes, but it holds credentials and a site identifier, never tenant
-  content. No other tenant data is written. The only cache is the in-memory
+  and logs outside this server's control. Server-side, tenant data lands in
+  the four sinks of §Local filesystem — the write journal (metadata only,
+  O-8), attachment downloads, file exports and portfolio reports — each off
+  until its variable is set, each `0600`, none deleted by the server. In
+  oauth mode the token store is one more file the server writes, but it holds
+  credentials and a site identifier, never tenant content. The only cache is
+  the in-memory
   metadata cache (D123): field, status, link-type and create-meta catalogues,
   keyed by profile, bounded, never written to disk, gone with the process. The only
   other files the server touches are operator-initiated (`doctor --save`'s env
