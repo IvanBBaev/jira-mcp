@@ -439,9 +439,15 @@ feature; whether a given org has them is outside this server's view.
 
 ## Credential storage
 
-- Preferred: env vars set by the MCP client config (Claude Code `.mcp.json`).
-- Alternative: `~/.config/jira-mcp-ai/.env`, written atomically 0600 by
-  `doctor --save` (prompts) — never hand-edited instructions in README.
+- Preferred: the user env file `~/.config/jira-mcp-ai/.env`, written
+  atomically 0600 by `doctor --save` (prompts), or the Claude Code plugin's
+  secure storage. Either keeps the token out of every MCP client config, so
+  the registration holds no secret (CONFIGURATION.md §Registering with a
+  client).
+- Never a project file: a token in `.mcp.json`, `.cursor/mcp.json` or
+  `.vscode/mcp.json` lands in the repository the moment the file is committed.
+  A value the client config does set still wins over the env file, so a client
+  that must carry the token keeps it in user scope only.
 - The token value is registered with the redactor at load; it can never appear
   in logs, errors, or tool results.
 - In oauth mode the API token is replaced, not supplemented: the durable

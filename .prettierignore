@@ -19,8 +19,8 @@ CLAUDE.md
 # a spurious whole-file diff. The recorder owns this format; Prettier does not.
 test/fixtures/
 
-# The published README carries hand-formatted blocks — the verbatim `.mcp.json`
-# registration example (copied from docs/CONFIGURATION.md, where the pinned
+# The published README carries hand-formatted blocks — the quick-start
+# registration snippets (copied from docs/CONFIGURATION.md, where the pinned
 # version is normative) and the GENERATED tool table injected in Wave 4 — that
 # Prettier would reflow. Kept out of the gate.
 README.md

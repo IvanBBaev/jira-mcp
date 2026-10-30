@@ -17,7 +17,7 @@ Two things shape the design:
 > **Status: latest release <!-- version:released -->1.0.0<!-- /version -->; this
 > branch is `main`.** The specification in [`docs/`](docs/README.md) is
 > normative and the code ships with it; drift is a bug. `jira-mcp-ai` is on npm
-> with provenance, so the registration example below resolves as written, and
+> with provenance, so the quick start below resolves as written, and
 > the tool surface follows semver.
 >
 > - **Released (npm):** <!-- count:tools@released -->58<!-- /count --> tools in
@@ -41,53 +41,63 @@ Two things shape the design:
 - A Jira Cloud site and an Atlassian API token (or, with `JIRA_AUTH_MODE=oauth`,
   an OAuth 2.0 app of your own — see [`docs/AUTH.md`](docs/AUTH.md))
 
-## Registration
+## Quick start
 
-Put this in `.mcp.json` (project scope), or paste the inner `"jira"` object
-into `claude mcp add-json jira '<object>'` — `claude mcp add` takes CLI
-arguments, not JSON.
+**1. Mint an API token** in your
+[Atlassian profile](https://id.atlassian.com/manage-profile/security/api-tokens)
+(*Security → API tokens*). It inherits exactly your Jira permissions.
 
-```json
-{
-  "mcpServers": {
-    "jira": {
-      "command": "npx",
-      "args": ["-y", "jira-mcp-ai@1.0.0"],
-      "env": {
-        "JIRA_SITE": "mycompany",
-        "JIRA_EMAIL": "me@example.com",
-        "JIRA_API_TOKEN": "<api-token>",
-        "JIRA_WRITE_MODE": "plan"
+**2. Save and check the credentials** — once per machine, in a terminal:
+
+```sh
+npx -y jira-mcp-ai@1.0.0 doctor --save   # prompts for site, email and token
+npx -y jira-mcp-ai@1.0.0 doctor          # probes them against your site
+```
+
+`--save` writes `~/.config/jira-mcp-ai/.env` with mode `0600`, and the server
+reads it at every start. That keeps the token out of every client config below:
+**never put the token in a file inside a repository** (`.mcp.json`,
+`.cursor/mcp.json`, `.vscode/mcp.json`).
+
+**3. Register the server** with your client:
+
+- **Claude Code, plugin** — prompts for the credentials and keeps the token in
+  secure storage, so step 2 is optional:
+  `/plugin marketplace add IvanBBaev/jira-mcp`, then
+  `/plugin install jira-mcp-ai@jira-mcp-ai`.
+- **Claude Code, CLI** — user scope, outside the repository:
+
+  ```sh
+  claude mcp add --scope user jira -e JIRA_WRITE_MODE=plan -- npx -y jira-mcp-ai@1.0.0
+  ```
+
+- **Cursor** —
+  [Add to Cursor](https://cursor.com/en/install-mcp?name=jira&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImppcmEtbWNwLWFpQDEuMC4wIl0sImVudiI6eyJKSVJBX1dSSVRFX01PREUiOiJwbGFuIn19).
+- **VS Code** —
+  [Install in VS Code](https://insiders.vscode.dev/redirect/mcp/install?name=jira&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22jira-mcp-ai%401.0.0%22%5D%2C%22env%22%3A%7B%22JIRA_WRITE_MODE%22%3A%22plan%22%7D%7D).
+- **Claude Desktop** — add this to `claude_desktop_config.json` and restart:
+
+  ```json
+  {
+    "mcpServers": {
+      "jira": {
+        "command": "npx",
+        "args": ["-y", "jira-mcp-ai@1.0.0"],
+        "env": { "JIRA_WRITE_MODE": "plan" }
       }
     }
   }
-}
-```
+  ```
 
-The version is pinned on purpose: an unpinned `npx -y` re-resolves to whatever is
-newest at spawn time, so a fresh publish could start running new code inside an
-agent session with no review step. Bump the pin once you have read the changelog.
-
-Before wiring the server into a client, run
-`npx -y jira-mcp-ai@1.0.0 doctor` with the same environment variables set: it
-runs the configuration and credential probes from a plain terminal and prints a
-report — the fastest way to learn whether the site, email and token actually
-work. `login` and `logout` (the OAuth flow), `--help` and `--version` are also
+Config file paths per OS, the JSON forms for every client, why the version is
+pinned, and what to do when the client shows no server (almost always PATH) are
+in [`docs/CONFIGURATION.md` §Registering with a client](docs/CONFIGURATION.md#registering-with-a-client).
+`login` and `logout` (the OAuth flow), `--help` and `--version` are also
 available.
 
-**If the server does not appear, it is almost always PATH.** Claude Desktop
-launches MCP servers from a minimal environment that does not include your
-shell's PATH, so a `node`/`npx` installed by nvm, Homebrew or fnm is invisible to
-it and the launch fails inside the client, before this server runs — you get the
-client's generic "server failed" message and nothing on this server's stderr,
-because there was no process. Fix it by giving an absolute path:
-`"command": "/usr/local/bin/npx"` (`which npx` prints yours). Claude Code, run
-from a terminal, inherits your PATH and is not affected.
-
-Every diagnostic this server writes goes to **stderr**, never stdout — stdout is
-the MCP protocol. Claude Code keeps it in `~/.claude/logs/`; Claude Desktop in
-`~/Library/Logs/Claude/mcp*.log` (macOS) or `%APPDATA%\Claude\logs\` (Windows).
-That is where the startup report and any `JIRA_*` configuration error will be.
+**Try it.** Ask the agent: *"What is on my plate this sprint?"* — a read-only
+search. Then ask it to comment on one of those issues: in the default `plan`
+mode it shows the comment it would post and posts nothing.
 
 ## Configuration
 

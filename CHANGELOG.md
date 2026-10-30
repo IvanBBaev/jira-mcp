@@ -14,6 +14,16 @@ env var names — not internal refactors.
 
 ### Changed
 
+- The install instructions keep the API token out of every client config.
+  `doctor --save` stores it in `~/.config/jira-mcp-ai/.env` (mode `0600`) and
+  the registrations carry no secret: the Claude Code plugin, a user-scope
+  `claude mcp add` one-liner, Claude Desktop, and one-click install links for
+  Cursor and VS Code. The README, the project site and
+  `docs/CONFIGURATION.md` no longer show a token inside `.mcp.json` or
+  `.vscode/mcp.json`, and the docs end with a first prompt to try. The
+  client config paths, the PATH fix and the log locations now live only in
+  `docs/CONFIGURATION.md`.
+
 - A `maxResults` above a tool's page cap is clamped to the cap with a
   `clamped` hint on every tool (D508). The agile lists (`jira_list_boards`,
   `jira_list_sprints`, `jira_get_sprint_issues`, `jira_get_backlog`), the

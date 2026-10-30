@@ -3930,3 +3930,16 @@ Proven in `src/tools/schema-probes.test.ts` and `src/mcp/define.test.ts`.
   call site, or a mapped file that no longer creates one, fails.
 - **CC-5144** — every `jira_*` tool name the document mentions is on the
   manifest.
+
+## Client registration snippets (V3-32, 2026-10-30)
+
+- **CC-5150** — every Cursor and VS Code install link in README.md, the Pages
+  site and CONFIGURATION.md decodes to `npx -y` plus the pin CONFIGURATION.md
+  states, and carries no credential variable; each of those docs has both links.
+- **CC-5151** — no registration snippet in README.md, the Pages site,
+  CONFIGURATION.md or AUTH.md sets `JIRA_API_TOKEN`, neither as a JSON env
+  entry nor as a `claude mcp add -e` flag.
+- **CC-5152** — README.md and the site link CONFIGURATION.md §Registering with
+  a client, which exists.
+- **CC-5153** — README.md and the site no longer restate the PATH fix or the
+  client log locations; CONFIGURATION.md owns them.

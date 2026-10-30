@@ -40,6 +40,7 @@ owner changed the value — if yes, it is a copy and must become a pointer.
 | Fact class | Owner |
 |---|---|
 | Env var names + defaults | CONFIGURATION.md |
+| Client registration: credential placement, version pin, per-client paths, PATH failure, log locations | CONFIGURATION.md |
 | Wire constants (endpoints, retry numbers, pagination) | JIRA-API.md |
 | Host forms: canonical `.atlassian.net` suffix, allowlist matching rules | JIRA-API.md |
 | Tool names, counts, per-tool defaults | TOOLS.md |

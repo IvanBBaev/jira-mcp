@@ -202,11 +202,60 @@ knows they are deliberately outside the runtime surface.
 |---|---|---|
 | `JIRA_LIVE_TEST` | — | `1` makes the unit-test network fence (`src/testing/network-fence.ts`) keep ambient `JIRA_*` variables and skip the fence. No test uses it and CI does not set it; the live read suite is `scripts/verify-live.mjs` (TESTING.md suite 9), which does not read this variable. |
 
-## Claude Code registration (example)
+## Registering with a client
 
-Put this in `.mcp.json` (project scope), or paste the inner `"jira"` object
-into `claude mcp add-json jira '<object>'` — `claude mcp add` takes CLI
-arguments, not JSON.
+This section owns client registration: the credential placement, the pinned
+command, the per-client config paths, the PATH failure and the log locations.
+README.md and the Pages site carry copy-paste snippets and point here for the
+rest.
+
+### Keep the token out of client configs
+
+**Never put the API token in a file inside a repository.** `.mcp.json`,
+`.cursor/mcp.json` and `.vscode/mcp.json` are project files, often committed so
+a team shares the server, and an Atlassian API token in git grants everything
+your account can do in Jira.
+
+Put the credentials in the user env file instead (§"Env file resolution"),
+once per machine:
+
+```sh
+npx -y jira-mcp-ai@1.0.0 doctor --save   # prompts for site, email and token; writes ~/.config/jira-mcp-ai/.env with mode 0600
+npx -y jira-mcp-ai@1.0.0 doctor          # probes the saved credentials against your site
+```
+
+The server reads that file at every start, so every registration below carries
+**no secret at all** — only the command and, optionally, non-secret settings
+such as `JIRA_WRITE_MODE`. A value the client does set wins over the file
+(§"Env file resolution"), so a project config can narrow the surface without
+touching credentials. `--save` covers basic auth; OAuth keeps its own token
+store (AUTH.md §OAuth 2.0 (3LO)).
+
+The version is **pinned deliberately**. `npx -y jira-mcp-ai` re-resolves to
+whatever is newest at spawn time, which means a published package can start
+running new code inside an agent session with no review step — the same supply
+chain risk the files-allowlist and provenance items in Phase 5 address from the
+publishing side. Bump the pin when you have read the changelog.
+
+### Claude Code
+
+The plugin asks for the site, email and token when it is enabled and keeps the
+token in Claude Code's secure storage, not in `settings.json`:
+
+```text
+/plugin marketplace add IvanBBaev/jira-mcp
+/plugin install jira-mcp-ai@jira-mcp-ai
+```
+
+Without the plugin, register it in **user** scope, which writes to
+`~/.claude.json`, not to the repository:
+
+```sh
+claude mcp add --scope user jira -e JIRA_WRITE_MODE=plan -- npx -y jira-mcp-ai@1.0.0
+```
+
+The JSON form, for `claude mcp add-json --scope user jira '<object>'` or a
+project `.mcp.json` that is safe to commit because it holds no credentials:
 
 ```json
 {
@@ -214,22 +263,44 @@ arguments, not JSON.
     "jira": {
       "command": "npx",
       "args": ["-y", "jira-mcp-ai@1.0.0"],
-      "env": {
-        "JIRA_SITE": "mycompany",
-        "JIRA_EMAIL": "me@example.com",
-        "JIRA_API_TOKEN": "<api-token>",
-        "JIRA_WRITE_MODE": "plan"
-      }
+      "env": { "JIRA_WRITE_MODE": "plan" }
     }
   }
 }
 ```
 
-The version is **pinned deliberately**. `npx -y jira-mcp-ai` re-resolves to
-whatever is newest at spawn time, which means a published package can start
-running new code inside an agent session with no review step — the same supply
-chain risk the files-allowlist and provenance items in Phase 5 address from the
-publishing side. Bump the pin when you have read the changelog.
+### Claude Desktop
+
+Add the same `"jira"` object to `claude_desktop_config.json`, then quit and
+reopen Desktop:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+### Cursor
+
+[Add to Cursor](https://cursor.com/en/install-mcp?name=jira&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImppcmEtbWNwLWFpQDEuMC4wIl0sImVudiI6eyJKSVJBX1dSSVRFX01PREUiOiJwbGFuIn19),
+or add the `"jira"` object under `"mcpServers"` in `~/.cursor/mcp.json` (user
+scope; `.cursor/mcp.json` in a project is shared with the repository).
+
+### VS Code
+
+[Install in VS Code](https://insiders.vscode.dev/redirect/mcp/install?name=jira&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22jira-mcp-ai%401.0.0%22%5D%2C%22env%22%3A%7B%22JIRA_WRITE_MODE%22%3A%22plan%22%7D%7D),
+or from a terminal, which writes to your user profile:
+
+```sh
+code --add-mcp '{"name":"jira","type":"stdio","command":"npx","args":["-y","jira-mcp-ai@1.0.0"],"env":{"JIRA_WRITE_MODE":"plan"}}'
+```
+
+VS Code keeps the servers under `"servers"`, not `"mcpServers"`; a workspace
+`.vscode/mcp.json` is shared with the repository.
+
+### First success
+
+Restart or reload the client, then ask the agent: *"What is on my plate this
+sprint?"* It answers with a read-only `jira_search`. Then ask it to add a comment
+to one of those issues: in the default `plan` mode it shows the comment it would
+post and posts nothing.
 
 ## When the client shows no server
 
