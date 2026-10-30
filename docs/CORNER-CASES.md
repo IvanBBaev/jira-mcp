@@ -3943,3 +3943,36 @@ Proven in `src/tools/schema-probes.test.ts` and `src/mcp/define.test.ts`.
   a client, which exists.
 - **CC-5153** — README.md and the site no longer restate the PATH fix or the
   client log locations; CONFIGURATION.md owns them.
+
+## Project-scope matrix over the catalogue (V3-33, 2026-10-30)
+
+V3-32 took CC-5150–5153 from this item's reserved range, so it starts at
+CC-5154. Project ABC is in scope, XYZ is not.
+
+- **CC-5154** — every tool in `PACKAGES` has exactly one entry across the
+  matrix rows, the confined list, the always-refused list and the reasoned
+  exemptions; a new tool without one, or an entry for a removed tool, fails.
+- **CC-5155** — the only exempt writes are the site-wide filter writes; every
+  other write has an in-scope, an out-of-scope and an unresolved case.
+- **CC-5156** — with every reference in ABC, a write plans, applies and sends
+  its mutation; a scoped read answers `ok`.
+- **CC-5157** — one reference outside ABC (an XYZ key, an XYZ id, or an ABC key
+  whose issue moved to XYZ; also parents, link ends, rank anchors,
+  `moveIssuesTo`, `moveFixIssuesTo`/`moveAffectedIssuesTo`, `originBoardId`
+  and `boardId`) is refused as `permission` with no mutation sent, and the
+  refusal names the reference and its project.
+- **CC-5158** — a reference that resolves to no project (an issue without a
+  project field, a board without a location, a sprint without a board, a
+  component or version without a project, a link without ends, a project id
+  without a key) is refused the same way, naming the reference.
+- **CC-5159** — `jira_search`, `jira_count`, `jira_list_projects`,
+  `jira_list_boards` and the portfolio tools send only JQL that starts with the
+  project clause and return nothing from XYZ.
+- **CC-5160** — `jira_delete_attachment` and `jira_download_attachment` are
+  refused before any mutation: attachment metadata names no issue.
+- **CC-5161** — an issue refused by its key prefix is named with its project:
+  `Issue "XYZ-1" (project XYZ) is outside the project scope …`.
+- **CC-5162** — unknown `/search/*` and `/bulk/*` sub-routes are refused before
+  any request.
+- **CC-5163** — a sprint update whose `originBoardId` names an out-of-scope
+  board is refused, naming the board and its project.

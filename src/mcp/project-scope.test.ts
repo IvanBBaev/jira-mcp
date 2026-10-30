@@ -140,12 +140,16 @@ test('CC-4006: a search response carrying an out-of-scope issue is refused', asy
 
 // --- Issues ------------------------------------------------------------------
 
-test('CC-4002: an issue whose key prefix is out of scope is refused without a request', async () => {
+test('CC-4002, CC-5161: an issue whose key prefix is out of scope is refused without a request, named', async () => {
   const { fake, scope } = setup();
   const error = await refused(
     scope.jira({ method: 'GET', path: '/issue/XYZ-1/comment' }),
   );
   assert.match(error.message, /JIRA_PROJECTS: ABC, DEF/);
+  assert.match(
+    error.message,
+    /^Issue "XYZ-1" \(project XYZ\) is outside the project scope/,
+  );
   assert.equal(fake.calls.length, 0);
 });
 
@@ -377,6 +381,29 @@ test('boards are filtered and checked by their location project', async () => {
   );
 });
 
+test('CC-5163: a sprint update that moves the sprint to an out-of-scope board is refused', async () => {
+  const { fake, scope } = setup();
+  fake.on('GET /rest/agile/1.0/sprint/9', jiraOk({ id: 9, originBoardId: 1 }));
+  fake.on(
+    'GET /rest/agile/1.0/board/1',
+    jiraOk({ id: 1, location: { projectKey: 'ABC' } }),
+  );
+  fake.on(
+    'GET /rest/agile/1.0/board/2',
+    jiraOk({ id: 2, location: { projectKey: 'XYZ' } }),
+  );
+  const error = await refused(
+    scope.jira({
+      method: 'POST',
+      root: 'agile',
+      path: '/sprint/9',
+      body: { originBoardId: 2 },
+    }),
+  );
+  assert.match(error.message, /^Board 2 \(project XYZ\)/);
+  assert.equal(fake.calls.filter((call) => call.method !== 'GET').length, 0);
+});
+
 test('sprint issue lists get the project clause added to their JQL', async () => {
   const { fake, scope } = setup();
   fake.on('GET /rest/agile/1.0/sprint/9/issue', jiraOk({ issues: [] }));
@@ -485,6 +512,24 @@ test('CC-4006: attachments by id and unknown routes are refused', async () => {
   );
   await refused(scope.jira({ method: 'GET', path: '/workflow/search' }));
   await refused(scope.jira({ method: 'GET', root: 'agile', path: '/epic/1' }));
+  assert.equal(fake.calls.length, 0);
+});
+
+test('CC-5162: unknown search and bulk sub-routes are refused before any request', async () => {
+  const { fake, scope } = setup();
+  const search = await refused(
+    scope.jira({ method: 'POST', path: '/search/id', body: { jql: 'a = 1' } }),
+  );
+  assert.match(search.message, /^This search route is outside the project scope/);
+  const bulk = await refused(
+    scope.jira({
+      method: 'POST',
+      path: '/bulk/issues',
+      body: { selectedIssueIdsOrKeys: ['ABC-1'] },
+    }),
+  );
+  assert.match(bulk.message, /^This bulk route is outside the project scope/);
+  await refused(scope.jira({ method: 'GET', path: '/bulk/other' }));
   assert.equal(fake.calls.length, 0);
 });
 

@@ -14,6 +14,11 @@ env var names — not internal refactors.
 
 ### Changed
 
+- Under `JIRA_PROJECTS`, a refusal now names what it refused and where that
+  points: `Issue "XYZ-1" (project XYZ) is outside the project scope …`, or
+  `… could not be resolved to a project` when Jira gives no project for it.
+  The error kind (`permission`) is unchanged.
+
 - The install instructions keep the API token out of every client config.
   `doctor --save` stores it in `~/.config/jira-mcp-ai/.env` (mode `0600`) and
   the registrations carry no secret: the Claude Code plugin, a user-scope

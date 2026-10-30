@@ -208,6 +208,18 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
       remediation: SCOPE_REMEDIATION,
     });
 
+  /**
+   * The refusal for a named entity: it names the entity and, once resolved,
+   * the project that put it out of scope — or says the project could not be
+   * resolved, which fails closed the same way.
+   */
+  const denyEntity = (what: string, project: string | undefined): JiraError =>
+    deny(
+      project === undefined
+        ? `${what} could not be resolved to a project, so it`
+        : `${what} (project ${project})`,
+    );
+
   // Per-guard memo: one tool call resolves each entity at most once.
   const memo = new Map<string, Promise<string | undefined>>();
   const remember = (
@@ -364,7 +376,7 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
   // --- Assertions -----------------------------------------------------------
 
   const assertKey = (key: string | undefined, what: string): void => {
-    if (key === undefined || !allowed.has(key)) throw deny(what);
+    if (key === undefined || !allowed.has(key)) throw denyEntity(what, key);
   };
 
   const assertProject = async (
@@ -419,7 +431,10 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     for (const issueRef of refs) {
       const key = ISSUE_KEY.exec(issueRef);
       if (key !== null && !allowed.has((key[1] ?? '').toUpperCase())) {
-        throw deny(`Issue ${JSON.stringify(issueRef)}`);
+        throw denyEntity(
+          `Issue ${JSON.stringify(issueRef)}`,
+          (key[1] ?? '').toUpperCase(),
+        );
       }
     }
     for (let start = 0; start < refs.length; start += SEARCH_BATCH) {
@@ -599,7 +614,8 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
           entityRef(link?.['inwardIssue']),
           entityRef(link?.['outwardIssue']),
         ];
-        if (ends.some((end) => end === undefined)) throw deny(`Issue link ${second}`);
+        if (ends.some((end) => end === undefined))
+          throw denyEntity(`Issue link ${second}`, undefined);
         for (const end of ends) if (end !== undefined) await assertIssue(req, end);
         return { req };
       }
@@ -785,7 +801,15 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     const issues = Array.isArray(rec['issues']) ? rec['issues'] : [rec];
     for (const issue of issues) {
       const key = issueProjectKey(issue);
-      if (key !== undefined && !allowed.has(key)) throw deny('A returned issue');
+      if (key !== undefined && !allowed.has(key)) {
+        const issueKey = ref(record(issue)?.['key']);
+        throw denyEntity(
+          issueKey === undefined
+            ? 'A returned issue'
+            : `Returned issue ${JSON.stringify(issueKey)}`,
+          key,
+        );
+      }
     }
   };
 
