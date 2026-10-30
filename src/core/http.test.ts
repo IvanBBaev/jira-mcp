@@ -1801,6 +1801,31 @@ test('CC-54: a download over the cap is aborted mid-stream, not buffered and rej
   assert.ok(sent < chunks, 'the reader must stop near the cap, not drain the body');
 });
 
+test('CC-5269: a download with a content-length comes back byte-exact whether the length is right, short or long', async () => {
+  const payload = Uint8Array.from({ length: 10 }, (_, i) => i + 1);
+  for (const declared of ['10', '4', '64']) {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(payload.subarray(0, 6));
+        controller.enqueue(payload.subarray(6));
+        controller.close();
+      },
+    });
+    const res = await withRawFetch(
+      () =>
+        Promise.resolve(
+          new Response(stream, { status: 200, headers: { 'content-length': declared } }),
+        ),
+      async () => {
+        const { request } = harness();
+        return await request(GET_CONTENT);
+      },
+    );
+    assert.ok(res.data instanceof Uint8Array, declared);
+    assert.deepEqual([...res.data], [...payload], declared);
+  }
+});
+
 /**
  * A JSON-looking body that streams 1 MiB chunks until it is ten chunks past
  * {@link MAX_TEXT_BODY_BYTES}, recording how far a reader got and whether it

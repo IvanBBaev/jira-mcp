@@ -4180,3 +4180,55 @@ The model tier's live behaviour is not tested offline: it sends
 `tool_choice: auto` (current models refuse a forced tool choice) and records a
 task with no `tool_use` block as a miss with its `stop_reason`, so a refusal
 shows up in the report instead of crashing the run.
+
+## Export separation, media quota and store hardening (V3-43, 2026-10-30)
+
+Exports no longer share the directory uploads read from, each output
+directory has a byte quota, and the media store reads bounded and writes
+whole (D531). The store cases run against a real `mkdtemp` directory; the
+short-write and growing-file cases drive `writeAll` and `readBounded` through
+fake handles, and the download peak is measured on the byte sink.
+
+- **CC-5250** — `jira_upload_attachment` refuses an export-shaped name
+  (`jira-export-<tool>-<stamp>-<hex>.jsonl`) with `validation` before reading
+  the file or calling Jira, even when a real file of that name exists.
+- **CC-5251** — a file this process downloaded is refused by the upload
+  (`validation`, "written by this server"); a copy of it under a new name is
+  a new inode and is uploaded.
+- **CC-5252** — a store without `refuseOwnWrites` (the export store) reads its
+  own files back, so `jira://exports/{name}` keeps working.
+- **CC-5253** — a write that would take the directory past
+  `JIRA_MEDIA_MAX_BYTES` is refused with `config` and leaves no file; files
+  already there count toward the quota.
+- **CC-5254** — quota `0` is off; files in subdirectories (the default export
+  directory) do not count toward the media directory's quota.
+- **CC-5255** — two concurrent writes that each fit but together pass the
+  quota: the first lands, the second is refused, and a later write still runs.
+- **CC-5256** — a download over the quota is `config` through the tool, with
+  the media directory left empty.
+- **CC-5257** — `createDir` creates the derived export directory `0700` on
+  the first write, not at construction, and a second write reuses it.
+- **CC-5258** — `createDir` does not create a missing parent; the failure
+  names the configured setting (`JIRA_EXPORT_DIR`).
+- **CC-5259** — `writeAll` continues after short writes, each at the offset
+  the last one stopped, until every byte has landed.
+- **CC-5260** — a write that lands zero bytes is reported through the
+  "filesystem full" error with the count that did land.
+- **CC-5261** — `readBounded` refuses a file that grew past its `fstat` size
+  (`validation`, "grew") and never reads more than size + 1 bytes.
+- **CC-5262** — a file that shrank after the stat comes back as the bytes it
+  holds.
+- **CC-5263** — a file served in short reads is assembled byte-exact.
+- **CC-5264** — with a declared length the byte sink holds exactly the file:
+  peak = file + one chunk, and `finish` returns the preallocated buffer
+  without a copy.
+- **CC-5265** — a body that runs past its declared length falls back to
+  chunks and comes back byte-exact.
+- **CC-5266** — a body shorter than declared comes back as the prefix it
+  filled.
+- **CC-5267** — without a declared length the chunks are joined at the end;
+  an empty body is zero bytes.
+- **CC-5268** — only a plain decimal `Content-Length` within the attachment
+  cap is used; negative, exponent, list, hex and over-cap values are ignored.
+- **CC-5269** — a download through the HTTP client comes back byte-exact
+  whether its `Content-Length` is right, too short or too long.

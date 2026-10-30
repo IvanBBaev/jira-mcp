@@ -129,6 +129,8 @@ export interface PackagesDeps {
    * `kind: 'config'` naming the setting; the metadata tool still works.
    */
   readonly mediaDir?: string;
+  /** `JIRA_MEDIA_MAX_BYTES` (D531): the media directory's byte quota, `0` = off. */
+  readonly mediaMaxBytes?: number;
   /**
    * `JIRA_REPORT_DIR`. Absent ⇒ `jira_portfolio_report` refuses with
    * `kind: 'config'`; `jira_portfolio_analyze` still works (D126).
@@ -153,7 +155,10 @@ export function createPackages(
     issuesPackage,
     issuesWritePackage,
     issuesDeletePackage,
-    createAttachmentsPackage({ mediaDir: deps.mediaDir }),
+    createAttachmentsPackage({
+      mediaDir: deps.mediaDir,
+      ...(deps.mediaMaxBytes === undefined ? {} : { mediaMaxBytes: deps.mediaMaxBytes }),
+    }),
     collabPackage,
     metaPackage,
     usersPackage,

@@ -116,7 +116,7 @@ export const PROFILE_DESCRIPTION =
 /** `.describe()` text for `output`, on the reads that declare `fileOutput` (D152). */
 export const OUTPUT_DESCRIPTION =
   'inline (default): rows in data. file: this page of rows goes to a JSONL file ' +
-  'in JIRA_MEDIA_DIR; returns its path, a resource link and a preview.';
+  'in the export directory; returns its path, a resource link and a preview.';
 
 /** Normative `.describe()` text for `apply` (write tools only). */
 export const APPLY_DESCRIPTION =

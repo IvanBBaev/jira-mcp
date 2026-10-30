@@ -220,6 +220,7 @@ function settings(writeMode: WriteMode): Settings {
     maxResultChars: 25_000,
     maxPages: 20,
     metaCacheTtlS: 300,
+    mediaMaxBytes: 1073741824,
     transport: 'stdio',
     httpPort: 3334,
     logLevel: 'info',

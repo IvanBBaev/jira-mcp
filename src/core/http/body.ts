@@ -91,6 +91,74 @@ export function attachmentTooLarge(
 }
 
 /**
+ * Where a download's chunks collect (D531, TSN-14). With a usable declared
+ * length the bytes land in ONE buffer allocated up front, so the peak is the
+ * file plus the chunk in flight; without one they are kept as chunks and
+ * joined at the end, which briefly holds the file twice. The declared length
+ * is a hint, never trusted: a body that runs past it (a decoded `gzip`, a
+ * lying server) falls back to chunks, and one that stops short is returned as
+ * the prefix it filled.
+ */
+export interface ByteSink {
+  push(chunk: Uint8Array): void;
+  finish(): Uint8Array;
+  /** Bytes the sink itself holds right now — what the peak test measures. */
+  readonly held: number;
+}
+
+/** The declared length when it is a plain integer the cap admits, else undefined. */
+export function declaredLength(header: string | null): number | undefined {
+  if (header === null || !/^\d{1,16}$/.test(header.trim())) return undefined;
+  const value = Number(header.trim());
+  return value <= MAX_ATTACHMENT_BYTES ? value : undefined;
+}
+
+/** A {@link ByteSink}, preallocated when `declared` is known. */
+export function createByteSink(declared: number | undefined): ByteSink {
+  let buffer = declared === undefined ? undefined : new Uint8Array(declared);
+  let filled = 0;
+  const chunks: Uint8Array[] = [];
+  let chunked = 0;
+
+  return {
+    push(chunk: Uint8Array): void {
+      if (buffer !== undefined && filled + chunk.byteLength <= buffer.byteLength) {
+        buffer.set(chunk, filled);
+        filled += chunk.byteLength;
+        return;
+      }
+      if (buffer !== undefined) {
+        // The body outran its declared length: keep what was filled as the
+        // first chunk (a view, not a copy) and carry on chunked.
+        chunks.push(buffer.subarray(0, filled));
+        chunked = buffer.byteLength;
+        buffer = undefined;
+      }
+      chunks.push(chunk);
+      chunked += chunk.byteLength;
+    },
+
+    finish(): Uint8Array {
+      if (buffer !== undefined) {
+        return filled === buffer.byteLength ? buffer : buffer.subarray(0, filled);
+      }
+      const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return out;
+    },
+
+    get held(): number {
+      return buffer === undefined ? chunked : buffer.byteLength;
+    },
+  };
+}
+
+/**
  * Read a whole body as bytes, counting AS IT ARRIVES and aborting the
  * transfer at the byte that crosses the cap — buffering first and checking
  * afterwards would defeat the point of having a cap.
@@ -129,7 +197,7 @@ export async function readBytesCapped(
   // `Response.body` is a stream of bytes, but the ambient type leaves the
   // chunk type open; this is the one place that pins it.
   const reader = (body as ReadableStream<Uint8Array>).getReader();
-  const chunks: Uint8Array[] = [];
+  const sink = createByteSink(declaredLength(response.headers.get('content-length')));
   let total = 0;
   try {
     for (;;) {
@@ -137,7 +205,7 @@ export async function readBytesCapped(
       if (chunk.done) break;
       total += chunk.value.byteLength;
       if (total > MAX_ATTACHMENT_BYTES) throw attachmentTooLarge(call, total, 'download');
-      chunks.push(chunk.value);
+      sink.push(chunk.value);
     }
   } catch (error) {
     // Whatever ended the read — the cap, the attempt timeout, the caller —
@@ -149,13 +217,7 @@ export async function readBytesCapped(
     reader.releaseLock();
   }
 
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
+  return sink.finish();
 }
 
 /**

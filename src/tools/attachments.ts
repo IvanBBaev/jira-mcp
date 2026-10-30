@@ -26,6 +26,13 @@
 //      a link someone left behind. The checks and the read share one
 //      descriptor, opened without following a link.
 //
+// Since D531 an upload also refuses what this server wrote itself — a file it
+// downloaded in this process, and anything named like an export — so "search
+// → export → upload" and "download → upload elsewhere" are no longer one-call
+// chains. Exports live in their own directory (JIRA_EXPORT_DIR, by default
+// `<JIRA_MEDIA_DIR>/exports`), which a basename cannot reach. Every write is
+// checked against a byte quota on the directory (JIRA_MEDIA_MAX_BYTES).
+//
 // WHY `jira_download_attachment` IS A READ (D-row in the WP-70 handoff). It
 // mutates local disk, which reads like a write — but `readOnlyHint: false` in
 // this server means "goes through the plan/apply gate", and the gate captures
@@ -41,7 +48,16 @@
 // ---------------------------------------------------------------------------
 
 import { constants } from 'node:fs';
-import { lstat, open, realpath, rm, stat, type FileHandle } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  type FileHandle,
+} from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import {
@@ -55,6 +71,7 @@ import {
 import { createJiraError, isJiraError } from '../core/errors.js';
 import { MAX_ATTACHMENT_BYTES } from '../core/http-util.js';
 import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
+import { EXPORT_NAME_PATTERN } from '../mcp/exports.js';
 import { ok } from '../mcp/result.js';
 import { WRITE_ANNOTATIONS, callBase, guarded } from '../mcp/tool-helpers.js';
 import type { PackageSpec, ToolAnnotations, ToolResult, ToolSpec } from '../mcp/types.js';
@@ -75,6 +92,144 @@ export const MAX_NAME_COLLISIONS = 100;
 
 /** Longest suffix still treated as an extension when uniquifying. */
 const MAX_EXTENSION_CHARS = 12;
+
+/** Mode of a directory this server creates itself (the default export dir). */
+export const MEDIA_DIR_MODE = 0o700;
+
+/** How {@link createNodeMediaStore} is configured beyond its directory. */
+export interface NodeMediaStoreOptions {
+  /**
+   * The byte quota on the directory (JIRA_MEDIA_MAX_BYTES, D531): a write that
+   * would take the regular files directly inside it past this many bytes is
+   * refused before a byte lands. `0` or absent switches the quota off.
+   */
+  readonly maxBytes?: number;
+  /**
+   * Create the directory (mode {@link MEDIA_DIR_MODE}) before the first write.
+   * Only for a directory the server derived itself — the default export dir —
+   * so a typo in an operator's path is still a `config` error, not a new tree.
+   */
+  readonly createDir?: boolean;
+  /**
+   * Refuse to READ a file this store wrote in this process (D531). The media
+   * store sets it, so a download cannot be re-uploaded; the export store does
+   * not, because reading its own files back is what `jira://exports/` is for.
+   */
+  readonly refuseOwnWrites?: boolean;
+  /** The setting named in messages; defaults to `JIRA_MEDIA_DIR`. */
+  readonly setting?: string;
+}
+
+/**
+ * What a write is checked against: one descriptor-level identity per file the
+ * store created. Size and mtime ride along so a reused inode — a downloaded
+ * file deleted and a new one dropped in its place — is not mistaken for it.
+ */
+function identityOf(info: {
+  readonly dev: number;
+  readonly ino: number;
+  readonly size: number;
+  readonly mtimeMs: number;
+}): string {
+  return `${String(info.dev)}:${String(info.ino)}:${String(info.size)}:${String(info.mtimeMs)}`;
+}
+
+/** The slice of `FileHandle` {@link writeAll} uses — a fake in tests. */
+export interface WritableHandle {
+  write(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ readonly bytesWritten: number }>;
+}
+
+/** The slice of `FileHandle` {@link readBounded} uses — a fake in tests. */
+export interface ReadableHandle {
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ readonly bytesRead: number }>;
+}
+
+/**
+ * Write every byte, looping on short writes (TSN-14). The kernel may accept
+ * fewer bytes than it was offered, and that alone is not an error; a write that
+ * accepts NOTHING is — the volume is full — and is reported with the count that
+ * did land, because a later read would otherwise upload a stub.
+ */
+export async function writeAll(
+  handle: WritableHandle,
+  bytes: Uint8Array,
+  full: (written: number) => Error,
+): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const { bytesWritten } = await handle.write(
+      bytes,
+      offset,
+      bytes.byteLength - offset,
+      offset,
+    );
+    if (bytesWritten <= 0) throw full(offset);
+    offset += bytesWritten;
+  }
+}
+
+/**
+ * Read at most `expected` bytes, and prove there are no more (TSN-14).
+ *
+ * `expected` is the size `fstat` reported, already checked against the cap.
+ * The buffer holds ONE byte more than that: a file that grew between the stat
+ * and the read fills it, and is refused instead of being read past the cap —
+ * the read is bounded by the buffer, not by the stat. A file that shrank comes
+ * back as what is there.
+ */
+export async function readBounded(
+  handle: ReadableHandle,
+  expected: number,
+  name: string,
+): Promise<Uint8Array> {
+  const buffer = new Uint8Array(expected + 1);
+  let total = 0;
+  while (total < buffer.byteLength) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      total,
+      buffer.byteLength - total,
+      total,
+    );
+    if (bytesRead <= 0) return buffer.subarray(0, total);
+    total += bytesRead;
+  }
+  throw createJiraError({
+    kind: 'validation',
+    reason: `"${name}" grew while it was being read (more than the ${String(expected)} bytes it had when it was checked).`,
+    remediation:
+      'Wait until whatever is writing the file has finished, then upload it again.',
+  });
+}
+
+/**
+ * Bytes held by the regular files directly inside `root`. Subdirectories (the
+ * default export dir among them) are not counted: each store has its own
+ * quota. A file removed between the listing and its `lstat` counts as zero.
+ */
+async function usageOf(root: string): Promise<number> {
+  const entries = await readdir(root, { withFileTypes: true });
+  let total = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    try {
+      total += (await lstat(join(root, entry.name))).size;
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw error;
+    }
+  }
+  return total;
+}
 
 /**
  * The `node:fs` implementation of the api ring's seam, rooted at one directory.
@@ -97,8 +252,22 @@ function isInside(target: string, root: string): boolean {
   return target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
-export function createNodeMediaStore(dir: string): MediaStore {
+export function createNodeMediaStore(
+  dir: string,
+  options: NodeMediaStoreOptions = {},
+): MediaStore {
   const root = resolve(dir);
+  const setting = options.setting ?? 'JIRA_MEDIA_DIR';
+  const maxBytes = options.maxBytes ?? 0;
+  /** {@link identityOf} every file this store created, for `refuseOwnWrites`. */
+  const written = new Set<string>();
+  /**
+   * Writes run one at a time: the quota is "usage now + this file", and two
+   * downloads that both measured the directory before either wrote would
+   * otherwise each fit and together overshoot it.
+   */
+  let queue: Promise<unknown> = Promise.resolve();
+  let created = false;
 
   /** Join, then verify — the joined path must stay under {@link root}. */
   const pathOf = (name: string): string => {
@@ -107,80 +276,104 @@ export function createNodeMediaStore(dir: string): MediaStore {
       throw createJiraError({
         kind: 'validation',
         reason: `"${name}" resolves outside the media directory.`,
-        remediation:
-          'Pass a plain file name. This server only reads and writes files directly inside JIRA_MEDIA_DIR.',
+        remediation: `Pass a plain file name. This server only reads and writes files directly inside ${setting}.`,
       });
     }
     if (target === root) {
       throw createJiraError({
         kind: 'validation',
         reason: `"${name}" names the media directory itself, not a file in it.`,
-        remediation: 'Pass the name of a file inside JIRA_MEDIA_DIR.',
+        remediation: `Pass the name of a file inside ${setting}.`,
       });
     }
     return target;
   };
 
+  /** Refuse a write the quota cannot hold. Runs inside the write queue. */
+  const checkQuota = async (name: string, size: number): Promise<void> => {
+    if (maxBytes <= 0) return;
+    let used: number;
+    try {
+      used = await usageOf(root);
+    } catch (error) {
+      throw writeFailure(error, root, name, setting);
+    }
+    if (used + size > maxBytes) {
+      throw createJiraError({
+        kind: 'config',
+        reason: `Writing "${name}" (${String(size)} bytes) would take ${root} to ${String(used + size)} bytes, over its ${String(maxBytes)}-byte quota (JIRA_MEDIA_MAX_BYTES). Nothing was written.`,
+        remediation: `Delete files from ${setting} that are no longer needed, or raise JIRA_MEDIA_MAX_BYTES and restart the server.`,
+      });
+    }
+  };
+
+  const writeOnce = async (
+    name: string,
+    bytes: Uint8Array,
+  ): Promise<MediaWriteResult> => {
+    if (options.createDir === true && !created) {
+      // Not recursive: the parent is the operator's directory, and a missing
+      // parent is a misconfiguration to report, not a tree to invent.
+      try {
+        await mkdir(root, { mode: MEDIA_DIR_MODE });
+      } catch (error) {
+        if (codeOf(error) !== 'EEXIST') throw writeFailure(error, root, name, setting);
+      }
+      created = true;
+    }
+    await checkQuota(name, bytes.byteLength);
+    // The `wx` flag is the no-overwrite rule itself: the kernel decides, so
+    // there is no exists-then-write window for a concurrent call to slip
+    // through. A collision is answered with the next variant, never with a
+    // clobbered file.
+    for (let attempt = 0; attempt <= MAX_NAME_COLLISIONS; attempt += 1) {
+      const candidate = attempt === 0 ? name : variantOf(name, attempt);
+      const path = pathOf(candidate);
+      try {
+        const handle = await open(path, 'wx', MEDIA_FILE_MODE);
+        try {
+          // A short write is not a syscall error, so `writeAll` loops; a write
+          // that lands nothing means the volume filled up. Returning early
+          // would report a truncated file as a completed download — and the
+          // name would stay taken, so a later read would see the stub.
+          await writeAll(handle, bytes, (landed) =>
+            createJiraError({
+              kind: 'config',
+              reason: `Only ${String(landed)} of ${String(bytes.byteLength)} bytes of "${candidate}" reached ${root}; the filesystem is most likely full.`,
+              remediation: `Free space in ${setting} (or point it at a larger volume) and try again.`,
+            }),
+          );
+          written.add(identityOf(await handle.stat()));
+        } finally {
+          await handle.close();
+        }
+        return { name: candidate, path, bytes: bytes.byteLength };
+      } catch (error) {
+        if (codeOf(error) === 'EEXIST') continue;
+        // The file exists from the moment `open` returns, so any failure
+        // after that leaves a partial file holding the name — and the name
+        // is the only thing a later read has to go on. Remove it before
+        // reporting. When `open` itself failed there is nothing to remove,
+        // which is what `force` is for; a failing unlink must not replace
+        // the real error with its own.
+        await rm(path, { force: true }).catch(() => undefined);
+        throw writeFailure(error, root, candidate, setting);
+      }
+    }
+    throw createJiraError({
+      kind: 'validation',
+      reason: `The media directory already holds ${String(MAX_NAME_COLLISIONS)} files named like "${name}".`,
+      remediation: `Clear out the old copies in ${setting}; this server never overwrites a file it wrote.`,
+    });
+  };
+
   return {
     dir: root,
 
-    async write(name: string, bytes: Uint8Array): Promise<MediaWriteResult> {
-      // The `wx` flag is the no-overwrite rule itself: the kernel decides, so
-      // there is no exists-then-write window for a concurrent call to slip
-      // through. A collision is answered with the next variant, never with a
-      // clobbered file.
-      for (let attempt = 0; attempt <= MAX_NAME_COLLISIONS; attempt += 1) {
-        const candidate = attempt === 0 ? name : variantOf(name, attempt);
-        const path = pathOf(candidate);
-        try {
-          const handle = await open(path, 'wx', MEDIA_FILE_MODE);
-          try {
-            const { bytesWritten } = await handle.write(bytes);
-            // A short write is not a syscall error: the kernel may accept
-            // fewer bytes than it was offered, and a filesystem running out
-            // of room is the everyday way that happens. Returning here would
-            // report a truncated file as a completed download — and the name
-            // would stay taken, so a later `read` would upload the stub to
-            // Jira as if it were the whole attachment.
-            //
-            // NO TEST DRIVES THIS ARM (and none can, here): `write(2)` returns
-            // short only when the volume fills up mid-call, which cannot be
-            // staged deterministically from a unit test — there is no seam over
-            // `node:fs` in this store on purpose, since the store IS the
-            // filesystem code. It is kept because the failure it catches is
-            // silent, and because the `isJiraError` passthrough in
-            // {@link writeFailure} exists solely to let this diagnosis survive
-            // the catch below.
-            if (bytesWritten !== bytes.byteLength) {
-              throw createJiraError({
-                kind: 'config',
-                reason: `Only ${String(bytesWritten)} of ${String(bytes.byteLength)} bytes of "${candidate}" reached ${root}; the filesystem is most likely full.`,
-                remediation:
-                  'Free space in JIRA_MEDIA_DIR (or point it at a larger volume) and download the attachment again.',
-              });
-            }
-          } finally {
-            await handle.close();
-          }
-          return { name: candidate, path, bytes: bytes.byteLength };
-        } catch (error) {
-          if (codeOf(error) === 'EEXIST') continue;
-          // The file exists from the moment `open` returns, so any failure
-          // after that leaves a partial file holding the name — and the name
-          // is the only thing a later read has to go on. Remove it before
-          // reporting. When `open` itself failed there is nothing to remove,
-          // which is what `force` is for; a failing unlink must not replace
-          // the real error with its own.
-          await rm(path, { force: true }).catch(() => undefined);
-          throw writeFailure(error, root, candidate);
-        }
-      }
-      throw createJiraError({
-        kind: 'validation',
-        reason: `The media directory already holds ${String(MAX_NAME_COLLISIONS)} files named like "${name}".`,
-        remediation:
-          'Clear out the old copies in JIRA_MEDIA_DIR; this server never overwrites a downloaded file.',
-      });
+    write(name: string, bytes: Uint8Array): Promise<MediaWriteResult> {
+      const run = queue.then(() => writeOnce(name, bytes));
+      queue = run.catch(() => undefined);
+      return run;
     },
 
     async read(name: string): Promise<MediaReadResult> {
@@ -214,6 +407,17 @@ export function createNodeMediaStore(dir: string): MediaStore {
               'Copy the file into JIRA_MEDIA_DIR instead of linking it, then upload the copy.',
           });
         }
+        // A file this process downloaded goes back out only after a person
+        // made it theirs (D531): re-uploading it is the second half of an
+        // exfiltration chain, and the model can run both halves on its own.
+        if (options.refuseOwnWrites === true && written.has(identityOf(info))) {
+          throw createJiraError({
+            kind: 'validation',
+            reason: `"${name}" was written by this server (a downloaded attachment), so it is not uploaded.`,
+            remediation:
+              'Uploads take files a person put into JIRA_MEDIA_DIR. To attach a downloaded file elsewhere, copy it to a new name yourself and upload the copy.',
+          });
+        }
         // Stat BEFORE read: refusing a 4 GiB file must not require loading it.
         if (info.size > MAX_ATTACHMENT_BYTES) {
           throw createJiraError({
@@ -223,10 +427,10 @@ export function createNodeMediaStore(dir: string): MediaStore {
               'This limit is compiled in and has no environment override. Attach the file through the Jira UI instead.',
           });
         }
-        const buffer = await handle.readFile();
-        return { path, bytes: new Uint8Array(buffer) };
+        const bytes = await readBounded(handle, info.size, name);
+        return { path, bytes };
       } catch (error) {
-        throw readFailure(error, root, name);
+        throw readFailure(error, root, name, setting);
       } finally {
         await handle?.close();
       }
@@ -303,9 +507,9 @@ function variantOf(name: string, index: number): string {
 /**
  * The `code` of a Node system error, without an `any` in sight.
  *
- * NEITHER GUARD IS REACHABLE FROM THIS MODULE, and both are kept. The only
- * callers are {@link writeFailure} and {@link readFailure}, both of which run
- * inside a `catch` over `node:fs`, and every rejection from there is an `Error`
+ * NEITHER GUARD IS REACHABLE FROM THIS MODULE, and both are kept. Every
+ * caller runs inside a `catch` over `node:fs`, and every rejection from there
+ * is an `Error`
  * carrying a string `code`. But a `catch` binding is `unknown`, `throw null` is
  * legal JavaScript, and a diagnosis helper that itself throws a TypeError would
  * replace the operator's real error with a worse one. Two branches nobody can
@@ -324,15 +528,19 @@ function codeOf(error: unknown): string | undefined {
  * the file is the thing being created — so it means the DIRECTORY is missing,
  * which is a configuration problem and is reported as one.
  */
-function writeFailure(error: unknown, root: string, name: string): Error {
+function writeFailure(
+  error: unknown,
+  root: string,
+  name: string,
+  setting: string,
+): Error {
   if (isJiraError(error)) return error;
   const code = codeOf(error);
   if (code === 'ENOENT' || code === 'ENOTDIR') {
     return createJiraError({
       kind: 'config',
       reason: `The media directory ${root} does not exist, so "${name}" could not be written.`,
-      remediation:
-        'Create the directory JIRA_MEDIA_DIR points at (or fix the value) and restart the server.',
+      remediation: `Create the directory ${setting} points at (or fix the value) and restart the server.`,
       cause: error,
     });
   }
@@ -340,29 +548,27 @@ function writeFailure(error: unknown, root: string, name: string): Error {
     return createJiraError({
       kind: 'config',
       reason: `The media directory ${root} is not writable by this server.`,
-      remediation:
-        'Grant the server write access to JIRA_MEDIA_DIR, or point it at a directory it owns.',
+      remediation: `Grant the server write access to ${setting}, or point it at a directory it owns.`,
       cause: error,
     });
   }
   return createJiraError({
     kind: 'config',
     reason: `Writing "${name}" into ${root} failed${code === undefined ? '' : ` (${code})`}.`,
-    remediation: 'Check the directory JIRA_MEDIA_DIR points at, then try again.',
+    remediation: `Check the directory ${setting} points at, then try again.`,
     cause: error,
   });
 }
 
 /** A failed read. `ENOENT` is the caller naming a file that is not there. */
-function readFailure(error: unknown, root: string, name: string): Error {
+function readFailure(error: unknown, root: string, name: string, setting: string): Error {
   if (isJiraError(error)) return error;
   const code = codeOf(error);
   if (code === 'ENOENT') {
     return createJiraError({
       kind: 'not_found',
       reason: `There is no file named "${name}" in the media directory.`,
-      remediation:
-        'Upload a file that is already inside JIRA_MEDIA_DIR; this server cannot read files from anywhere else.',
+      remediation: `Upload a file that is already inside ${setting}; this server cannot read files from anywhere else.`,
       cause: error,
     });
   }
@@ -372,8 +578,7 @@ function readFailure(error: unknown, root: string, name: string): Error {
     return createJiraError({
       kind: 'validation',
       reason: `"${name}" turned into a symbolic link while it was being read.`,
-      remediation:
-        'Upload a real file from JIRA_MEDIA_DIR. This server never follows a link out of that directory.',
+      remediation: `Upload a real file from ${setting}. This server never follows a link out of that directory.`,
       cause: error,
     });
   }
@@ -385,7 +590,7 @@ function readFailure(error: unknown, root: string, name: string): Error {
     return createJiraError({
       kind: 'validation',
       reason: `"${name}" is a directory, not a file.`,
-      remediation: 'Name a single file inside JIRA_MEDIA_DIR.',
+      remediation: `Name a single file inside ${setting}.`,
       cause: error,
     });
   }
@@ -393,15 +598,14 @@ function readFailure(error: unknown, root: string, name: string): Error {
     return createJiraError({
       kind: 'config',
       reason: `"${name}" is not readable by this server.`,
-      remediation:
-        'Grant the server read access to the files in JIRA_MEDIA_DIR, or move the file there again.',
+      remediation: `Grant the server read access to the files in ${setting}, or move the file there again.`,
       cause: error,
     });
   }
   return createJiraError({
     kind: 'config',
     reason: `Reading "${name}" from ${root} failed${code === undefined ? '' : ` (${code})`}.`,
-    remediation: 'Check the directory JIRA_MEDIA_DIR points at, then try again.',
+    remediation: `Check the directory ${setting} points at, then try again.`,
     cause: error,
   });
 }
@@ -527,7 +731,7 @@ function downloadAttachmentTool(
       'without it the call is refused (jira_list_attachments keeps working). Files ' +
       "over 50 MiB are refused. The name on disk derives from Jira's filename and may " +
       'be rewritten to keep it safe; an existing file is never overwritten (renamed: ' +
-      'true says so).',
+      'true says so). Refused when the directory would pass its byte quota.',
     package: 'attachments',
     annotations: DOWNLOAD_ANNOTATIONS,
     input: downloadAttachmentInput,
@@ -615,7 +819,8 @@ function uploadAttachmentTool(
       'refused, so nothing else on the host can be uploaded. Requires JIRA_MEDIA_DIR ' +
       'and a file no larger than 50 MiB. A timeout is reported as ambiguous_write and ' +
       'is never retried automatically: re-read jira_list_attachments before sending ' +
-      'the file again, or the issue ends up with two copies.',
+      'the file again, or the issue ends up with two copies. Files this server ' +
+      'downloaded itself are refused.',
     package: 'attachments',
     annotations: WRITE_ANNOTATIONS,
     writeTier: 'standard',
@@ -626,6 +831,17 @@ function uploadAttachmentTool(
     },
     handler: async (args, ctx): Promise<ToolResult<AttachmentUploadData>> =>
       guarded(async () => {
+        // An export is the server's own bulk read: uploading one would carry a
+        // whole search to any issue in a single call (SEC-02, D531). Refused by
+        // name, whatever directory the file sits in and whoever put it there.
+        if (EXPORT_NAME_PATTERN.test(args.name)) {
+          throw createJiraError({
+            kind: 'validation',
+            reason: `"${args.name}" is named like a jira_* export (output: "file"), and exports are never uploaded.`,
+            remediation:
+              'Upload a file a person put into JIRA_MEDIA_DIR. Exports stay local; read one through its jira://exports/ uri instead.',
+          });
+        }
         const result = await ctx.api.uploadAttachment({
           ...callBase(ctx),
           issueKey: args.issue,
@@ -654,6 +870,8 @@ export interface AttachmentsDeps {
    * `kind: 'config'` naming the setting, and the metadata tool still works.
    */
   readonly mediaDir?: string;
+  /** `JIRA_MEDIA_MAX_BYTES` (D531); `0` or absent = no quota. */
+  readonly mediaMaxBytes?: number;
   /** Overrides {@link mediaDir} with a store built elsewhere — tests use it. */
   readonly store?: MediaStore;
 }
@@ -672,7 +890,10 @@ export function createAttachmentsPackage(deps: AttachmentsDeps = {}): PackageSpe
     deps.store ??
     (deps.mediaDir === undefined || deps.mediaDir.trim() === ''
       ? undefined
-      : createNodeMediaStore(deps.mediaDir));
+      : createNodeMediaStore(deps.mediaDir, {
+          refuseOwnWrites: true,
+          ...(deps.mediaMaxBytes === undefined ? {} : { maxBytes: deps.mediaMaxBytes }),
+        }));
 
   return {
     id: 'attachments',

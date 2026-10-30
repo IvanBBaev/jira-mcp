@@ -521,10 +521,25 @@ export interface Settings {
   readonly metaCacheTtlS: number;
   /**
    * `JIRA_MEDIA_DIR`. Directory attachment downloads land in (and uploads are
-   * read from). Unset ⇒ the binary attachment tools refuse with a `config`
+   * read from); exports go to its `exports` subdirectory unless
+   * `JIRA_EXPORT_DIR` says otherwise. Unset ⇒ the binary attachment tools refuse with a `config`
    * error; metadata listing needs no directory (D45).
    */
   readonly mediaDir?: string;
+  /**
+   * `JIRA_MEDIA_MAX_BYTES` (default 1 GiB). Byte quota on each output
+   * directory — the media dir and the export dir — checked before every write;
+   * `0` switches it off (D531).
+   */
+  readonly mediaMaxBytes: number;
+  /**
+   * `JIRA_EXPORT_DIR`, as the operator set it. Where reads called with
+   * `output: "file"` write their JSONL exports. Unset ⇒ the `exports`
+   * subdirectory of `JIRA_MEDIA_DIR`, created on first use; never the media
+   * directory itself, which uploads read from (D531). Use
+   * `resolveExportDir` for the effective directory.
+   */
+  readonly exportDir?: string;
   /**
    * `JIRA_REPORT_DIR`. Directory `jira_portfolio_report` writes its Markdown
    * reports into. Unset ⇒ that tool refuses with a `config` error;

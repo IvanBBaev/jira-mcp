@@ -13,6 +13,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RESULT_CHARS,
+  DEFAULT_MEDIA_MAX_BYTES,
   DEFAULT_META_CACHE_TTL_S,
   DEFAULT_OAUTH_AUTH_ORIGIN,
   DEFAULT_OAUTH_GATEWAY_ORIGIN,
@@ -27,6 +28,7 @@ import {
   collectSecrets,
   formatStartupReport,
   loadSettings,
+  resolveExportDir,
   type LoadSettingsOptions,
   type StartupReport,
 } from './settings.js';
@@ -725,6 +727,54 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(relative.mediaDir, '/work/project/media');
     assert.equal(relative.reportDir, '/work/project/reports');
     assert.equal(relative.journalPath, '/work/project/logs/writes.jsonl');
+  });
+
+  it('[D531] reads the media quota and the export directory', () => {
+    const defaults = load({ ...VALID }).settings;
+    assert.equal(defaults.mediaMaxBytes, DEFAULT_MEDIA_MAX_BYTES);
+    assert.equal(defaults.exportDir, undefined);
+
+    const { settings, report } = load(
+      {
+        ...VALID,
+        JIRA_MEDIA_DIR: 'media',
+        JIRA_EXPORT_DIR: '~/jira-exports',
+        JIRA_MEDIA_MAX_BYTES: '0',
+      },
+      PATHS,
+    );
+    assert.equal(report.ok, true);
+    assert.equal(settings.mediaMaxBytes, 0, '0 turns the quota off');
+    assert.equal(settings.exportDir, '/home/tester/jira-exports');
+
+    const over = load({ ...VALID, JIRA_MEDIA_MAX_BYTES: '1099511627777' });
+    assert.equal(over.report.ok, false);
+    assert.equal(over.report.errors[0]?.field, 'JIRA_MEDIA_MAX_BYTES');
+  });
+
+  it('[D531] refuses an export directory that is the media directory', () => {
+    const { report } = load(
+      { ...VALID, JIRA_MEDIA_DIR: '/srv/media', JIRA_EXPORT_DIR: '/srv/media/./' },
+      PATHS,
+    );
+    assert.deepEqual(codes(report), ['export_dir_is_media_dir']);
+    assert.equal(report.errors[0]?.field, 'JIRA_EXPORT_DIR');
+  });
+
+  it('[D531] resolves the effective export directory', () => {
+    assert.equal(resolveExportDir({}), undefined);
+    assert.deepEqual(resolveExportDir({ mediaDir: '/srv/media' }), {
+      dir: '/srv/media/exports',
+      derived: true,
+    });
+    assert.deepEqual(
+      resolveExportDir({ mediaDir: '/srv/media', exportDir: '/srv/out' }),
+      { dir: '/srv/out', derived: false },
+    );
+    assert.deepEqual(resolveExportDir({ exportDir: '/srv/out' }), {
+      dir: '/srv/out',
+      derived: false,
+    });
   });
 
   it('treats an invalid number as an error finding, not a silent fallback', () => {

@@ -311,8 +311,8 @@ the operator's job.
 | Sink | Variable | Holds | Written by | Mode and naming | Retention |
 |---|---|---|---|---|---|
 | journal | `JIRA_JOURNAL_PATH` | Metadata of every executed write: time, correlation id, tool, argument hash, outcome, HTTP status, issue key. No field values, no JQL (O-8). | every executed write tool | `0600`, append-only JSONL, passed through the redactor | rotated at ~5 MiB to `<journal>.1`, one previous file kept |
-| media | `JIRA_MEDIA_DIR` | Attachment bytes exactly as stored in Jira — real tenant documents. | <!-- tools:media -->`jira_download_attachment`<!-- /tools --> | `0600`, opened `wx` (never overwrites), name sanitized from the Jira filename (D49) | until the operator deletes it |
-| exports | `JIRA_MEDIA_DIR` (same directory) | One page of issue, comment, changelog, worklog or sprint rows as JSONL — tenant content, redacted for secrets before it is written (D152). | <!-- tools:exports -->`jira_search`, `jira_get_comments`, `jira_get_changelog`, `jira_get_worklogs`, `jira_get_sprint_issues`<!-- /tools --> when called with `output: "file"` | `0600`, opened `wx`, `jira-export-<tool>-<UTC stamp>-<8 hex>.jsonl`; also readable as `jira://exports/{name}` | until the operator deletes it |
+| media | `JIRA_MEDIA_DIR` | Attachment bytes exactly as stored in Jira — real tenant documents. | <!-- tools:media -->`jira_download_attachment`<!-- /tools --> | `0600`, opened `wx` (never overwrites), name sanitized from the Jira filename (D49); refused past `JIRA_MEDIA_MAX_BYTES` | until the operator deletes it |
+| exports | `JIRA_EXPORT_DIR`, default `<JIRA_MEDIA_DIR>/exports` (created `0700`); never `JIRA_MEDIA_DIR` itself (D531) | One page of issue, comment, changelog, worklog or sprint rows as JSONL — tenant content, redacted for secrets before it is written (D152). | <!-- tools:exports -->`jira_search`, `jira_get_comments`, `jira_get_changelog`, `jira_get_worklogs`, `jira_get_sprint_issues`<!-- /tools --> when called with `output: "file"` | `0600`, opened `wx`, `jira-export-<tool>-<UTC stamp>-<8 hex>.jsonl`; also readable as `jira://exports/{name}`; refused past `JIRA_MEDIA_MAX_BYTES` | until the operator deletes it |
 | reports | `JIRA_REPORT_DIR` | A Markdown portfolio report: issue keys, summaries, blockers and duplicate findings across the swept projects (D126). Not passed through the redactor. | <!-- tools:reports -->`jira_portfolio_report`<!-- /tools --> | `0600`, opened `wx`, `portfolio-<UTC stamp>.md` | until the operator deletes it |
 <!-- /sinks -->
 
@@ -323,13 +323,39 @@ to a row here or to the non-tenant files listed under *Data handling*
 `jira_portfolio_report` are annotated `readOnlyHint: true` — they change
 nothing in Jira, but they do write to local disk.
 
-Uploads read from the same `JIRA_MEDIA_DIR`, so the export files and earlier
-downloads are readable by `jira_upload_attachment`. A steered model can
-therefore export a wide search and upload the file to an issue the attacker
-can read — one call's worth of rows instead of one comment's worth (SEC-02).
-Separating the export directory is roadmap V3-43; until then, an operator who
-enables `JIRA_MEDIA_DIR` together with `apply` mode accepts that residual
-risk.
+**Exports and downloads are not upload material (D531, SEC-02).** A steered
+model that could export a wide search and then upload the file to an issue the
+attacker can read would move one call's worth of rows instead of one comment's
+worth. Three locks stand in the way:
+
+- Exports live in their own directory. `JIRA_EXPORT_DIR`, or by default the
+  `exports/` subdirectory of `JIRA_MEDIA_DIR`; an upload takes a plain
+  basename, so it cannot name a file in a subdirectory. Setting
+  `JIRA_EXPORT_DIR` to the media directory itself is a startup error
+  (`export_dir_is_media_dir`).
+- The upload refuses any name shaped like an export
+  (`jira-export-….jsonl`), even one a person copied into the media directory.
+- The upload refuses a file this process downloaded, matched by device, inode,
+  size and modification time. A downloaded attachment goes back out only after
+  a person copies it to a new file.
+
+Residual risk: the record of downloaded files lives in memory, so after a
+restart an earlier download is uploadable again. A person who copies a file
+has, by design, made it theirs. Two paths that differ only through a symlink
+or letter case are not recognised as the same directory at startup; the
+basename rule still keeps exports out of reach when they sit below the media
+directory, but an operator who points `JIRA_EXPORT_DIR` at an alias of
+`JIRA_MEDIA_DIR` defeats the first lock.
+
+**Disk use is bounded (D531, SEC-07).** Each output directory, media and
+exports separately, has a byte quota, `JIRA_MEDIA_MAX_BYTES` (1 GiB by
+default, `0` turns it off). It counts the regular files directly in the
+directory and is checked before every write, with writes to one directory run
+one at a time so two concurrent downloads cannot both fit and together pass
+it. A write that would pass it is refused with `kind=config` and nothing is
+written. A file is written in full or removed: short writes are continued, a
+write that lands nothing is reported as a full filesystem, and the partial
+file is deleted.
 
 The attachment half is bounded as follows. Unset `JIRA_MEDIA_DIR`, the two
 byte-moving tools refuse with `kind=config` having made zero Jira calls, while
@@ -359,7 +385,11 @@ attachment *metadata* keeps working — it needs no directory (CC-58).
   primitive — the one place where a helpful rewrite is the vulnerability
   (CC-57).
 - Size caps apply in both directions and are enforced during the transfer, not
-  after it (CC-54), so an oversized body is never buffered whole.
+  after it (CC-54), so an oversized body is never buffered whole. An upload
+  reads at most the size `fstat` reported plus one byte, so a file that grows
+  while it is read is refused instead of being read past the cap. A download
+  with a usable `Content-Length` is collected in one preallocated buffer, so
+  it is held in memory once rather than twice (TSN-14).
 
 ### Transport
 - stdio: console guard; protocol on stdout, diagnostics on stderr.
@@ -413,7 +443,7 @@ attachment *metadata* keeps working — it needs no directory (CC-58).
   asks for a write. Completions (D154) answer only from closed sets the server
   already holds — declared prompt values and manifest tool names — and make no
   Jira call. The `jira://exports/{name}` resource reads only names matching
-  the export pattern, so it is never a general reader over `JIRA_MEDIA_DIR`;
+  the export pattern, so it is never a general reader over the export directory;
   what it returns is the same redacted rows the export wrote, and they are as
   untrusted as the read that produced them.
 - Markdown rendering does not widen the injection surface: `format: "markdown"`

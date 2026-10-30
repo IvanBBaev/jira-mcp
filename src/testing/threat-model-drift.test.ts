@@ -95,7 +95,7 @@ function sinkOf(
  */
 const CALL_SITES: Readonly<Record<string, string>> = {
   'src/core/journal.ts': 'journal',
-  'src/tools/attachments.ts': 'media', // the media store, shared with exports
+  'src/tools/attachments.ts': 'media', // the store class; exports get their own instance (D531)
   'src/tools/portfolio.ts': 'reports',
   'src/core/oauth.ts': 'credentials', // the oauth token store
   'src/core/env-lock.ts': 'credentials', // env file and lock owner records

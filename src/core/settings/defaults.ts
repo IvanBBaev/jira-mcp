@@ -34,6 +34,15 @@ export const DEFAULT_MAX_RESULT_CHARS = 25000;
 export const DEFAULT_MAX_PAGES = 20;
 /** `JIRA_META_CACHE_TTL_S` default: five minutes (D123). */
 export const DEFAULT_META_CACHE_TTL_S = 300;
+/** `JIRA_MEDIA_MAX_BYTES` default: 1 GiB per output directory (D531). */
+export const DEFAULT_MEDIA_MAX_BYTES = 1073741824;
+/** Upper bound of `JIRA_MEDIA_MAX_BYTES`: 1 TiB. */
+export const MAX_MEDIA_MAX_BYTES = 1099511627776;
+/**
+ * The subdirectory of `JIRA_MEDIA_DIR` exports go to when `JIRA_EXPORT_DIR`
+ * is unset (D531). A basename cannot address it, so uploads cannot read it.
+ */
+export const DEFAULT_EXPORT_SUBDIR = 'exports';
 /** `JIRA_TRANSPORT` default. */
 export const DEFAULT_TRANSPORT: TransportKind = 'stdio';
 /** `JIRA_HTTP_PORT` default. */

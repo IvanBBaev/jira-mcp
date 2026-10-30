@@ -177,6 +177,19 @@
           "format": "filepath"
         },
         {
+          "name": "JIRA_MEDIA_MAX_BYTES",
+          "description": "Byte quota for each output directory (media and exports). 0 turns it off.",
+          "isRequired": false,
+          "default": "1073741824",
+          "format": "number"
+        },
+        {
+          "name": "JIRA_EXPORT_DIR",
+          "description": "Directory output: \"file\" exports are written into. Unset: the exports subdirectory of JIRA_MEDIA_DIR.",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
           "name": "JIRA_REPORT_DIR",
           "description": "Directory the portfolio report tool writes Markdown reports into. Unset: that tool refuses.",
           "isRequired": false,

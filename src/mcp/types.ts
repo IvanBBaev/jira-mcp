@@ -351,7 +351,7 @@ export interface ToolSpec<In = unknown, Out = unknown> {
   /**
    * Present on a large READ that can write its page to a file (D152): the
    * input then declares `output` (`outputArg`), and `output: "file"` moves
-   * `data[rows]` into a JSONL file in JIRA_MEDIA_DIR. The registry does the
+   * `data[rows]` into a JSONL file in the export directory. The registry does the
    * moving; the handler never sees `output`.
    */
   readonly fileOutput?: FileOutputSpec;

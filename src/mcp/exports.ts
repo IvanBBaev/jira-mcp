@@ -3,10 +3,16 @@
 //
 // A tool that declares `fileOutput` takes `output: "file"`: the registry runs
 // the read as usual, then this module moves the page's rows out of the
-// envelope into a JSONL file in JIRA_MEDIA_DIR and leaves a descriptor behind
+// envelope into a JSONL file in the export directory and leaves a descriptor behind
 // — the path, a `jira://exports/<name>` uri, the row count, the size and a
 // short preview. Everything else in `data` (cursors, paging) stays inline, so
 // the next call still knows where to continue: one page per file.
+//
+// The export directory is NOT the media directory (D531): JIRA_EXPORT_DIR, or
+// `<JIRA_MEDIA_DIR>/exports` by default. A file name cannot address a
+// subdirectory, so jira_upload_attachment can never read an export back out —
+// a search exported to disk and then attached to an issue would otherwise be a
+// bulk exfiltration in two calls.
 //
 // The rows are redacted BEFORE they are written. The envelope is redacted
 // again on render, but the file never passes through the renderer, so this is
@@ -43,7 +49,7 @@ export const EXPORT_PREVIEW_CHARS = 2000;
 /**
  * What an export file is called. Strict on purpose: the export resource reads
  * only names this module could have written, so `jira://exports/` is never a
- * general reader over JIRA_MEDIA_DIR. The optional `-N` is the media store's
+ * general reader over the export directory. The optional `-N` is the media store's
  * collision variant.
  */
 export const EXPORT_NAME_PATTERN =
@@ -175,7 +181,7 @@ function exportNotFound(uri: string): McpError {
   return new McpError(
     RESOURCE_NOT_FOUND,
     `Unknown export "${uri}". Exports are the files a tool called with ` +
-      'output: "file" wrote to JIRA_MEDIA_DIR; use the uri that call returned.',
+      'output: "file" wrote to the export directory; use the uri that call returned.',
   );
 }
 
@@ -201,13 +207,14 @@ export async function readExport(
   };
 }
 
-/** The config error for `output: "file"` without JIRA_MEDIA_DIR. */
+/** The config error for `output: "file"` without an export directory. */
 export function noMediaDirError(tool: string): ReturnType<typeof createJiraError> {
   return createJiraError({
     kind: 'config',
-    reason: `${tool} was called with output: "file", but JIRA_MEDIA_DIR is not set. Nothing was sent to Jira.`,
+    reason: `${tool} was called with output: "file", but neither JIRA_EXPORT_DIR nor JIRA_MEDIA_DIR is set. Nothing was sent to Jira.`,
     remediation:
-      'Set JIRA_MEDIA_DIR to a writable directory and restart the server, or call ' +
+      'Set JIRA_EXPORT_DIR (or JIRA_MEDIA_DIR, whose exports/ subdirectory is the default) ' +
+      'to a writable directory and restart the server, or call ' +
       'again without output (the rows come back inline).',
   });
 }

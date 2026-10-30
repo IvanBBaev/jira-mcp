@@ -50,11 +50,14 @@ import { createFakeLogger } from '../core/fakes/index.js';
 import type { AnyToolSpec, PackageSpec, ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   MAX_NAME_COLLISIONS,
+  MEDIA_DIR_MODE,
   MEDIA_FILE_MODE,
   attachmentsPackage,
   createAttachmentsPackage,
   createNodeMediaStore,
   listAttachmentsTool,
+  readBounded,
+  writeAll,
 } from './attachments.js';
 
 // ---------------------------------------------------------------------------
@@ -821,4 +824,249 @@ test('the package is three tools under one deniable id', () => {
   // `JIRA_MEDIA_DIR=` did not configure one.
   const blank = createAttachmentsPackage({ mediaDir: '   ' });
   assert.equal(blank.tools.length, 3);
+});
+
+// ---------------------------------------------------------------------------
+// D531 — export separation, quota, store hardening (V3-43)
+// ---------------------------------------------------------------------------
+
+test('CC-5250: the upload refuses an export-shaped name before reading anything', async () => {
+  await withTempDir(async (dir) => {
+    const name = 'jira-export-jira_search-20261030T081500Z-0a1b2c3d.jsonl';
+    // Even a real file under that name — put there by hand — is not sent: the
+    // shape alone marks it as this server's bulk output.
+    await writeFile(join(dir, name), '{"key":"ABC-1"}\n');
+    const pkg = createAttachmentsPackage({ mediaDir: dir });
+    const fake = createFakeJiraRequest();
+
+    const result = await toolOf(pkg, 'jira_upload_attachment').handler(
+      { issue: 'ABC-1', name },
+      createCtx(fake.fn),
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.kind, 'validation');
+    assert.match(result.error?.message ?? '', /export/);
+    assert.equal(fake.calls.length, 0, 'nothing may reach Jira');
+  });
+});
+
+test('CC-5251: the upload refuses a file this process downloaded, and accepts a copy', async () => {
+  await withTempDir(async (dir) => {
+    const pkg = createAttachmentsPackage({ mediaDir: dir });
+    const downloaded = dataOf(
+      await toolOf(pkg, 'jira_download_attachment').handler(
+        { attachmentId: '10001' },
+        createCtx(downloadFake(new Uint8Array([1, 2, 3, 4])).fn),
+      ),
+    ) as { name: string };
+
+    const upload = createFakeJiraRequest().on(UPLOAD_ROUTE, jiraOk([attachmentRow()]));
+    const refused = await toolOf(pkg, 'jira_upload_attachment').handler(
+      { issue: 'ABC-1', name: downloaded.name },
+      createCtx(upload.fn),
+    );
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error?.kind, 'validation');
+    assert.match(refused.error?.message ?? '', /written by this server/);
+    assert.equal(upload.calls.length, 0);
+
+    // A person who copies the file has made it theirs: the copy is a new inode.
+    await writeFile(join(dir, 'copy.pdf'), await readFile(join(dir, downloaded.name)));
+    const sent = await toolOf(pkg, 'jira_upload_attachment').handler(
+      { issue: 'ABC-1', name: 'copy.pdf' },
+      createCtx(upload.fn),
+    );
+    assert.equal(sent.ok, true);
+  });
+});
+
+test('CC-5252: a store without refuseOwnWrites reads its own files back (the export store)', async () => {
+  await withTempDir(async (dir) => {
+    const store = createNodeMediaStore(dir);
+    const written = await store.write('a.jsonl', new Uint8Array([7, 8]));
+    assert.deepEqual([...(await store.read(written.name)).bytes], [7, 8]);
+  });
+});
+
+test('CC-5253: a write that would pass the quota is refused before any byte lands', async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(join(dir, 'existing.bin'), new Uint8Array(6));
+    const store = createNodeMediaStore(dir, { maxBytes: 10 });
+
+    await store.write('fits.bin', new Uint8Array(4));
+    const error = await caught(() => store.write('over.bin', new Uint8Array(1)));
+
+    assert.equal(error.kind, 'config');
+    assert.match(error.message, /JIRA_MEDIA_MAX_BYTES/);
+    assert.deepEqual((await readdir(dir)).sort(), ['existing.bin', 'fits.bin']);
+  });
+});
+
+test('CC-5254: quota 0 is off, and subdirectories do not count', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'exports'));
+    await writeFile(join(dir, 'exports', 'big.jsonl'), new Uint8Array(64));
+    const capped = createNodeMediaStore(dir, { maxBytes: 8 });
+    await capped.write('small.bin', new Uint8Array(8));
+
+    const open = createNodeMediaStore(dir, { maxBytes: 0 });
+    await open.write('large.bin', new Uint8Array(1024));
+    assert.ok((await readdir(dir)).includes('large.bin'));
+  });
+});
+
+test('CC-5255: concurrent writes are serialised, so together they cannot overshoot the quota', async () => {
+  await withTempDir(async (dir) => {
+    const store = createNodeMediaStore(dir, { maxBytes: 10 });
+    const results = await Promise.allSettled([
+      store.write('a.bin', new Uint8Array(6)),
+      store.write('b.bin', new Uint8Array(6)),
+    ]);
+
+    assert.deepEqual(
+      results.map((result) => result.status),
+      ['fulfilled', 'rejected'],
+    );
+    // A refused write does not wedge the queue.
+    await store.write('c.bin', new Uint8Array(4));
+  });
+});
+
+test('CC-5256: the download reports the quota as a config error and leaves no file', async () => {
+  await withTempDir(async (dir) => {
+    const pkg = createAttachmentsPackage({ mediaDir: dir, mediaMaxBytes: 3 });
+    const result = await toolOf(pkg, 'jira_download_attachment').handler(
+      { attachmentId: '10001' },
+      createCtx(downloadFake(new Uint8Array([1, 2, 3, 4])).fn),
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.kind, 'config');
+    assert.deepEqual(await readdir(dir), []);
+  });
+});
+
+test('CC-5257: createDir makes the derived directory 0700 on the first write, not before', async () => {
+  await withTempDir(async (dir) => {
+    const exports = join(dir, 'exports');
+    const store = createNodeMediaStore(exports, { createDir: true });
+    assert.deepEqual(await readdir(dir), [], 'nothing is created at construction');
+
+    await store.write('one.jsonl', new Uint8Array([1]));
+    await store.write('two.jsonl', new Uint8Array([2]));
+
+    assert.equal((await stat(exports)).mode & 0o777, MEDIA_DIR_MODE);
+    assert.deepEqual((await readdir(exports)).sort(), ['one.jsonl', 'two.jsonl']);
+  });
+});
+
+test('CC-5258: createDir never invents a missing parent', async () => {
+  await withTempDir(async (dir) => {
+    const store = createNodeMediaStore(join(dir, 'gone', 'exports'), {
+      createDir: true,
+      setting: 'JIRA_EXPORT_DIR',
+    });
+    const error = await caught(() => store.write('x.jsonl', new Uint8Array([1])));
+    assert.match(`${error.message} ${error.remediation ?? ''}`, /JIRA_EXPORT_DIR/);
+    assert.deepEqual(await readdir(dir), []);
+  });
+});
+
+/** A fake handle whose writes land at most `step` bytes, then `0` after `budget`. */
+function shortWriter(step: number, budget = Number.POSITIVE_INFINITY) {
+  const landed: number[] = [];
+  let total = 0;
+  return {
+    landed,
+    handle: {
+      write(
+        buffer: Uint8Array,
+        offset: number,
+        length: number,
+        position: number,
+      ): Promise<{ bytesWritten: number }> {
+        assert.equal(position, total, 'every write continues where the last one stopped');
+        const n = Math.max(0, Math.min(step, length, budget - total));
+        for (let i = 0; i < n; i += 1) landed.push(buffer[offset + i] ?? -1);
+        total += n;
+        return Promise.resolve({ bytesWritten: n });
+      },
+    },
+  };
+}
+
+test('CC-5259: writeAll loops over short writes until every byte has landed', async () => {
+  const { handle, landed } = shortWriter(3);
+  const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+
+  await writeAll(handle, bytes, () => new Error('unexpected'));
+
+  assert.deepEqual(landed, [...bytes]);
+});
+
+test('CC-5260: writeAll reports a write that lands nothing as a full filesystem', async () => {
+  const { handle } = shortWriter(2, 5);
+  let reported = -1;
+
+  await assert.rejects(
+    writeAll(handle, new Uint8Array(9), (written) => {
+      reported = written;
+      return new Error('full');
+    }),
+    /full/,
+  );
+  assert.equal(reported, 5);
+});
+
+test('CC-5261: readBounded refuses a file that grew between stat and read', async () => {
+  // The handle serves 6 bytes although fstat said 4: the +1 slot fills.
+  const data = new Uint8Array([1, 2, 3, 4, 5, 6]);
+  let served = 0;
+  const handle = {
+    read(
+      buffer: Uint8Array,
+      offset: number,
+      length: number,
+    ): Promise<{ bytesRead: number }> {
+      const n = Math.min(length, data.length - served);
+      buffer.set(data.subarray(served, served + n), offset);
+      served += n;
+      return Promise.resolve({ bytesRead: n });
+    },
+  };
+
+  const error = await caught(() => readBounded(handle, 4, 'growing.log'));
+  assert.equal(error.kind, 'validation');
+  assert.match(error.message, /grew/);
+  assert.ok(served <= 5, 'it never reads past the bound');
+});
+
+test('CC-5262: readBounded returns a file that shrank as the bytes it really holds', async () => {
+  const handle = {
+    read(buffer: Uint8Array, offset: number): Promise<{ bytesRead: number }> {
+      if (offset > 0) return Promise.resolve({ bytesRead: 0 });
+      buffer.set([9, 9], offset);
+      return Promise.resolve({ bytesRead: 2 });
+    },
+  };
+  assert.deepEqual([...(await readBounded(handle, 4, 'shrunk.txt'))], [9, 9]);
+});
+
+test('CC-5263: readBounded assembles a file served in short reads', async () => {
+  const data = new Uint8Array([1, 2, 3, 4, 5]);
+  let served = 0;
+  const handle = {
+    read(
+      buffer: Uint8Array,
+      offset: number,
+      length: number,
+    ): Promise<{ bytesRead: number }> {
+      const n = Math.min(2, length, data.length - served);
+      buffer.set(data.subarray(served, served + n), offset);
+      served += n;
+      return Promise.resolve({ bytesRead: n });
+    },
+  };
+  assert.deepEqual([...(await readBounded(handle, 5, 'chunked.bin'))], [...data]);
 });

@@ -241,15 +241,19 @@ Five large reads — `jira_search`, `jira_get_comments`, `jira_get_changelog`,
 `jira_get_worklogs` and `jira_get_sprint_issues` — take an optional
 `output`: `"inline"` (the default) or `"file"` (D152). With `"file"` the
 page's row array (`issues`, `comments`, `histories`, `worklogs`, `issues`)
-is redacted and written to `JIRA_MEDIA_DIR` as
+is redacted and written to the export directory — `JIRA_EXPORT_DIR`, or by
+default `<JIRA_MEDIA_DIR>/exports` (D531) — as
 `jira-export-<tool>-<UTC stamp>-<8 hex>.jsonl`, one row per line, and `data`
 carries `output: "file"` and
 `export: {name, path, uri, mimeType, rows, bytes, preview, preview_truncated?}`
 in its place. Every other field — `nextPageToken`, `startAt`, `hasMore` —
 stays inline: one page per file, paging as usual. The result also carries a
 `resource_link` content block to `jira://exports/{name}`, which
-`resources/read` serves while `JIRA_MEDIA_DIR` is set. Without
-`JIRA_MEDIA_DIR`, `output: "file"` is a `config` error and nothing is sent.
+`resources/read` serves while an export directory is configured. With
+neither `JIRA_EXPORT_DIR` nor `JIRA_MEDIA_DIR` set, `output: "file"` is a
+`config` error and nothing is sent; an export that would pass
+`JIRA_MEDIA_MAX_BYTES` is a `config` error too. `jira_upload_attachment`
+never uploads an export.
 
 ## Untrusted content (normative)
 

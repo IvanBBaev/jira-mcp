@@ -333,7 +333,11 @@ async function serve(): Promise<void> {
         // call. `jira_capabilities` therefore always reports the current numbers.
         return { ...assembled.report, counters: telemetry.snapshot() };
       },
-      { mediaDir: settings.mediaDir, reportDir: settings.reportDir },
+      {
+        mediaDir: settings.mediaDir,
+        mediaMaxBytes: settings.mediaMaxBytes,
+        reportDir: settings.reportDir,
+      },
     );
 
     // Gating is applied twice on purpose: `buildServer` needs the WHOLE manifest
@@ -355,6 +359,8 @@ async function serve(): Promise<void> {
 
     const { buildServer } = await import('./mcp/server.js');
     const { createNodeMediaStore } = await import('./tools/attachments.js');
+    const { resolveExportDir } = await import('./core/settings.js');
+    const exportDir = resolveExportDir(settings);
     const serverDeps = {
       settings,
       packages,
@@ -367,11 +373,17 @@ async function serve(): Promise<void> {
       rng,
       journal,
       api,
-      // Where `output: "file"` writes and exports are read from (D152).
+      // Where `output: "file"` writes and exports are read from (D152). Its
+      // own directory since D531 — never the one uploads read from — and the
+      // derived default (`<JIRA_MEDIA_DIR>/exports`) is created on first write.
       media:
-        settings.mediaDir === undefined
+        exportDir === undefined
           ? undefined
-          : createNodeMediaStore(settings.mediaDir),
+          : createNodeMediaStore(exportDir.dir, {
+              createDir: exportDir.derived,
+              maxBytes: settings.mediaMaxBytes,
+              setting: exportDir.derived ? 'JIRA_MEDIA_DIR' : 'JIRA_EXPORT_DIR',
+            }),
     };
 
     // WHICH transport is this file's one branch on `settings.transport` (D101).

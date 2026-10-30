@@ -277,7 +277,7 @@ export interface RegistryDeps {
   readonly gate?: WriteGate | undefined;
   /** The api-ring adapter every tool call gets (D106); {@link CLOUD_API} when absent. */
   readonly api?: JiraApi | undefined;
-  /** JIRA_MEDIA_DIR, where `output: "file"` writes (D152); absent = not configured. */
+  /** The export directory, where `output: "file"` writes (D152, D531); absent = not configured. */
   readonly media?: MediaStore | undefined;
 }
 

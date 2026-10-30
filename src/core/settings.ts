@@ -26,6 +26,7 @@ export {
   DEFAULT_AUTH_MODE,
   DEFAULT_CALL_BUDGET_MS,
   DEFAULT_DEPLOYMENT,
+  DEFAULT_EXPORT_SUBDIR,
   DEFAULT_HOST_CONCURRENCY,
   DEFAULT_HTTP_PORT,
   DEFAULT_IRREVERSIBLE_CONFIRM,
@@ -33,6 +34,7 @@ export {
   DEFAULT_LOG_LEVEL,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RESULT_CHARS,
+  DEFAULT_MEDIA_MAX_BYTES,
   DEFAULT_META_CACHE_TTL_S,
   DEFAULT_OAUTH_AUTH_ORIGIN,
   DEFAULT_OAUTH_GATEWAY_ORIGIN,
@@ -48,6 +50,8 @@ export {
   TOKEN_EXPIRY_WARNING_DAYS,
 } from './settings/defaults.js';
 export { splitAllowedHosts } from './settings/hosts.js';
+export { resolveExportDir } from './settings/limits.js';
+export type { ExportDirResolution } from './settings/limits.js';
 export { loadSettings } from './settings/load.js';
 export type { LoadSettingsOptions, LoadSettingsResult } from './settings/load.js';
 export { profileVar } from './settings/profiles.js';

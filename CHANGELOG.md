@@ -63,9 +63,10 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
    still works.
 3. Nothing else is required. The new settings are optional:
    `JIRA_PROJECTS`, `JIRA_IRREVERSIBLE_CONFIRM`, `JIRA_CLOUD_ID`,
-   `JIRA_OAUTH_GRANT` and `JIRA_REPORT_DIR` are unset or off by default;
-   `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300 seconds by
-   default, `0` turns it off).
+   `JIRA_OAUTH_GRANT`, `JIRA_REPORT_DIR` and `JIRA_EXPORT_DIR` are unset or
+   off by default; `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300
+   seconds by default, `0` turns it off); `JIRA_MEDIA_MAX_BYTES` caps each
+   output directory at 1 GiB by default (`0` turns it off).
 4. If your API token sits inside a client config such as `.mcp.json`, move
    it out: `npx -y jira-mcp-ai@1.1.0 doctor --save` stores it in
    `~/.config/jira-mcp-ai/.env` with mode `0600`.
@@ -81,6 +82,10 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
      instead of retrying until the call budget runs out.
    - Field, status, link-type, create-metadata and user-search answers are
      cached for a few minutes; see `JIRA_META_CACHE_TTL_S`.
+   - `output: "file"` exports land in `JIRA_MEDIA_DIR/exports/` (created
+     on the first export), not in `JIRA_MEDIA_DIR` itself.
+     `jira_upload_attachment` refuses export-named files and files this
+     server downloaded; copy a downloaded file to a new name to attach it.
 
 ### Added
 
@@ -229,6 +234,18 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   ARCHITECTURE.md lists every capability the server declares (completions
   was missing; the docs linter now compares the two) and says what is true of
   HTTP sessions: each has its own recent-write registry.
+- Downloads, uploads and exports no longer share one directory. Exports go
+  to `JIRA_EXPORT_DIR`, by default the `exports/` subdirectory of
+  `JIRA_MEDIA_DIR`, which `jira_upload_attachment` cannot reach; setting
+  both to the same path is a startup error. The upload also refuses
+  export-named files and any file this process downloaded, so a model cannot
+  export or download data and attach it elsewhere on its own. Each output
+  directory has a byte quota, `JIRA_MEDIA_MAX_BYTES` (1 GiB by default, `0`
+  turns it off): a download or export that would pass it is refused before
+  anything is written. Files are written in full or not at all (a short
+  write is retried, a full disk is reported), an upload of a file that grows
+  while it is read is refused, and a download with a `Content-Length` is
+  held in memory once instead of twice.
 - `plan_id` values are longer (`plan_` plus 32 hex digits) and drawn from a
   cryptographic random source. Under `JIRA_TRANSPORT=http` one plan store
   serves every session: a plan can be applied only by the session and token
@@ -237,7 +254,7 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   up to 64 unapplied plans without pushing out another session's. stdio is
   unchanged.
 
-Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527.
+Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527, D531.
 
 ### Fixed
 

@@ -148,8 +148,10 @@ export interface BuildServerDeps {
    */
   readonly planStore?: PlanStore | undefined;
   /**
-   * JIRA_MEDIA_DIR as a store (D152): where `output: "file"` writes and what
-   * `jira://exports/{name}` reads. Absent = file output is refused.
+   * The export directory as a store (D152, D531): JIRA_EXPORT_DIR, else
+   * `<JIRA_MEDIA_DIR>/exports` — never the directory uploads read from. Where
+   * `output: "file"` writes and what `jira://exports/{name}` reads. Absent =
+   * file output is refused. (The name `media` predates the split.)
    */
   readonly media?: MediaStore | undefined;
 }
