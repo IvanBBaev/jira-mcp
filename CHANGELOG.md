@@ -209,6 +209,12 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   a model or a client's tool search finds the right tool from the first
   words, and two descriptions no longer carry internal reference numbers. A
   test holds every description to both rules.
+- A read tool can no longer send a write: the request object read tools get
+  refuses anything but a read before it reaches Jira, so read-only mode, the
+  reader profile and plan mode hold even if a read tool has a bug. A test
+  runs every read tool and fails when a new one has no test arguments. The
+  multi-issue read and the bulk change-history read now retry on a 502, 503
+  or 504 like any other read.
 - The MCP SDK floor is `^1.32.1` (was `^1.30.0`).
 - Documentation: install steps keep the API token out of every client config
   (`doctor --save`, then a user-scope `claude mcp add`, Claude Desktop, and
@@ -224,7 +230,7 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D521.
   was missing; the docs linter now compares the two) and says what is true of
   HTTP sessions: each has its own recent-write registry.
 
-Decisions: D124, D127, D500–D505, D508, D525, D526.
+Decisions: D124, D127, D500–D505, D508, D525–D527.
 
 ### Fixed
 

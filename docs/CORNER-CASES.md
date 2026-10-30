@@ -4007,3 +4007,24 @@ CC-5154. Project ABC is in scope, XYZ is not.
   verb and fillers (`my`, `to`), stemmed; `jira_count` and `jira_get_myself`
   name theirs explicitly.
 - **CC-5175** — every explicit noun override names a tool that exists.
+
+## Read confinement (V3-40, 2026-10-30)
+
+- **CC-5180** — a read tool whose handler sends a PUT, POST or DELETE gets the
+  internal-error envelope and nothing reaches Jira, in `apply` and in `plan`
+  mode (D527).
+- **CC-5181** — the refusal is the fixed unexpected-error envelope
+  (`unexpected_shape`), not retryable, with no detail: the violation message
+  names the method and is never shown to the caller.
+- **CC-5182** — a GET and a `safe: true` POST pass the seam unchanged.
+- **CC-5183** — a mutation after a read is refused; the read already sent is
+  the only request recorded.
+- **CC-5184** — the fixture table covers exactly the read tools of the
+  manifest: a read tool without fixture arguments and a fixture naming no
+  read tool both fail the test.
+- **CC-5185** — every read tool answers ok against the recording world, sends
+  only GET or `safe` requests, and (except the local `jira_capabilities`)
+  sends at least one, so a fixture cannot pass by never reaching the client.
+- **CC-5186** — `POST /issue/bulkfetch`, `POST /changelog/bulkfetch` and
+  `POST /search/jql` are recorded as `safe`.
+- **CC-5187** — read tools answer the same in `plan` mode as in `apply` mode.

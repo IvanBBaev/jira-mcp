@@ -601,22 +601,33 @@ function observeMutations(inner: JiraRequestFn): {
   };
 }
 
-/** Rejects a mutation issued by a `planContext`; never leaves this module. */
-class ContextMutated extends Error {
-  constructor() {
-    super('planContext issued a mutation');
-    this.name = 'ContextMutated';
+/**
+ * Rejects a mutation issued through a read-only seam: by a read tool's handler
+ * or by a `planContext` (D527). It is not a `JiraError`, so the catch site
+ * projects it as the fixed unexpected-error envelope — a read tool that tries
+ * to write is a bug in this server, not in the request.
+ */
+type ReadOnlySource = 'read_tool' | 'plan_context';
+
+class ReadOnlyViolation extends Error {
+  constructor(source: ReadOnlySource, method: string) {
+    super(`${source === 'read_tool' ? 'a read tool' : 'planContext'} issued a ${method}`);
+    this.name = 'ReadOnlyViolation';
   }
 }
 
 /**
- * The seam a `planContext` reads through: reads pass, a mutation is refused
- * without reaching the network. The context runs OUTSIDE the capture, so a
- * write slipping in here would be a real write in plan mode.
+ * The seam a read runs on: GET and `safe` requests pass, any other request is
+ * refused without reaching the network. Read tools get it at runtime, so the
+ * "read" label is enforced, not trusted (D527, CC-5180); a `planContext` gets
+ * it because it runs OUTSIDE the capture, where a write slipping in would be a
+ * real write in plan mode.
  */
-function readOnlySeam(inner: JiraRequestFn): JiraRequestFn {
+function readOnlySeam(inner: JiraRequestFn, source: ReadOnlySource): JiraRequestFn {
   return <T = unknown>(req: JiraRequestSpec): Promise<JiraResponse<T>> =>
-    isReadRequest(req) ? inner<T>(req) : Promise.reject(new ContextMutated());
+    isReadRequest(req)
+      ? inner<T>(req)
+      : Promise.reject(new ReadOnlyViolation(source, req.method));
 }
 
 function createPlanCapture(
@@ -862,7 +873,7 @@ export interface DiffPlanPayload extends PlanPayload {
 async function readPlanContext(call: WriteGateCall): Promise<PlanContext | undefined> {
   if (call.context === undefined) return undefined;
   try {
-    return await call.context(readOnlySeam(call.jira));
+    return await call.context(readOnlySeam(call.jira, 'plan_context'));
   } catch {
     return undefined;
   }
@@ -976,8 +987,12 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
     },
 
     async execute(call: WriteGateCall): Promise<ToolResult<unknown>> {
-      // Reads are never gated, including the reads a plan is built from.
-      if (call.tool.writeTier === undefined) return call.invoke(call.jira);
+      // Reads are never gated, including the reads a plan is built from — but
+      // they are confined: a read tool's handler gets a seam that refuses any
+      // mutation before the network (D527).
+      if (call.tool.writeTier === undefined) {
+        return call.invoke(readOnlySeam(call.jira, 'read_tool'));
+      }
 
       const wantsApply = call.control.apply === true;
       if (deps.writeMode !== 'apply' || !wantsApply) return plan(call);
@@ -1004,7 +1019,7 @@ export function createWriteGate(deps: WriteGateDeps): WriteGate {
       let live: PlanContext | undefined;
       if (call.context !== undefined) {
         try {
-          live = await call.context(readOnlySeam(call.jira));
+          live = await call.context(readOnlySeam(call.jira, 'plan_context'));
         } catch (error) {
           return errorResult(error);
         }

@@ -288,12 +288,14 @@ Every non-system field is `customfield_10xxx` and instance-specific. Consequence
   `{issues, issueErrors}` — one request for up to 100 refs; refs Jira cannot
   serve are reported, not fatal. The cap and the `issueErrors` shape are from
   memory, unverified; claim C61 checks a batch with one absent key. Cloud only.
+  A pure read, so the request is `safe: true` (D527).
 - Bulk changelog read (D150): `POST /changelog/bulkfetch` with
   `{issueIdsOrKeys, fieldIds?, maxResults?, nextPageToken?}` returns
   `{issueChangeLogs: [{issueId, changeHistories}], nextPageToken?}` — histories
   of up to 1000 issues, grouped by numeric id (never key), one cursor for the
   batch. The caps and the shape are from memory, unverified; claim C62 checks
-  the id keying and `hasMore`. Cloud only.
+  the id keying and `hasMore`. Cloud only. A pure read, so the request is
+  `safe: true` (D527).
 - The catalogue reads (`/field`, `/issueLinkType`, `/statuses/search`, `/status`
   on Data Center, the two create-meta routes, and since D138
   `/priority/search`, `/resolution/search` and `/issuetype`, and since D140
@@ -874,8 +876,10 @@ adapter before a request exists rather than mapped to `leadUserName`.
     (`isIdempotent` in the donor is deliberately GET-only — Jira PUTs can carry
     non-idempotent `update` add/remove clauses, so PUT is NOT replayed), plus
     requests explicitly marked `safe: true` per-request. The `safe` flag exists
-    because `POST /search/jql` and `POST /search/approximate-count` are pure
-    reads that deserve retries despite the POST verb;
+    because `POST /search/jql`, `POST /search/approximate-count` and the two
+    `bulkfetch` reads are pure reads that deserve retries despite the POST
+    verb. It also lets them through the read-only seam every read tool runs
+    on (D527);
   - unsafe writes are never replayed on 5xx/transport failure — an ambiguous
     write surfaces a `JiraError` with `kind: "ambiguous_write"` telling the
     model to verify state before retrying. When the 2xx headers arrived and

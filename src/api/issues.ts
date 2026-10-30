@@ -567,9 +567,12 @@ export async function getIssuesBulk(
   const properties = normalizeList(options.properties);
   const raw = options.raw === true;
 
+  // A pure read on a POST verb: `safe` lets it retry like a GET and pass the
+  // read-only seam a read tool runs on (D527).
   const response = await send(options, {
     method: 'POST',
     path: ISSUE_BULKFETCH_PATH,
+    safe: true,
     body: {
       issueIdsOrKeys: requested,
       ...(fields.length === 0 ? {} : { fields }),
@@ -759,9 +762,11 @@ export async function getChangelogsBulk(
   const fieldIds = normalizeList(options.fieldIds);
   const token = options.nextPageToken?.trim();
 
+  // A pure read on a POST verb, like the issue bulkfetch (D527).
   const response = await send(options, {
     method: 'POST',
     path: CHANGELOG_BULKFETCH_PATH,
+    safe: true,
     body: {
       issueIdsOrKeys: requested,
       ...(fieldIds.length === 0 ? {} : { fieldIds }),
