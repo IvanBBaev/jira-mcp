@@ -4103,3 +4103,43 @@ the wire under four configurations: default, reader, read-only and plan.
   Nothing is sent.
 - **CC-5199** — plan mode: both tiers return `executed: false` with a
   `plan_id`. Only GET or `safe` requests reach Jira, and nothing is journaled.
+
+## Frozen 1.x legacy surface (V3-45, 2026-10-30)
+
+`test/legacy-surface-1.x.json` is a copy of `manifest.snapshot.json` (82
+tools: 42 reads, 29 standard writes, 11 irreversible) taken before the 2.0
+renames (V3-24). `src/tools/legacy-surface.test.ts` calls every 1.x name over
+InMemoryTransport with the real `PACKAGES`, using the old name only, so the
+checks hold whatever alias mechanism V3-24 picks. Arguments are built from
+the frozen 1.x input schema; a short frozen table covers the either-or rules
+JSON Schema cannot express.
+
+- **CC-5200** — the frozen file matches its pinned sha256 (over the parsed
+  JSON, so reformatting is allowed). It holds 82 unique names with the 1.x
+  tier counts, and `readOnlyHint` agrees with each tier. Every override in
+  the test names a 1.x tool.
+- **CC-5201** — in plan mode, every 1.x name called with its required 1.x
+  arguments is neither `not_found` nor refused by the schema. Nothing is
+  written or journaled.
+- **CC-5202** — every 1.x name accepts all its 1.x fields at once, and still
+  refuses an unknown key with the schema refusal.
+- **CC-5203** — a 1.x name that `tools/list` shows carries its 1.x
+  annotations. A 1.x name the list does not show is a hidden alias. There are
+  never more hidden 1.x names than new listed names.
+- **CC-5204** — with `JIRA_PACKAGES_READONLY=all`, every 1.x write is
+  refused as `write_gated` and every 1.x read is served.
+- **CC-5205** — apply mode with the irreversible tier off: every 1.x write
+  with `apply: true` and no plan gets `write_gated`, and the remediation names
+  `JIRA_ALLOW_IRREVERSIBLE` exactly for the 1.x irreversible tier.
+- **CC-5206** — for each 1.x package, `JIRA_PACKAGES_DENY=<package>` refuses
+  exactly that package's 1.x names as "package is not enabled". `core` stays
+  on.
+- **CC-5207** — for each 1.x package, `JIRA_TOOL_PACKAGES=<package>` serves
+  exactly its 1.x names plus `core`, and `JIRA_PACKAGES_READONLY=<package>`
+  gates exactly its 1.x writes.
+- **CC-5208** — the reader profile serves the 1.x reads of its six 1.x
+  packages, gates their writes and refuses every other 1.x name.
+- **CC-5209** — with `JIRA_PROJECTS=ABC`, every 1.x name that requires an
+  `issue` is refused as `permission` for an issue in XYZ, and the refusal
+  names XYZ. `jira_upload_attachment` is refused earlier, because the harness
+  has no `JIRA_MEDIA_DIR`. Nothing is written.

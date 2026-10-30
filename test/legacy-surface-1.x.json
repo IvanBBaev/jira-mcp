@@ -1,0 +1,3491 @@
+{
+  "$frozen": "The 1.x tool surface, frozen on 2026-10-30 from src/tools/manifest.snapshot.json at main c5ebf0f (V3-45, QA-R6). Never regenerate or edit it: src/tools/legacy-surface.test.ts pins its sha256. Every name here must stay callable through 2.x with this input schema, write tier, annotations and package (V3-24).",
+  "packages": [
+    {
+      "id": "core",
+      "tools": [
+        {
+          "name": "jira_capabilities",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_myself",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_my_permissions",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "permissions": {
+                "minItems": 1,
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["permissions"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "tools": [
+        {
+          "name": "jira_search",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expand": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "reconcileIssues": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                }
+              },
+              "output": {
+                "type": "string",
+                "enum": ["inline", "file"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["jql"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_count",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["jql"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_parse_jql",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "queries": {
+                "minItems": 1,
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["queries"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_filters",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filterName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_filter",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filterId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                ]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["filterId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_create_filter",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["name", "jql"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_filter",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filterId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["filterId"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "issues",
+      "tools": [
+        {
+          "name": "jira_get_issue",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issues": {
+                "minItems": 1,
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "expand": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "properties": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "raw": {
+                "type": "boolean"
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_comments",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "orderBy": {
+                "type": "string",
+                "enum": ["-created", "created"]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "output": {
+                "type": "string",
+                "enum": ["inline", "file"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_transitions",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_changelog",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "output": {
+                "type": "string",
+                "enum": ["inline", "file"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_changelogs_bulk",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "fieldIds": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_worklogs",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "output": {
+                "type": "string",
+                "enum": ["inline", "file"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_remote_links",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_bulk_status",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["taskId"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "issues-write",
+      "tools": [
+        {
+          "name": "jira_create_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issueType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeAccountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
+                }
+              },
+              "priority": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project", "issueType", "summary"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeAccountId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
+                }
+              },
+              "labelsAdd": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
+                }
+              },
+              "labelsRemove": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
+                }
+              },
+              "priority": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "notifyUsers": {
+                "type": "boolean"
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_transition_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "transition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "transition"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_add_comment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "body": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "visibility": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["role", "group"]
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "value"],
+                "additionalProperties": false
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "body"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_comment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "commentId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                ]
+              },
+              "body": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "visibility": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": ["role", "group"]
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["type", "value"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "commentId", "body"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_assign_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1
+              },
+              "unassign": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_add_worklog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timeSpentSeconds": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "timeSpent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "started": {
+                "type": "string",
+                "pattern": "^(\\d{4}-\\d{2}-\\d{2})[T ]((?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?(?:\\.\\d{1,3})?)(Z|[+-]\\d{2}:?\\d{2})?$"
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_worklog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklogId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                ]
+              },
+              "timeSpentSeconds": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "timeSpent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "started": {
+                "type": "string",
+                "pattern": "^(\\d{4}-\\d{2}-\\d{2})[T ]((?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?(?:\\.\\d{1,3})?)(Z|[+-]\\d{2}:?\\d{2})?$"
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "worklogId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_link_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "linkType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inwardIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outwardIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "comment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": ["text", "markdown"]
+              },
+              "resolveMentions": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["linkType", "inwardIssue", "outwardIssue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_add_remote_link",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "summary": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "relationship": {
+                "type": "string",
+                "maxLength": 255
+              },
+              "globalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "url", "title"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "issues-delete",
+      "tools": [
+        {
+          "name": "jira_delete_issue",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "deleteSubtasks": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_comment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "commentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "commentId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_worklog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklogId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "worklogId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_unlink_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "linkId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["linkId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_attachment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "attachmentId": {
+                "type": "string",
+                "pattern": "^[1-9]\\d*$"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["attachmentId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_remote_link",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "linkId": {
+                "type": "string",
+                "pattern": "^[1-9]\\d*$"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "linkId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_component",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "componentId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "moveIssuesTo": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["componentId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_version",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "moveFixIssuesTo": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "moveAffectedIssuesTo": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["versionId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_delete_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_bulk_delete_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "notifyUsers": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_bulk_edit_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "irreversible",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^\\S+$"
+                }
+              },
+              "labelsAction": {
+                "type": "string",
+                "enum": ["ADD", "REMOVE", "REPLACE", "REMOVE_ALL"]
+              },
+              "priorityId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeAccountId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fixVersionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "fixVersionsAction": {
+                "type": "string",
+                "enum": ["ADD", "REMOVE", "REPLACE", "REMOVE_ALL"]
+              },
+              "notifyUsers": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "attachments",
+      "tools": [
+        {
+          "name": "jira_list_attachments",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_download_attachment",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "attachmentId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                ]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["attachmentId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_upload_attachment",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "contentType": {
+                "type": "string",
+                "pattern": "^\\s*[!#$%&'*+.^_`|~0-9A-Za-z-]+\\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:\\s*;[\\x20-\\x7e]*)?\\s*$"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "name"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "collab",
+      "tools": [
+        {
+          "name": "jira_list_watchers",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_add_watcher",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_remove_watcher",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_add_vote",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_remove_vote",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_components",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_create_component",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "leadAccountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeType": {
+                "type": "string",
+                "enum": [
+                  "PROJECT_DEFAULT",
+                  "COMPONENT_LEAD",
+                  "PROJECT_LEAD",
+                  "UNASSIGNED"
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project", "name"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_component",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "componentId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "leadAccountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assigneeType": {
+                "type": "string",
+                "enum": [
+                  "PROJECT_DEFAULT",
+                  "COMPONENT_LEAD",
+                  "PROJECT_LEAD",
+                  "UNASSIGNED"
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["componentId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_versions",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["released", "unreleased", "archived"]
+                }
+              },
+              "issueCounts": {
+                "type": "boolean"
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_create_version",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "releaseDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "released": {
+                "type": "boolean"
+              },
+              "archived": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["projectId", "name"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_version",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "releaseDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "released": {
+                "type": "boolean"
+              },
+              "archived": {
+                "type": "boolean"
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["versionId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_project_roles",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "roleId": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*$"
+                  }
+                ]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "meta",
+      "tools": [
+        {
+          "name": "jira_list_projects",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_project",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expand": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_fields",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_create_meta",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issueTypeId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["project"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_statuses",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "pattern": "^[1-9]\\d*$"
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_link_types",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_priorities",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_resolutions",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_issue_types",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_labels",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_timetracking_config",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "users",
+      "tools": [
+        {
+          "name": "jira_search_users",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includeEmail": {
+                "type": "boolean"
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "agile",
+      "tools": [
+        {
+          "name": "jira_list_boards",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projectKeyOrId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": ["scrum", "kanban"]
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_board_config",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["boardId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_list_sprints",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "state": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["active", "future", "closed"]
+                  },
+                  {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["active", "future", "closed"]
+                    }
+                  }
+                ]
+              },
+              "startAt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["boardId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_sprint_issues",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "fields": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "output": {
+                "type": "string",
+                "enum": ["inline", "file"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_get_backlog",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "fields": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "nextPageToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startAt": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
+              },
+              "maxResults": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["boardId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_move_to_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId", "issues"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_move_to_backlog",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_create_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "originBoardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "goal": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["name", "originBoardId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_start_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "startDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId", "startDate", "endDate"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_close_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_update_sprint",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "goal": {
+                "type": "string"
+              },
+              "startDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endDate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_rank_issues",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "rankBeforeIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rankAfterIssue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rankCustomFieldId": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issues"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_set_estimate",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "writeTier": "standard",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
+              },
+              "apply": {
+                "type": "boolean"
+              },
+              "plan_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["issue", "boardId", "value"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_sprint_summary",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "sprintId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "boardId": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "scopeChanges": {
+                "type": "boolean"
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["sprintId"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "portfolio",
+      "tools": [
+        {
+          "name": "jira_portfolio_analyze",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "minItems": 2,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includeDone": {
+                "type": "boolean"
+              },
+              "updatedWithinDays": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
+              },
+              "maxIssues": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "similarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "duplicateSimilarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "includeSameProject": {
+                "type": "boolean"
+              },
+              "includeBoards": {
+                "type": "boolean"
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "jira_portfolio_report",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "minItems": 2,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                }
+              },
+              "jql": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includeDone": {
+                "type": "boolean"
+              },
+              "updatedWithinDays": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
+              },
+              "maxIssues": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "similarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "duplicateSimilarity": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1
+              },
+              "includeSameProject": {
+                "type": "boolean"
+              },
+              "includeBoards": {
+                "type": "boolean"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  ]
+}
