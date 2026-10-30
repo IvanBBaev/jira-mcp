@@ -4064,3 +4064,42 @@ CC-5154. Project ABC is in scope, XYZ is not.
   and exactly one request reaches Jira.
 - **CC-5105** — the server takes a plan's owner from the request's session id
   and `authInfo.token`; without them (stdio) the owner is `local/local`.
+
+## Catalogue safety tests (V3-41, 2026-10-30)
+
+`src/api/safe-allowlist.test.ts` freezes which request specs may carry
+`safe: true`. `src/tools/catalogue-wire.test.ts` runs the real catalogue over
+the wire under four configurations: default, reader, read-only and plan.
+
+- **CC-5190** — every `safe` request literal in `src/` (TypeScript source
+  scan) is on the frozen allowlist, and every allowlist entry still matches
+  one. A spec with `safe: true` that is not on the list fails the gate. The
+  message gives the spec's `file:line`, its enclosing function and its
+  method and path.
+- **CC-5191** — every allowlist entry gives the reason the request is a pure
+  read.
+- **CC-5192** — `safe: true` added to a write spec (a `createIssue` POST)
+  fails, and the message names that spec.
+- **CC-5193** — a `safe` that is not the literal `true` fails even when the
+  request is allowlisted. That covers a variable, a shorthand and `false`.
+- **CC-5194** — a stale allowlist entry fails. So does an ambiguous key, where
+  two requests share one name.
+- **CC-5195** — the expectation comes from `manifest.snapshot.json`, and the
+  reader package list is written out separately. The running `PACKAGES` holds
+  exactly the snapshot's tools in the same packages. A write moved into
+  another package fails here.
+- **CC-5196** — for each configuration, `tools/list` over InMemoryTransport
+  returns exactly the expected names. Reader and read-only strip every write,
+  and reader drops the packages it does not select. Each listed tool's
+  annotations match the snapshot, and `readOnlyHint` is true exactly when the
+  tool has no write tier.
+- **CC-5197** — for each configuration, every tool it does not list is refused
+  when called. A stripped write gets `write_gated` and a tool from a package
+  that is not selected gets `config`. Nothing reaches Jira and nothing is
+  journaled.
+- **CC-5198** — default (apply mode, irreversible tier off): `jira_add_comment`
+  and `jira_delete_issue` with `apply: true` and no plan both get
+  `write_gated`. The irreversible refusal names `JIRA_ALLOW_IRREVERSIBLE`.
+  Nothing is sent.
+- **CC-5199** — plan mode: both tiers return `executed: false` with a
+  `plan_id`. Only GET or `safe` requests reach Jira, and nothing is journaled.
