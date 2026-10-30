@@ -4259,3 +4259,8 @@ fake handles, and the download peak is measured on the byte sink.
   under `stdio`. `::ffff:127.0.0.1` counts as non-loopback.
 - **CC-5278** — `doctor` reports a non-loopback bind as `warn` with the
   `-p 127.0.0.1:<port>:<port>` hint, next to the settings warning.
+- **CC-5279** — the credential a session is bound to is a digest, never the
+  bearer itself, and a bearer that differs only by case or a trailing space
+  does not match it. A mismatch is answered 404 "Session not found", like an
+  unknown id; with one accepted token that path is pinned at the
+  `sessionCredentialMatches` seam.

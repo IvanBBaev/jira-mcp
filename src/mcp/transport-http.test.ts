@@ -1007,6 +1007,20 @@ test('[CC-5271] a session credential matches only the digest it was opened with'
   assert.equal(sessionCredentialMatches(bound, ''), false);
 });
 
+test('[CC-5279] the bound credential is a digest, and a near-miss bearer does not match it', () => {
+  const bound = credentialFingerprint(TOKEN);
+  assert.notEqual(bound, TOKEN);
+  assert.equal(bound.includes(TOKEN), false);
+  assert.equal(
+    sessionCredentialMatches(bound, credentialFingerprint(TOKEN.toUpperCase())),
+    false,
+  );
+  assert.equal(
+    sessionCredentialMatches(bound, credentialFingerprint(`${TOKEN} `)),
+    false,
+  );
+});
+
 test('[CC-5272] a live session id presented with another bearer is refused, and the session survives', async () => {
   const harness = await makeHarness();
   await withHandle(harness, async () => {
