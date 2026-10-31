@@ -51,6 +51,8 @@ import type {
 } from '../core/types.js';
 import type { BudgetGuard } from './shared.js';
 import { shapeDataCenterUser } from './users.js';
+import { isRecord, readString } from './guards.js';
+import { requireRecord, requireText, responseShapeError, writeControls } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants
@@ -429,10 +431,10 @@ async function readIssueAttachments(
     path: `/issue/${encodeSegment(key, 'issue key or id')}`,
     pathTemplate: ISSUE_PATH_TEMPLATE,
     query: { fields: 'attachment' },
-    ...callExtras(options),
+    ...writeControls(options),
   });
 
-  const body = requireRecord(response.data, 'the issue response');
+  const body = requireAttachmentRecord(response.data, 'the issue response');
   const fields = body['fields'];
   const rows = isRecord(fields) ? fields['attachment'] : undefined;
   if (rows === undefined || rows === null) {
@@ -441,7 +443,10 @@ async function readIssueAttachments(
     return { issueKey: readString(body, 'key') ?? key, attachments: [] };
   }
   if (!Array.isArray(rows)) {
-    throw shapeError('the issue\'s "attachment" field is not an array');
+    throw responseShapeError(
+      'attachment',
+      'the issue\'s "attachment" field is not an array',
+    );
   }
 
   return {
@@ -461,7 +466,7 @@ export async function getAttachment(
     method: 'GET',
     path: `/attachment/${encodeSegment(id, 'attachment id')}`,
     pathTemplate: ATTACHMENT_PATH_TEMPLATE,
-    ...callExtras(options),
+    ...writeControls(options),
   });
   return toJiraAttachment(response.data, 'the attachment response');
 }
@@ -499,7 +504,7 @@ export async function downloadAttachment(
     // media URL; the client refuses to follow more than one redirect anyway.
     query: { redirect: false },
     accept: 'binary',
-    ...callExtras(options),
+    ...writeControls(options),
   });
 
   return await writeDownload(store, attachment, response.data);
@@ -536,7 +541,7 @@ export async function downloadAttachmentDataCenter(
     root: 'v2',
     path: `/attachment/${encodeSegment(id, 'attachment id')}`,
     pathTemplate: ATTACHMENT_PATH_TEMPLATE,
-    ...callExtras(options),
+    ...writeControls(options),
   });
   const attachment = toJiraAttachment(
     meta.data,
@@ -554,7 +559,7 @@ export async function downloadAttachmentDataCenter(
     path: `/attachment/${encodeSegment(id, 'attachment id')}/${encodeFilenameSegment(attachment.filename)}`,
     pathTemplate: SECURE_ATTACHMENT_PATH_TEMPLATE,
     accept: 'binary',
-    ...callExtras(options),
+    ...writeControls(options),
   });
 
   refuseServletSubstitute(attachment, response);
@@ -583,14 +588,16 @@ function refuseServletSubstitute(
     size >= 0 &&
     bytes.byteLength !== size
   ) {
-    throw shapeError(
+    throw responseShapeError(
+      'attachment',
       `the servlet answered ${String(bytes.byteLength)} bytes for an attachment of ${String(size)} bytes, which is a login or proxy page rather than the file`,
     );
   }
   const contentType = (response.headers['content-type'] ?? '').toLowerCase();
   const mimeType = (attachment.mimeType ?? '').toLowerCase();
   if (contentType.startsWith('text/html') && !mimeType.startsWith('text/html')) {
-    throw shapeError(
+    throw responseShapeError(
+      'attachment',
       'the servlet answered an HTML page for an attachment that is not HTML, which is a login or proxy page rather than the file',
     );
   }
@@ -606,7 +613,10 @@ async function writeDownload(
   bytes: unknown,
 ): Promise<DownloadAttachmentResult> {
   if (!(bytes instanceof Uint8Array)) {
-    throw shapeError('the attachment content response carried no bytes');
+    throw responseShapeError(
+      'attachment',
+      'the attachment content response carried no bytes',
+    );
   }
   if (bytes.byteLength > MAX_ATTACHMENT_BYTES) throw tooLarge(bytes.byteLength);
 
@@ -632,12 +642,18 @@ async function writeDownload(
  */
 function encodeFilenameSegment(filename: string): string {
   if (filename === '' || /^\.+$/.test(filename)) {
-    throw shapeError(`the attachment's filename "${filename}" cannot name a download`);
+    throw responseShapeError(
+      'attachment',
+      `the attachment's filename "${filename}" cannot name a download`,
+    );
   }
   try {
     return encodeURIComponent(filename);
   } catch {
-    throw shapeError("the attachment's filename is not well-formed Unicode");
+    throw responseShapeError(
+      'attachment',
+      "the attachment's filename is not well-formed Unicode",
+    );
   }
 }
 
@@ -675,12 +691,15 @@ export async function uploadAttachment(
         bytes: file.bytes,
       },
     ],
-    ...callExtras(options),
+    ...writeControls(options),
   });
 
   const rows = response.data;
   if (!Array.isArray(rows)) {
-    throw shapeError('the upload response is not an array of attachments');
+    throw responseShapeError(
+      'attachment',
+      'the upload response is not an array of attachments',
+    );
   }
   return {
     attachments: rows.map((row, index) =>
@@ -701,11 +720,12 @@ function toJiraAttachment(
   what: string,
   readAuthor: (value: unknown) => AttachmentAuthor | undefined = toAuthor,
 ): JiraAttachment {
-  const record = requireRecord(row, what);
+  const record = requireAttachmentRecord(row, what);
   const id = readIdentifier(record, 'id');
-  if (id === undefined) throw shapeError(`${what} has no "id"`);
+  if (id === undefined) throw responseShapeError('attachment', `${what} has no "id"`);
   const filename = readString(record, 'filename');
-  if (filename === undefined) throw shapeError(`${what} has no "filename"`);
+  if (filename === undefined)
+    throw responseShapeError('attachment', `${what} has no "filename"`);
 
   const size = record['size'];
   const author = readAuthor(record['author']);
@@ -757,7 +777,12 @@ function requireStore(store: MediaStore | undefined, what: string): MediaStore {
 }
 
 function requireIssueKey(value: string): string {
-  return requireText(value, 'issue key or id', 'Pass an issue key such as ABC-1.');
+  return requireText(
+    value,
+    'issue key or id',
+    'Pass an issue key such as ABC-1.',
+    notAReference,
+  );
 }
 
 function requireAttachmentId(value: string): string {
@@ -765,19 +790,20 @@ function requireAttachmentId(value: string): string {
     value,
     'attachment id',
     'Pass the numeric id from jira_list_attachments.',
+    notAReference,
   );
 }
 
-function requireText(value: string, what: string, remediation: string): string {
-  const text = value.trim();
-  if (text === '') {
-    throw createJiraError({
-      kind: 'validation',
-      reason: `An empty ${what} is not a valid reference.`,
-      remediation,
-    });
-  }
-  return text;
+/** The blank-reference reason of {@link requireIssueKey}/{@link requireAttachmentId}. */
+function notAReference(what: string): string {
+  return `An empty ${what} is not a valid reference.`;
+}
+
+/** {@link requireRecord} worded as an attachment-response failure. */
+function requireAttachmentRecord(value: unknown, what: string): Record<string, unknown> {
+  return requireRecord(value, what, (subject) =>
+    responseShapeError('attachment', `${subject} is not a JSON object`),
+  );
 }
 
 /** The size refusal, worded the same way the client words its own (CC-54). */
@@ -788,29 +814,6 @@ function tooLarge(bytes: number): JiraError {
     remediation:
       'This limit is compiled in and has no environment override. Handle the file outside this server.',
   });
-}
-
-/** `signal`/`deadlineAt` spread onto a request spec, both optional. */
-function callExtras(options: AttachmentCallBase & BudgetGuard): Record<string, unknown> {
-  return {
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, what: string): Record<string, unknown> {
-  if (!isRecord(value)) throw shapeError(`${what} is not a JSON object`);
-  return value;
-}
-
-/** A non-empty string field, or `undefined`. */
-function readString(row: Record<string, unknown>, key: string): string | undefined {
-  const value = row[key];
-  return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
 /** An id field, which Jira sends as a string but has been known to send as a number. */
@@ -826,13 +829,6 @@ function optionalString(
 ): Record<string, string> {
   const value = readString(row, key);
   return value === undefined ? {} : { [key]: value };
-}
-
-function shapeError(what: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: `Jira's attachment response could not be read: ${what}.`,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -872,7 +868,7 @@ export async function deleteAttachment(
   const attachmentId = numericAttachmentId(options.attachmentId);
   await options.jira({
     ...deleteAttachmentRequest({ attachmentId }),
-    ...callExtras(options),
+    ...writeControls(options),
   });
   return { attachmentId, deleted: true };
 }

@@ -51,19 +51,13 @@ import {
   JiraError,
   type JiraDeployment,
   type JiraRequestFn,
-  type JiraRequestSpec,
   type JiraResponse,
 } from '../core/types.js';
 import { shapeDataCenterUser } from './users.js';
 import type { DataCenterUser } from './users.js';
-import {
-  budgetOf,
-  fetchAll,
-  type BudgetGuard,
-  type ClassicCursor,
-  type ClassicLoopResult,
-  type ClassicPage,
-} from './shared.js';
+import { type BudgetGuard, type ClassicLoopResult, type ClassicPage } from './shared.js';
+import { asRecord, compact, readNumber, readString } from './guards.js';
+import { requireField, requireRecord, runClassic, sendOne, shapeError } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Page sizes and default expands
@@ -1072,50 +1066,6 @@ export function filterLabels(
 // ---------------------------------------------------------------------------
 
 /**
- * Issue ONE request, stamping the caller's cancellation and call-budget deadline
- * onto it. A spec that set its own keeps it, mirroring `withLoopControls` in
- * `api/shared.ts` so single and looped reads behave identically.
- *
- * The `Clock` of the {@link BudgetGuard} is unused on this path — there is
- * no page boundary at which to check a deadline; `core/http.ts` enforces
- * `deadlineAt` for the request itself. It still travels in the same options
- * object so a caller passes one context to every function in this module.
- */
-function sendOne(
-  options: MetaOptions,
-  spec: JiraRequestSpec,
-): Promise<JiraResponse<unknown>> {
-  return options.jira({
-    ...spec,
-    signal: spec.signal ?? options.signal,
-    deadlineAt: spec.deadlineAt ?? options.deadlineAt,
-  });
-}
-
-/**
- * Run one classic pagination loop. The `deadlineAt`/`clock` pair goes through
- * {@link budgetOf} rather than being spread raw, because {@link BudgetGuard} is
- * a UNION: spreading it would let a `deadlineAt` reach `fetchAll` beside an
- * absent clock, which is the exact mistake the union exists to prevent.
- */
-function runClassic<T>(
-  options: MetaPagedOptions,
-  pageSize: number,
-  request: (cursor: ClassicCursor) => JiraRequestSpec,
-  readPage: (response: JiraResponse) => ClassicPage<T>,
-): Promise<ClassicLoopResult<T>> {
-  const base = {
-    jira: options.jira,
-    signal: options.signal,
-    maxPages: options.maxPages,
-    pageSize: options.pageSize ?? pageSize,
-    request,
-    readPage,
-  };
-  return fetchAll<T>({ ...base, ...budgetOf(options) });
-}
-
-/**
  * Validate-and-encode ONE path segment, per the `JiraRequestSpec.path` contract
  * ("each dynamic segment must already be percent-encoded per segment by the
  * caller"). Delegates to `encodeSegment`, which also REJECTS traversal
@@ -1138,33 +1088,6 @@ function trimmed(value: string | undefined): string | undefined {
 // 9. Guards — wire `unknown` → the shapes above
 // ---------------------------------------------------------------------------
 
-function shapeError(message: string, remediation: string): JiraError {
-  return createJiraError({ kind: 'unexpected_shape', reason: message, remediation });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireRecord(value: unknown, what: string): Record<string, unknown> {
-  const record = asRecord(value);
-  if (record === undefined) {
-    throw shapeError(
-      `Jira returned a ${what} that is not a JSON object.`,
-      'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).',
-    );
-  }
-  return record;
-}
-
-function readString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
 /** Ids arrive as strings on most endpoints and as numbers on a few; normalise. */
 function readId(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
@@ -1178,11 +1101,6 @@ function readBoolean(record: Record<string, unknown>, key: string): boolean | un
   return typeof value === 'boolean' ? value : undefined;
 }
 
-function readNumber(record: Record<string, unknown>, key: string): number | undefined {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
 function readStringArray(
   record: Record<string, unknown>,
   key: string,
@@ -1190,30 +1108,6 @@ function readStringArray(
   const value = record[key];
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === 'string');
-}
-
-function requireField(value: string | undefined, field: string, what: string): string {
-  if (value === undefined) {
-    throw shapeError(
-      `Jira returned a ${what} without a usable "${field}".`,
-      'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).',
-    );
-  }
-  return value;
-}
-
-/**
- * Drop `undefined`-valued keys, so a mapped object contains only what Jira
- * actually sent. Beyond tidiness this is a contract detail: these objects are
- * serialized into tool results, and `{"lead": undefined}` and an absent `lead`
- * are the same JSON but not the same object to a test or a consumer.
- */
-function compact<T extends Record<string, unknown>>(value: T): T {
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) out[key] = entry;
-  }
-  return out as T;
 }
 
 /**

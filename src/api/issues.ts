@@ -66,6 +66,8 @@ import {
 } from './users.js';
 import { wikiToText } from './wiki.js';
 import type { JiraUser, ShapedUser } from './users.js';
+import { asRecord, isRecord } from './guards.js';
+import { requireRecord, requireText, responseShapeError, send } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants
@@ -566,7 +568,12 @@ export async function getIssue(options: GetIssueOptions): Promise<IssueDetail> {
   });
 
   return {
-    ...shapeIssueRecord(requireRecord(response.data, 'issue'), 'issue', raw, options),
+    ...shapeIssueRecord(
+      requireIssueRecord(response.data, 'issue'),
+      'issue',
+      raw,
+      options,
+    ),
     raw,
     ...(fields.length === 0 ? {} : { fieldsRequested: fields }),
     expand,
@@ -637,10 +644,10 @@ export async function getIssuesBulk(
     },
   });
 
-  const data = requireRecord(response.data, 'bulk issue read');
+  const data = requireIssueRecord(response.data, 'bulk issue read');
   const issues = (Array.isArray(data.issues) ? data.issues : []).map((entry, index) =>
     shapeIssueRecord(
-      requireRecord(entry, `issues[${String(index)}]`),
+      requireIssueRecord(entry, `issues[${String(index)}]`),
       `issues[${String(index)}]`,
       raw,
       options,
@@ -870,7 +877,7 @@ export async function getChangelogsBulk(
     },
   });
 
-  const data = requireRecord(response.data, 'bulk changelog read');
+  const data = requireIssueRecord(response.data, 'bulk changelog read');
   const issues: IssueChangelogPage[] = [];
   const blocks = isUnknownArray(data.issueChangeLogs) ? data.issueChangeLogs : [];
   for (const block of blocks) {
@@ -938,16 +945,20 @@ export async function listChangelogDataCenter(
     query: { expand: 'changelog', fields: '' },
   });
 
-  const data = requireRecord(response.data, 'issue');
+  const data = requireIssueRecord(response.data, 'issue');
   if (!isRecord(data.changelog)) {
-    throw shapeError(
+    throw responseShapeError(
+      'issue',
       'the issue read embedded no "changelog" object for expand=changelog',
     );
   }
   const block = data.changelog;
   const rows = block.histories ?? [];
   if (!isUnknownArray(rows)) {
-    throw shapeError('the embedded changelog has a non-array "histories"');
+    throw responseShapeError(
+      'issue',
+      'the embedded changelog has a non-array "histories"',
+    );
   }
   const windowStart = nonNegativeInteger(block.startAt) ?? 0;
   const windowEnd = windowStart + rows.length;
@@ -1024,10 +1035,13 @@ export async function listTransitions(
     },
   });
 
-  const data = requireRecord(response.data, 'transitions');
+  const data = requireIssueRecord(response.data, 'transitions');
   const rows = data.transitions ?? [];
   if (!isUnknownArray(rows)) {
-    throw shapeError('the transitions response has a non-array "transitions"');
+    throw responseShapeError(
+      'issue',
+      'the transitions response has a non-array "transitions"',
+    );
   }
   const transitions: IssueTransition[] = [];
   for (const row of rows) {
@@ -1576,7 +1590,7 @@ export function linkIssuesRequest(input: LinkIssuesInput): JiraRequestSpec {
  */
 export async function createIssue(options: CreateIssueOptions): Promise<CreatedIssue> {
   const response = await send(options, createIssueRequest(options));
-  const data = requireRecord(response.data, 'created issue');
+  const data = requireIssueRecord(response.data, 'created issue');
   return {
     id: requireString(data.id, 'issue.id'),
     key: requireString(data.key, 'issue.key'),
@@ -1638,7 +1652,8 @@ export async function transitionIssue(
 export async function addComment(options: AddCommentOptions): Promise<IssueComment> {
   const response = await send(options, addCommentRequest(options));
   const comment = shapeComment(response.data, undefined, options.deployment);
-  if (comment === undefined) throw shapeError('the created comment has no string "id"');
+  if (comment === undefined)
+    throw responseShapeError('issue', 'the created comment has no string "id"');
   return comment;
 }
 
@@ -1661,7 +1676,8 @@ export async function updateComment(
       : options.visibility;
   const response = await send(options, updateCommentRequest({ ...options, visibility }));
   const comment = shapeComment(response.data, undefined, options.deployment);
-  if (comment === undefined) throw shapeError('the updated comment has no string "id"');
+  if (comment === undefined)
+    throw responseShapeError('issue', 'the updated comment has no string "id"');
   return comment;
 }
 
@@ -1683,13 +1699,14 @@ async function storedCommentVisibility(
   });
   const record = asRecord(response.data);
   if (record === undefined || typeof record.id !== 'string') {
-    throw shapeError('the comment to edit has no string "id"');
+    throw responseShapeError('issue', 'the comment to edit has no string "id"');
   }
   if (record.visibility === undefined || record.visibility === null) return null;
   const stored = shapeVisibility(record.visibility);
   if (stored?.type === undefined || (stored.value ?? stored.identifier) === undefined) {
     // A restriction this server cannot restate must not be dropped silently.
-    throw shapeError(
+    throw responseShapeError(
+      'issue',
       'the comment to edit carries a visibility without a type and a value',
     );
   }
@@ -1744,7 +1761,8 @@ export async function addWorklog(options: AddWorklogOptions): Promise<IssueWorkl
 
   const response = await send(options, addWorklogRequest({ ...options, startedAt }));
   const worklog = shapeWorklog(response.data, options.deployment);
-  if (worklog === undefined) throw shapeError('the created worklog has no string "id"');
+  if (worklog === undefined)
+    throw responseShapeError('issue', 'the created worklog has no string "id"');
   return worklog;
 }
 
@@ -2315,18 +2333,6 @@ function shapeChangelogBlock(
 // 10. Transport helpers
 // ---------------------------------------------------------------------------
 
-/** Stamp cancellation and the call budget onto a spec, then send it. */
-async function send(
-  options: IssueRequestBase & BudgetGuard,
-  spec: JiraRequestSpec,
-): Promise<JiraResponse> {
-  return options.jira({
-    ...spec,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
-  });
-}
-
 interface ClassicListSpec<T> {
   readonly defaultPageSize: number;
   /** Appended to `/issue/{id}` — already a literal, never caller data. */
@@ -2371,10 +2377,13 @@ async function classicList<T>(
   };
 
   const readPage = (response: JiraResponse): ClassicPage<T> => {
-    const data = requireRecord(response.data, spec.collection);
+    const data = requireIssueRecord(response.data, spec.collection);
     const sent = data[spec.collection] ?? [];
     if (!isUnknownArray(sent)) {
-      throw shapeError(`"${spec.collection}" is present but is not an array`);
+      throw responseShapeError(
+        'issue',
+        `"${spec.collection}" is present but is not an array`,
+      );
     }
     // A server that ignores `startAt`/`maxResults` (Data Center's worklog route
     // answers every worklog from offset 0) echoes a lower `startAt` or sends
@@ -2470,19 +2479,6 @@ function commentIdSegment(value: string | number): string {
     });
   }
   return text;
-}
-
-/** A non-empty trimmed string, or a `validation` error naming the input. */
-function requireText(value: string, what: string, remediation?: string): string {
-  const clean = typeof value === 'string' ? value.trim() : '';
-  if (clean === '') {
-    throw createJiraError({
-      kind: 'validation',
-      reason: `A ${what} is required and must not be empty.`,
-      ...(remediation === undefined ? {} : { remediation }),
-    });
-  }
-  return clean;
 }
 
 /** `{ id }` for an all-digit value, `{ key }` otherwise — projects and issues. */
@@ -2703,8 +2699,11 @@ function staleTransition(cause: JiraError, transitionId: string): JiraError {
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+/** {@link requireRecord} worded as an issue-response failure. */
+function requireIssueRecord(value: unknown, what: string): Record<string, unknown> {
+  return requireRecord(value, what, (subject) =>
+    responseShapeError('issue', `the ${subject} response is not a JSON object`),
+  );
 }
 
 /**
@@ -2716,27 +2715,11 @@ function isUnknownArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-function requireRecord(value: unknown, what: string): Record<string, unknown> {
-  if (!isRecord(value)) throw shapeError(`the ${what} response is not a JSON object`);
-  return value;
-}
-
 function requireString(value: unknown, what: string): string {
   if (typeof value !== 'string' || value === '') {
-    throw shapeError(`${what} is missing or not a string`);
+    throw responseShapeError('issue', `${what} is missing or not a string`);
   }
   return value;
-}
-
-function shapeError(what: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: `Jira's issue response could not be read: ${what}.`,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2835,7 +2818,8 @@ export async function getComment(options: GetCommentOptions): Promise<IssueComme
     pathTemplate: ISSUE_COMMENT_ITEM_PATH_TEMPLATE,
   });
   const comment = shapeComment(response.data, options.format);
-  if (comment === undefined) throw shapeError('the comment has no string "id"');
+  if (comment === undefined)
+    throw responseShapeError('issue', 'the comment has no string "id"');
   return comment;
 }
 
@@ -2848,7 +2832,8 @@ export async function getWorklog(options: GetWorklogOptions): Promise<IssueWorkl
     pathTemplate: ISSUE_WORKLOG_ITEM_PATH_TEMPLATE,
   });
   const worklog = shapeWorklog(response.data);
-  if (worklog === undefined) throw shapeError('the worklog has no string "id"');
+  if (worklog === undefined)
+    throw responseShapeError('issue', 'the worklog has no string "id"');
   return worklog;
 }
 
@@ -3050,13 +3035,14 @@ export async function listRemoteLinks(
     pathTemplate: ISSUE_REMOTE_LINK_PATH_TEMPLATE,
   });
   if (!isUnknownArray(response.data)) {
-    throw shapeError('the remote link response is not a JSON array');
+    throw responseShapeError('issue', 'the remote link response is not a JSON array');
   }
   const remoteLinks = response.data.map((row) => {
     const link = shapeRemoteLink(row);
     // A row without a numeric id cannot be addressed by the delete, and
     // dropping it would hide a link the issue really has (D141).
-    if (link === undefined) throw shapeError('a remote link has no numeric "id"');
+    if (link === undefined)
+      throw responseShapeError('issue', 'a remote link has no numeric "id"');
     return link;
   });
   return { issue: options.issue.trim(), remoteLinks };
@@ -3091,9 +3077,9 @@ export async function addRemoteLink(
 ): Promise<AddRemoteLinkResult> {
   const request = addRemoteLinkRequest(options);
   const response = await send(options, request);
-  const data = requireRecord(response.data, 'remote link');
+  const data = requireIssueRecord(response.data, 'remote link');
   if (typeof data.id !== 'number') {
-    throw shapeError('the created remote link has no numeric "id"');
+    throw responseShapeError('issue', 'the created remote link has no numeric "id"');
   }
   const body = request.body as {
     readonly globalId?: string;
@@ -3259,7 +3245,8 @@ export async function updateWorklog(
     updateWorklogRequest({ ...options, visibility: stored.visibility }),
   );
   const worklog = shapeWorklog(response.data, options.deployment);
-  if (worklog === undefined) throw shapeError('the updated worklog has no string "id"');
+  if (worklog === undefined)
+    throw responseShapeError('issue', 'the updated worklog has no string "id"');
   return worklog;
 }
 
@@ -3318,12 +3305,12 @@ export async function getIssueLink(
     path: `${ISSUE_LINK_PATH}/${id}`,
     pathTemplate: ISSUE_LINK_ITEM_PATH_TEMPLATE,
   });
-  const record = requireRecord(response.data, 'issue link');
+  const record = requireIssueRecord(response.data, 'issue link');
   const linkId = requireString(record.id, 'the issue link "id"');
   const inwardIssue = shapeLinkedIssue(record.inwardIssue);
   const outwardIssue = shapeLinkedIssue(record.outwardIssue);
   if (inwardIssue === undefined || outwardIssue === undefined) {
-    throw shapeError('the issue link does not name both of its issues');
+    throw responseShapeError('issue', 'the issue link does not name both of its issues');
   }
   const type = asRecord(record.type) ?? {};
   return {
@@ -3408,8 +3395,9 @@ export async function getRemoteLink(options: GetRemoteLinkOptions): Promise<Remo
     path: issuePath(options.issue, `/remotelink/${remoteLinkIdSegment(options.linkId)}`),
     pathTemplate: ISSUE_REMOTE_LINK_ITEM_PATH_TEMPLATE,
   });
-  const link = shapeRemoteLink(requireRecord(response.data, 'remote link'));
-  if (link === undefined) throw shapeError('the remote link has no numeric "id"');
+  const link = shapeRemoteLink(requireIssueRecord(response.data, 'remote link'));
+  if (link === undefined)
+    throw responseShapeError('issue', 'the remote link has no numeric "id"');
   return link;
 }
 

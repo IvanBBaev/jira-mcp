@@ -20,6 +20,7 @@
 //
 // Nothing here reads env, imports settings, or touches `globalThis.fetch`.
 
+import { abortError } from './clock.js';
 import { JIRA_ROOT_PATHS, JiraError } from './types.js';
 import type { HostRef, HttpMethod, JiraApiRoot, QueryParams, Rng } from './types.js';
 
@@ -814,12 +815,6 @@ interface Waiter {
 interface HostSlots {
   active: number;
   waiters: Waiter[];
-}
-
-function abortError(): Error {
-  const err = new Error('The operation was aborted');
-  err.name = 'AbortError';
-  return err;
 }
 
 /**

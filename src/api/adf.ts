@@ -25,6 +25,7 @@
 //     unfetchable signed URL in a model's context is a liability, not data.
 
 import { JiraError } from '../core/types.js';
+import { isRecord } from './guards.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,10 +85,6 @@ const MAX_TYPE_LABEL = 40;
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** A non-empty string attribute, or `undefined`. Empty strings count as absent. */
 function attrString(node: AdfNode, key: string): string | undefined {

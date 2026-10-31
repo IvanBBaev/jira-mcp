@@ -71,10 +71,7 @@ import {
 } from '../core/types.js';
 import {
   DEFAULT_MAX_PAGES,
-  budgetOf,
-  fetchAll,
   type BudgetGuard,
-  type ClassicCursor,
   type ClassicLoopResult,
   type ClassicPage,
 } from './shared.js';
@@ -84,6 +81,17 @@ import {
   shapeDataCenterUser,
 } from './users.js';
 import type { DataCenterUser } from './users.js';
+import { asRecord, compact, readNumber, readString } from './guards.js';
+import {
+  SHAPE_REMEDIATION,
+  requireField,
+  requireRecord,
+  requireWriteText,
+  runClassic,
+  sendOne,
+  shapeError,
+  writeControls,
+} from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Endpoints, page size and closed vocabularies
@@ -582,6 +590,7 @@ export function listComponents(
   return collabCall(PROJECT_READ_HINT, () =>
     runClassic(
       options,
+      COLLAB_PAGE_SIZE,
       (cursor) => ({
         method: 'GET',
         path: `/project/${project}/component`,
@@ -656,6 +665,7 @@ export function listVersions(
   return collabCall(PROJECT_READ_HINT, () =>
     runClassic(
       options,
+      COLLAB_PAGE_SIZE,
       (cursor) => ({
         method: 'GET',
         path: `/project/${project}/version`,
@@ -729,6 +739,7 @@ async function dataCenterArray(
   if (!Array.isArray(response.data)) {
     throw shapeError(
       `GET ${pathTemplate} answered with something other than a JSON array of ${what}s.`,
+      SHAPE_REMEDIATION,
     );
   }
   return response.data.map((entry, index) =>
@@ -1057,12 +1068,12 @@ export async function createComponent(
   options: CreateComponentOptions,
 ): Promise<ComponentChange> {
   const body: Record<string, unknown> = {
-    name: requireText(options.name, 'component name', COMPONENT_NAME_REMEDIATION),
-    project: requireText(options.project, 'project key', PROJECT_REMEDIATION),
+    name: requireWriteText(options.name, 'component name', COMPONENT_NAME_REMEDIATION),
+    project: requireWriteText(options.project, 'project key', PROJECT_REMEDIATION),
   };
   if (options.description !== undefined) body.description = options.description;
   if (options.leadAccountId !== undefined) {
-    body.leadAccountId = requireText(
+    body.leadAccountId = requireWriteText(
       options.leadAccountId,
       'leadAccountId',
       ACCOUNT_ID_REMEDIATION,
@@ -1102,12 +1113,16 @@ export async function updateComponent(
   const id = positiveId(options.componentId, 'componentId', COMPONENT_ID_REMEDIATION);
   const body: Record<string, unknown> = {};
   if (options.name !== undefined) {
-    body.name = requireText(options.name, 'component name', COMPONENT_NAME_REMEDIATION);
+    body.name = requireWriteText(
+      options.name,
+      'component name',
+      COMPONENT_NAME_REMEDIATION,
+    );
   }
   // `''` is kept on purpose: an empty description is how a description is cleared.
   if (options.description !== undefined) body.description = options.description;
   if (options.leadAccountId !== undefined) {
-    body.leadAccountId = requireText(
+    body.leadAccountId = requireWriteText(
       options.leadAccountId,
       'leadAccountId',
       ACCOUNT_ID_REMEDIATION,
@@ -1149,7 +1164,7 @@ export async function createVersion(
   options: CreateVersionOptions,
 ): Promise<VersionChange> {
   const body: Record<string, unknown> = {
-    name: requireText(options.name, 'version name', VERSION_NAME_REMEDIATION),
+    name: requireWriteText(options.name, 'version name', VERSION_NAME_REMEDIATION),
     projectId: Number(positiveId(options.projectId, 'projectId', PROJECT_ID_REMEDIATION)),
   };
   addVersionFields(body, options);
@@ -1186,7 +1201,7 @@ export async function updateVersion(
   const id = positiveId(options.versionId, 'versionId', VERSION_ID_REMEDIATION);
   const body: Record<string, unknown> = {};
   if (options.name !== undefined) {
-    body.name = requireText(options.name, 'version name', VERSION_NAME_REMEDIATION);
+    body.name = requireWriteText(options.name, 'version name', VERSION_NAME_REMEDIATION);
   }
   addVersionFields(body, options);
   requireChange(
@@ -1217,13 +1232,13 @@ export async function updateVersion(
 /** The Cloud watcher: an accountId, and never a username (D111). */
 function cloudWatcher(options: WatcherOptions): string {
   refuseUsernameOnCloud(options.username);
-  return requireText(options.accountId ?? '', 'accountId', ACCOUNT_ID_REMEDIATION);
+  return requireWriteText(options.accountId ?? '', 'accountId', ACCOUNT_ID_REMEDIATION);
 }
 
 /** The Data Center watcher: a username, and never an accountId (D111). */
 function dataCenterWatcher(options: WatcherOptions): string {
   refuseAccountIdOnDataCenter(options.accountId);
-  return requireText(options.username ?? '', 'username', USERNAME_REMEDIATION);
+  return requireWriteText(options.username ?? '', 'username', USERNAME_REMEDIATION);
 }
 
 /** The two vote routes differ only by verb, so they share one implementation. */
@@ -1267,77 +1282,19 @@ function addVersionFields(
 }
 
 /**
- * Issue ONE request, stamping the caller's cancellation and call-budget
- * deadline onto it. A spec that set its own keeps it, mirroring
- * `withLoopControls` in `api/shared.ts` so single and looped reads behave
- * identically.
- */
-function sendOne(
-  options: CollabOptions,
-  spec: JiraRequestSpec,
-): Promise<JiraResponse<unknown>> {
-  return options.jira({
-    ...spec,
-    signal: spec.signal ?? options.signal,
-    deadlineAt: spec.deadlineAt ?? options.deadlineAt,
-  });
-}
-
-/**
- * The per-request controls every write here forwards. `safe` is deliberately
- * NOT among them: an unsafe write is never replayed (JIRA-API.md §Rate limiting
- * and retries), and a replayed `POST /votes` would be harmless while a replayed
- * anything-else would not — the exception is not worth the precedent.
- */
-function writeControls(
-  options: CollabOptions,
-): Pick<JiraRequestSpec, 'signal' | 'deadlineAt'> {
-  return {
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
-  };
-}
-
-/**
- * Run the classic pagination loop. The `deadlineAt`/`clock` pair goes through
- * {@link budgetOf} rather than being spread raw, because {@link BudgetGuard} is
- * a UNION: spreading it would let a `deadlineAt` reach `fetchAll` beside an
- * absent clock, which is the exact pairing the union exists to prevent.
- */
-function runClassic<T>(
-  options: CollabPagedBase & BudgetGuard,
-  request: (cursor: ClassicCursor) => JiraRequestSpec,
-  readPage: (response: JiraResponse) => ClassicPage<T>,
-): Promise<ClassicLoopResult<T>> {
-  const base = {
-    jira: options.jira,
-    request,
-    readPage,
-    pageSize: options.pageSize ?? COLLAB_PAGE_SIZE,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.maxPages === undefined ? {} : { maxPages: options.maxPages }),
-    ...(options.startAt === undefined ? {} : { startAt: options.startAt }),
-  };
-  // Narrowed through a plain `BudgetGuard` binding so the discriminant is read
-  // off the union itself, not off an intersection TS may not distribute.
-  const guard: BudgetGuard = options;
-  return fetchAll<T>({ ...base, ...budgetOf(guard) });
-}
-
-/**
  * `/issue/<encoded key>` plus a LITERAL suffix. The key is encoded on its own
  * per the `JiraRequestSpec.path` contract; `encodeSegment` REJECTS traversal
  * segments and separators rather than encoding them, so a key carrying `../`
  * fails validation before any request exists.
  */
 function issuePath(issue: string, suffix: string): string {
-  const key = requireText(issue, 'issue key or id', ISSUE_REMEDIATION);
+  const key = requireWriteText(issue, 'issue key or id', ISSUE_REMEDIATION);
   return `/issue/${encodeSegment(key, 'issue key or id')}${suffix}`;
 }
 
 /** Validate-and-encode ONE path segment (see {@link issuePath} for the why). */
 function pathSegment(value: string, what: string, remediation: string): string {
-  return encodeSegment(requireText(value, what, remediation), what);
+  return encodeSegment(requireWriteText(value, what, remediation), what);
 }
 
 /**
@@ -1372,19 +1329,6 @@ function notSelf(target: string, id: string, what: string, remediation: string):
     });
   }
   return target;
-}
-
-/** A required non-empty string, trimmed (D22 — the refusal names the field). */
-function requireText(value: string, what: string, remediation: string): string {
-  const clean = value.trim();
-  if (clean === '') {
-    throw createJiraError({
-      kind: 'validation',
-      reason: `A ${what} is required and must not be empty. Nothing was sent.`,
-      remediation,
-    });
-  }
-  return clean;
 }
 
 /** Version dates are calendar dates; a timestamp is a caller mistake (D22). */
@@ -1600,18 +1544,6 @@ function asCollabError(error: unknown, hint: string): unknown {
 // 8. Guards — wire `unknown` → the shapes above
 // ---------------------------------------------------------------------------
 
-/** The one remediation every shape failure here shares. */
-const SHAPE_REMEDIATION =
-  'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).';
-
-function shapeError(message: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: message,
-    remediation: SHAPE_REMEDIATION,
-  });
-}
-
 /**
  * Read the echo of a CREATE (CC-1220). A 2xx means Jira most likely created
  * the record, so an echo that cannot be read is not a plain shape mismatch:
@@ -1642,26 +1574,6 @@ function createdEcho<T>(
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireRecord(value: unknown, what: string): Record<string, unknown> {
-  const record = asRecord(value);
-  if (record === undefined) {
-    throw shapeError(`Jira returned a ${what} that is not a JSON object.`);
-  }
-  return record;
-}
-
-function readString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
 /** Component and version ids arrive as strings; `projectId` arrives as a number. */
 function readId(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
@@ -1673,31 +1585,6 @@ function readId(record: Record<string, unknown>, key: string): string | undefine
 function readBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
   const value = record[key];
   return typeof value === 'boolean' ? value : undefined;
-}
-
-function readNumber(record: Record<string, unknown>, key: string): number | undefined {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function requireField(value: string | undefined, field: string, what: string): string {
-  if (value === undefined) {
-    throw shapeError(`Jira returned a ${what} without a usable "${field}".`);
-  }
-  return value;
-}
-
-/**
- * Drop `undefined`-valued keys, so a mapped row contains only what Jira actually
- * sent — `{"description": undefined}` and an absent `description` are the same
- * JSON but not the same object to a test or a consumer.
- */
-function compact<T extends Record<string, unknown>>(value: T): T {
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) out[key] = entry;
-  }
-  return out as T;
 }
 
 /**
@@ -1713,7 +1600,10 @@ function classicPage<T>(
   const body = requireRecord(response.data, `${what} page`);
   const raw = body.values;
   if (!Array.isArray(raw)) {
-    throw shapeError(`A ${what} page arrived without a "values" array.`);
+    throw shapeError(
+      `A ${what} page arrived without a "values" array.`,
+      SHAPE_REMEDIATION,
+    );
   }
   return {
     items: raw.map((entry, index) => map(requireRecord(entry, `${what} row #${index}`))),
@@ -1832,12 +1722,16 @@ function mapRoleMap(body: Record<string, unknown>): readonly ProjectRole[] {
   const roles: ProjectRole[] = [];
   for (const [name, value] of Object.entries(body)) {
     if (typeof value !== 'string') {
-      throw shapeError(`The project role map entry "${name}" is not a URL string.`);
+      throw shapeError(
+        `The project role map entry "${name}" is not a URL string.`,
+        SHAPE_REMEDIATION,
+      );
     }
     const id = value.slice(value.lastIndexOf('/') + 1);
     if (!POSITIVE_INT.test(id)) {
       throw shapeError(
         `The project role URL for "${name}" does not end in a numeric role id.`,
+        SHAPE_REMEDIATION,
       );
     }
     roles.push({ id, name });
@@ -1857,7 +1751,10 @@ function mapRoleDetail(
 ): ProjectRoleDetail {
   const raw = body.actors;
   if (raw !== undefined && !Array.isArray(raw)) {
-    throw shapeError('Jira returned a project role whose "actors" is not an array.');
+    throw shapeError(
+      'Jira returned a project role whose "actors" is not an array.',
+      SHAPE_REMEDIATION,
+    );
   }
   const actors = (raw ?? []).map((entry, index) =>
     deployment === 'datacenter'

@@ -36,8 +36,10 @@
 // ---------------------------------------------------------------------------
 
 import { createJiraError } from '../core/errors.js';
-import type { JiraError, JiraRequestFn, QueryParams } from '../core/types.js';
+import type { JiraRequestFn, QueryParams } from '../core/types.js';
 import type { BudgetGuard } from './shared.js';
+import { isRecord } from './guards.js';
+import { responseShapeError } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants and caps
@@ -253,17 +255,23 @@ function isNumericId(value: string): boolean {
 
 /** `{ permissions: { KEY: { havePermission, … } } }` — the record, or a shape error. */
 function answersOf(data: unknown): Record<string, unknown> {
-  if (!isRecord(data)) throw shapeError('the body is not an object');
+  if (!isRecord(data))
+    throw responseShapeError('permissions', 'the body is not an object');
   const answers = data['permissions'];
-  if (!isRecord(answers)) throw shapeError('"permissions" is not an object');
+  if (!isRecord(answers))
+    throw responseShapeError('permissions', '"permissions" is not an object');
   return answers;
 }
 
 function toPermissionCheck(key: string, answer: unknown): PermissionCheck {
-  if (!isRecord(answer)) throw shapeError(`the entry for ${key} is not an object`);
+  if (!isRecord(answer))
+    throw responseShapeError('permissions', `the entry for ${key} is not an object`);
   const granted = answer['havePermission'];
   if (typeof granted !== 'boolean') {
-    throw shapeError(`the entry for ${key} has no boolean "havePermission"`);
+    throw responseShapeError(
+      'permissions',
+      `the entry for ${key} has no boolean "havePermission"`,
+    );
   }
   return {
     key,
@@ -280,15 +288,4 @@ function optionalString(
 ): Record<string, string> {
   const value = row[key];
   return typeof value === 'string' && value !== '' ? { [key]: value } : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function shapeError(what: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: `Jira's permissions response could not be read: ${what}.`,
-  });
 }

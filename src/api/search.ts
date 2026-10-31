@@ -50,6 +50,8 @@ import {
   type TokenPage,
   type TokenPaginateBase,
 } from './shared.js';
+import { isRecord } from './guards.js';
+import { responseShapeError } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants and caps
@@ -471,10 +473,11 @@ export async function searchIssuesDataCenter(
 function readDataCenterSearchPage(response: JiraResponse): ClassicPage<SearchIssue> {
   const data = response.data;
   const where = `/rest/api/2${DATACENTER_SEARCH_PATH}`;
-  if (!isRecord(data)) throw shapeError(`${where} did not return a JSON object`);
+  if (!isRecord(data))
+    throw responseShapeError('search', `${where} did not return a JSON object`);
   const rows = data.issues ?? [];
   if (!Array.isArray(rows)) {
-    throw shapeError(`${where} returned a non-array "issues" property`);
+    throw responseShapeError('search', `${where} returned a non-array "issues" property`);
   }
   return {
     items: rows.map(toSearchIssue),
@@ -506,7 +509,8 @@ export async function approximateCount(
 
   const data = response.data;
   if (!isRecord(data) || typeof data.count !== 'number' || !Number.isFinite(data.count)) {
-    throw shapeError(
+    throw responseShapeError(
+      'search',
       `${APPROXIMATE_COUNT_PATH} did not return a numeric "count" property`,
     );
   }
@@ -554,7 +558,10 @@ export async function countIssuesDataCenter(
     !Number.isInteger(data.total) ||
     data.total < 0
   ) {
-    throw shapeError(`${where} did not return a non-negative integer "total" property`);
+    throw responseShapeError(
+      'search',
+      `${where} did not return a non-negative integer "total" property`,
+    );
   }
   return { count: data.total, approximate: false };
 }
@@ -570,13 +577,16 @@ const DATACENTER_COUNT_FIELDS: readonly string[] = Object.freeze(['summary']);
 function readSearchPage(response: JiraResponse): TokenPage<SearchIssue> {
   const data = response.data;
   if (!isRecord(data)) {
-    throw shapeError(`${SEARCH_JQL_PATH} did not return a JSON object`);
+    throw responseShapeError('search', `${SEARCH_JQL_PATH} did not return a JSON object`);
   }
   const rows = data.issues;
   // A page with no `issues` array at all is legal on the last page of some
   // Jira builds; an `issues` that is present but not an array is not.
   if (rows !== undefined && !Array.isArray(rows)) {
-    throw shapeError(`${SEARCH_JQL_PATH} returned a non-array "issues" property`);
+    throw responseShapeError(
+      'search',
+      `${SEARCH_JQL_PATH} returned a non-array "issues" property`,
+    );
   }
   return {
     items: (rows ?? []).map(toSearchIssue),
@@ -589,14 +599,14 @@ function readSearchPage(response: JiraResponse): TokenPage<SearchIssue> {
 
 function toSearchIssue(row: unknown, index: number): SearchIssue {
   if (!isRecord(row)) {
-    throw shapeError(`issue at position ${index} is not a JSON object`);
+    throw responseShapeError('search', `issue at position ${index} is not a JSON object`);
   }
   const { id, key } = row;
   if (typeof id !== 'string' || id === '') {
-    throw shapeError(`issue at position ${index} has no string "id"`);
+    throw responseShapeError('search', `issue at position ${index} has no string "id"`);
   }
   if (typeof key !== 'string' || key === '') {
-    throw shapeError(`issue at position ${index} has no string "key"`);
+    throw responseShapeError('search', `issue at position ${index} has no string "key"`);
   }
   return { ...row, id, key, fields: isRecord(row.fields) ? row.fields : {} };
 }
@@ -734,17 +744,6 @@ function callerTokenExpired(cause: JiraError): JiraError {
 // 7. Small shared helpers
 // ---------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function shapeError(what: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: `Jira's search response could not be read: ${what}.`,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // 8. JQL parse (D146)
 // ---------------------------------------------------------------------------
@@ -803,10 +802,14 @@ export async function parseJql(options: ParseJqlOptions): Promise<ParseJqlResult
 
   const data = response.data;
   if (!isRecord(data) || !Array.isArray(data.queries)) {
-    throw shapeError(`${JQL_PARSE_PATH} did not return a "queries" array`);
+    throw responseShapeError(
+      'search',
+      `${JQL_PARSE_PATH} did not return a "queries" array`,
+    );
   }
   if (data.queries.length !== queries.length) {
-    throw shapeError(
+    throw responseShapeError(
+      'search',
       `${JQL_PARSE_PATH} answered ${String(data.queries.length)} queries for ${String(queries.length)} sent`,
     );
   }
@@ -838,7 +841,10 @@ function normalizeParseQueries(queries: readonly string[]): readonly string[] {
 
 function toParsedJql(row: unknown, index: number, sent: readonly string[]): ParsedJql {
   if (!isRecord(row)) {
-    throw shapeError(`${JQL_PARSE_PATH} queries[${String(index)}] is not an object`);
+    throw responseShapeError(
+      'search',
+      `${JQL_PARSE_PATH} queries[${String(index)}] is not an object`,
+    );
   }
   const errors = messageList(row.errors, `queries[${String(index)}].errors`);
   const warnings = messageList(row.warnings, `queries[${String(index)}].warnings`);
@@ -849,7 +855,10 @@ function toParsedJql(row: unknown, index: number, sent: readonly string[]): Pars
 function messageList(value: unknown, where: string): readonly string[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-    throw shapeError(`${JQL_PARSE_PATH} ${where} is not a list of messages`);
+    throw responseShapeError(
+      'search',
+      `${JQL_PARSE_PATH} ${where} is not a list of messages`,
+    );
   }
   return value;
 }

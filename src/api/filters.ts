@@ -53,21 +53,27 @@
 
 import { createJiraError } from '../core/errors.js';
 import {
-  type JiraError,
   type JiraRequestFn,
   type JiraRequestSpec,
   type JiraResponse,
 } from '../core/types.js';
 import {
-  budgetOf,
   DEFAULT_MAX_PAGES,
-  fetchAll,
   type BudgetGuard,
-  type ClassicCursor,
   type ClassicLoopResult,
   type ClassicPage,
 } from './shared.js';
 import { shapeDataCenterUser, type DataCenterUser } from './users.js';
+import { asRecord, compact, readNumber, readString } from './guards.js';
+import {
+  SHAPE_REMEDIATION,
+  requireField,
+  requireRecord,
+  requireText,
+  runClassic,
+  sendOne,
+  shapeError,
+} from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Endpoints, page size and the expand set
@@ -222,6 +228,7 @@ export function searchFilters(
 ): Promise<FilterSearchResult> {
   return runClassic(
     options,
+    FILTER_PAGE_SIZE,
     (cursor) => ({
       method: 'GET',
       path: FILTER_SEARCH_PATH,
@@ -309,8 +316,8 @@ export function createFilterRequest(input: CreateFilterInput): JiraRequestSpec {
     path: '/filter',
     pathTemplate: FILTER_CREATE_PATH,
     body: {
-      name: requireText(input.name, 'name'),
-      jql: requireText(input.jql, 'jql'),
+      name: requireFilterText(input.name, 'name'),
+      jql: requireFilterText(input.jql, 'jql'),
       ...(description === undefined || description === '' ? {} : { description }),
     },
   };
@@ -334,8 +341,8 @@ export function updateFilterRequest(input: UpdateFilterInput): JiraRequestSpec {
     path: `/filter/${id}`,
     pathTemplate: FILTER_PATH_TEMPLATE,
     body: {
-      name: requireText(input.name, 'name'),
-      jql: requireText(input.jql, 'jql'),
+      name: requireFilterText(input.name, 'name'),
+      jql: requireFilterText(input.jql, 'jql'),
       ...(input.description === undefined
         ? {}
         : { description: input.description.trim() }),
@@ -362,8 +369,8 @@ export async function updateFilter(options: UpdateFilterOptions): Promise<SavedF
       remediation: 'Name the field to change; jira_get_filter shows the current values.',
     });
   }
-  if (options.name !== undefined) requireText(options.name, 'name');
-  if (options.jql !== undefined) requireText(options.jql, 'jql');
+  if (options.name !== undefined) requireFilterText(options.name, 'name');
+  if (options.jql !== undefined) requireFilterText(options.jql, 'jql');
   const current = await getFilter({ ...options, filterId: id });
   const description = options.description ?? current.description;
   const response = await sendOne(
@@ -488,49 +495,6 @@ export async function getFilterDataCenter(
 // ---------------------------------------------------------------------------
 
 /**
- * Issue ONE request, stamping the caller's cancellation and call-budget
- * deadline onto it. A spec that set its own keeps it, mirroring
- * `withLoopControls` in `api/shared.ts` so single and looped reads behave
- * identically.
- */
-function sendOne(
-  options: FilterOptions,
-  spec: JiraRequestSpec,
-): Promise<JiraResponse<unknown>> {
-  return options.jira({
-    ...spec,
-    signal: spec.signal ?? options.signal,
-    deadlineAt: spec.deadlineAt ?? options.deadlineAt,
-  });
-}
-
-/**
- * Run the classic pagination loop. The `deadlineAt`/`clock` pair goes through
- * {@link budgetOf} rather than being spread raw, because {@link BudgetGuard}
- * is a UNION: spreading it would let a `deadlineAt` reach `fetchAll` beside an
- * absent clock, which is the exact pairing the union exists to prevent.
- */
-function runClassic<T>(
-  options: FilterPagedBase & BudgetGuard,
-  request: (cursor: ClassicCursor) => JiraRequestSpec,
-  readPage: (response: JiraResponse) => ClassicPage<T>,
-): Promise<ClassicLoopResult<T>> {
-  const base = {
-    jira: options.jira,
-    request,
-    readPage,
-    pageSize: options.pageSize ?? FILTER_PAGE_SIZE,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.maxPages === undefined ? {} : { maxPages: options.maxPages }),
-    ...(options.startAt === undefined ? {} : { startAt: options.startAt }),
-  };
-  // Narrowed through a plain `BudgetGuard` binding so the discriminant is read
-  // off the union itself, not off an intersection TS may not distribute.
-  const guard: BudgetGuard = options;
-  return fetchAll<T>({ ...base, ...budgetOf(guard) });
-}
-
-/**
  * Validate a filter id and return it as a path segment. Filter ids are always
  * positive integers, so anything else is a caller mistake — and the check
  * doubles as the guarantee that no unencoded caller string reaches the URL
@@ -548,17 +512,14 @@ function filterId(value: number | string): string {
   return text;
 }
 
-/** A required text field, trimmed; blank is a local `validation` error (D22). */
-function requireText(value: string, field: string): string {
-  const clean = value.trim();
-  if (clean.length === 0) {
-    throw createJiraError({
-      kind: 'validation',
-      reason: `A filter ${field} must not be blank.`,
-      remediation: `Pass a non-empty ${field}.`,
-    });
-  }
-  return clean;
+/** {@link requireText} worded for a filter field. */
+function requireFilterText(value: string, field: string): string {
+  return requireText(
+    value,
+    field,
+    `Pass a non-empty ${field}.`,
+    (what) => `A filter ${what} must not be blank.`,
+  );
 }
 
 /** Blank query filters are omitted from the URL rather than sent as `''`. */
@@ -572,37 +533,6 @@ function trimmed(value: string | undefined): string | undefined {
 // 6. Guards — wire `unknown` → the shapes above
 // ---------------------------------------------------------------------------
 
-function shapeError(message: string, remediation: string): JiraError {
-  return createJiraError({ kind: 'unexpected_shape', reason: message, remediation });
-}
-
-/** The one remediation every shape failure here shares. */
-const SHAPE_REMEDIATION =
-  'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).';
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireRecord(value: unknown, what: string): Record<string, unknown> {
-  const record = asRecord(value);
-  if (record === undefined) {
-    throw shapeError(
-      `Jira returned a ${what} that is not a JSON object.`,
-      SHAPE_REMEDIATION,
-    );
-  }
-  return record;
-}
-
-function readString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
 /** Filter ids arrive as strings on `/filter/{id}` and as numbers in search rows. */
 function readId(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
@@ -614,34 +544,6 @@ function readId(record: Record<string, unknown>, key: string): string | undefine
 function readBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
   const value = record[key];
   return typeof value === 'boolean' ? value : undefined;
-}
-
-function readNumber(record: Record<string, unknown>, key: string): number | undefined {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function requireField(value: string | undefined, field: string, what: string): string {
-  if (value === undefined) {
-    throw shapeError(
-      `Jira returned a ${what} without a usable "${field}".`,
-      SHAPE_REMEDIATION,
-    );
-  }
-  return value;
-}
-
-/**
- * Drop `undefined`-valued keys, so a mapped filter contains only what Jira
- * actually sent — `{"jql": undefined}` and an absent `jql` are the same JSON
- * but not the same object to a test or a consumer.
- */
-function compact<T extends Record<string, unknown>>(value: T): T {
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) out[key] = entry;
-  }
-  return out as T;
 }
 
 /**

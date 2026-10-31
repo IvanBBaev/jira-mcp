@@ -1,5 +1,6 @@
-// How the wire tier raises: one redacting error constructor, the abort/timeout
-// errors an attempt guard rejects with, and the shared remediation texts (D515).
+// How the wire tier raises: one redacting error constructor, the timeout error
+// an attempt guard rejects with (its abort error lives in `core/clock.ts`), and
+// the shared remediation texts (D515).
 
 import { JiraError } from '../types.js';
 import type { JiraErrorKind, Redactor } from '../types.js';
@@ -17,12 +18,6 @@ export const WRITE_OUTCOME_UNKNOWN =
  */
 export const WRITE_NOT_APPLIED =
   'The write was not applied. Send it again if it is still needed.';
-
-export function abortError(): Error {
-  const err = new Error('The operation was aborted');
-  err.name = 'AbortError';
-  return err;
-}
 
 export function timeoutError(): Error {
   const err = new Error('The request timed out');

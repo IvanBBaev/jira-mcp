@@ -2,7 +2,8 @@
 // queue waits under (D515). Both are clock sleeps, never real timers.
 
 import type { Clock } from '../types.js';
-import { abortError, timeoutError } from './failures.js';
+import { abortError } from '../clock.js';
+import { timeoutError } from './failures.js';
 
 /**
  * The abort envelope of ONE attempt: the signal every `fetch` of that attempt

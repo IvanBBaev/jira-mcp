@@ -6,6 +6,7 @@
 // retry/backoff sequences of `core/http.ts` are asserted exactly (CC-11…CC-14)
 // and a suite that waited 8 real seconds for one backoff would never be run.
 
+import { abortError } from '../clock.js';
 import type { Clock } from '../types.js';
 
 /** A {@link Clock} whose time is driven manually by the test. */
@@ -24,17 +25,6 @@ interface PendingSleep {
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
   onAbort?: () => void;
-}
-
-/**
- * The rejection a cancelled `sleep` produces. `name` is `AbortError` because
- * that is what callers branch on — the platform's own convention, and
- * `core/http.ts` distinguishes an abort from a timeout by it.
- */
-function abortError(): Error {
-  const err = new Error('The operation was aborted');
-  err.name = 'AbortError';
-  return err;
 }
 
 /**

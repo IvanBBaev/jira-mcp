@@ -69,7 +69,6 @@ import {
 import { DEFAULT_SEARCH_FIELDS, normalizeIssueIds } from './search.js';
 import {
   budgetOf,
-  fetchAll,
   searchPages,
   type BudgetGuard,
   type ClassicCursor,
@@ -79,6 +78,8 @@ import {
   type TokenPage,
   type TokenPaginateBase,
 } from './shared.js';
+import { isRecord } from './guards.js';
+import { runClassic, writeControls } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Constants and closed vocabularies
@@ -591,6 +592,7 @@ export async function listBoards(
   return agileCall({ rootProbe: options.projectKeyOrId === undefined }, () =>
     runClassic<AgileBoard>(
       options,
+      DEFAULT_AGILE_PAGE_SIZE,
       (cursor) => ({
         method: 'GET',
         root: 'agile',
@@ -625,6 +627,7 @@ export async function listSprints(
   return agileCall({ rootProbe: false }, () =>
     runClassic<AgileSprint>(
       options,
+      DEFAULT_AGILE_PAGE_SIZE,
       (cursor) => ({
         method: 'GET',
         root: 'agile',
@@ -746,6 +749,7 @@ async function listAgileIssuePage(
   const page = await agileCall({ rootProbe: false }, () =>
     runClassic<AgileIssue>(
       options,
+      DEFAULT_AGILE_PAGE_SIZE,
       (cursor) => ({
         method: 'GET',
         root: 'agile',
@@ -1481,51 +1485,6 @@ export async function deleteSprint(
 // ---------------------------------------------------------------------------
 
 /**
- * The per-request controls every write in this module forwards. Kept in one
- * helper so a new write cannot forget the deadline and quietly escape the call
- * budget; `safe` is deliberately NOT among them (JIRA-API.md §Rate limiting).
- */
-function writeControls(
-  options: AgileBase & BudgetGuard,
-): Pick<JiraRequestSpec, 'signal' | 'deadlineAt'> {
-  return {
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
-  };
-}
-
-/**
- * Run one classic agile loop: everything {@link fetchAll} needs, rebuilt field
- * by field from the caller's options.
- *
- * The rebuild is deliberate, and the budget half goes through
- * {@link budgetOf}, because {@link BudgetGuard} is a UNION — spreading the
- * options object would let a `deadlineAt` arrive next to an absent `clock`,
- * which is the exact pairing the union exists to make unrepresentable.
- * Rebuilding also keeps the route's own inputs (`boardId`, `state`, `fields`, …)
- * out of the loop options, so the loop only ever sees loop concerns.
- */
-function runClassic<T>(
-  options: AgilePagedBase & BudgetGuard,
-  request: (cursor: ClassicCursor) => JiraRequestSpec,
-  readPage: (response: JiraResponse) => ClassicPage<T>,
-): Promise<ClassicLoopResult<T>> {
-  const base = {
-    jira: options.jira,
-    request,
-    readPage,
-    pageSize: options.pageSize ?? DEFAULT_AGILE_PAGE_SIZE,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.maxPages === undefined ? {} : { maxPages: options.maxPages }),
-    ...(options.startAt === undefined ? {} : { startAt: options.startAt }),
-  };
-  // Narrowed through a plain `BudgetGuard` binding so the discriminant is read
-  // off the union itself, not off an intersection TS may not distribute.
-  const guard: BudgetGuard = options;
-  return fetchAll<T>({ ...base, ...budgetOf(guard) });
-}
-
-/**
  * Validate a board/sprint id and return it as a path segment. Agile ids are
  * always positive integers, so anything else is a caller mistake — and the
  * check doubles as the guarantee that no unencoded caller string reaches the
@@ -1844,10 +1803,6 @@ function narrowIssue(value: unknown, endpoint: string): AgileIssue {
     ...(typeof issue.id === 'string' ? { id: issue.id } : {}),
     ...(isRecord(issue.fields) ? { fields: issue.fields } : {}),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** `Array.isArray` narrowed to `unknown[]` instead of `any[]`. */

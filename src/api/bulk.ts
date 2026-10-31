@@ -49,13 +49,16 @@
 
 import { createJiraError } from '../core/errors.js';
 import { encodeSegment } from '../core/http-util.js';
-import {
-  JiraError,
-  type JiraRequestFn,
-  type JiraRequestSpec,
-  type JiraResponse,
-} from '../core/types.js';
+import { JiraError, type JiraRequestFn, type JiraRequestSpec } from '../core/types.js';
 import type { BudgetGuard } from './shared.js';
+import { asRecord, compact, readNumber, readString } from './guards.js';
+import {
+  requireField,
+  requireRecord,
+  requireWriteText,
+  sendOne,
+  writeControls,
+} from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Endpoints and closed vocabularies
@@ -331,7 +334,7 @@ export function submitBulkEditRequest(input: SubmitBulkEditInput): JiraRequestSp
         fieldId: 'labels',
         bulkEditMultiSelectFieldOption: input.labels.action,
         labels: multiSelectValues(input.labels.action, input.labels.values, 'labels').map(
-          (value) => ({ name: requireText(value, 'label', LABEL_REMEDIATION) }),
+          (value) => ({ name: requireWriteText(value, 'label', LABEL_REMEDIATION) }),
         ),
       },
     ];
@@ -351,7 +354,7 @@ export function submitBulkEditRequest(input: SubmitBulkEditInput): JiraRequestSp
           input.assignee.accountId === null
             ? null
             : {
-                accountId: requireText(
+                accountId: requireWriteText(
                   input.assignee.accountId,
                   'assignee accountId',
                   ASSIGNEE_REMEDIATION,
@@ -500,31 +503,6 @@ function mapProgress(body: Record<string, unknown>): BulkStatusResult {
 // 7. Wire plumbing and validation (D22 — every refusal names the field)
 // ---------------------------------------------------------------------------
 
-/** Forward exactly one request, stamping the caller's signal and deadline. */
-function sendOne(
-  options: BulkOptions,
-  spec: JiraRequestSpec,
-): Promise<JiraResponse<unknown>> {
-  return options.jira({
-    ...spec,
-    signal: spec.signal ?? options.signal,
-    deadlineAt: spec.deadlineAt ?? options.deadlineAt,
-  });
-}
-
-/**
- * The executor's half of the issues.ts §13 split: the controls the pure
- * builders must not stamp. Spread AFTER the builder's spec.
- */
-function writeControls(
-  options: BulkOptions,
-): Pick<JiraRequestSpec, 'signal' | 'deadlineAt'> {
-  return {
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
-  };
-}
-
 /** Run one call, appending the bulk permission hint to a refusal (CC-34 pattern). */
 async function bulkCall<T>(hint: string, run: () => Promise<T>): Promise<T> {
   try {
@@ -577,7 +555,7 @@ function requireIssues(issues: readonly string[]): string[] {
     });
   }
   return issues.map((issue) =>
-    requireText(issue, 'issue key or id', ISSUE_LIST_REMEDIATION),
+    requireWriteText(issue, 'issue key or id', ISSUE_LIST_REMEDIATION),
   );
 }
 
@@ -616,7 +594,7 @@ function multiSelectValues(
 
 /** Validate-and-encode ONE path segment (see `api/collab.ts` for the why). */
 function pathSegment(value: string, what: string, remediation: string): string {
-  return encodeSegment(requireText(value, what, remediation), what);
+  return encodeSegment(requireWriteText(value, what, remediation), what);
 }
 
 /**
@@ -634,69 +612,4 @@ function positiveId(value: string, what: string, remediation: string): string {
     });
   }
   return text;
-}
-
-/** A required non-empty string, trimmed (D22 — the refusal names the field). */
-function requireText(value: string, what: string, remediation: string): string {
-  const clean = value.trim();
-  if (clean === '') {
-    throw createJiraError({
-      kind: 'validation',
-      reason: `A ${what} is required and must not be empty. Nothing was sent.`,
-      remediation,
-    });
-  }
-  return clean;
-}
-
-const SHAPE_REMEDIATION =
-  'Re-run the call; a persistent mismatch means the Jira API changed (see docs/JIRA-API.md).';
-
-function shapeError(message: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: message,
-    remediation: SHAPE_REMEDIATION,
-  });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireRecord(value: unknown, what: string): Record<string, unknown> {
-  const record = asRecord(value);
-  if (record === undefined) {
-    throw shapeError(`Jira returned a ${what} that is not a JSON object.`);
-  }
-  return record;
-}
-
-function requireField(value: string | undefined, field: string, what: string): string {
-  if (value === undefined) {
-    throw shapeError(`Jira returned a ${what} without a usable "${field}".`);
-  }
-  return value;
-}
-
-function readString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function readNumber(record: Record<string, unknown>, key: string): number | undefined {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-/** Drop `undefined`-valued keys so optional result fields are ABSENT, not `undefined`. */
-function compact<T extends Record<string, unknown>>(value: T): T {
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) out[key] = entry;
-  }
-  return out as T;
 }

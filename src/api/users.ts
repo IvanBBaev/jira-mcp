@@ -46,6 +46,8 @@ import {
   type ClassicPage,
   type PageStopReason,
 } from './shared.js';
+import { isRecord } from './guards.js';
+import { responseShapeError } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // 1. Wire constants and caps
@@ -418,13 +420,16 @@ export async function getMyselfDataCenter(
   });
   const row = response.data;
   const what = `${MYSELF_PATH} response`;
-  if (!isRecord(row)) throw shapeError(`${what} is not a JSON object`);
+  if (!isRecord(row)) throw responseShapeError('user', `${what} is not a JSON object`);
   const name =
     typeof row['name'] === 'string' && row['name'] !== '' ? row['name'] : undefined;
   const key =
     typeof row['key'] === 'string' && row['key'] !== '' ? row['key'] : undefined;
   if (name === undefined && key === undefined) {
-    throw shapeError(`${what} has neither a string "name" nor a string "key"`);
+    throw responseShapeError(
+      'user',
+      `${what} has neither a string "name" nor a string "key"`,
+    );
   }
   const user: DataCenterSelf = {
     ...(name === undefined ? {} : { name }),
@@ -489,7 +494,8 @@ export async function searchUsersDataCenter(
     toUser: (row, what) => {
       const user = shapeDataCenterUser(row);
       if (user === undefined) {
-        throw shapeError(
+        throw responseShapeError(
+          'user',
           `${what} is not a Data Center user (a string "displayName" with a "name" or "key", and no "accountId")`,
         );
       }
@@ -907,7 +913,7 @@ function readUserPage<T>(
 ): ClassicPage<T> {
   const rows = response.data;
   if (!Array.isArray(rows)) {
-    throw shapeError(`${path} did not return a JSON array of users`);
+    throw responseShapeError('user', `${path} did not return a JSON array of users`);
   }
   return {
     items: rows.map((row, index) => toRow(row, `user at position ${index}`)),
@@ -933,11 +939,11 @@ function assignableWindow<T>(page: ClassicPage<T>, sent: ClassicCursor): Classic
 /** Narrow one user record. `accountId` is the identity; everything else is optional. */
 function toJiraUser(row: unknown, what: string): JiraUser {
   if (!isRecord(row)) {
-    throw shapeError(`${what} is not a JSON object`);
+    throw responseShapeError('user', `${what} is not a JSON object`);
   }
   const accountId = row['accountId'];
   if (typeof accountId !== 'string' || accountId === '') {
-    throw shapeError(`${what} has no string "accountId"`);
+    throw responseShapeError('user', `${what} has no string "accountId"`);
   }
   return {
     accountId,
@@ -1005,15 +1011,4 @@ function optionalString(
 ): Record<string, string> {
   const value = row[key];
   return typeof value === 'string' && value !== '' ? { [key]: value } : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function shapeError(what: string): JiraError {
-  return createJiraError({
-    kind: 'unexpected_shape',
-    reason: `Jira's user response could not be read: ${what}.`,
-  });
 }

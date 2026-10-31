@@ -22,11 +22,13 @@ import type { Clock } from './types.js';
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 /**
- * The rejection a cancelled `sleep` produces. `name` is `AbortError` because
- * that is what callers branch on — the platform convention, matched by
- * `createFakeClock` so code cannot tell the two clocks apart.
+ * The rejection a cancelled wait produces — a `sleep` here and in
+ * `createFakeClock`, a semaphore wait, an attempt guard. `name` is
+ * `AbortError` because that is what callers branch on (the platform
+ * convention; `core/http.ts` tells an abort from a timeout by it). Defined
+ * once, here, so every clock and wait rejects alike.
  */
-function abortError(): Error {
+export function abortError(): Error {
   const err = new Error('The operation was aborted');
   err.name = 'AbortError';
   return err;

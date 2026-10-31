@@ -62,6 +62,7 @@ import {
   unsafeHref,
   type AdfNode,
 } from './adf.js';
+import { isRecord } from './guards.js';
 
 /**
  * D112 — the tag the Data Center adapter puts on a mention node whose `attrs.id`
@@ -220,10 +221,6 @@ function unsupported(what: string, where?: string): JiraError {
     message: `Jira Data Center wiki markup cannot express ${what}${where === undefined ? '' : ` ${where}`}.`,
     remediation: `Rewrite the content using only ${SUBSET}.`,
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function children(node: AdfNode): readonly unknown[] {
