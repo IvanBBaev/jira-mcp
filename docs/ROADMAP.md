@@ -422,7 +422,7 @@ takes a number outside its row.
 
 | ID | Item | Source | Owns | IDs | Deps | Status | Est h |
 |---|---|---|---|---|---|---|---|
-| V3-54 | Typed DC assembly via `satisfies JiraApi`; remove `Partial<JiraApi>` and `as unknown as` | TSN-R2 | `src/api/datacenter.ts` | — | — | todo | 2 |
+| V3-54 | Typed DC assembly via `satisfies JiraApi`; remove `Partial<JiraApi>` and `as unknown as` | TSN-R2 | `src/api/datacenter.ts` | — | — | done 0513a80 (41 unserved members listed as typed `stub(...)`; stub-name test added to CC-263; outside Owns: `src/tools/datacenter.test.ts`) | 2 |
 | V3-55 | `createJiraError` as the only constructor: convert the ~40 direct `new JiraError(` sites, `no-restricted-syntax` rule | TSN-R3 | `src/core/errors.ts`, `eslint.config.js`, the sites in `src/core`, `src/mcp`, `src/api`, `src/tools/index.ts` | D536 | V3-10, V3-12 | todo | 3 |
 | V3-56 | Shared `api/guards.ts` and `api/wire.ts` (dedupe `isRecord` ×12, `shapeError` ×10, `send*`, `abortError`) | TSN-R4 | `src/api/guards.ts` (new), `src/api/wire.ts` (new), `src/api/*.ts`, `src/core/clock.ts` | — | — | todo | 4 |
 | V3-57 | Split `createProjectScope` (612 lines) after its matrix lands | TSN-R5 | `src/mcp/project-scope.ts` | — | V3-33 | todo | 3 |
