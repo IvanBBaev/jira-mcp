@@ -49,9 +49,9 @@ const SAFE_ALLOWLIST: Readonly<Record<string, string>> = {
     'Data Center count: a zero-row search, a read.',
   'src/api/search.ts › parseJql · POST JQL_PARSE_PATH':
     'JQL validation: Jira parses the queries and stores nothing.',
-  'src/api/issues.ts › getIssuesBulk · POST ISSUE_BULKFETCH_PATH':
+  'src/api/issues/bulk.ts › getIssuesBulk · POST ISSUE_BULKFETCH_PATH':
     'Issue bulkfetch: reads up to the cap of issues by key or id (D527).',
-  'src/api/issues.ts › getChangelogsBulk · POST CHANGELOG_BULKFETCH_PATH':
+  'src/api/issues/changelog.ts › getChangelogsBulk · POST CHANGELOG_BULKFETCH_PATH':
     'Changelog bulkfetch: reads the change history of many issues (D527).',
   "src/mcp/project-scope.ts › createProjectScope › assertIssues · POST deps.deployment === 'datacenter' ? '/search' : '/search/jql'":
     'The JIRA_PROJECTS guard resolving issue keys to projects: a search.',

@@ -46,7 +46,7 @@ import {
   type ClassicPage,
   type PageStopReason,
 } from './shared.js';
-import { isRecord } from './guards.js';
+import { asRecord, isRecord } from './guards.js';
 import { responseShapeError } from './wire.js';
 
 // ---------------------------------------------------------------------------
@@ -169,6 +169,25 @@ export function refuseAccountIdOnDataCenter(value: string | undefined): void {
     remediation:
       'Drop accountId and pass username — the `name` that user fields (assignee, reporter, watchers, jira_get_myself) return on Data Center.',
   });
+}
+
+/**
+ * A user object, or `undefined` when this record is not one. Recognised by
+ * `accountId` — Cloud identifies users by nothing else (JIRA-API.md §Users) —
+ * and everything else is dropped, `emailAddress` and `avatarUrls` included.
+ *
+ * Exported alongside {@link shapeIssueFields} for the tool ring.
+ */
+export function shapeUser(value: unknown): JiraUser | undefined {
+  const record = asRecord(value);
+  if (record === undefined || typeof record.accountId !== 'string') return undefined;
+  return {
+    accountId: record.accountId,
+    ...(typeof record.displayName === 'string'
+      ? { displayName: record.displayName }
+      : {}),
+    ...(typeof record.active === 'boolean' ? { active: record.active } : {}),
+  };
 }
 
 /**

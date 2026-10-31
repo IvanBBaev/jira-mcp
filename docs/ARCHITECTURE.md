@@ -88,6 +88,12 @@ core  ←  api  ←  mcp  ←  tools
   `meta.ts`, `users.ts`, `permissions.ts`, `agile.ts`, `adf.ts`, `shared.ts` for
   pagination helpers, `guards.ts` for the pure record readers and `wire.ts` for
   the shared send and failure helpers). No MCP concepts here.
+  - **`api/issues.ts`** is a re-export barrel over `api/issues/` (D517): the
+    issue surface split by concern (paths, read and write types, request
+    builders, executors, worklog time, read shaping, the classic list reader,
+    input normalization, errors) and then by sub-domain (reads, bulk,
+    changelog, deletes, worklog edit, issue links, remote links). Importers
+    use the barrel, never a module under `api/issues/`.
   - **`api/port.ts`** is the domain-level port (D106): `JiraApi` names every
     api-ring function a tool may call — each one that talks to Jira, and the
     converters that speak a wire body format — and `CLOUD_API` is the existing
