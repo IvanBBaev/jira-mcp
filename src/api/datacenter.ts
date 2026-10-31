@@ -327,8 +327,16 @@ function notServed(name: string): JiraError {
   });
 }
 
-/** A port member the Data Center adapter does not implement. */
-function stub(name: string): () => never {
+/** The port's function members: everything but the adapter's identity. */
+type ApiMember = Exclude<keyof JiraApi, 'deployment' | 'serves'>;
+
+/**
+ * A port member the Data Center adapter does not implement. `() => never` is
+ * assignable to every member's signature, so the stub needs no cast; the
+ * name is typed against the port, and a test checks each stub names its own
+ * key.
+ */
+function stub(name: ApiMember): () => never {
   return () => {
     throw notServed(name);
   };
@@ -369,7 +377,16 @@ const adfFromMarkdown: JiraApi['adfFromMarkdown'] = (text, options) => {
     : (tagDataCenterMentions(doc, usernames) as ReturnType<JiraApi['adfFromMarkdown']>);
 };
 
-const served: Partial<JiraApi> = {
+/**
+ * The Data Center adapter, written out member by member and checked with
+ * `satisfies JiraApi` (TSN-02): a served member must match the Cloud
+ * signature, and a member the port gains fails the build here until it is
+ * either served or stubbed on purpose. UNVERIFIED — see the header.
+ */
+export const DATACENTER_API: JiraApi = Object.freeze({
+  deployment: 'datacenter',
+  serves: DATACENTER_TOOLS,
+
   getMyself: getMyselfDataCenter,
   getMyPermissions: (options) =>
     getMyPermissions({ ...options, jira: onV2(options.jira) }),
@@ -502,20 +519,49 @@ const served: Partial<JiraApi> = {
   // Center does not have; the DC twin stays on the agile route and its offset
   // paging.
   listSprintIssues: listSprintIssuesDataCenter,
-};
 
-function buildDataCenterApi(): JiraApi {
-  const members: Record<string, unknown> = {};
-  for (const name of Object.keys(CLOUD_API)) {
-    if (name === 'deployment' || name === 'serves') continue;
-    members[name] = (served as Record<string, unknown>)[name] ?? stub(name);
-  }
-  return Object.freeze({
-    ...(members as unknown as JiraApi),
-    deployment: 'datacenter',
-    serves: DATACENTER_TOOLS,
-  });
-}
-
-/** The Jira Data Center adapter. UNVERIFIED — see the header. */
-export const DATACENTER_API: JiraApi = buildDataCenterApi();
+  // Not served on Data Center: each throws `unsupported` before any request.
+  // The registry never lists their tools (DATACENTER_TOOLS), so these are
+  // the backstop for a direct port call.
+  addRemoteLink: stub('addRemoteLink'),
+  closeSprint: stub('closeSprint'),
+  createFilter: stub('createFilter'),
+  deleteAttachment: stub('deleteAttachment'),
+  deleteComment: stub('deleteComment'),
+  deleteComponent: stub('deleteComponent'),
+  deleteIssue: stub('deleteIssue'),
+  deleteIssueLink: stub('deleteIssueLink'),
+  deleteRemoteLink: stub('deleteRemoteLink'),
+  deleteSprint: stub('deleteSprint'),
+  deleteVersion: stub('deleteVersion'),
+  deleteWorklog: stub('deleteWorklog'),
+  getAttachment: stub('getAttachment'),
+  getBoardConfiguration: stub('getBoardConfiguration'),
+  getBulkStatus: stub('getBulkStatus'),
+  getChangelogsBulk: stub('getChangelogsBulk'),
+  getComment: stub('getComment'),
+  getComponent: stub('getComponent'),
+  getComponentRelatedIssueCounts: stub('getComponentRelatedIssueCounts'),
+  getIssueLink: stub('getIssueLink'),
+  getRemoteLink: stub('getRemoteLink'),
+  getSprint: stub('getSprint'),
+  getTimeTrackingConfig: stub('getTimeTrackingConfig'),
+  getVersion: stub('getVersion'),
+  getVersionRelatedIssueCounts: stub('getVersionRelatedIssueCounts'),
+  getWorklog: stub('getWorklog'),
+  listBacklogIssues: stub('listBacklogIssues'),
+  listIssueTypes: stub('listIssueTypes'),
+  listLabels: stub('listLabels'),
+  listPriorities: stub('listPriorities'),
+  listRemoteLinks: stub('listRemoteLinks'),
+  listResolutions: stub('listResolutions'),
+  parseJql: stub('parseJql'),
+  rankIssues: stub('rankIssues'),
+  setEstimate: stub('setEstimate'),
+  submitBulkDelete: stub('submitBulkDelete'),
+  submitBulkEdit: stub('submitBulkEdit'),
+  updateFilter: stub('updateFilter'),
+  updateSprint: stub('updateSprint'),
+  updateWorklog: stub('updateWorklog'),
+  uploadAttachment: stub('uploadAttachment'),
+} satisfies JiraApi);

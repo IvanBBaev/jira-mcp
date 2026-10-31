@@ -1213,13 +1213,33 @@ test('CC-263: an unserved port member throws unsupported rather than calling Clo
   assert.equal(jira.calls.length, 0);
   // Every served member is a real implementation, not a stub.
   for (const name of Object.keys(CLOUD_API).filter((key) => key !== 'deployment')) {
-    assert.equal(
-      typeof (DATACENTER_API as unknown as Record<string, unknown>)[name],
-      'function',
-      name,
-    );
+    assert.equal(typeof Reflect.get(DATACENTER_API, name), 'function', name);
   }
   assert.ok(Object.isFrozen(DATACENTER_API));
+});
+
+test('CC-263: every Data Center stub names its own port member (TSN-02)', async () => {
+  // The adapter is an explicit literal (`satisfies JiraApi`), so a stub's
+  // name string is the only part the compiler cannot tie to its key.
+  const jira = createFakeJiraRequest();
+  let stubs = 0;
+  for (const name of Object.keys(CLOUD_API).filter((key) => key !== 'deployment')) {
+    const member: unknown = Reflect.get(DATACENTER_API, name);
+    assert.equal(typeof member, 'function', name);
+    try {
+      const out: unknown = Reflect.apply(member as () => unknown, undefined, [
+        { jira: jira.fn },
+      ]);
+      if (out instanceof Promise) await out.catch(() => undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (!message.includes('in this version of the server')) continue;
+      assert.equal((error as { kind?: string }).kind, 'unsupported', name);
+      assert.ok(message.startsWith(`${name} is not available on Jira Data Center`), name);
+      stubs += 1;
+    }
+  }
+  assert.ok(stubs > 0);
 });
 
 test('CC-263: adapterFor picks the adapter by deployment', () => {
