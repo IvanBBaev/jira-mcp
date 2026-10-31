@@ -20,6 +20,7 @@ import type { Telemetry } from '../telemetry.js';
 import type { JiraCredentials } from './credentials.js';
 import type { FailureReason } from './decide.js';
 import type { Fail } from './failures.js';
+import type { QuotaHold } from './quota-hold.js';
 
 export interface AttemptFailure {
   readonly reason: FailureReason;
@@ -76,6 +77,8 @@ export interface ClientContext {
   readonly concurrency: number;
   /** Consecutive transport/5xx failures per host, for `upstream_degraded`. */
   readonly consecutiveFailures: Map<string, number>;
+  /** Per host: no call is sent before a spent quota lifts (D534). */
+  readonly quotaHolds: Map<string, QuotaHold>;
 }
 
 /** What the attempt in flight has learned so far; reset at its start. */

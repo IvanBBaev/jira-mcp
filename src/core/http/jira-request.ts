@@ -45,11 +45,13 @@ import type { AttemptFacts, ReplayPolicy } from './decide.js';
 import { makeFail } from './failures.js';
 import { armAttempt } from './guard.js';
 import { noteFailure, noteSuccess } from './health.js';
+import { assertNotQuotaHeld, openQuotaHold } from './quota-hold.js';
 import { acquireSlot } from './slots.js';
 import {
   announceRateLimit,
   answeredFailure,
   lostFailure,
+  serverErrorWaitMs,
   successValue,
 } from './verdict.js';
 
@@ -252,6 +254,8 @@ function factsOf(
 async function runCall<T>(ctx: CallContext): Promise<JiraResponse<T>> {
   const { method, route, logger, telemetry } = ctx;
   const policy: ReplayPolicy = { replayable: ctx.replayable };
+  // A spent quota on this host refuses the call before the wire (D534).
+  assertNotQuotaHeld(ctx);
 
   for (let attempt = 1; ; attempt += 1) {
     const { outcome, attemptTimeoutMs } = await attemptOnce(ctx, attempt);
@@ -269,10 +273,17 @@ async function runCall<T>(ctx: CallContext): Promise<JiraResponse<T>> {
       seen.kind === 'result' && classified.kind === 'rate_limited'
         ? announceRateLimit(ctx, seen.result.headers, seen.limit, attempt)
         : 0;
+    if (decision.kind === 'fail' && decision.fail === 'quota' && seen.kind === 'result') {
+      openQuotaHold(ctx, seen.limit);
+    }
 
     if (decision.kind === 'retry') {
       const delayMs =
-        decision.reason === '429' ? rateLimitWaitMs : backoffMs(attempt, ctx.rng);
+        decision.reason === '429'
+          ? rateLimitWaitMs
+          : decision.reason === '5xx' && seen.kind === 'result'
+            ? serverErrorWaitMs(ctx, seen.result, attempt)
+            : backoffMs(attempt, ctx.rng);
       logger.emit('http_retry', {
         method,
         pathTemplate: route,
@@ -324,6 +335,7 @@ export function createJiraRequest(options: JiraHttpOptions): JiraRequestFn {
     pool: createSemaphorePool(concurrency),
     concurrency,
     consecutiveFailures: new Map<string, number>(),
+    quotaHolds: new Map(),
   };
   const defaults: ClientDefaults = {
     resolveCredentials:

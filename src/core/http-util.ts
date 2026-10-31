@@ -46,6 +46,8 @@ export const BACKOFF_CAP_MS = 8_000;
 export const BACKOFF_JITTER_MS = 250;
 /** Fractional jitter added on top of a capped `Retry-After` (0–20 %). */
 export const RETRY_AFTER_JITTER = 0.2;
+/** Longest quota hold (D534): one hourly quota window. */
+export const MAX_QUOTA_HOLD_MS = 3_600_000;
 
 /**
  * Hard ceiling on ONE attachment transfer, in bytes — 50 MiB, both directions
@@ -504,6 +506,10 @@ export function buildRequestUrl(
  * Retry arithmetic
  * ------------------------------------------------------------------------- */
 
+// A 429 is replayed for every method, POST and PUT included, with or without
+// `Retry-After` (D534): Jira's limiters answer 429 before the request is
+// processed, so nothing was applied. Atlassian's general advice is to retry
+// idempotent requests only; this is a recorded deviation, not an oversight.
 const RETRY_ANY_METHOD = new Set([429]);
 const RETRY_REPLAYABLE_ONLY = new Set([502, 503, 504]);
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -544,7 +550,13 @@ function unitRandom(rng: Rng): number {
   return Math.min(0.999999, Math.max(0, value));
 }
 
-/** `min(500 · 2^(attempt-1), 8000)` plus 0–250 ms of injected jitter. */
+/**
+ * `min(500 · 2^(attempt-1), 8000)` plus 0–250 ms of injected jitter.
+ *
+ * Lower than Atlassian's suggested 2–5 s start on purpose (D534): an agent
+ * waits on every call inside a 120 s budget, and a server's own `Retry-After`
+ * (429, and 503 since D534) still sets the floor when one is sent.
+ */
 export function backoffMs(attempt: number, rng: Rng): number {
   const n = Math.max(1, Math.floor(attempt));
   const base = Math.min(BACKOFF_BASE_MS * 2 ** (n - 1), BACKOFF_CAP_MS);

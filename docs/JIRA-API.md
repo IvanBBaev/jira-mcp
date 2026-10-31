@@ -918,6 +918,22 @@ adapter before a request exists rather than mapped to `leadUserName`.
     `jira-per-issue-on-write` follow the rule above; the per-issue one tells
     the model to slow its writes to that issue. Unknown reason values are
     dropped, never echoed;
+  - **a spent quota holds the host (D534):** after a quota 429 that names a
+    reset instant (`Retry-After`, `X-RateLimit-Reset` or the `RateLimit`
+    reset), every later call to the same host fails locally as
+    `rate_limited`, before the wire, until that instant (at most one hour,
+    `MAX_QUOTA_HOLD_MS`). The message says the call was not sent and names
+    the instant; `httpStatus` is absent. The call made at the instant is
+    sent. A quota 429 with no reset instant holds nothing. This follows
+    Atlassian's advice to pause all requests until the window resets; it is
+    not the host-health breaker D13 rules out;
+  - **429 on an unsafe write is replayed (D534):** a POST or PUT answered
+    429 is retried under the rule above, with or without `Retry-After`.
+    Atlassian's rate-limiting page says to retry idempotent requests only;
+    the deviation rests on Jira's limiters answering 429 before the request
+    is processed, so nothing was applied. The per-issue write limiter is the
+    case that needs it most. A 5xx or transport failure on an unsafe write
+    is still never replayed;
   - `502/503/504` + transport errors: retried only for **GET** requests
     (`isIdempotent` in the donor is deliberately GET-only — Jira PUTs can carry
     non-idempotent `update` add/remove clauses, so PUT is NOT replayed), plus
@@ -933,7 +949,12 @@ adapter before a request exists rather than mapped to `leadUserName`.
     was applied — do not send it again, read it back (CC-205);
   - backoff `min(500·2^(attempt−1), 8000) + 0–250 ms jitter` (the first retry
     waits ~500 ms; jitter from an injected RNG for test determinism), attempts
-    capped (default 3);
+    capped (default 3). **A retryable 503 that carries `Retry-After` waits
+    `max(Retry-After capped at 60 s + 0–20 % jitter, backoff)` (D534)**; a
+    502 or 504 and a 503 without a usable header wait the backoff. The base
+    stays below Atlassian's suggested 2–5 s start (D534): an agent waits on
+    every call inside the 120 s budget, four 2–30 s waits would spend most of
+    it, and the server's own `Retry-After` sets the floor when it sends one;
   - per-host concurrency semaphore (default 4);
   - the whole tool call runs under a wall-clock budget `JIRA_CALL_BUDGET_MS`
     (default 120 s) — retry waits and semaphore queueing count against it; on

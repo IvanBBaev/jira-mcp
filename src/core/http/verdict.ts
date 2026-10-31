@@ -63,6 +63,26 @@ export function announceRateLimit(
   return waitMs;
 }
 
+/**
+ * How long a replayable request waits before retrying a 5xx. A 503 that
+ * carries `Retry-After` waits at least that long (capped at 60 s, plus the
+ * same 0–20 % jitter a 429 gets), and never less than the backoff (D534).
+ * Every other 5xx, and a 503 without a usable header, waits the backoff.
+ */
+export function serverErrorWaitMs(
+  ctx: CallContext,
+  result: AttemptResult,
+  attempt: number,
+): number {
+  const { clock, rng } = ctx;
+  const backoff = backoffMs(attempt, rng);
+  if (result.status !== 503) return backoff;
+  const serverMs = parseRetryAfterMs(result.headers['retry-after'], clock.now());
+  const cappedMs = serverMs === undefined ? 0 : capRetryAfterMs(serverMs);
+  if (cappedMs === 0) return backoff;
+  return Math.max(jitterMs(cappedMs, RETRY_AFTER_JITTER, rng), backoff);
+}
+
 /** The error for a lost response (no status, or a body lost after one). */
 export function lostFailure(
   ctx: CallContext,

@@ -80,7 +80,11 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
    - A `maxResults` above a tool's cap is clamped with a `clamped` hint
      instead of failing validation.
    - A 429 for a spent hourly quota fails at once with the reset time
-     instead of retrying until the call budget runs out.
+     instead of retrying until the call budget runs out. Until that time,
+     later calls to the same site fail the same way without being sent
+     (at most one hour).
+   - A 503 that says when to come back (`Retry-After`) is retried after
+     that wait, capped at 60 seconds, instead of after half a second.
    - Field, status, link-type, create-metadata and user-search answers are
      cached for a few minutes; see `JIRA_META_CACHE_TTL_S`.
    - `output: "file"` exports land in `JIRA_MEDIA_DIR/exports/` (created

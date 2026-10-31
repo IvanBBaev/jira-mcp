@@ -4290,3 +4290,34 @@ fake handles, and the download peak is measured on the byte sink.
   message, in one request.
 - **CC-5289** — the `jira_get_issue` schema accepts 1000 entries in `issues`
   and refuses 1001; the description states both caps and the conditions.
+
+## Retry alignment (D534, 2026-10-31)
+
+- **CC-5290** — a GET answered 503 with `Retry-After: 3` waits 3 s, then
+  retries; no `rate_limited` event, since a 503 is not a 429.
+- **CC-5291** — a 503 with `Retry-After: 0`, an unparseable value or no header
+  waits the plain backoff (500 ms, then 1 s).
+- **CC-5292** — a 503 with a day-long `Retry-After` waits at most 60 s plus
+  20 % jitter.
+- **CC-5293** — a 503 `Retry-After` in HTTP-date form is honoured.
+- **CC-5294** — `Retry-After` on a 502 or 504 is not read; the backoff applies.
+- **CC-5295** — an unsafe POST answered 503 with `Retry-After` is still an
+  `ambiguous_write` after one request.
+- **CC-5296** — after a quota 429 with a reset instant, the next call to the
+  same host is `rate_limited` with nothing sent, no `httpStatus`, the reset
+  instant in the message and a `rate_limited` event.
+- **CC-5297** — the hold refuses a call one millisecond before the reset
+  instant and sends the call made at it.
+- **CC-5298** — a hold on one host does not refuse a call to another.
+- **CC-5299** — a quota 429 with no reset instant opens no hold.
+- **CC-5300** — a reset instant ten days out holds for one hour only.
+- **CC-5301** — a burst or per-issue 429 opens no hold.
+- **CC-5302** — the hold takes its instant from `X-RateLimit-Reset` when
+  `Retry-After` is absent.
+- **CC-5303** — an unsafe write during a hold is refused with nothing sent.
+- **CC-5304** — of two quota 429s, the later reset instant wins; a shorter one
+  does not shrink the hold.
+- **CC-5305** — a POST answered 429 without `Retry-After` is replayed after
+  the backoff with the same body (the JIR-05 pin).
+- **CC-5306** — a POST answered with a per-issue 429 is replayed after its
+  `Retry-After`.
