@@ -96,6 +96,10 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
    - Under `JIRA_TRANSPORT=http`, a `JIRA_HTTP_TOKEN` shorter than 32
      characters stops the server at startup. Replace it with
      `openssl rand -hex 32` and update the client that sends it.
+   - `jira_update_issue` refuses a text or markdown `description` that
+     would replace a stored one holding tables, panels, media or other
+     content a string cannot carry, and names what would be lost. Pass
+     `acceptLoss: true` to replace it anyway, or send an ADF document.
 
 ### Added
 
@@ -210,6 +214,13 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, 
 
 ### Changed
 
+- `jira_update_issue` with a text or markdown `description` first reads the
+  stored one. If it holds content a string cannot carry (tables, panels,
+  media, status lozenges, coloured text …), the update is refused before
+  anything is planned or sent, naming what would be lost. `acceptLoss: true`
+  replaces it anyway, and the plan's `diff` row for `description` then lists
+  the loss under `lost`. A raw ADF document, `null` and Data Center are not
+  checked.
 - Sprint and backlog reads on Jira Cloud use `/rest/software/1.0`, with a
   one-time fallback to `/rest/agile/1.0` when the new route refuses a first
   page (the result then carries `rootFallback: true` and a `root_fallback`

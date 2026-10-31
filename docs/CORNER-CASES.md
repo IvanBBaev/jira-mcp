@@ -4351,3 +4351,29 @@ fake handles, and the download peak is measured on the byte sink.
 - **CC-5324** — a read with complete comments raises no hint and no field.
 - **CC-5325** — both software tools send the session ring as `reconcileIssues`.
 - **CC-5326** — an expired ring sends no `reconcileIssues`.
+
+## Rich-content loss on a description replace (V3-53, 2026-10-31)
+
+- **CC-5330** — `richTextLoss` names the node and mark types outside the
+  writable subset (doc, paragraph, text, hardBreak, heading, bullet and
+  ordered lists, listItem, codeBlock, mention; marks strong, em, code, link),
+  deduplicated in document order. Implied children (tableRow, tableHeader,
+  tableCell, media, taskItem, decisionItem) are not listed; their container
+  is. A value that is not an ADF document measures as no loss. Each list is
+  capped at 20 entries and the walk stops at the node-depth cap, so a cyclic
+  or hostile document ends.
+- **CC-5331** — `jira_update_issue` with a string `description` reads the live
+  description (raw) first; if it holds anything a string cannot carry, the
+  call is refused as `validation` naming the loss (marks as `<type> mark`) and
+  nothing is planned or written. Same in plan and apply mode.
+- **CC-5332** — with `acceptLoss: true` the update goes through and the plan's
+  `diff` row for `description` carries `lost: [...]`.
+- **CC-5333** — a lossless replace carries no `lost` key.
+- **CC-5334** — a raw ADF document or `null` is not measured: no read precedes
+  the write.
+- **CC-5335** — `acceptLoss` without a string `description` is refused by the
+  schema at path `acceptLoss`.
+- **CC-5336** — Data Center stores wiki markup, so nothing is measured and no
+  read is spent.
+- **CC-5337** — a failed read of the live description fails the call; a loss
+  that cannot be measured is not assumed to be none.

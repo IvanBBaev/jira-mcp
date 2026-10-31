@@ -53,7 +53,9 @@ import type {
   TransitionIssueResult,
   UpdateIssueResult,
 } from '../api/issues.js';
+import type { RichTextLoss } from '../api/adf.js';
 import type { JiraApi } from '../api/port.js';
+import { createJiraError } from '../core/errors.js';
 import type { JiraError } from '../core/types.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';
 import { errorResultOf } from '../mcp/errors.js';
@@ -554,21 +556,95 @@ const updateIssueInput = writeToolInput({
     .describe('Default true, like Jira. false suppresses the change notification.'),
   format: writeFormatArg,
   resolveMentions: resolveMentionsArg,
+  acceptLoss: z
+    .boolean()
+    .optional()
+    .describe(
+      'Replace a string description even though the live one holds content a ' +
+        'string cannot carry (tables, panels, media). Default false: such an ' +
+        'update is refused and names what would be lost.',
+    ),
 }).superRefine((value, ctx) => {
   refuseFormatOnRawAdf(ctx, value.format, 'description', value.description);
   refuseResolveWithoutMarkdown(ctx, value.format, value.resolveMentions);
+  refuseAcceptLossWithoutText(ctx, value.description, value.acceptLoss);
 });
+
+/**
+ * CC-5335: `acceptLoss` answers one question — may a STRING replace a richer
+ * stored description? With no description, a raw document (the caller wrote the
+ * whole tree) or `null` (clearing is the stated intent) there is no question.
+ */
+function refuseAcceptLossWithoutText(
+  ctx: z.RefinementCtx,
+  description: string | Record<string, unknown> | null | undefined,
+  acceptLoss: boolean | undefined,
+): void {
+  if (acceptLoss !== undefined && typeof description !== 'string') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['acceptLoss'],
+      message:
+        'acceptLoss only applies to a string description; a raw ADF document or ' +
+        'null replaces the field as given. Drop acceptLoss.',
+    });
+  }
+}
+
+/**
+ * Whether this update replaces the description with a string whose loss can be
+ * measured. Data Center stores wiki markup, not ADF, so there is no structure
+ * to compare and no read is spent on it (CC-5336).
+ */
+function measuresLoss(ctx: ToolCtx, description: unknown): boolean {
+  return typeof description === 'string' && ctx.api.deployment !== 'datacenter';
+}
+
+/** A loss as one list: node types as they are, mark types labelled as marks. */
+function lossLabels(loss: RichTextLoss): readonly string[] {
+  return [...loss.nodes, ...loss.marks.map((mark) => `${mark} mark`)];
+}
+
+/**
+ * JIR-11 / CC-5331: a string description is rebuilt as the markdown subset,
+ * so whatever the live document holds outside it is dropped by the replace.
+ * The live value is read (a GET, so it travels in plan and apply alike, like
+ * the transition lookup) and the update is refused — nothing planned, nothing
+ * sent — unless the caller said `acceptLoss: true`. A read failure fails the
+ * call: a loss that cannot be measured is not assumed to be none.
+ */
+async function refuseDescriptionLoss(ctx: ToolCtx, args: UpdateIssueArgs): Promise<void> {
+  if (!measuresLoss(ctx, args.description) || args.acceptLoss === true) return;
+  const detail = await ctx.api.getIssue({
+    ...callBase(ctx),
+    issue: args.issue,
+    fields: ['description'],
+    raw: true,
+  });
+  const lost = lossLabels(ctx.api.richTextLoss(detail.fields['description']));
+  if (lost.length === 0) return;
+  throw createJiraError({
+    kind: 'validation',
+    reason:
+      `Replacing the description of ${args.issue} with a string would drop content ` +
+      `a string cannot carry: ${lost.join(', ')}. Nothing was sent to Jira.`,
+    remediation:
+      'To keep it, read the issue with jira_get_issue (raw: true) and pass an ADF ' +
+      'document that holds it. To replace it anyway, repeat the call with ' +
+      'acceptLoss: true.',
+  });
+}
 
 export const updateIssueTool = defineTool({
   name: 'jira_update_issue',
   title: 'Update issue',
   description:
     'Update fields on one issue. REPLACE semantics: description replaces the WHOLE ' +
-    'rich-text field, so tables and panels in the old value are lost — never "append" ' +
-    'this way. labels replaces the whole list; labelsAdd / labelsRemove edit it ' +
-    'incrementally. parent: null un-parents, assigneeAccountId: null unassigns. ' +
-    'format: "markdown" parses a string description. Status is not settable here — use ' +
-    'jira_transition_issue.',
+    'rich-text field — never "append" this way; a string that would drop tables, ' +
+    'panels or media is refused unless acceptLoss: true. labels replaces the whole ' +
+    'list; labelsAdd / labelsRemove edit it incrementally. parent: null un-parents, ' +
+    'assigneeAccountId: null unassigns. format: "markdown" parses a string ' +
+    'description. Status is not settable here — use jira_transition_issue.',
   package: 'issues-write',
   annotations: DESTRUCTIVE_WRITE_ANNOTATIONS,
   writeTier: 'standard',
@@ -579,6 +655,7 @@ export const updateIssueTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<UpdateIssueResult>> =>
     guarded(async () => {
+      await refuseDescriptionLoss(ctx, args);
       const resolution = await resolveCallMentions(
         ctx,
         args.description,
@@ -609,12 +686,20 @@ export const updateIssueTool = defineTool({
   planContext: async (args, ctx): Promise<PlanContext> => {
     const touched = updatedSystemFields(args);
     const custom = Object.keys(args.fields ?? {}).filter((id) => !touched.includes(id));
-    const read = await readIssueFields(ctx, args.issue, [...touched, ...custom]);
+    // A string description is measured against the stored ADF (CC-5332), so
+    // the read keeps rich text raw; the cell compacts either form to words.
+    const measure = measuresLoss(ctx, args.description);
+    const read = await readIssueFields(ctx, args.issue, [...touched, ...custom], {
+      raw: measure,
+    });
     const now = read.fields;
     const diff: PlanFieldChange[] = [
-      ...touched.map((field) =>
-        fieldChange(field, now[field], updateTarget(field, args, now[field])),
-      ),
+      ...touched.map((field) => {
+        const row = fieldChange(field, now[field], updateTarget(field, args, now[field]));
+        if (!measure || field !== 'description') return row;
+        const lost = lossLabels(ctx.api.richTextLoss(now[field]));
+        return lost.length === 0 ? row : { ...row, lost };
+      }),
       ...custom.map((id) => fieldChange(id, now[id], args.fields?.[id])),
     ];
     return issueContext(diff, read);

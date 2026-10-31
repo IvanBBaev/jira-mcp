@@ -20,8 +20,9 @@
 //
 //   * IN: every function that talks to Jira (it takes a `jira` request
 //     function), and every converter whose output or input is a WIRE BODY
-//     FORMAT — `adfFromMarkdown`, `extractMentions`, `shapeIssueFields` — since
-//     ADF is exactly what a Data Center adapter would replace.
+//     FORMAT — `adfFromMarkdown`, `extractMentions`, `richTextLoss`,
+//     `shapeIssueFields` — since ADF is exactly what a Data Center adapter
+//     would replace.
 //   * OUT: constants, types, and pure helpers whose meaning does not depend on
 //     the backend (`resolveTransitionId`, `startedInstant`, `filterFields`).
 //     Tools keep importing those directly. `src/tools/port-boundary.test.ts`
@@ -34,7 +35,7 @@
 // adapter conforms to it rather than the tools conforming to two.
 // ---------------------------------------------------------------------------
 
-import { adfFromMarkdown, extractMentions } from './adf.js';
+import { adfFromMarkdown, extractMentions, richTextLoss } from './adf.js';
 import {
   closeSprint,
   updateSprint,
@@ -161,6 +162,7 @@ export interface JiraApi {
   // --- wire body format (ADF on Cloud) ---
   readonly adfFromMarkdown: typeof adfFromMarkdown;
   readonly extractMentions: typeof extractMentions;
+  readonly richTextLoss: typeof richTextLoss;
   readonly shapeIssueFields: typeof shapeIssueFields;
 
   // --- agile ---
@@ -291,6 +293,7 @@ export const CLOUD_API: JiraApi = Object.freeze({
 
   adfFromMarkdown,
   extractMentions,
+  richTextLoss,
   shapeIssueFields,
 
   closeSprint,

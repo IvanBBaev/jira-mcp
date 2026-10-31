@@ -439,6 +439,9 @@ const served: Partial<JiraApi> = {
   // tagged here and written as `[~username]`, so a plan shows them too.
   adfFromMarkdown,
   extractMentions: CLOUD_API.extractMentions,
+  // A Data Center description is a wiki STRING, which measures as no loss:
+  // there is no ADF structure to compare against the writable subset.
+  richTextLoss: CLOUD_API.richTextLoss,
   resolveMentionNames,
   createIssue: (options) => {
     refuseAccountId('assigneeAccountId', options.assigneeAccountId);

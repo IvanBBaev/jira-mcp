@@ -230,7 +230,7 @@ Issue changes: creation, fields, workflow transitions, comments and comment edit
 | Tool | Title | Access | Since | What it does |
 | --- | --- | --- | --- | --- |
 | `jira_create_issue` | Create issue | write · standard | 0.9.0 | Create one issue. project and issueType are instance-specific: jira_list_projects and jira_get_create_meta resolve them, and the latter names the custom fields the project requires. |
-| `jira_update_issue` | Update issue | write · standard | 0.9.0 | Update fields on one issue. REPLACE semantics: description replaces the WHOLE rich-text field, so tables and panels in the old value are lost — never "append" this way. |
+| `jira_update_issue` | Update issue | write · standard | 0.9.0 | Update fields on one issue. |
 | `jira_transition_issue` | Transition issue | write · standard | 0.9.0 | Move one issue through its workflow. |
 | `jira_add_comment` | Add comment | write · standard | 0.9.0 | Add a comment to one issue. body takes plain text (converted to ADF) or a raw ADF document; format: "markdown" parses a string body as the markdown subset. |
 | `jira_update_comment` | Update comment | write · standard | 0.9.0 | Edit one existing comment. |

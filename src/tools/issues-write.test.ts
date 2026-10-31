@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { adfFromMarkdown } from '../api/adf.js';
+import { DATACENTER_API } from '../api/datacenter.js';
 import { CLOUD_API } from '../api/port.js';
 import { errorFromResponse } from '../core/errors.js';
 import {
@@ -64,6 +65,7 @@ const ASSIGNEE_ROUTE = `PUT /rest/api/3/issue/${KEY}/assignee`;
 const WORKLOG_ROUTE = `POST /rest/api/3/issue/${KEY}/worklog`;
 const LINK_ROUTE = 'POST /rest/api/3/issueLink';
 const MYSELF_ROUTE = 'GET /rest/api/3/myself';
+const GET_ISSUE_ROUTE = `GET /rest/api/3/issue/${KEY}`;
 
 /** 2026-08-07T10:00:00.000Z — the instant every call in this file runs at. */
 const NOW = Date.UTC(2026, 7, 7, 10, 0, 0);
@@ -100,6 +102,16 @@ function adfDoc(text: string): Record<string, unknown> {
     content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
   };
 }
+
+/** `GET /issue/{key}` — a description a string can replace losslessly. // synthetic */
+const PLAIN_ISSUE = jiraOk({
+  id: '10001',
+  key: KEY,
+  fields: {
+    description: adfDoc('The old body.'),
+    updated: '2026-08-07T09:00:00.000+0000',
+  },
+});
 
 /** `POST /issue` — 201. // synthetic */
 const CREATED_BODY = {
@@ -484,7 +496,9 @@ test('CC-31: labelsAdd/labelsRemove build an incremental update, never a replace
 });
 
 test('CC-31: description replaces the whole rich-text field, and the description says so', async () => {
-  const fake = createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT);
+  const fake = createFakeJiraRequest()
+    .on(GET_ISSUE_ROUTE, PLAIN_ISSUE)
+    .on(UPDATE_ROUTE, NO_CONTENT);
 
   await updateIssueTool.handler(
     { issue: KEY, description: 'The new body.', parent: null, notifyUsers: false },
@@ -499,6 +513,176 @@ test('CC-31: description replaces the whole rich-text field, and the description
 
   assert.match(updateIssueTool.description, /replaces the WHOLE rich-text field/);
   assert.match(updateIssueTool.description, /labelsAdd/);
+});
+
+/** A live description holding a table, a media group and a coloured run. // synthetic */
+const RICH_DESCRIPTION = {
+  type: 'doc',
+  version: 1,
+  content: [
+    {
+      type: 'paragraph',
+      content: [
+        {
+          type: 'text',
+          text: 'Red',
+          marks: [{ type: 'textColor', attrs: { color: '#ff0000' } }],
+        },
+      ],
+    },
+    {
+      type: 'table',
+      content: [
+        {
+          type: 'tableRow',
+          content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [] }] }],
+        },
+      ],
+    },
+    {
+      type: 'mediaSingle',
+      content: [{ type: 'media', attrs: { id: 'm-1', type: 'file' } }],
+    },
+  ],
+};
+
+const RICH_ISSUE = jiraOk({
+  id: '10001',
+  key: KEY,
+  fields: { description: RICH_DESCRIPTION, updated: '2026-08-07T09:00:00.000+0000' },
+});
+
+test('CC-5331: a string description over a table and media is refused, naming both, and nothing is written', async () => {
+  const fake = createFakeJiraRequest().on(GET_ISSUE_ROUTE, RICH_ISSUE);
+
+  const result = await updateIssueTool.handler(
+    { issue: KEY, description: 'The new body.' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'validation');
+  assert.match(result.error?.reason ?? '', /table, mediaSingle, textColor mark/);
+  assert.match(result.error?.remediation ?? '', /acceptLoss: true/);
+  // Only the read went out — the PUT is unrouted, so reaching it would throw.
+  assert.deepEqual(
+    fake.calls.map((call) => call.method),
+    ['GET'],
+  );
+});
+
+test('CC-5332: with acceptLoss the plan lists the table and the media in the description row', async () => {
+  const fake = createFakeJiraRequest().on(GET_ISSUE_ROUTE, RICH_ISSUE);
+  assert.ok(updateIssueTool.planContext !== undefined);
+
+  const context = await updateIssueTool.planContext(
+    updateIssueTool.input.parse({
+      issue: KEY,
+      description: 'The new body.',
+      acceptLoss: true,
+    }),
+    ctxOf(fake),
+  );
+
+  const row = context.diff?.find((change) => change.field === 'description');
+  assert.deepEqual(row?.lost, ['table', 'mediaSingle', 'textColor mark']);
+});
+
+test('CC-5332: with acceptLoss the apply replaces the description', async () => {
+  const fake = createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT);
+
+  const result = await updateIssueTool.handler(
+    { issue: KEY, description: 'The new body.', acceptLoss: true },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    nested(lastBody(fake), 'fields')['description'],
+    adfDoc('The new body.'),
+  );
+});
+
+test('CC-5333: a lossless replace plans a description row without a lost list', async () => {
+  const fake = createFakeJiraRequest().on(GET_ISSUE_ROUTE, PLAIN_ISSUE);
+  assert.ok(updateIssueTool.planContext !== undefined);
+
+  const context = await updateIssueTool.planContext(
+    updateIssueTool.input.parse({ issue: KEY, description: 'The new body.' }),
+    ctxOf(fake),
+  );
+
+  const row = context.diff?.find((change) => change.field === 'description');
+  assert.ok(row !== undefined);
+  assert.equal(row.lost, undefined);
+});
+
+test('CC-5334: a raw ADF document or null is not measured — no read precedes the write', async () => {
+  for (const description of [RICH_DESCRIPTION, null]) {
+    const fake = createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT);
+
+    const result = await updateIssueTool.handler(
+      { issue: KEY, description },
+      ctxOf(fake),
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(
+      fake.calls.map((call) => call.method),
+      ['PUT'],
+    );
+  }
+});
+
+test('CC-5335: acceptLoss without a string description is refused by the schema', () => {
+  for (const extra of [{}, { description: adfDoc('Raw.') }, { description: null }]) {
+    const parsed = updateIssueTool.input.safeParse({
+      issue: KEY,
+      ...extra,
+      acceptLoss: true,
+    });
+    assert.equal(parsed.success, false, JSON.stringify(extra));
+    assert.deepEqual(parsed.success ? undefined : parsed.error.issues[0]?.path, [
+      'acceptLoss',
+    ]);
+  }
+});
+
+test('CC-5336: Data Center stores wiki markup — a string description is sent without a measuring read', async () => {
+  const fake = createFakeJiraRequest().on(`PUT /rest/api/2/issue/${KEY}`, NO_CONTENT);
+
+  const result = await updateIssueTool.handler(
+    { issue: KEY, description: 'The new body.' },
+    { ...ctxOf(fake), api: DATACENTER_API },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    fake.calls.map((call) => call.method),
+    ['PUT'],
+  );
+});
+
+test('CC-5337: a failed read of the live description fails the call — loss is never assumed none', async () => {
+  const fake = createFakeJiraRequest().on(
+    GET_ISSUE_ROUTE,
+    jiraErr(
+      errorFromResponse({
+        status: 403,
+        body: { errorMessages: ['You do not have permission.'], errors: {} },
+        method: 'GET',
+        pathTemplate: '/issue/{issueIdOrKey}',
+      }),
+    ),
+  );
+
+  const result = await updateIssueTool.handler(
+    { issue: KEY, description: 'The new body.' },
+    ctxOf(fake),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(fake.calls.length, 1);
 });
 
 test('jira_update_issue clears the assignee with an explicit null', async () => {
@@ -1268,7 +1452,9 @@ test('CC-46: format with an absent rich-text input is a no-op, not an error', ()
 });
 
 test('CC-46: update_issue converts markdown, and null + format still clears (CC-31)', async () => {
-  const fake = createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT);
+  const fake = createFakeJiraRequest()
+    .on(GET_ISSUE_ROUTE, PLAIN_ISSUE)
+    .on(UPDATE_ROUTE, NO_CONTENT);
 
   await updateIssueTool.handler(
     { issue: KEY, description: MD_TEXT, format: 'markdown' },
@@ -1629,7 +1815,9 @@ test('resolution reaches the rich-text surface of every tool that has one', asyn
     },
     {
       tool: updateIssueTool,
-      fake: createFakeJiraRequest().on(UPDATE_ROUTE, NO_CONTENT),
+      fake: createFakeJiraRequest()
+        .on(GET_ISSUE_ROUTE, PLAIN_ISSUE)
+        .on(UPDATE_ROUTE, NO_CONTENT),
       sent: (fake) => nested(lastBody(fake), 'fields')['description'],
     },
     {

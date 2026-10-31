@@ -89,16 +89,22 @@ export function fieldChange(field: string, from: unknown, to: unknown): PlanFiel
   return { field, from: compactValue(from), to: compactValue(to) };
 }
 
-/** The live values of `fields` plus the `updated` stamp, through the port. */
+/**
+ * The live values of `fields` plus the `updated` stamp, through the port.
+ * `raw` keeps rich text as the stored ADF document instead of rendered text —
+ * what a caller needs to measure the structure a replace would drop (CC-5330).
+ */
 export async function readIssueFields(
   ctx: ToolCtx,
   issue: string,
   fields: readonly string[],
+  options: { readonly raw?: boolean } = {},
 ): Promise<{ readonly fields: Readonly<Record<string, unknown>>; version?: string }> {
   const detail = await ctx.api.getIssue({
     ...callBase(ctx),
     issue,
     fields: [...new Set([...fields, VERSION_FIELD])],
+    ...(options.raw === true ? { raw: true } : {}),
   });
   const stamp = detail.fields[VERSION_FIELD];
   return {

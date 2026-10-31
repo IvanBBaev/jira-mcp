@@ -24,7 +24,9 @@ import {
   extractMentions,
   isAdfDoc,
   MAX_LIST_INDENT_DEPTH,
+  MAX_LOSS_TYPES,
   renderAdfDocs,
+  richTextLoss,
   toAdf,
   type AdfNode,
   type MentionTarget,
@@ -2208,4 +2210,119 @@ test('[CC-591] markdown: a carriage return in tenant text is a line break, not a
   }
   // The text path is not read back and keeps the tenant's bytes.
   assert.equal(adfToText(doc(para2(text('a\rb')))), 'a\rb');
+});
+
+// --- richTextLoss (V3-53) ---------------------------------------------------
+
+test('CC-5330: richTextLoss names a table and a media group, not their implied children', () => {
+  // synthetic: true
+  const doc = {
+    type: 'doc',
+    version: 1,
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Intro' }] },
+      {
+        type: 'table',
+        content: [
+          {
+            type: 'tableRow',
+            content: [
+              { type: 'tableHeader', content: [{ type: 'paragraph', content: [] }] },
+              { type: 'tableCell', content: [{ type: 'paragraph', content: [] }] },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'mediaSingle',
+        content: [{ type: 'media', attrs: { id: 'm-1', type: 'file' } }],
+      },
+    ],
+  };
+  assert.deepEqual(richTextLoss(doc), { nodes: ['table', 'mediaSingle'], marks: [] });
+});
+
+test('CC-5330: richTextLoss reports nothing for the writable subset', () => {
+  const doc = {
+    type: 'doc',
+    version: 1,
+    content: [
+      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'H' }] },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'b',
+                    marks: [
+                      { type: 'strong' },
+                      { type: 'link', attrs: { href: 'https://x' } },
+                    ],
+                  },
+                  { type: 'hardBreak' },
+                  { type: 'mention', attrs: { id: 'acc-1' } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { type: 'codeBlock', content: [{ type: 'text', text: 'x' }] },
+    ],
+  };
+  assert.deepEqual(richTextLoss(doc), { nodes: [], marks: [] });
+});
+
+test('CC-5330: richTextLoss lists marks a string cannot carry, deduplicated in document order', () => {
+  const doc = {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          {
+            type: 'text',
+            text: 'a',
+            marks: [{ type: 'textColor', attrs: { color: '#f00' } }],
+          },
+          {
+            type: 'text',
+            text: 'b',
+            marks: [{ type: 'underline' }, { type: 'textColor' }],
+          },
+        ],
+      },
+      { type: 'panel', content: [{ type: 'paragraph', content: [] }] },
+      { type: 'panel', content: [] },
+    ],
+  };
+  assert.deepEqual(richTextLoss(doc), {
+    nodes: ['panel'],
+    marks: ['textColor', 'underline'],
+  });
+});
+
+test('CC-5330: richTextLoss measures no loss for values that are not ADF documents', () => {
+  for (const value of [null, undefined, 'h2. wiki text', 42, { type: 'paragraph' }, []]) {
+    assert.deepEqual(richTextLoss(value), { nodes: [], marks: [] });
+  }
+});
+
+test('CC-5330: richTextLoss caps each list and survives a cyclic document', () => {
+  const content: unknown[] = [];
+  for (let i = 0; i < MAX_LOSS_TYPES + 10; i += 1) content.push({ type: `custom${i}` });
+  const wide = { type: 'doc', version: 1, content };
+  assert.equal(richTextLoss(wide).nodes.length, MAX_LOSS_TYPES);
+
+  const panel: { type: string; content: unknown[] } = { type: 'panel', content: [] };
+  panel.content.push(panel);
+  const cyclic = { type: 'doc', version: 1, content: [panel] };
+  assert.deepEqual(richTextLoss(cyclic), { nodes: ['panel'], marks: [] });
 });

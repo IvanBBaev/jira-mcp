@@ -384,6 +384,11 @@ export interface PlanFieldChange {
   readonly field: string;
   readonly from: unknown;
   readonly to: unknown;
+  /**
+   * Rich-text structure the write would drop: node and mark types of the live
+   * value that the new value cannot carry (CC-5330). Absent when nothing is lost.
+   */
+  readonly lost?: readonly string[];
 }
 
 /** What {@link ToolSpec.planContext} reports about the entity a write targets. */

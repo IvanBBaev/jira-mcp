@@ -1646,6 +1646,92 @@ export function extractMentions(text: string): readonly string[] {
   return [...names];
 }
 
+// ---------------------------------------------------------------------------
+// Replace-loss measurement (JIR-11, CC-5330)
+//
+// A string written to a rich-text field becomes a document the write path
+// builds, and the write path can build only the markdown subset (plus D100's
+// mentions). Whatever the stored document holds outside that subset — tables,
+// panels, media, task lists, colour — is gone after the replace. The measure
+// below names those node and mark types so a plan can show them and an update
+// can refuse to drop them unannounced.
+// ---------------------------------------------------------------------------
+
+/** Node types a string rich-text input can produce (`adfFromMarkdown`, D100). */
+const WRITABLE_NODES: ReadonlySet<string> = new Set([
+  'doc',
+  'paragraph',
+  'text',
+  'hardBreak',
+  'heading',
+  'bulletList',
+  'orderedList',
+  'listItem',
+  'codeBlock',
+  'mention',
+]);
+
+/** Marks a string rich-text input can produce. */
+const WRITABLE_MARKS: ReadonlySet<string> = new Set(['strong', 'em', 'code', 'link']);
+
+/**
+ * Children that never stand alone: their container is already named, so
+ * listing them too (`table, tableRow, tableCell`) is noise, not information.
+ */
+const IMPLIED_NODES: ReadonlySet<string> = new Set([
+  'tableRow',
+  'tableHeader',
+  'tableCell',
+  'media',
+  'taskItem',
+  'decisionItem',
+]);
+
+/** Most entries one loss list carries; a hostile document cannot grow it. */
+export const MAX_LOSS_TYPES = 20;
+
+/** What replacing a rich-text value with a string would drop (CC-5330). */
+export interface RichTextLoss {
+  /** Node types outside the writable subset, document order, deduplicated. */
+  readonly nodes: readonly string[];
+  /** Mark types outside the writable subset, document order, deduplicated. */
+  readonly marks: readonly string[];
+}
+
+/**
+ * The node and mark types in `value` that a string replacement cannot
+ * reproduce. Anything that is not an ADF document — `null`, a Data Center
+ * wiki string, a rendered text — measures as no loss, because there is no
+ * structure to measure. Never throws; the depth cap ends cycles (CC-09).
+ */
+export function richTextLoss(value: unknown): RichTextLoss {
+  const nodes = new Set<string>();
+  const marks = new Set<string>();
+  if (!isAdfDoc(value)) return { nodes: [], marks: [] };
+
+  const visit = (node: unknown, depth: number): void => {
+    if (depth > MAX_NODE_DEPTH || !isRecord(node)) return;
+    const type = nodeType(node);
+    if (!WRITABLE_NODES.has(type) && !IMPLIED_NODES.has(type)) {
+      if (nodes.size < MAX_LOSS_TYPES) nodes.add(typeLabel(type));
+    }
+    if (Array.isArray(node.marks)) {
+      for (const mark of node.marks) {
+        const markType = nodeType(mark);
+        if (!WRITABLE_MARKS.has(markType) && marks.size < MAX_LOSS_TYPES) {
+          marks.add(typeLabel(markType));
+        }
+      }
+    }
+    if (Array.isArray(node.content)) {
+      for (const child of node.content) visit(child, depth + 1);
+    }
+  };
+
+  visit(value, 0);
+  return { nodes: [...nodes], marks: [...marks] };
+}
+
 /** Structural guard: is this value an ADF document rather than a scalar field? */
 export function isAdfDoc(value: unknown): value is AdfDoc {
   return isRecord(value) && value.type === 'doc' && Array.isArray(value.content);
