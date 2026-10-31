@@ -914,8 +914,20 @@ function wireIssueLinks(state, issue, origin) {
   return out;
 }
 
-/** The `fields` bag, honouring the `fields` query the client sent. */
-function wireIssueFields(state, issue, origin, requested) {
+/**
+ * How many comments the `/rest/software/1.0` issue reads embed per issue
+ * (D535, Atlassian RFC-127): the page is cut at 20 while `total` keeps the
+ * real count, which is what the server's `comments_capped` hint keys on.
+ */
+const SOFTWARE_COMMENT_CAP = 20;
+
+/**
+ * The `fields` bag, honouring the `fields` query the client sent.
+ * `commentCap` cuts the embedded comment page (the software routes, D535).
+ */
+function wireIssueFields(state, issue, origin, requested, commentCap) {
+  const comments =
+    commentCap === undefined ? issue.comments : issue.comments.slice(0, commentCap);
   const all = {
     summary: issue.summary,
     description: issue.description,
@@ -941,6 +953,12 @@ function wireIssueFields(state, issue, origin, requested) {
     issuelinks: wireIssueLinks(state, issue, origin),
     fixVersions: [],
     components: [],
+    comment: {
+      startAt: 0,
+      maxResults: commentCap ?? comments.length,
+      total: issue.comments.length,
+      comments: comments.map((comment) => wireComment(state, issue, comment, origin)),
+    },
     worklog: {
       startAt: 0,
       maxResults: 20,
@@ -964,7 +982,7 @@ function wireIssue(state, issue, origin, options = {}) {
     id: issue.id,
     key: issue.key,
     self: `${origin}/rest/api/3/issue/${issue.id}`,
-    fields: wireIssueFields(state, issue, origin, options.fields),
+    fields: wireIssueFields(state, issue, origin, options.fields, options.commentCap),
   };
   if (options.expand?.includes('changelog') === true) {
     body.changelog = {
@@ -2921,7 +2939,12 @@ function buildRoutes(server) {
               issue.projectKey === board.location.projectKey &&
               !open.has(issue.sprintId),
           )
-          .map((issue) => wireIssue(state, issue, origin(), { fields }));
+          .map((issue) =>
+            wireIssue(state, issue, origin(), {
+              fields,
+              commentCap: SOFTWARE_COMMENT_CAP,
+            }),
+          );
         return softwareIssuePage(rows, ctx.query);
       },
     ],
@@ -2984,7 +3007,12 @@ function buildRoutes(server) {
             : String(ctx.query.fields).split(',');
         const rows = [...state.issues.values()]
           .filter((issue) => !issue.deleted && issue.sprintId === sprintId)
-          .map((issue) => wireIssue(state, issue, origin(), { fields }));
+          .map((issue) =>
+            wireIssue(state, issue, origin(), {
+              fields,
+              commentCap: SOFTWARE_COMMENT_CAP,
+            }),
+          );
         return softwareIssuePage(rows, ctx.query);
       },
     ],

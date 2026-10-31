@@ -37,7 +37,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * The fifteen hint codes of TOOLS.md §Hint catalog, in table order. Adding a
+ * The sixteen hint codes of TOOLS.md §Hint catalog, in table order. Adding a
  * code is a spec change there first, then here. A hint NEVER changes `ok`:
  * truncation, approximation and eventual consistency are successful results with
  * caveats, not failures.
@@ -58,10 +58,11 @@ export const HINT_CODES = [
   'mentions_skipped',
   'enqueued',
   'root_fallback',
+  'comments_capped',
 ] as const;
 
 /**
- * One of the fifteen machine-stable hint codes.
+ * One of the sixteen machine-stable hint codes.
  *
  * Produced by: every tool (WP-30…WP-34), the write gate (WP-24), pagination
  * helpers (WP-15).

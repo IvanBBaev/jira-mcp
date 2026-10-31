@@ -488,6 +488,54 @@ test('CC-294: an unknown deployment or a malformed context path is refused at st
 });
 
 // ---------------------------------------------------------------------------
+// CC-5318 — the Cloud fake's software routes cap embedded comments at 20 (D535)
+// ---------------------------------------------------------------------------
+
+test(
+  'CC-5318: a software-route read embeds 20 comments per issue and keeps the real total',
+  { skip: noTls },
+  async () => {
+    const basic = `Basic ${Buffer.from('rehearsal@example.invalid:rehearsal-token').toString('base64')}`;
+    const issue = 'SCRATCH-1';
+    const before = record(
+      (await send(cloud, 'GET', `/rest/api/3/issue/${issue}/comment`, basic)).json,
+    );
+    const seeded = Number(before['total']);
+    // Enough comments that the thread is past the cap whatever the seed holds.
+    for (let added = seeded; added <= 20; added += 1) {
+      const reply = await send(
+        cloud,
+        'POST',
+        `/rest/api/3/issue/${issue}/comment`,
+        basic,
+        {
+          body: { type: 'doc', version: 1, content: [] },
+        },
+      );
+      assert.equal(reply.status, 201);
+    }
+
+    const page = record(
+      (
+        await send(
+          cloud,
+          'GET',
+          '/rest/software/1.0/sprint/101/issue?fields=summary,comment&maxResults=50',
+          basic,
+        )
+      ).json,
+    );
+    const row = (page['issues'] as unknown[])
+      .map(record)
+      .find((entry) => entry['key'] === issue);
+    assert.ok(row !== undefined, `${issue} is in sprint 101`);
+    const comment = record(record(row['fields'])['comment']);
+    assert.equal((comment['comments'] as unknown[]).length, 20);
+    assert.ok(Number(comment['total']) > 20, 'total keeps the real count');
+  },
+);
+
+// ---------------------------------------------------------------------------
 // CC-295 — the leak check catches every way identity can leak
 // ---------------------------------------------------------------------------
 

@@ -66,7 +66,7 @@ import {
   type JiraResponse,
   type QueryParams,
 } from '../core/types.js';
-import { DEFAULT_SEARCH_FIELDS } from './search.js';
+import { DEFAULT_SEARCH_FIELDS, normalizeIssueIds } from './search.js';
 import {
   budgetOf,
   fetchAll,
@@ -281,6 +281,14 @@ export type ListSprintIssuesOptions = AgilePagedBase & {
    * `nextPageToken`. Data Center refuses it and resumes by `startAt`.
    */
   readonly nextPageToken?: string;
+  /**
+   * Cloud software root only (D535): numeric issue ids Jira should refresh in
+   * its index before answering — the session's recent writes. Sent as the CSV
+   * query parameter `reconcileIssues` on every software-root request of this
+   * read; never on the D525 agile fallback or Data Center, whose routes do not
+   * take it. Validated like `/search/jql`'s list (numeric, at most 50).
+   */
+  readonly reconcileIssues?: readonly string[];
 } & BudgetGuard;
 
 /** Options for {@link moveIssuesToSprint}. */
@@ -398,6 +406,8 @@ export type ListBacklogIssuesOptions = AgilePagedBase & {
   readonly jql?: string;
   /** As {@link ListSprintIssuesOptions.nextPageToken}. */
   readonly nextPageToken?: string;
+  /** As {@link ListSprintIssuesOptions.reconcileIssues}. */
+  readonly reconcileIssues?: readonly string[];
 } & BudgetGuard;
 
 /**
@@ -425,6 +435,50 @@ export interface SprintIssuesResult extends PageLoopResult<AgileIssue> {
    * carries offset paging (`nextStartAt`, `total`), not a token.
    */
   readonly rootFallback?: true;
+  /**
+   * Cloud software root only (D535): the canonical ids sent as
+   * `reconcileIssues`, when any were.
+   */
+  readonly reconciledIssueIds?: readonly string[];
+  /**
+   * Keys of issues whose `comment` field came back short (D535, JIR-06): Jira
+   * reported a `total` above the comments it returned, or — on the software
+   * root, which caps embedded comments at {@link SOFTWARE_COMMENT_CAP} per
+   * issue — returned exactly that many. Absent when no issue qualifies or
+   * `comment` was not requested. The full thread is `jira_get_comments`.
+   */
+  readonly commentsCapped?: readonly string[];
+}
+
+/**
+ * How many comments the `/rest/software/1.0` reads embed per issue (D535,
+ * JIR-06; Atlassian RFC-127). The changelog is capped the same way, but these
+ * reads take no `expand`, so this server never asks for it there.
+ */
+export const SOFTWARE_COMMENT_CAP = 20;
+
+/**
+ * The keys of issues whose embedded comment page is short — see
+ * {@link SprintIssuesResult.commentsCapped}. `atCapMeansShort` is the software
+ * root's rule: a page of exactly the cap is reported even when `total` is
+ * absent or equal, because the cap may be what made it so.
+ */
+export function cappedCommentKeys(
+  issues: readonly AgileIssue[],
+  atCapMeansShort: boolean,
+): readonly string[] {
+  const keys: string[] = [];
+  for (const issue of issues) {
+    const comment: unknown = issue.fields?.['comment'];
+    if (comment === null || typeof comment !== 'object') continue;
+    const { comments, total } = comment as { comments?: unknown; total?: unknown };
+    if (!Array.isArray(comments)) continue;
+    const short =
+      (typeof total === 'number' && total > comments.length) ||
+      (atCapMeansShort && comments.length >= SOFTWARE_COMMENT_CAP);
+    if (short) keys.push(issue.key);
+  }
+  return keys;
 }
 
 /** What {@link moveIssuesToSprint} returns. */
@@ -707,7 +761,13 @@ async function listAgileIssuePage(
     ),
   );
 
-  return { ...page, fields, fieldsDefaulted };
+  const commentsCapped = cappedCommentKeys(page.items, false);
+  return {
+    ...page,
+    fields,
+    fieldsDefaulted,
+    ...(commentsCapped.length === 0 ? {} : { commentsCapped }),
+  };
 }
 
 /**
@@ -754,6 +814,7 @@ async function listSoftwareIssuePage(
       readonly fields?: readonly string[];
       readonly jql?: string;
       readonly nextPageToken?: string;
+      readonly reconcileIssues?: readonly string[];
     },
   path: string,
   pathTemplate: string,
@@ -799,6 +860,7 @@ async function readSoftwareIssuePage(
     BudgetGuard & {
       readonly fields?: readonly string[];
       readonly jql?: string;
+      readonly reconcileIssues?: readonly string[];
     },
   path: string,
   pathTemplate: string,
@@ -806,6 +868,7 @@ async function readSoftwareIssuePage(
 ): Promise<SprintIssuesResult> {
   const { fields, fieldsDefaulted } = issueFields(options.fields);
   const jql = trimmedOrUndefined(options.jql);
+  const reconcileIds = normalizeIssueIds(options.reconcileIssues, 'reconcileIssues');
   const endpoint = `GET ${pathTemplate}`;
   const maxResults = options.pageSize ?? DEFAULT_AGILE_PAGE_SIZE;
 
@@ -820,6 +883,7 @@ async function readSoftwareIssuePage(
         maxResults,
         fields: fields.join(','),
         ...(jql === undefined ? {} : { jql }),
+        ...(reconcileIds.length === 0 ? {} : { reconcileIssues: reconcileIds.join(',') }),
         ...(cursor.nextPageToken === undefined
           ? {}
           : { nextPageToken: cursor.nextPageToken }),
@@ -835,7 +899,14 @@ async function readSoftwareIssuePage(
     searchPages<AgileIssue>({ ...base, ...budgetOf(guard) }),
   );
 
-  return { ...page, fields, fieldsDefaulted };
+  const commentsCapped = cappedCommentKeys(page.items, true);
+  return {
+    ...page,
+    fields,
+    fieldsDefaulted,
+    ...(reconcileIds.length === 0 ? {} : { reconciledIssueIds: reconcileIds }),
+    ...(commentsCapped.length === 0 ? {} : { commentsCapped }),
+  };
 }
 
 /** CC-03: the caller's trimmed field list, or the default set when it is empty. */

@@ -413,7 +413,7 @@ export function journalingGate(
  */
 export function recordingGate(
   inner: WriteGate,
-  deps: { readonly recent: RecentWrites },
+  deps: { readonly recent: RecentWrites; readonly clock?: Clock },
 ): WriteGate {
   return {
     get outstandingPlans(): number {
@@ -443,12 +443,12 @@ export function recordingGate(
         // A handler that lets its JiraError escape (the registry's catch-all
         // turns it into the envelope) is judged the same way.
         if (executed && isJiraError(error) && wasApplied({ ok: false, error })) {
-          deps.recent.record(writtenIssueIds(call.args));
+          deps.recent.record(writtenIssueIds(call.args), deps.clock?.now());
         }
         throw error;
       }
       if (executed && wasApplied(result))
-        deps.recent.record(writtenIssueIds(call.args, result));
+        deps.recent.record(writtenIssueIds(call.args, result), deps.clock?.now());
       return result;
     },
   };
@@ -546,9 +546,12 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     ...(deps.media === undefined ? {} : { media: deps.media }),
     // CC-02 outermost: it observes the result the journal may already have
     // hinted on, and journaling stays the last thing that can touch an envelope.
-    gate: recordingGate(journaled, {
-      recent,
-    }),
+    // D535: `JIRA_RECONCILE_WRITES=false` leaves the ring unwritten, so every
+    // read sends only what its caller named.
+    gate:
+      settings.reconcileWrites === false
+        ? journaled
+        : recordingGate(journaled, { recent, clock: deps.clock }),
   });
 
   // The documentation half of the surface (D124): built from the SAME manifest

@@ -67,7 +67,9 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
    off by default; `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300
    seconds by default, `0` turns it off); `JIRA_MEDIA_MAX_BYTES` caps each
    output directory at 1 GiB by default (`0` turns it off);
-   `JIRA_HTTP_BIND` keeps the http transport on `127.0.0.1` by default.
+   `JIRA_HTTP_BIND` keeps the http transport on `127.0.0.1` by default;
+   `JIRA_RECONCILE_WRITES` (on by default) sends the ids you wrote in the
+   last minute with the next search and sprint or backlog read.
 4. If your API token sits inside a client config such as `.mcp.json`, move
    it out: `npx -y jira-mcp-ai@1.1.0 doctor --save` stores it in
    `~/.config/jira-mcp-ai/.env` with mode `0600`.
@@ -196,8 +198,15 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
   npm package, over stdio by default or over http published to the host's
   loopback. No image is published yet; build it from a checkout (README
   §Docker).
+- Sprint and backlog reads say when an issue's embedded comments are
+  incomplete: Jira Cloud's new routes embed at most 20 per issue, so such
+  issues are listed in `data.commentsCapped` with a `comments_capped` hint
+  pointing at `jira_get_comments`.
+- Issues you just wrote show up in the next sprint and backlog reads, as they
+  already did in `jira_search`: their ids are sent as `reconcileIssues` for
+  60 s after the write. `JIRA_RECONCILE_WRITES=false` turns this off.
 
-Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, D521.
+Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, D521, D535.
 
 ### Changed
 

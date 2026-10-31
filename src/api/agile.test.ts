@@ -41,7 +41,9 @@ import {
   DEFAULT_AGILE_PAGE_SIZE,
   DEFAULT_SPRINT_ISSUE_FIELDS,
   MAX_MOVE_ISSUES,
+  SOFTWARE_COMMENT_CAP,
   SPRINT_PATH_TEMPLATE,
+  cappedCommentKeys,
   closeSprint,
   createSprint,
   deleteSprint,
@@ -661,6 +663,131 @@ test('CC-5130: a 403 from the software root is answered once by the agile twin, 
   );
   // CC-03 holds on the fallback leg too: the default field set is sent.
   assert.equal(queryOf(jira.lastRequest()).fields, DEFAULT_SPRINT_ISSUE_FIELDS.join(','));
+});
+
+/** An issue row carrying an embedded comment page of `count` of `total`. */
+function commentedRow(key: string, id: string, count: number, total?: number): unknown {
+  // synthetic — an issue whose `comment` field is the capped page (D535)
+  const comments = Array.from({ length: count }, (_, index) => ({
+    id: String(index + 1),
+  }));
+  return {
+    id,
+    key,
+    fields: {
+      summary: key,
+      comment: {
+        startAt: 0,
+        maxResults: count,
+        ...(total === undefined ? {} : { total }),
+        comments,
+      },
+    },
+  };
+}
+
+test('CC-5316: recent-write ids go to the software root as the reconcileIssues CSV, on every page', async () => {
+  const jira = createFakeJiraRequest()
+    .enqueue(jiraOk(softwarePage([issueRow('ABC-1', '10001')], 'tok-2')))
+    .enqueue(jiraOk(softwarePage([issueRow('ABC-2', '10002')])));
+
+  const result = await listSprintIssues({
+    jira: jira.fn,
+    sprintId: 21,
+    reconcileIssues: ['10002', '010001', '10002'],
+  });
+
+  assert.equal(jira.calls[0]?.query?.reconcileIssues, '10002,10001');
+  assert.equal(jira.calls[1]?.query?.reconcileIssues, '10002,10001');
+  assert.deepEqual(result.reconciledIssueIds, ['10002', '10001']);
+});
+
+test('CC-5316: no recent writes means no reconcileIssues parameter at all', async () => {
+  const jira = createFakeJiraRequest().enqueue(jiraOk(softwarePage([])));
+
+  const result = await listBacklogIssues({
+    jira: jira.fn,
+    boardId: 7,
+    reconcileIssues: [],
+  });
+
+  assert.equal(Object.hasOwn(queryOf(jira.lastRequest()), 'reconcileIssues'), false);
+  assert.equal(Object.hasOwn(result, 'reconciledIssueIds'), false);
+});
+
+test('CC-5317: a key in reconcileIssues is refused before the wire', async () => {
+  const jira = createFakeJiraRequest();
+
+  const error = asJiraError(
+    await caught(() =>
+      listSprintIssues({ jira: jira.fn, sprintId: 21, reconcileIssues: ['ABC-1'] }),
+    ),
+  );
+
+  assert.equal(error.kind, 'validation');
+  assert.deepEqual(jira.calls, []);
+});
+
+test('CC-5319: the agile fallback never carries reconcileIssues — the route does not take it', async () => {
+  const jira = createFakeJiraRequest()
+    .on('GET /rest/software/1.0/sprint/21/issue', jiraErr(rootRefusal(403)))
+    .on(
+      'GET /rest/agile/1.0/sprint/21/issue',
+      jiraOk(issuesPage(0, 50, 1, [issueRow('ABC-1', '10001')])),
+    );
+
+  const result = await listSprintIssues({
+    jira: jira.fn,
+    sprintId: 21,
+    reconcileIssues: ['10001'],
+  });
+
+  assert.equal(jira.calls[0]?.query?.reconcileIssues, '10001');
+  assert.equal(Object.hasOwn(queryOf(jira.lastRequest()), 'reconcileIssues'), false);
+  assert.equal(result.rootFallback, true);
+});
+
+test('CC-5320: a software read flags issues whose embedded comments are short or at the cap', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk(
+      softwarePage([
+        commentedRow('ABC-1', '10001', SOFTWARE_COMMENT_CAP, 31),
+        commentedRow('ABC-2', '10002', SOFTWARE_COMMENT_CAP),
+        commentedRow('ABC-3', '10003', 3, 3),
+        issueRow('ABC-4', '10004'),
+      ]),
+    ),
+  );
+
+  const result = await listSprintIssues({
+    jira: jira.fn,
+    sprintId: 21,
+    fields: ['summary', 'comment'],
+  });
+
+  assert.deepEqual(result.commentsCapped, ['ABC-1', 'ABC-2']);
+});
+
+test('CC-5321: a read with no short comment page carries no commentsCapped field', async () => {
+  const jira = createFakeJiraRequest().enqueue(
+    jiraOk(
+      softwarePage([commentedRow('ABC-3', '10003', 3, 3), issueRow('ABC-4', '10004')]),
+    ),
+  );
+
+  const result = await listSprintIssues({ jira: jira.fn, sprintId: 21 });
+
+  assert.equal(Object.hasOwn(result, 'commentsCapped'), false);
+});
+
+test('CC-5322: off the software root only a total above the page counts as short', () => {
+  const issues = [
+    commentedRow('ABC-1', '10001', SOFTWARE_COMMENT_CAP, SOFTWARE_COMMENT_CAP),
+    commentedRow('ABC-2', '10002', 5, 9),
+  ] as Parameters<typeof cappedCommentKeys>[0];
+
+  assert.deepEqual(cappedCommentKeys(issues, false), ['ABC-2']);
+  assert.deepEqual(cappedCommentKeys(issues, true), ['ABC-1', 'ABC-2']);
 });
 
 test('CC-5131: the backlog read falls back to the agile board backlog on a 404', async () => {

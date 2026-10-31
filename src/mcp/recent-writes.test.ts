@@ -12,6 +12,7 @@ import test from 'node:test';
 
 import {
   MAX_RECENT_WRITES,
+  RECENT_WRITE_TTL_MS,
   createRecentWrites,
   sessionRecentWrites,
   writtenIssueIds,
@@ -79,6 +80,37 @@ test('clear forgets everything', () => {
   recent.clear();
 
   assert.deepEqual(recent.snapshot(), []);
+});
+
+test('CC-5311: an id expires sixty seconds after its last write, by the clock passed in', () => {
+  const recent = createRecentWrites();
+  const t0 = 1_000_000;
+  recent.record(['10001'], t0);
+  recent.record(['10002'], t0 + 30_000);
+
+  assert.equal(RECENT_WRITE_TTL_MS, 60_000);
+  assert.deepEqual(recent.snapshot(t0 + RECENT_WRITE_TTL_MS), ['10001', '10002']);
+  assert.deepEqual(recent.snapshot(t0 + RECENT_WRITE_TTL_MS + 1), ['10002']);
+  assert.deepEqual(recent.snapshot(t0 + 30_000 + RECENT_WRITE_TTL_MS + 1), []);
+});
+
+test('CC-5312: re-recording an id restarts its sixty seconds', () => {
+  const recent = createRecentWrites();
+  recent.record(['10001'], 0);
+  recent.record(['10001'], 50_000);
+
+  assert.deepEqual(recent.snapshot(100_000), ['10001']);
+  assert.deepEqual(recent.snapshot(110_001), []);
+});
+
+test('CC-5313: without a clock reading nothing expires (the pre-D535 shape)', () => {
+  const recent = createRecentWrites();
+  recent.record(['10001']);
+  recent.record(['10002'], 0);
+
+  // An id recorded without a time never expires; a snapshot without one expires nothing.
+  assert.deepEqual(recent.snapshot(), ['10001', '10002']);
+  assert.deepEqual(recent.snapshot(10 * RECENT_WRITE_TTL_MS), ['10001']);
 });
 
 test('the ambient session registry is a registry like any other', () => {

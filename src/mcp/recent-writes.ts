@@ -25,7 +25,11 @@
 // (CC-244). Before, every session in the process shared the ambient instance.
 //
 // The registry is IN-MEMORY and SESSION-SCOPED: it dies with the process, like
-// the plan ids of the write gate. Nothing here is persisted, and nothing here is
+// the plan ids of the write gate. It is also TIME-BOUNDED (D535): an id lives
+// {@link RECENT_WRITE_TTL_MS} from its last write, measured on the injected
+// `Clock` the caller passes in, because past that the index has caught up and
+// reconciling the id is work for nothing. `JIRA_RECONCILE_WRITES=false` keeps it
+// empty (`buildServer` then never records). Nothing here is persisted, and nothing here is
 // a fact about Jira — a stale id costs at most one wasted reconcile.
 //
 // Layering: `mcp` ring, no imports beyond a type and `node:async_hooks`. Only `core/http.ts` talks to
@@ -48,6 +52,14 @@ import type { ToolResult } from './types.js';
 export const MAX_RECENT_WRITES = 50;
 
 /**
+ * How long an id stays in the registry after its last write (D535, JIR-07):
+ * sixty seconds. Jira documents no indexing SLA; a minute is far past the lag
+ * the read-after-write problem is about, and short enough that a long session
+ * does not drag a reconcile list behind every search.
+ */
+export const RECENT_WRITE_TTL_MS = 60_000;
+
+/**
  * The session's memory of written issue ids.
  *
  * `record` is total and silent: ids that are not numeric never get here (see
@@ -55,13 +67,19 @@ export const MAX_RECENT_WRITES = 50;
  * id's position.
  */
 export interface RecentWrites {
-  /** Remember these ids as just written. Non-numeric input is ignored. */
-  record(ids: readonly string[]): void;
   /**
-   * The remembered ids, oldest first, at most {@link MAX_RECENT_WRITES}. A fresh
-   * array every call — the caller may hand it to `api/search.ts` unguarded.
+   * Remember these ids as written at `nowMs` (the injected clock's reading).
+   * Non-numeric input is ignored. Without `nowMs` the ids never expire — the
+   * shape the pre-D535 callers and unit tests rely on.
    */
-  snapshot(): readonly string[];
+  record(ids: readonly string[], nowMs?: number): void;
+  /**
+   * The remembered ids, oldest first, at most {@link MAX_RECENT_WRITES}. With
+   * `nowMs`, ids recorded more than {@link RECENT_WRITE_TTL_MS} before it are
+   * dropped first. A fresh array every call — the caller may hand it to
+   * `api/search.ts` unguarded.
+   */
+  snapshot(nowMs?: number): readonly string[];
   /** Forget everything. For tests and for the ambient instance between them. */
   clear(): void;
 }
@@ -78,26 +96,37 @@ const NUMERIC_ID = /^\d+$/;
  * exceeded the OLDEST id is dropped, because it is the one most likely to have
  * been indexed already.
  */
-export function createRecentWrites(max: number = MAX_RECENT_WRITES): RecentWrites {
-  // A Set iterates in insertion order, which is the whole data structure here.
-  const ids = new Set<string>();
+export function createRecentWrites(
+  max: number = MAX_RECENT_WRITES,
+  ttlMs: number = RECENT_WRITE_TTL_MS,
+): RecentWrites {
+  // A Map iterates in insertion order, which is the whole data structure here;
+  // the value is when the id was written (undefined: no clock, never expires).
+  const ids = new Map<string, number | undefined>();
 
   return {
-    record(incoming: readonly string[]): void {
+    record(incoming: readonly string[], nowMs?: number): void {
       for (const id of incoming) {
         if (!NUMERIC_ID.test(id)) continue;
         ids.delete(id);
-        ids.add(id);
+        ids.set(id, nowMs);
       }
       while (ids.size > max) {
-        const [oldest] = ids;
+        const [oldest] = ids.keys();
         if (oldest === undefined) break;
         ids.delete(oldest);
       }
     },
 
-    snapshot(): readonly string[] {
-      return [...ids];
+    snapshot(nowMs?: number): readonly string[] {
+      if (nowMs !== undefined) {
+        // Insertion order is write order, so expiry could stop at the first
+        // fresh id — except a clock may step back; checking all 50 is cheap.
+        for (const [id, writtenAt] of ids) {
+          if (writtenAt !== undefined && nowMs - writtenAt > ttlMs) ids.delete(id);
+        }
+      }
+      return [...ids.keys()];
     },
 
     clear(): void {

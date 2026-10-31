@@ -499,6 +499,14 @@ export interface Settings {
    * confirmation, asked through the client, to every irreversible apply.
    */
   readonly irreversibleConfirm: IrreversibleConfirm;
+  /**
+   * `JIRA_RECONCILE_WRITES` (default true, D535). Whether the server remembers
+   * the issue ids its applied writes touched (60 s, at most 50) and sends them
+   * as `reconcileIssues` on the next `/search/jql` and software-route read.
+   * `false` keeps the ring empty; a caller's own `reconcileIssues` still goes.
+   * `loadSettings` always sets it, hand-built test settings may omit it (on).
+   */
+  readonly reconcileWrites?: boolean;
 
   /** `JIRA_REQUEST_TIMEOUT_MS` (default 30000). */
   readonly requestTimeoutMs: number;

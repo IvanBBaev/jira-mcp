@@ -4321,3 +4321,33 @@ fake handles, and the download peak is measured on the byte sink.
   the backoff with the same body (the JIR-05 pin).
 - **CC-5306** — a POST answered with a per-issue 429 is replayed after its
   `Retry-After`.
+
+## Software-route correctness (D535, 2026-10-31)
+
+- **CC-5310** — `JIRA_RECONCILE_WRITES` parses as a boolean, defaults to
+  `true`, and is documented in `.env.example`, `server.json` and
+  CONFIGURATION.md (env-docs sync).
+- **CC-5311** — a recorded id expires 60 s after its write, by the clock
+  reading the snapshot is given.
+- **CC-5312** — re-recording an id restarts its 60 s.
+- **CC-5313** — a snapshot without a clock reading expires nothing.
+- **CC-5314** — an applied write is stamped with the server's injected clock
+  and gone from the ring once that clock passes 60 s.
+- **CC-5315** — `JIRA_RECONCILE_WRITES=false`: an applied write records
+  nothing.
+- **CC-5316** — recent-write ids reach the software root as the canonical,
+  de-duplicated `reconcileIssues` CSV on every page; an empty ring sends no
+  parameter.
+- **CC-5317** — an issue key in `reconcileIssues` is refused before the wire.
+- **CC-5318** — the fake's software routes embed 20 comments per issue and keep
+  the real `total`.
+- **CC-5319** — the agile fallback leg never carries `reconcileIssues`.
+- **CC-5320** — a software read lists issues whose comment page is shorter than
+  its `total` or exactly 20 in `commentsCapped`.
+- **CC-5321** — a read with no short comment page carries no `commentsCapped`.
+- **CC-5322** — off the software root only a `total` above the page counts.
+- **CC-5323** — `jira_get_sprint_issues` raises `comments_capped` naming the key
+  and `jira_get_comments`, and lists it in `data.commentsCapped`.
+- **CC-5324** — a read with complete comments raises no hint and no field.
+- **CC-5325** — both software tools send the session ring as `reconcileIssues`.
+- **CC-5326** — an expired ring sends no `reconcileIssues`.

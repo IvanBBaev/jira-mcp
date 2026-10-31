@@ -34,6 +34,7 @@ export type SurfaceSettings = Pick<
   | 'writeMode'
   | 'allowIrreversible'
   | 'irreversibleConfirm'
+  | 'reconcileWrites'
 >;
 
 /** Read package gating, the project scope and the write gate. */
@@ -91,6 +92,9 @@ export function readSurface(read: EnvReader, add: Add): SurfaceSettings {
     IRREVERSIBLE_CONFIRMS,
     DEFAULT_IRREVERSIBLE_CONFIRM,
   );
+  // D535: the read-after-write ring. On by default — it only ever adds ids
+  // this session wrote to a read that would otherwise miss them.
+  const reconcileWrites = read.bool('JIRA_RECONCILE_WRITES', true);
 
   return {
     toolPackages: toolPackages.length > 0 ? toolPackages : [DEFAULT_TOOL_PACKAGES],
@@ -100,5 +104,6 @@ export function readSurface(read: EnvReader, add: Add): SurfaceSettings {
     writeMode,
     allowIrreversible,
     irreversibleConfirm,
+    reconcileWrites,
   };
 }

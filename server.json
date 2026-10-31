@@ -122,6 +122,13 @@
           "format": "string"
         },
         {
+          "name": "JIRA_RECONCILE_WRITES",
+          "description": "Send the ids of issues this session wrote in the last 60 s as reconcileIssues on the next search and sprint/backlog read, so a fresh write is not missing from it. false turns the memory off.",
+          "isRequired": false,
+          "default": "true",
+          "format": "boolean"
+        },
+        {
           "name": "JIRA_REQUEST_TIMEOUT_MS",
           "description": "Per-request timeout in milliseconds.",
           "isRequired": false,

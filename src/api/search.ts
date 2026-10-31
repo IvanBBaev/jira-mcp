@@ -638,9 +638,10 @@ function resolveMaxResults(requested: number | undefined): {
 /**
  * Normalize an issue-ID list for the wire. `reconcileIssues` takes numeric issue
  * IDs, not keys — passing `PROJ-1` earns an opaque 400, so it is refused here
- * with the remediation that names where a real ID comes from.
+ * with the remediation that names where a real ID comes from. Shared with the
+ * software-route reads (`api/agile.ts`, D535), which take the same list.
  */
-function normalizeIssueIds(
+export function normalizeIssueIds(
   ids: readonly (string | number)[] | undefined,
   field: string,
 ): readonly string[] {

@@ -604,7 +604,7 @@ Jira Software swagger on 2026-10-28:
 - `GET /rest/software/1.0/board/{boardId}/backlog` — the board backlog.
 
 Both take `maxResults` (≤ 50 here), `fields`, `jql`, `nextPageToken` and
-`reconcileIssues` (≤ 50 issue ids, unused by this server), and answer **200**
+`reconcileIssues` (≤ 50 issue ids, sent by this server since D535 — see below), and answer **200**
 with `{ expand?, issues[], nextPageToken?, isLast? }`. There is **no
 `startAt` and no `total`** (D501): a page is followed with the token until
 `isLast: true` or the token is absent or `null`, through the same
@@ -638,8 +638,21 @@ reads; every other agile route stays on `/rest/agile/1.0`.
   search index. An issue moved by `jira_move_to_sprint` or
   `jira_move_to_backlog` can be missing from (or still present in) the next
   read for a short while. The API offers `reconcileIssues` to force named ids
-  into the answer; this server does not send it. Re-read after a moment
-  instead of retrying the write.
+  into the answer. Since D535 this server sends the session's recent writes
+  (numeric ids the recording gate captured in the last 60 s, at most 50) as
+  the CSV query parameter `reconcileIssues` on every software-root request,
+  as `jira_search` sends them in its body. Not on the agile fallback or Data
+  Center, whose routes do not take it. The CSV encoding of this GET
+  parameter is read from the swagger, not yet proven on a live tenant.
+  `JIRA_RECONCILE_WRITES=false` turns recording off. A move recorded by key
+  only is not reconciled — re-read after a moment instead of retrying the
+  write.
+- **Embedded comment cap (D535).** These reads embed at most 20 comments per
+  issue in the `comment` field (and would cap the changelog the same way, but
+  they take no `expand`, so the changelog is never requested here). The
+  `comment` page keeps the real `total`. An issue whose page is shorter than
+  its `total`, or holds exactly 20, is listed in `data.commentsCapped` with a
+  `comments_capped` hint pointing at `jira_get_comments`.
 - **Data Center (D502).** Jira Software Data Center has no `/rest/software`
   root. Its sprint-issue twin stays on `/rest/agile/1.0` with classic
   `startAt`/`total` paging, and it refuses a `nextPageToken` (CC-5004).

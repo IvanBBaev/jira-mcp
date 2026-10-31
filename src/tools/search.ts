@@ -384,7 +384,9 @@ export const searchTool = defineTool({
       // to find it again. An explicit empty array is a caller's decision too, so
       // `undefined` and `[]` are deliberately not the same thing here.
       const recentlyWrittenIssueIds =
-        args.reconcileIssues === undefined ? currentRecentWrites().snapshot() : undefined;
+        args.reconcileIssues === undefined
+          ? currentRecentWrites().snapshot(ctx.clock.now())
+          : undefined;
       // CC-04 / D508: clamped here, so the hint can name the value asked for.
       const page = clampPageSize(args.maxResults, MAX_SEARCH_RESULTS, 'nextPageToken');
       const result = await ctx.api.searchIssues({

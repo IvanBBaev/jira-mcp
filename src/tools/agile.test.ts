@@ -36,7 +36,11 @@ import {
 } from '../core/fakes/index.js';
 import { createJiraError } from '../core/errors.js';
 import { JiraError, type JiraRequestFn } from '../core/types.js';
-import { writtenIssueIds } from '../mcp/recent-writes.js';
+import {
+  createRecentWrites,
+  withRecentWrites,
+  writtenIssueIds,
+} from '../mcp/recent-writes.js';
 import type { ToolCtx, ToolResult } from '../mcp/types.js';
 import {
   agilePackage,
@@ -629,6 +633,95 @@ test('CC-5136: a software-root fallback is reported with the root_fallback hint 
   assert.equal(result.ok, true);
   assert.ok(result.hints?.some((hint) => hint.code === 'root_fallback'));
   assert.equal(result.data?.paging.nextPageToken, undefined);
+});
+
+test('CC-5323: an issue at the 20-comment cap raises comments_capped and is listed in data', async () => {
+  const comments = Array.from({ length: 20 }, (_, index) => ({ id: String(index + 1) }));
+  const fake = createFakeJiraRequest().on(
+    SPRINT_ISSUES_ROUTE,
+    // synthetic — one issue whose embedded comment page hit the software cap
+    jiraOk({
+      isLast: true,
+      issues: [
+        {
+          id: '10001',
+          key: 'ABC-1',
+          fields: { comment: { startAt: 0, maxResults: 20, total: 27, comments } },
+        },
+      ],
+    }),
+  );
+
+  const result = await getSprintIssuesTool.handler(
+    { sprintId: 42, fields: ['comment'] },
+    createCtx(fake.fn),
+  );
+  const data = dataOf(result);
+
+  assert.ok(hintCodes(result).includes('comments_capped'));
+  assert.match(
+    result.hints?.find((hint) => hint.code === 'comments_capped')?.message ?? '',
+    /ABC-1.*jira_get_comments/,
+  );
+  assert.deepEqual(data.commentsCapped, ['ABC-1']);
+});
+
+test('CC-5324: a read with complete comments raises no comments_capped hint', async () => {
+  const fake = createFakeJiraRequest().on(
+    BOARD_BACKLOG_ROUTE,
+    jiraOk({ isLast: true, issues: [{ id: '1', key: 'ABC-1', fields: {} }] }),
+  );
+
+  const result = await getBacklogTool.handler(
+    { boardId: 17, fields: ['summary'] },
+    createCtx(fake.fn),
+  );
+
+  assert.equal(hintCodes(result).includes('comments_capped'), false);
+  assert.equal(Object.hasOwn(dataOf(result), 'commentsCapped'), false);
+});
+
+test('CC-5325: the session ring rides along as reconcileIssues on both software reads', async () => {
+  const recent = createRecentWrites();
+  recent.record(['10007'], 1_000);
+  const fake = createFakeJiraRequest()
+    .on(SPRINT_ISSUES_ROUTE, jiraOk({ isLast: true, issues: [] }))
+    .on(BOARD_BACKLOG_ROUTE, jiraOk({ isLast: true, issues: [] }));
+
+  await withRecentWrites(recent, async () => {
+    await getSprintIssuesTool.handler(
+      { sprintId: 42, fields: ['summary'] },
+      createCtx(fake.fn),
+    );
+    await getBacklogTool.handler(
+      { boardId: 17, fields: ['summary'] },
+      createCtx(fake.fn),
+    );
+  });
+
+  assert.deepEqual(
+    fake.calls.map((call) => call.query?.reconcileIssues),
+    ['10007', '10007'],
+  );
+});
+
+test('CC-5326: an expired or empty ring sends no reconcileIssues', async () => {
+  const recent = createRecentWrites();
+  // Written 60 s and 1 ms before the context clock's 1 000 ms reading.
+  recent.record(['10007'], 1_000 - 60_001);
+  const fake = createFakeJiraRequest().on(
+    SPRINT_ISSUES_ROUTE,
+    jiraOk({ isLast: true, issues: [] }),
+  );
+
+  await withRecentWrites(recent, () =>
+    getSprintIssuesTool.handler(
+      { sprintId: 42, fields: ['summary'] },
+      createCtx(fake.fn),
+    ),
+  );
+
+  assert.equal(Object.hasOwn(fake.lastRequest()?.query ?? {}, 'reconcileIssues'), false);
 });
 
 // ---------------------------------------------------------------------------

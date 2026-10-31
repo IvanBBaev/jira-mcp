@@ -36,6 +36,7 @@ import { createMemoryMedia } from '../testing/memory-media.js';
 import { defineTool, outputArg, toolInput, writeToolInput, z } from './define.js';
 import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import {
+  RECENT_WRITE_TTL_MS,
   createRecentWrites,
   currentRecentWrites,
   sessionRecentWrites,
@@ -253,6 +254,8 @@ interface Harness {
   readonly logger: ReturnType<typeof createFakeLogger>;
   /** CC-02: injected per harness, so no test writes into the ambient session. */
   readonly recent: RecentWrites;
+  /** D535: the clock the recording gate stamps writes with. */
+  readonly clock: ReturnType<typeof createFakeClock>;
 }
 
 interface HarnessOptions {
@@ -272,6 +275,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
     journal,
     logger,
     recent,
+    clock,
     deps: {
       recentWrites: recent,
       settings: { ...BASE_SETTINGS, ...options.settings },
@@ -1158,6 +1162,39 @@ test('CC-02: an applied create records the id it minted', async () => {
 
     assert.deepEqual(dataOf(result), { executed: true, id: '10007', key: 'ABC-7' });
     assert.deepEqual(recent.snapshot(), ['10007']);
+  });
+});
+
+test('CC-5314: a recorded write expires from the ring by the injected clock', async () => {
+  const { deps, jira, recent, clock } = makeHarness({ settings: { writeMode: 'apply' } });
+  jira.on(
+    'POST /rest/api/3/issue',
+    jiraOk({ id: '10007', key: 'ABC-7' }, { status: 201 }),
+  );
+
+  await withSession(deps, async ({ client }) => {
+    await applyWrite(client, 'jira_fx_create', { summary: 'S' });
+
+    assert.deepEqual(recent.snapshot(clock.now()), ['10007']);
+    clock.advance(RECENT_WRITE_TTL_MS + 1);
+    assert.deepEqual(recent.snapshot(clock.now()), []);
+  });
+});
+
+test('CC-5315: JIRA_RECONCILE_WRITES=false records nothing', async () => {
+  const { deps, jira, recent } = makeHarness({
+    settings: { writeMode: 'apply', reconcileWrites: false },
+  });
+  jira.on(
+    'POST /rest/api/3/issue',
+    jiraOk({ id: '10007', key: 'ABC-7' }, { status: 201 }),
+  );
+
+  await withSession(deps, async ({ client }) => {
+    const result = await applyWrite(client, 'jira_fx_create', { summary: 'S' });
+
+    assert.equal(dataOf(result)['executed'], true);
+    assert.deepEqual(recent.snapshot(), []);
   });
 });
 

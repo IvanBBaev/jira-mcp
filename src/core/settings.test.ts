@@ -818,6 +818,13 @@ describe('loadSettings — numeric and enum knobs', () => {
     assert.equal(settings.metaCacheTtlS, 0);
   });
 
+  it('CC-5310: JIRA_RECONCILE_WRITES defaults on and false is the off switch', () => {
+    assert.equal(load({ ...VALID }).settings.reconcileWrites, true);
+    const { report, settings } = load({ ...VALID, JIRA_RECONCILE_WRITES: 'false' });
+    assert.equal(report.ok, true);
+    assert.equal(settings.reconcileWrites, false);
+  });
+
   it('rejects a metadata cache TTL above one day', () => {
     const { report, settings } = load({ ...VALID, JIRA_META_CACHE_TTL_S: '86401' });
     assert.deepEqual(codes(report), ['invalid_number']);

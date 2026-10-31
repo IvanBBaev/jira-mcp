@@ -55,6 +55,7 @@ import {
   DEFAULT_AGILE_PAGE_SIZE,
   DEFAULT_SPRINT_ISSUE_FIELDS,
   MAX_MOVE_ISSUES,
+  SOFTWARE_COMMENT_CAP,
   SPRINT_STATES,
   type AgileBoard,
   type AgileIssue,
@@ -68,6 +69,7 @@ import type { JiraApi } from '../api/port.js';
 import type { PageStopReason } from '../api/shared.js';
 import { createJiraError } from '../core/errors.js';
 import { defineTool, outputArg, toolInput, writeToolInput, z } from '../mcp/define.js';
+import { currentRecentWrites } from '../mcp/recent-writes.js';
 import { ok } from '../mcp/result.js';
 import {
   DESTRUCTIVE_WRITE_ANNOTATIONS,
@@ -450,12 +452,52 @@ const ROOT_FALLBACK_HINT: Hint = {
     'account needs access to the Jira Software issue-read API.',
 };
 
+/**
+ * D535 (JIR-06): an issue's embedded comments came back short — the software
+ * root caps them at 20 per issue. Names at most five keys; the full list is
+ * `data.commentsCapped`.
+ */
+function commentsCappedHint(keys: readonly string[]): Hint {
+  const shown = keys.slice(0, 5).join(', ');
+  const more = keys.length > 5 ? ` and ${String(keys.length - 5)} more` : '';
+  return {
+    code: 'comments_capped',
+    message:
+      `The comments of ${shown}${more} are incomplete: Jira Cloud embeds at most ` +
+      `${String(SOFTWARE_COMMENT_CAP)} comments per issue on this read. Read the full ` +
+      'thread with jira_get_comments (issue = the key); data.commentsCapped lists them all.',
+  };
+}
+
 /** The advisory hints of a sprint-issue or backlog read. */
 function issueReadHints(loop: SprintIssuesResult): Hint[] {
   return [
     ...(loop.fieldsDefaulted ? [FIELDS_DEFAULTED_HINT] : []),
     ...(loop.rootFallback === true ? [ROOT_FALLBACK_HINT] : []),
+    ...(loop.commentsCapped === undefined || loop.commentsCapped.length === 0
+      ? []
+      : [commentsCappedHint(loop.commentsCapped)]),
   ];
+}
+
+/** The `commentsCapped` data field, present only when an issue qualifies. */
+function commentsCappedOf(loop: SprintIssuesResult): {
+  readonly commentsCapped?: readonly string[];
+} {
+  return loop.commentsCapped === undefined || loop.commentsCapped.length === 0
+    ? {}
+    : { commentsCapped: loop.commentsCapped };
+}
+
+/**
+ * D535 (JIR-07): the session's recent writes, sent as `reconcileIssues` so an
+ * issue written a moment ago is not missing from a Cloud software-route read.
+ * Data Center's route takes no such parameter, so nothing is passed there.
+ */
+function recentWriteIds(ctx: ToolCtx): { readonly reconcileIssues?: readonly string[] } {
+  if (ctx.api.deployment === 'datacenter') return {};
+  const ids = currentRecentWrites().snapshot(ctx.clock.now());
+  return ids.length === 0 ? {} : { reconcileIssues: ids };
 }
 
 const getSprintIssuesInput = toolInput({
@@ -503,6 +545,8 @@ interface SprintIssuesData {
   /** The field ids actually sent — the caller's list, or the default set. */
   readonly fields: readonly string[];
   readonly paging: IssuePagingInfo;
+  /** D535: keys whose embedded comments are incomplete (the 20-per-issue cap). */
+  readonly commentsCapped?: readonly string[];
 }
 
 /**
@@ -561,6 +605,7 @@ export const getSprintIssuesTool = defineTool<
         sprintId: args.sprintId,
         fields: args.fields,
         jql: args.jql,
+        ...recentWriteIds(ctx),
       });
       const hints = [...page.hints, ...issueReadHints(loop)];
       // CC-35: content-bearing, so it is branded here and stays branded through
@@ -572,6 +617,7 @@ export const getSprintIssuesTool = defineTool<
           sprintId: args.sprintId,
           fields: loop.fields,
           paging: issuePagingOf(loop),
+          ...commentsCappedOf(loop),
         },
         { untrusted: true, ...(hints.length === 0 ? {} : { hints }) },
       );
@@ -603,6 +649,8 @@ interface BacklogData {
   /** The field ids actually sent — the caller's list, or the default set. */
   readonly fields: readonly string[];
   readonly paging: IssuePagingInfo;
+  /** D535: keys whose embedded comments are incomplete (the 20-per-issue cap). */
+  readonly commentsCapped?: readonly string[];
 }
 
 export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, BacklogData>({
@@ -637,6 +685,7 @@ export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, Backlo
         boardId: args.boardId,
         fields: args.fields,
         jql: args.jql,
+        ...recentWriteIds(ctx),
       });
       const hints = [...page.hints, ...issueReadHints(loop)];
       // Content-bearing exactly like the sprint read (CC-35).
@@ -647,6 +696,7 @@ export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, Backlo
           boardId: args.boardId,
           fields: loop.fields,
           paging: issuePagingOf(loop),
+          ...commentsCappedOf(loop),
         },
         { untrusted: true, ...(hints.length === 0 ? {} : { hints }) },
       );

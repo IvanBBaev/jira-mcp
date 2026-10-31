@@ -120,6 +120,7 @@ Per-call resolution flows through AsyncLocalStorage (the `runWithCid` seam in
 | `JIRA_WRITE_MODE` | `plan` | `plan` = writes describe instead of execute; `apply` = writes execute when the call passes `apply: true`. Gate contract: THREAT-MODEL.md. |
 | `JIRA_ALLOW_IRREVERSIBLE` | `false` | Opt-in for the irreversible write tier (the deletes, D45 and D102, and the bulk delete/edit pair, D103). Without it those tools refuse even under `JIRA_WRITE_MODE=apply` — blanket write mode never covers the tier. |
 | `JIRA_IRREVERSIBLE_CONFIRM` | `off` | `off` or `elicit`. Under `elicit` every irreversible apply also asks the human through MCP form elicitation (D303) and runs only on an explicit yes; a decline, a cancel or an undeliverable question spends the plan. A client that does not declare form elicitation is refused with the plan kept. Adds to `JIRA_ALLOW_IRREVERSIBLE`, never replaces it. |
+| `JIRA_RECONCILE_WRITES` | `true` | Read-after-write (D535). The server remembers the numeric ids of issues its applied writes touched — per session, for 60 seconds, at most 50 — and sends them as `reconcileIssues` on the next `jira_search` (`/search/jql`) and on the first page of `jira_get_sprint_issues` / `jira_get_backlog` (software routes), so an issue written a moment ago is not missing from the read. Never sent to Data Center. `false` keeps the memory empty; ids a caller passes to `jira_search` itself still go. |
 
 ## HTTP behaviour
 
