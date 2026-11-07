@@ -225,8 +225,9 @@ export const searchUsersTool = defineTool<
     'other tool takes; Cloud has no usernames. Pass issue or project to restrict to ' +
     'people assignable there (issue wins). Email is personal data: dropped unless ' +
     'includeEmail is true; a site that masks it says so with the email_hidden hint. ' +
-    'Data Center answers by name and key. One page per call — when paging.partial is ' +
-    'true, call again with startAt = paging.nextStartAt.',
+    'Data Center answers by name and key. ' +
+    `One page per call, max ${String(MAX_USER_SEARCH_RESULTS)} rows — when paging.partial ` +
+    'is true, call again with startAt = paging.nextStartAt.',
   package: 'users',
   annotations: READ_ANNOTATIONS,
   input: searchUsersInput,

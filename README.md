@@ -200,7 +200,7 @@ JQL search over issues, approximate result counts, strict JQL checks, and the sa
 
 | Tool | Title | Access | Since | What it does |
 | --- | --- | --- | --- | --- |
-| `jira_search` | Search issues | read-only | 0.9.0 | Search Jira issues by JQL: returns ONE page of issues plus data.nextPageToken — pass it back to read the next page. |
+| `jira_search` | Search issues | read-only | 0.9.0 | Search Jira issues by JQL: ONE page per call, max 100 rows, plus data.nextPageToken — pass it back for the next page. |
 | `jira_count` | Count issues | read-only | 0.9.0 | Count Jira issues matching a JQL query without fetching any of them. |
 | `jira_parse_jql` | Check JQL | read-only | 1.1.0 (unreleased) | Check JQL against Jira's strict parser without running it: grammar, and whether every field, function and value it names exists for you. |
 | `jira_list_filters` | List saved filters | read-only | 0.9.0 | Find saved filters — named, stored JQL — by name substring or owner, each with its jql. |

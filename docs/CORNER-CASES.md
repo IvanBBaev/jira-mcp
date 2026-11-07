@@ -4394,3 +4394,19 @@ fake handles, and the download peak is measured on the byte sink.
 - **CC-5352** — `jira_search` cancelled before its first page answers
   `kind=transport` "cancelled by the caller" instead of `issues: []` with
   `hasMore: false`, which read as a complete, empty result.
+
+## Paging documentation (V3-64, 2026-11-07)
+
+- **CC-5360** — every tool that takes `maxResults` has an entry in the paging
+  documentation table (`src/tools/paging-doc.test.ts`); a new paged tool fails
+  the test until its cap and continuation are written down.
+- **CC-5361** — a capped paged description says "One page per call, max N
+  rows", and N equals the cap in its `maxResults` argument (`1…N`, D508), the
+  value the handler clamps to. The prose is built from the same constant.
+- **CC-5362** — `jira_list_filters` has no cap of its own: its description
+  says "50 rows by default (Jira sets the max)" and its argument says Jira may
+  send fewer, instead of naming a cap the server does not enforce.
+- **CC-5363** — every paged description names the field to continue with
+  (`data.nextPageToken`, `data.nextStartAt`, `paging.nextStartAt`,
+  `paging.nextPageToken`) and the flag that says more rows exist, where the
+  tool has one (`data.partial`, `data.hasMore`, `paging.partial`).
