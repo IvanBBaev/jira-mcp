@@ -486,10 +486,13 @@ justification of the surviving mutants are in
 
 `npm run check` = `check:publish && audit:prod`, where `check:publish` =
 `typecheck && lint && format:check && build && tarball && test:coverage &&
-docs:lint` and `audit:prod` is `npm audit --omit=dev --audit-level=high`.
+docs:lint` and `audit:prod` is `scripts/audit-gate.mjs`: `npm audit --omit=dev`
+failing on a high or critical advisory that `audit-allowlist.json` does not
+cover, or on an expired allowlist entry (D546, docs/RELEASING.md §3.2).
 `tarball` is `scripts/check-tarball.mjs` over `npm pack --dry-run --json` — the
 tarball-content assertion — and `docs:lint` is the docs-regime checks from
-docs/README.md. CI runs `check` on Node 22 and 24. Run before finishing any
+docs/README.md. CI runs `check:publish` on Node 22 and 24 and `audit:prod` as
+its own `audit` job. Run before finishing any
 change; report the real result.
 
 Two release-only steps sit outside `check` and run from `prepublishOnly`

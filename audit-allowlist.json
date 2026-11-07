@@ -1,0 +1,4 @@
+{
+  "$comment": "Reviewed overrides for scripts/audit-gate.mjs (D546, docs/RELEASING.md §3.2). One entry per GHSA id: {ghsa, package, reason, expires}. expires is the last day the entry holds, at most 90 days ahead; an expired entry fails the gate.",
+  "advisories": []
+}

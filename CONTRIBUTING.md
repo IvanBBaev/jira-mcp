@@ -47,7 +47,9 @@ It runs, in order:
    statements 97) enforced. Those are floors that must not creep down — they
    were last ratcheted up in D105.
 7. `docs:lint` — `scripts/docs-lint.mjs` over the spec corpus (see below).
-8. `audit:prod` — `npm audit --omit=dev --audit-level=high`.
+8. `audit:prod` — `scripts/audit-gate.mjs`: `npm audit --omit=dev`, failing on
+   a high or critical advisory not covered by an unexpired entry in
+   [`audit-allowlist.json`](audit-allowlist.json) (D546).
 
 Steps 1–7 are `check:publish`; `check` is `check:publish && audit:prod`. The
 split exists because `prepublishOnly` runs `check:publish`, not `check`: the audit is the

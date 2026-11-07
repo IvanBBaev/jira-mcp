@@ -47,7 +47,29 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run check
+      # `check:publish` is `npm run check` minus the advisory audit, which runs
+      # in the `audit` job below: a new advisory is a separate red line, not a
+      # failed build on every Node of the matrix (D546).
+      - run: npm run check:publish
+
+  # The advisory audit on its own (D546): `scripts/audit-gate.mjs` runs
+  # `npm audit --omit=dev` and fails only on a high or critical advisory that
+  # `audit-allowlist.json` does not cover, or on an allowlist entry that has
+  # expired. Its verdict depends on the advisory database at the second it runs,
+  # not on the commit, which is why it is a named job of its own. `publish.yml`
+  # still runs the full `npm run check`, so the same gate guards the release.
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+      # No `npm ci`: `npm audit` reads package-lock.json, and the gate script
+      # imports nothing but node builtins.
+      - run: npm run audit:prod
 
   # Since D36 `check` already runs the suite under c8 (`test:coverage` is step 6
   # of `check:publish`, docs/TESTING.md §Gate), so this job repeats that run on

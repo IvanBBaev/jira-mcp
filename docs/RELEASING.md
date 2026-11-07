@@ -169,7 +169,10 @@ if it is skipped, and "unchecked" means only a reader will notice.
 6. `publish.yml` fires: it re-runs the full gate — including the advisory audit,
    which lives in the workflow rather than in `prepublishOnly` precisely so a
    freshly disclosed CVE stops the release *before* anything irreversible
-   (D62) — then publishes with provenance.
+   (D62) — then publishes with provenance. The audit step is
+   `scripts/audit-gate.mjs` (D546): it fails only on a high or critical
+   advisory that `audit-allowlist.json` does not cover, or on an expired entry;
+   §3.2 is the override.
 
 ### 3.1 The tarball is compiled by a different config
 
@@ -207,6 +210,34 @@ Two consequences worth knowing before you hit them:
   which is the documentation a consumer sees on hover. The comments are also
   what make a stack trace from a published build readable. Both audits so far
   have reached the same answer; overturn it with a ledger entry, not a commit.
+
+### 3.2 Overriding the advisory audit
+
+A high or critical advisory with no fix, disclosed the day of a release, does not
+have to block it. The override is one reviewed commit to `audit-allowlist.json`
+at the repository root (D546):
+
+```json
+{
+  "ghsa": "GHSA-xxxx-xxxx-xxxx",
+  "package": "<affected package>",
+  "reason": "why this package is not exposed, and what will remove the entry",
+  "expires": "YYYY-MM-DD"
+}
+```
+
+- `ghsa` is the id at the end of the advisory URL `npm audit` prints. One entry
+  covers that advisory only, never a package or a severity.
+- `expires` is the last day the entry holds, at most 90 days ahead. The day
+  after, the gate fails on the entry itself, whether or not the advisory is
+  still there: the advisory gets fixed, or somebody reviews it again and moves
+  the date in a new commit.
+- An entry that no longer matches anything is printed as a warning. Remove it
+  in the next change that touches the file.
+
+`npm run audit:prod` runs the gate on its own; CI runs it as the `audit` job,
+and `publish.yml` runs it inside `npm run check`. Moderate and low advisories
+are listed and never fail, as with `--audit-level=high` before.
 
 ### Rehearsing the install before it is irreversible
 

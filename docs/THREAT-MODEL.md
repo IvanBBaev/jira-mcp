@@ -492,7 +492,9 @@ attachment *metadata* keeps working — it needs no directory (CC-58).
   it is not fixable from this repo; it is a property of the SDK's dependency
   layout. The honest claim is "two direct runtime dependencies", never "a
   two-package install".
-- `npm audit --omit=dev --audit-level=high` inside `npm run check`; lockfile
+- `npm audit --omit=dev` through `scripts/audit-gate.mjs` inside `npm run check`
+  and as its own CI job, failing on high/critical unless an expiring,
+  reviewed `audit-allowlist.json` entry covers it (D546); lockfile
   committed; dependabot with 7-day cooldown; CodeQL runs from
   `.github/workflows/codeql.yml` (advanced setup: `javascript-typescript` +
   `actions`, `security-extended`, SHA-pinned, no secret, weekly and on every
