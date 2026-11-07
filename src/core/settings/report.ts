@@ -1,7 +1,7 @@
 // The aggregated startup report (D516): the finding shape every section
 // reader emits through an `Add` sink, and the report built from them.
 
-import { JiraError } from '../types.js';
+import { createJiraError } from '../errors.js';
 
 /** `error` blocks startup via {@link assertStartupOk}; `warning` never does. */
 export type FindingSeverity = 'error' | 'warning';
@@ -74,9 +74,9 @@ export function formatStartupReport(report: StartupReport): string {
  */
 export function assertStartupOk(report: StartupReport): void {
   if (report.ok) return;
-  throw new JiraError({
+  throw createJiraError({
     kind: 'config',
-    message: `Invalid configuration:\n${formatStartupReport(report)}`,
+    reason: `Invalid configuration:\n${formatStartupReport(report)}`,
     retryable: false,
     remediation:
       'Fix the JIRA_* variables listed above (names and defaults: https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md), then restart. `jira-mcp-ai doctor` prints the same report without starting the server.',

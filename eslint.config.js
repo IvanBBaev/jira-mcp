@@ -64,6 +64,17 @@ const noZodRuntimeImport = {
     'Import the re-exported helpers from mcp/define.js, or use `import type`.',
 };
 
+// ARCHITECTURE.md §Error model / D536: redaction and the cause-then-recovery
+// message are applied by `createJiraError` at construction; the `JiraError`
+// constructor only copies fields. A direct `new JiraError(...)` skips both, so
+// it is allowed only inside core/errors.ts (the choke point) and in tests.
+const noDirectJiraError = {
+  selector: "NewExpression[callee.name='JiraError']",
+  message:
+    'Build errors with createJiraError() from core/errors.ts (D536): a direct ' +
+    '`new JiraError(...)` skips redaction and the remediation composition.',
+};
+
 export default tseslint.config(
   {
     ignores: [
@@ -154,21 +165,33 @@ export default tseslint.config(
     },
   },
 
-  // AbortSignal.timeout + the zod quarantine. Both live on no-restricted-syntax,
-  // so they are configured together; src/mcp/define.ts is excluded here and
-  // re-listed below with only the AbortSignal entry (splitting the rule across
-  // an `off` override would drop the AbortSignal ban with it).
+  // AbortSignal.timeout, the zod quarantine and the JiraError choke point. All
+  // three live on no-restricted-syntax, so they are configured together; the
+  // exempt files are excluded here and re-listed below with only the entries
+  // that still apply to them (splitting the rule across an `off` override
+  // would drop the other bans with it).
   {
     files: ['src/**/*.ts'],
-    ignores: ['src/mcp/define.ts'],
+    ignores: ['src/mcp/define.ts', 'src/core/errors.ts', 'src/**/*.test.ts'],
     rules: {
-      'no-restricted-syntax': ['error', noAbortSignalTimeout, noZodRuntimeImport],
+      'no-restricted-syntax': [
+        'error',
+        noAbortSignalTimeout,
+        noZodRuntimeImport,
+        noDirectJiraError,
+      ],
     },
   },
   {
     files: ['src/mcp/define.ts'],
     rules: {
-      'no-restricted-syntax': ['error', noAbortSignalTimeout],
+      'no-restricted-syntax': ['error', noAbortSignalTimeout, noDirectJiraError],
+    },
+  },
+  {
+    files: ['src/core/errors.ts', 'src/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', noAbortSignalTimeout, noZodRuntimeImport],
     },
   },
 

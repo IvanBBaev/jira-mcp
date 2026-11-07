@@ -53,7 +53,8 @@
 // content silently from a write is the one thing this must not do.
 // ---------------------------------------------------------------------------
 
-import { JiraError } from '../core/types.js';
+import { createJiraError } from '../core/errors.js';
+import type { JiraError } from '../core/types.js';
 import {
   adfFromMarkdown,
   MAX_NODE_DEPTH,
@@ -118,9 +119,9 @@ export function tagDataCenterMentions(
 }
 
 function unsafeUsername(): JiraError {
-  return new JiraError({
+  return createJiraError({
     kind: 'validation',
-    message:
+    reason:
       'A mention resolved to a Jira Data Center username that cannot be written as wiki markup safely (it holds a character outside letters, digits and . _ - @ +).',
     remediation: 'Write the name as plain text instead of an @[...] mention.',
   });
@@ -216,9 +217,9 @@ function label(type: unknown): string {
 }
 
 function unsupported(what: string, where?: string): JiraError {
-  return new JiraError({
+  return createJiraError({
     kind: 'validation',
-    message: `Jira Data Center wiki markup cannot express ${what}${where === undefined ? '' : ` ${where}`}.`,
+    reason: `Jira Data Center wiki markup cannot express ${what}${where === undefined ? '' : ` ${where}`}.`,
     remediation: `Rewrite the content using only ${SUBSET}.`,
   });
 }
@@ -229,9 +230,9 @@ function children(node: AdfNode): readonly unknown[] {
 
 function asNode(value: unknown, ctx: Ctx): AdfNode {
   if (ctx.depth > MAX_NODE_DEPTH) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'validation',
-      message: `The document nests deeper than ${String(MAX_NODE_DEPTH)} levels.`,
+      reason: `The document nests deeper than ${String(MAX_NODE_DEPTH)} levels.`,
       remediation: 'Flatten the structure before writing it.',
     });
   }

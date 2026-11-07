@@ -88,7 +88,8 @@ import {
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { JiraError, type Clock } from './types.js';
+import { createJiraError } from './errors.js';
+import type { Clock } from './types.js';
 
 /** Mode for files that hold credentials: owner read/write only. */
 export const SECRET_FILE_MODE = 0o600;
@@ -433,9 +434,9 @@ export async function acquireEnvLock(
     }
 
     if (clock.now() >= deadline) {
-      throw new JiraError({
+      throw createJiraError({
         kind: 'timeout',
-        message: `Timed out after ${String(acquireTimeoutMs)}ms waiting for the env lock ${lockPath}, held by ${describeOwner(readOwnerRaw(lockPath), 'an unknown process')}.`,
+        reason: `Timed out after ${String(acquireTimeoutMs)}ms waiting for the env lock ${lockPath}, held by ${describeOwner(readOwnerRaw(lockPath), 'an unknown process')}.`,
         retryable: true,
         remediation: `Wait for the other jira-mcp-ai process to finish. If none is running, remove ${lockPath} and retry.`,
       });

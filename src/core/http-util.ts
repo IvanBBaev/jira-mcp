@@ -21,7 +21,8 @@
 // Nothing here reads env, imports settings, or touches `globalThis.fetch`.
 
 import { abortError } from './clock.js';
-import { JIRA_ROOT_PATHS, JiraError } from './types.js';
+import { createJiraError } from './errors.js';
+import { JIRA_ROOT_PATHS, type JiraError } from './types.js';
 import type { HostRef, HttpMethod, JiraApiRoot, QueryParams, Rng } from './types.js';
 
 /* ------------------------------------------------------------------------- *
@@ -221,9 +222,9 @@ export type HostVerdict = 'canonical' | 'allowlisted' | 'blocked' | 'not_allowed
 function compileHostPattern(entry: string): RegExp {
   const source = entry.slice(1, -1);
   if (!source.startsWith('^') || !source.endsWith('$')) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Allowed-host pattern ${entry} is not anchored.`,
+      reason: `Allowed-host pattern ${entry} is not anchored.`,
       remediation:
         'Anchor the pattern with ^ and $ (e.g. /^jira\\.example\\.com$/). ' +
         'Unanchored patterns match substrings, which defeats the allowlist.',
@@ -234,9 +235,9 @@ function compileHostPattern(entry: string): RegExp {
     // ends, and `/^a\.x\.com|b\.com$/` would match `a.x.com.attacker.net` (CC-483).
     return new RegExp(`^(?:${source})$`, 'i');
   } catch (cause) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Allowed-host pattern ${entry} is not a valid regular expression.`,
+      reason: `Allowed-host pattern ${entry} is not a valid regular expression.`,
       remediation: 'Fix the pattern in JIRA_ALLOWED_HOSTS, or use an exact host name.',
       cause,
     });
@@ -295,16 +296,16 @@ export function assertHostAllowed(
   const verdict = checkHost(host, allowedHosts);
   if (verdict === 'canonical' || verdict === 'allowlisted') return;
   if (verdict === 'blocked') {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Refusing to contact "${host}" (${context}): loopback, private, link-local and metadata addresses are never contacted.`,
+      reason: `Refusing to contact "${host}" (${context}): loopback, private, link-local and metadata addresses are never contacted.`,
       remediation:
         'Point JIRA_SITE at a Jira Cloud site. This block applies even to hosts listed in JIRA_ALLOWED_HOSTS.',
     });
   }
-  throw new JiraError({
+  throw createJiraError({
     kind: 'config',
-    message: `Host "${host}" (${context}) is not a Jira Cloud site and is not in the allowed-host list.`,
+    reason: `Host "${host}" (${context}) is not a Jira Cloud site and is not in the allowed-host list.`,
     remediation:
       'Use a <site>.atlassian.net host, or add the exact host — or an anchored /^pattern$/ — to JIRA_ALLOWED_HOSTS.',
   });
@@ -321,25 +322,25 @@ export function hostFromOrigin(origin: string): string {
   try {
     url = new URL(origin);
   } catch (cause) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Jira origin "${origin}" is not a valid URL.`,
+      reason: `Jira origin "${origin}" is not a valid URL.`,
       remediation: 'Set JIRA_SITE to a site name or an https:// URL.',
       cause,
     });
   }
   if (url.protocol !== 'https:') {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Jira origin "${origin}" is not https.`,
+      reason: `Jira origin "${origin}" is not https.`,
       remediation:
         'Jira Cloud is https-only; credentials are never sent over plain http.',
     });
   }
   if (url.username !== '' || url.password !== '') {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: 'Jira origin must not embed credentials.',
+      reason: 'Jira origin must not embed credentials.',
       remediation:
         'Remove the user:password part; auth comes from JIRA_EMAIL/JIRA_API_TOKEN.',
     });
@@ -374,7 +375,7 @@ function hasControlChar(value: string): boolean {
 }
 
 function invalidPath(message: string, remediation: string): JiraError {
-  return new JiraError({ kind: 'validation', message, remediation });
+  return createJiraError({ kind: 'validation', reason: message, remediation });
 }
 
 /**
@@ -470,9 +471,9 @@ export function buildRequestUrl(
   assertApiPath(path);
   if (host.pathPrefix !== '') {
     if (host.pathPrefix.endsWith('/')) {
-      throw new JiraError({
+      throw createJiraError({
         kind: 'config',
-        message: `Host path prefix "${host.pathPrefix}" must not end with "/".`,
+        reason: `Host path prefix "${host.pathPrefix}" must not end with "/".`,
         remediation: 'Use "" or a prefix like "/ex/jira/<cloudId>".',
       });
     }
@@ -481,18 +482,18 @@ export function buildRequestUrl(
 
   const base = new URL(host.origin);
   if (base.pathname !== '/' || base.search !== '' || base.hash !== '') {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Host origin "${host.origin}" must be scheme + host only.`,
+      reason: `Host origin "${host.origin}" must be scheme + host only.`,
       remediation: 'Move any path onto HostRef.pathPrefix.',
     });
   }
 
   const url = new URL(`${base.origin}${host.pathPrefix}${JIRA_ROOT_PATHS[root]}${path}`);
   if (url.origin !== base.origin) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: 'Refusing to send a request whose URL escaped the configured host.',
+      reason: 'Refusing to send a request whose URL escaped the configured host.',
       remediation: 'This is a bug in the caller: report it.',
     });
   }
@@ -825,9 +826,9 @@ interface HostSlots {
  */
 export function createSemaphorePool(limit: number): SemaphorePool {
   if (!Number.isInteger(limit) || limit < 1) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `Host concurrency must be a positive integer, got ${String(limit)}.`,
+      reason: `Host concurrency must be a positive integer, got ${String(limit)}.`,
       remediation: 'Set JIRA_HOST_CONCURRENCY to 1 or more.',
     });
   }

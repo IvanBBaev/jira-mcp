@@ -29,7 +29,8 @@
 // operator can read into a constant nobody looks at.
 
 import { assertApiPath, isBlockedHost } from './http-util.js';
-import { JiraError } from './types.js';
+import { createJiraError } from './errors.js';
+import type { JiraError } from './types.js';
 import type { HostRef, JiraDeployment } from './types.js';
 
 /** The one host suffix that needs no allowlist entry (JIRA-API.md §Hosts). */
@@ -534,18 +535,18 @@ export function isValidCloudId(value: string): boolean {
  */
 export function gatewayHost(gatewayOrigin: string, cloudId: string): HostRef {
   if (!isValidCloudId(cloudId)) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `The Jira cloudId ${JSON.stringify(cloudId)} is not a plain identifier (letters, digits and hyphens only), so no request URL was built from it.`,
+      reason: `The Jira cloudId ${JSON.stringify(cloudId)} is not a plain identifier (letters, digits and hyphens only), so no request URL was built from it.`,
       remediation:
         'Set JIRA_OAUTH_CLOUD_ID to the id that `jira-mcp-ai login` printed (or unset it and let the login discover the site); for a scoped API token, set JIRA_CLOUD_ID to the "cloudId" of https://<your-site>/_edge/tenant_info.',
     });
   }
 
   const refuse = (why: string, cause?: unknown): JiraError =>
-    new JiraError({
+    createJiraError({
       kind: 'config',
-      message: `The OAuth gateway origin ${JSON.stringify(gatewayOrigin)} ${why}.`,
+      reason: `The OAuth gateway origin ${JSON.stringify(gatewayOrigin)} ${why}.`,
       remediation: `Unset JIRA_OAUTH_GATEWAY_ORIGIN to use https://${OAUTH_GATEWAY_HOST}, or set it to a bare https origin with no path.`,
       cause,
     });

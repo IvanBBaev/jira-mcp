@@ -34,10 +34,10 @@
 import { CLOUD_API } from '../api/port.js';
 import type { MediaStore } from '../api/attachments.js';
 import type { JiraApi } from '../api/port.js';
-import { isJiraError, toLogFields } from '../core/errors.js';
+import { createJiraError, isJiraError, toLogFields } from '../core/errors.js';
 import { newCorrelationId, runWithCid } from '../core/log.js';
 import { createMetaCache } from '../core/meta-cache.js';
-import { JiraError } from '../core/types.js';
+import type { JiraError } from '../core/types.js';
 import type {
   Clock,
   ErrorRecord,
@@ -104,9 +104,9 @@ function isPackageProfile(token: string): token is PackageProfile {
 }
 
 function selectionError(envVar: string, token: string): JiraError {
-  return new JiraError({
+  return createJiraError({
     kind: 'config',
-    message: `${envVar} names "${token}", which is not a known package or profile.`,
+    reason: `${envVar} names "${token}", which is not a known package or profile.`,
     retryable: false,
     remediation:
       `Use a profile (${PACKAGE_PROFILES.join(', ')}) or a comma list of packages ` +
@@ -160,9 +160,9 @@ function assertManifest(manifest: readonly PackageSpec[]): void {
   const seenTools = new Set<string>();
   for (const pkg of manifest) {
     if (seenPackages.has(pkg.id)) {
-      throw new JiraError({
+      throw createJiraError({
         kind: 'config',
-        message: `The tool manifest declares package "${pkg.id}" twice.`,
+        reason: `The tool manifest declares package "${pkg.id}" twice.`,
         retryable: false,
         remediation: 'Each package appears once in the PACKAGES manifest.',
       });
@@ -170,9 +170,9 @@ function assertManifest(manifest: readonly PackageSpec[]): void {
     seenPackages.add(pkg.id);
     for (const tool of pkg.tools) {
       if (seenTools.has(tool.name)) {
-        throw new JiraError({
+        throw createJiraError({
           kind: 'config',
-          message: `The tool manifest declares tool "${tool.name}" twice.`,
+          reason: `The tool manifest declares tool "${tool.name}" twice.`,
           retryable: false,
           remediation: 'Tool names are globally unique across packages.',
         });

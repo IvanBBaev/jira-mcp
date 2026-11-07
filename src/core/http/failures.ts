@@ -2,8 +2,8 @@
 // an attempt guard rejects with (its abort error lives in `core/clock.ts`), and
 // the shared remediation texts (D515).
 
-import { JiraError } from '../types.js';
-import type { JiraErrorKind, Redactor } from '../types.js';
+import { createJiraError } from '../errors.js';
+import type { JiraError, JiraErrorKind, Redactor } from '../types.js';
 
 /** Bound on the body snippet carried on `JiraError.detail` (CC-15). */
 export const MAX_DETAIL_CHARS = 200;
@@ -62,17 +62,21 @@ export type Fail = (init: FailInit) => JiraError;
 export function makeFail(redactor: Redactor | undefined): Fail {
   const clean = (text: string): string => redactor?.redactString(text) ?? text;
   return (init: FailInit): JiraError =>
-    new JiraError({
-      ...init,
-      message: clean(init.message),
-      remediation: clean(init.remediation),
+    createJiraError({
+      kind: init.kind,
+      reason: init.message,
+      remediation: init.remediation,
+      httpStatus: init.httpStatus,
+      jiraMessages: init.jiraMessages,
+      retryable: init.retryable,
       // Redact the whole body, THEN cut: a cut through a secret leaves a
       // prefix no needle matches any more (CC-238, as CC-158 in errors.ts).
       detail:
         init.detail === undefined
           ? undefined
           : clean(init.detail).slice(0, MAX_DETAIL_CHARS),
-      jiraMessages: init.jiraMessages?.map((entry) => clean(entry)),
+      cause: init.cause,
+      redactor,
     });
 }
 

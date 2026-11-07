@@ -25,7 +25,7 @@
 // Redaction is applied HERE, at construction: the frozen `JiraError` constructor
 // only copies fields, so an error built with `new JiraError(...)` directly
 // bypasses the choke point. Everything in the server builds errors through this
-// module.
+// module; eslint rejects a direct `new JiraError(...)` anywhere else (D536).
 
 import { stripCredentialShapes } from './redact.js';
 import { JIRA_ERROR_KINDS, JiraError } from './types.js';

@@ -32,7 +32,7 @@
 // Layering: `core ← api ← mcp ← tools`.
 // ---------------------------------------------------------------------------
 
-import { JiraError } from '../core/types.js';
+import { createJiraError } from '../core/errors.js';
 import type { ErrorRecord } from '../core/types.js';
 import {
   DEFAULT_TAINT_SOURCE,
@@ -92,17 +92,17 @@ export function normalizeHints(
   if (hints === undefined || hints.length === 0) return undefined;
   for (const hint of hints) {
     if (!(HINT_CODES as readonly string[]).includes(hint.code)) {
-      throw new JiraError({
+      throw createJiraError({
         kind: 'config',
-        message: `Unknown hint code "${String(hint.code)}".`,
+        reason: `Unknown hint code "${String(hint.code)}".`,
         retryable: false,
         remediation: `Use one of: ${HINT_CODES.join(', ')}.`,
       });
     }
     if (typeof hint.message !== 'string' || hint.message.trim() === '') {
-      throw new JiraError({
+      throw createJiraError({
         kind: 'config',
-        message: `Hint "${hint.code}" has an empty message.`,
+        reason: `Hint "${hint.code}" has an empty message.`,
         retryable: false,
         remediation: 'Every hint must say what to do next.',
       });
@@ -206,18 +206,18 @@ function toJsonRecord(result: ToolResult<unknown>): JsonRecord {
   try {
     json = serialize(result);
   } catch {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'unexpected_shape',
-      message: 'The tool produced a result that cannot be serialized to JSON.',
+      reason: 'The tool produced a result that cannot be serialized to JSON.',
       retryable: false,
       remediation: 'Return plain data from the handler (no cycles, no BigInt).',
     });
   }
   const parsed: unknown = JSON.parse(json);
   if (!isRecord(parsed)) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'unexpected_shape',
-      message: 'The tool result did not serialize to a JSON object.',
+      reason: 'The tool result did not serialize to a JSON object.',
       retryable: false,
       remediation: 'Return a ToolResult envelope built with ok() or err().',
     });
@@ -418,9 +418,9 @@ export function truncateResult(
   // which is the one moment it must not. `registry.render` catches this and
   // answers with a complete `ok: false` envelope instead (D85).
   if (!isRecord(redacted)) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'unexpected_shape',
-      message: 'The redaction step did not return a result envelope.',
+      reason: 'The redaction step did not return a result envelope.',
       retryable: false,
       remediation:
         'A redactor must map an object to an object. Fix the redactor rather ' +

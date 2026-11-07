@@ -552,7 +552,11 @@ test('a schema rejection lists at most eight issues and counts the rest', async 
   const message = result.structuredContent.error?.message ?? '';
   assert.equal(result.structuredContent.error?.kind, 'validation');
   assert.match(message, /^Arguments rejected by the schema of jira_wide: a: /);
-  assert.match(message, /; h: [^;]+ \(\+1 more\)\.$/);
+  // The cause sentence ends at the count; `message` appends the remediation (D536).
+  assert.match(
+    result.structuredContent.error?.reason ?? '',
+    /; h: [^;]+ \(\+1 more\)\.$/,
+  );
   assert.doesNotMatch(message, /; i: /, 'the ninth issue is counted, not listed');
 });
 

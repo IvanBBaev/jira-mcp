@@ -36,7 +36,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { JiraError } from '../core/types.js';
+import { createJiraError } from '../core/errors.js';
 import type { HostRef, Settings } from '../core/types.js';
 import type { PackageSelection } from '../mcp/registry.js';
 import type { PackageSpec } from '../mcp/types.js';
@@ -177,9 +177,9 @@ export function createPackages(
  * a diagnosis instead of a crash.
  */
 function unboundReport(): never {
-  throw new JiraError({
+  throw createJiraError({
     kind: 'config',
-    message:
+    reason:
       'jira_capabilities was called on the unbound PACKAGES manifest, which carries ' +
       'no capabilities report. This build wired the manifest without a report source.',
     retryable: false,

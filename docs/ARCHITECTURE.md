@@ -238,7 +238,9 @@ retryable: boolean, remediation?: string, reason?: string }`. Messages state
 cause, then recovery action; `reason` carries the cause sentence alone
 (always set by the factory, so composers append hints without re-parsing the
 message); machine-stable `kind` codes live in a documented catalog and are
-substring-asserted in tests. Error text is redacted at construction time.
+substring-asserted in tests. Error text is redacted at construction time:
+`createJiraError` (`core/errors.ts`) is the only constructor, and a direct
+`new JiraError(...)` elsewhere is an eslint error (D536).
 HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
 `message` shapes (see JIRA-API.md).
 

@@ -50,7 +50,7 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import { DEFAULT_HTTP_BIND, MIN_HTTP_TOKEN_LENGTH } from '../core/settings.js';
-import { JiraError } from '../core/types.js';
+import { createJiraError } from '../core/errors.js';
 import type { Clock, Logger, Settings } from '../core/types.js';
 import type { ConnectableServer, ShutdownReason, TransportHandle } from './transport.js';
 import { credentialFingerprint } from './write-mode.js';
@@ -288,9 +288,9 @@ export async function connectHttpTransport(
   // unauthenticated listener off the machine fails closed twice.
   const token = settings.httpToken;
   if (token === undefined) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message:
+      reason:
         'JIRA_TRANSPORT=http requires JIRA_HTTP_TOKEN; the HTTP transport fails ' +
         'closed without it (CC-30).',
       retryable: false,
@@ -300,9 +300,9 @@ export async function connectHttpTransport(
   }
   // Same double gate for the floor (settings error `http_token_too_short`).
   if ([...token].length < MIN_HTTP_TOKEN_LENGTH) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `JIRA_HTTP_TOKEN is shorter than ${String(MIN_HTTP_TOKEN_LENGTH)} characters; the HTTP transport refuses it (D532).`,
+      reason: `JIRA_HTTP_TOKEN is shorter than ${String(MIN_HTTP_TOKEN_LENGTH)} characters; the HTTP transport refuses it (D532).`,
       retryable: false,
       remediation: 'Generate one with `openssl rand -hex 32`.',
     });
@@ -551,9 +551,9 @@ export async function connectHttpTransport(
   await new Promise<void>((resolve, reject) => {
     const onListenError = (error: unknown): void => {
       reject(
-        new JiraError({
+        createJiraError({
           kind: 'config',
-          message: `The HTTP transport could not bind ${bindHost}:${String(port)}: ${
+          reason: `The HTTP transport could not bind ${bindHost}:${String(port)}: ${
             error instanceof Error ? error.message : 'unknown error'
           }.`,
           retryable: false,

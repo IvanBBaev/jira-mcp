@@ -2157,7 +2157,8 @@ test('CC-92: an error body that cannot be read costs the snippet, not the verdic
   // costs the messages, and must not turn into a different failure.
   assert.equal(err.kind, 'transport');
   assert.equal(err.httpStatus, 503);
-  assert.deepEqual(err.jiraMessages, [], 'no messages survived the unreadable body');
+  // createJiraError drops an empty list rather than carrying `[]` (D536).
+  assert.equal(err.jiraMessages, undefined, 'no messages survived the unreadable body');
   assert.match(err.message, /Jira rejected GET .* with HTTP 503\./);
 });
 

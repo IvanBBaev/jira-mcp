@@ -32,7 +32,8 @@
 
 import { z } from 'zod';
 
-import { JiraError } from '../core/types.js';
+import { createJiraError } from '../core/errors.js';
+import type { JiraError } from '../core/types.js';
 import { PACKAGE_IDS, WRITE_TIERS } from './types.js';
 import type { AnyToolSpec, ToolAnnotations, ToolSpec } from './types.js';
 
@@ -196,9 +197,9 @@ const ANNOTATION_KEYS = [
  * never a `validation` error: nothing about the caller's request is wrong.
  */
 function specError(name: string, problem: string): JiraError {
-  return new JiraError({
+  return createJiraError({
     kind: 'config',
-    message: `Tool spec "${name}" is invalid: ${problem}.`,
+    reason: `Tool spec "${name}" is invalid: ${problem}.`,
     retryable: false,
     remediation:
       'Fix the tool definition; this is a bug in the server, not in the request.',

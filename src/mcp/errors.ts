@@ -22,8 +22,12 @@
 // Layering: `core ← api ← mcp ← tools`.
 // ---------------------------------------------------------------------------
 
-import { isJiraError, toErrorRecord as projectJiraError } from '../core/errors.js';
-import { JIRA_ERROR_KINDS, JiraError } from '../core/types.js';
+import {
+  createJiraError,
+  isJiraError,
+  toErrorRecord as projectJiraError,
+} from '../core/errors.js';
+import { JIRA_ERROR_KINDS } from '../core/types.js';
 import type { ErrorRecord, JiraErrorKind } from '../core/types.js';
 import { err } from './result.js';
 import type { EnvelopeOptions } from './result.js';
@@ -99,7 +103,7 @@ export function errorResult(
 /**
  * Build an error envelope from an explicit kind — for refusals decided locally,
  * before any request is sent (write gating, budget checks, unsupported
- * deployments). Goes through `JiraError` so the same rules apply, including the
+ * deployments). Goes through `createJiraError` so the same rules apply, including the
  * default retryability that `RETRYABLE_ERROR_KINDS` assigns to the kind: an
  * omitted `retryable` inherits it rather than silently meaning `false`.
  */
@@ -112,11 +116,13 @@ export function errorResultOf(
     readonly hints?: EnvelopeOptions['hints'];
   } = {},
 ): ToolResult<never> {
-  const error = new JiraError({
+  const error = createJiraError({
     kind,
-    message,
+    reason: message,
+    // An omitted remediation stays omitted: the caller decided there is none,
+    // so the kind's default text is not appended.
+    remediation: init.remediation ?? '',
     ...(init.retryable === undefined ? {} : { retryable: init.retryable }),
-    ...(init.remediation === undefined ? {} : { remediation: init.remediation }),
   });
   return errorResult(error, { hints: init.hints });
 }

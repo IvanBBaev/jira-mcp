@@ -24,7 +24,7 @@
 //     id placeholder, never the media URL — v1 fetches no attachments, and an
 //     unfetchable signed URL in a model's context is a liability, not data.
 
-import { JiraError } from '../core/types.js';
+import { createJiraError } from '../core/errors.js';
 import { isRecord } from './guards.js';
 
 // ---------------------------------------------------------------------------
@@ -1745,9 +1745,9 @@ export function toAdf(body: string | AdfNode): AdfDoc {
   if (typeof body === 'string') return adfFromText(body);
 
   if (!isRecord(body)) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'validation',
-      message: 'A rich-text body must be plain text or an ADF document object.',
+      reason: 'A rich-text body must be plain text or an ADF document object.',
       remediation:
         'Pass a string, or an object shaped { type: "doc", version: 1, content: [] }.',
     });
@@ -1755,9 +1755,9 @@ export function toAdf(body: string | AdfNode): AdfDoc {
 
   const type = body.type;
   if (typeof type === 'string' && type !== 'doc') {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'validation',
-      message: `A rich-text ADF body must be a whole document, not a "${typeLabel(type)}" node.`,
+      reason: `A rich-text ADF body must be a whole document, not a "${typeLabel(type)}" node.`,
       remediation: 'Wrap the node in { type: "doc", version: 1, content: [ ... ] }.',
     });
   }

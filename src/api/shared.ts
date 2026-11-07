@@ -41,8 +41,8 @@
 // clock (time arrives as the injected {@link Clock}).
 // ---------------------------------------------------------------------------
 
+import { createJiraError } from '../core/errors.js';
 import {
-  JiraError,
   type Clock,
   type JiraRequestFn,
   type JiraRequestSpec,
@@ -258,9 +258,9 @@ export async function searchPages<T>(
         // A repeated cursor is either a Jira bug or a token we already burned;
         // sending it again would duplicate a page or spin forever. Both are
         // worse than failing loudly, and `max_pages` would misreport the cause.
-        throw new JiraError({
+        throw createJiraError({
           kind: 'unexpected_shape',
-          message:
+          reason:
             'Jira handed back a nextPageToken that this search already used. ' +
             'Tokens are one-time-use, so the loop stopped instead of re-sending it. ' +
             'Re-run the search from the first page.',
@@ -282,9 +282,9 @@ export async function searchPages<T>(
       // JIRA-API.md §Search: a token is invalidated when the JQL or the field
       // list changes. Sending it anyway earns a confusing 400 at best and a
       // wrong page at worst.
-      throw new JiraError({
+      throw createJiraError({
         kind: 'validation',
-        message:
+        reason:
           'The paginated request changed between pages while carrying a ' +
           'nextPageToken. A search token is bound to the JQL and field list that ' +
           'produced it, so the loop refused to send it against a different query.',
@@ -484,9 +484,9 @@ function normalizeToken(token: string | undefined): string | undefined {
  */
 function normalizePositiveInt(value: number, name: string): number {
   if (!Number.isInteger(value) || value < 1) {
-    throw new JiraError({
+    throw createJiraError({
       kind: 'config',
-      message: `${name} must be an integer >= 1, received ${String(value)}.`,
+      reason: `${name} must be an integer >= 1, received ${String(value)}.`,
       remediation:
         name === 'maxPages'
           ? 'Check JIRA_MAX_PAGES (CONFIGURATION.md); the documented default is 20.'
