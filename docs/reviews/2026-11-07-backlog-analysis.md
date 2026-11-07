@@ -338,3 +338,10 @@ owner disposes. The concrete proposals, in order of value:
    row for the TypeScript 7 and `@types/node` 26 majors.
 4. Hold V3-13, V3-59 and V3-67 together as the Data Center lane until V3-27.
 5. Land V3-64 only after the 1.1.0 tag; leave V3-65 parked under D548.
+
+## Postscript, 2026-11-07 evening
+
+After this report was written, `main` was pushed to `988b7df` from another
+session. The first step of register item 1 is therefore done, and R2 is now
+being tested by the first Actions run on those 74 commits. The tag, the
+publish, the route check and every other item in the registers are still open.
