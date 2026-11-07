@@ -12,22 +12,23 @@
 <!-- release-progress:begin -->
 ## Release progress (Opus 5.5 hours)
 
-> Maintained by the `relase-opus-5-5-persentage` skill. Unit: wall-clock hours
+> Maintained by the `%-relase-opus-5-5-persentage` skill. Unit: wall-clock hours
 > of one autonomous Opus 5.5 session at this project's gate standard.
 > Numbers are computed by the skill's script from the table below.
 
 | | |
 |---|---|
-| Release target | `1.0.0` — the version published after Gate C closes on Cloud (D87, RELEASING.md §6) (current version `1.0.0`, released by owner decision before Gate C closed — D121) |
-| Progress | **88.4 %** — 153 h of 173 h earned |
-| Remaining | **20 h** Opus 5.5 (0 h workable now, 20 h blocked) |
-| Blocked by | test-account permissions (project admin, delete, bulk changes); a live `--write` run of Gate C; npm trusted publisher + token revoke (D86); leaked API token rotation; `live` Actions secrets |
-| Calibration | Phase 13.1–13.3 landed in ~1.5 h of commits (2026-09-26 13:51→15:14); defect hunts 17–20 ran ~1 h each (2026-10-10 18:43→22:43); phases 9–12 took one session of 4–5 h each |
-| Updated | 2026-10-16 at `8b03d46` |
+| Release target | `1.1.0` — `main` as a minor release with one announced break (D547, ROADMAP V3-22) (current version `1.0.0` on npm, 74 commits unpushed) |
+| Progress | **99 %** — 298 h of 301 h earned |
+| Remaining | **3 h** Opus 5.5 (0 h workable now, 3 h blocked) |
+| Blocked by | the owner's yes for push, tag and publish (D547 date passed 2026-11-01); npm trusted publisher, `NPM_TOKEN` removal and revoke (D86); rotation of the pasted API token |
+| Calibration | Phase 13.1–13.3 landed in ~1.5 h of commits (2026-09-26 13:51→15:14); defect hunts 17–20 ran ~1 h each (2026-10-10 18:43→22:43); phases 9–12 took one session of 4–5 h each; 2026-10-30 landed about 30 rows across parallel sessions, so commit times do not give per-row hours and estimates stay as written |
+| Updated | 2026-11-06 at `8de2d0f` |
 
-Out of target: verifying the Data Center preview against a real DC host
-(Phase 13 exit, D104/D106). It stays a labelled UNVERIFIED preview and does not
-block `1.0.0`.
+Out of target: the Data Center preview stays a labelled UNVERIFIED preview
+(D104, D106, D549). Gate C, the fixture set and the weekly live suite, rows
+R03–R07 until 2026-11-06, moved to ROADMAP V3-39, V3-47 and V3-48: D121 released
+1.0.0 without them and D547 keeps 1.1.0 from waiting on them.
 
 | ID | Item | Source | Status | Est h |
 |---|---|---|---|---|
@@ -49,21 +50,24 @@ block `1.0.0`.
 | D16 | Review fix pass over phases 9–12 | WORKLOG 2026-09-07/08 | `done` | 4 |
 | D17 | Coverage sweep, defect hunts 1–22, owner sweeps D118/D119 (CC-134…CC-430) | CORNER-CASES.md | `done` | 28 |
 | D18 | Phase 13.1–13.8: Data Center preview, 47 tools (D106–D117) | Phase 13 | `done` | 16 |
+| D19 | Post-1.0 surface: Phases 14–16 and wave 6, 58→82 tools (D126, D133…, D300–D303, D400) | Phases 14–16, wave 6 | `done` | 24 |
+| D20 | Roadmap rows V3-01…V3-28 that are done | ROADMAP v3 work packages | `done` | 39.5 |
+| D21 | Panel rows V3-29…V3-41 that are done | ROADMAP panel work packages | `done` | 28.5 |
+| D22 | Panel rows V3-42…V3-53 that are done | ROADMAP panel work packages | `done` | 32.5 |
+| D23 | Panel rows V3-54…V3-81 that are done | ROADMAP panel work packages | `done` | 16 |
 | R01 | Register the npm trusted publisher, delete `NPM_TOKEN`, revoke the token (D86) | RELEASING.md §5 | `blocked-owner` | 0.5 |
 | R02 | Rotate the API token pasted in chat; delete stranded `SAN-1204`/`SAN-1205` | CLAUDE.md status | `blocked-owner` | 0.5 |
-| R03 | Grant the test account project admin, delete and "Make bulk changes" on the sandbox | RELEASING.md §6 | `blocked-owner` | 0.5 |
-| R04 | Gate C `--write` run over the 18 unproven tools, incl. `jira_link_issues` direction | RELEASING.md §6, README status | `blocked-external` | 4 |
-| R05 | Fix what that run finds (each past live run found 3–4 defects) | Risks table | `blocked-external` | 6 |
-| R06 | Record the minimum fixture set against the live site | Phase 1, Phase 3 open items | `blocked-external` | 3 |
-| R07 | `live` environment `JIRA_*` secrets; weekly live suite green | Phase 5 open item | `blocked-owner` | 1 |
 | R08 | Flip docs to 1.0.0: README status, live counts, CHANGELOG, RELEASING, site | D87, D121 | `done` | 3 |
 | R09 | Publish `1.0.0`: tag, publish workflow, registry and provenance checks | RELEASING.md §4–§5, D121 | `done` | 1.5 |
+| R10 | Push `main` (74 commits) and read the first Actions run on them | V3-22, 2026-11-06 analysis | `blocked-owner` | 0.5 |
+| R11 | Publish `1.1.0`: tag, publish workflow, registry and provenance checks | V3-22, D547 | `blocked-owner` | 1.5 |
 
 ### History
 - 2026-10-13 `6484ffb` — 88.4 %, 20 h left (first run; baseline)
 - 2026-10-14 `22ee78f` — 88.4 %, 20 h left (±0 pp; 22nd hunt and CC-430 fold into D17, already `done`; no status, estimate or scope change — every remaining row is still owner/external-blocked)
 - 2026-10-16 `5f605ca` — 88.4 %, 20 h left (±0 pp; 57 commits — defect hunts 23–36 (CC-5xx–CC-8xx), the 0.9.5 changelog, CI action bumps — are quality work outside the 1.0.0 rows; no status, estimate or scope change, every remaining row still owner/external-blocked)
 - 2026-10-16 `8b03d46` — 88.4 %, 20 h left (±0 pp; 23 commits — defect hunts 37–43 (CC-860/861, CC-880, CC-900, CC-920–922, CC-960–964, CC-980–982) — are quality work outside the 1.0.0 rows; no status, estimate or scope change, every remaining row still owner/external-blocked)
+- 2026-11-06 `8de2d0f` — 99 %, 3 h left (+10.6 pp, mostly from the new target, not new progress; target moved from `1.0.0`, shipped 2026-10-19 by D121, to `1.1.0` per D547. R08 and R09 were already `done`, so the 88.4 % header was stale: 91 % before this run. Removed R03–R07: D121 and D547, carried by V3-39, V3-47 and V3-48. Added D19–D23, 140.5 h of finished post-1.0 work, with D19 at a new 24 h estimate and the rest at ROADMAP hours, plus R10 and R11. No re-estimates. Every remaining row is owner-blocked)
 <!-- release-progress:end -->
 
 ## Standing decisions
