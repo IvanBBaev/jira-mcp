@@ -1490,8 +1490,8 @@ variable the server reads or depends on.
 
 ## v2 wave 6 — project scope guard (D400)
 
-Phase number left open: waves 4 and 5 run in parallel and take the next
-ones. D400 and CC-4000…CC-4006 are placeholders to renumber after them.
+No phase number: this wave ran in parallel with wave 5, which took Phase 16.
+D400 and CC-4000…CC-4006 never collided and are final.
 
 - [x] `JIRA_PROJECTS` (D400) — a guard below the write gate confines every
       tool to the listed projects: search JQL rewritten, every named entity

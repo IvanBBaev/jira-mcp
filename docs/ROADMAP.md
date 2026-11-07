@@ -330,7 +330,7 @@ and are not started.
 | V3-19 | Write gate as an explicit, ordered middleware list. Panel 2026-10-29 (ARC-R5): one write-pipeline constructor, so it also owns `server.ts` | `src/mcp/write-mode.ts`, `src/mcp/registry.ts`, `src/mcp/project-scope.ts`, `src/mcp/server.ts` | D523–D524 | V3-09, V3-14, V3-57 | todo | 6 |
 | V3-20 | Docs split: `docs/decisions/Dnnn.md` plus an index; archive the IMPLEMENTATION-PLAN phases 0–16; split CORNER-CASES by domain. **Solo**: runs only when no other WP is open. Panel 2026-10-29 (DOC, ARC-R10): contributor-corpus hygiene only — user/admin docs are V3-69…V3-71; the DECISIONS split may run early as a docs-only solo job | `docs/DECISIONS.md`, `docs/CORNER-CASES.md`, `docs/IMPLEMENTATION-PLAN.md`, `docs/decisions/` (new) | — | V3-01, V3-02, V3-04, V3-05, V3-06, V3-07, V3-08, V3-09, V3-10, V3-11, V3-12, V3-13, V3-14, V3-18, V3-19 | todo | 4 |
 | V3-21 | Live check of `/rest/software/1.0` under Basic auth, a scoped token and OAuth 3LO (a 403 has been reported); the fallback itself is V3-29. Panel 2026-10-29 (OPS, JIR-R8): the Basic-auth read half of `verify-live.mjs` is owner-runnable today, before the tag; scoped token and 3LO stay external | — (live run) | — | V3-01 | blocked-owner | 1 |
-| V3-22 | Release `main` as 1.1.0 before ~2026-11-01 (a 1.0.1 of V3-01 alone conflicts in 13 files — DevOps review). Docs checklist: V3-30, V3-34; fallback `1.1.0-rc.1` on `beta` | release | — | V3-01, V3-29, V3-38 | todo (D547: ships without waiting for V3-21; the tag, push and publish still need the owner's yes) | 1.5 |
+| V3-22 | Release `main` as 1.1.0 before ~2026-11-01 (a 1.0.1 of V3-01 alone conflicts in 13 files — DevOps review). Docs checklist: V3-30, V3-34; fallback `1.1.0-rc.1` on `beta` | release | — | V3-01, V3-29, V3-38 | todo (D547: ships without waiting for V3-21; the tag, push and publish still need the owner's yes; deadline missed, not tagged as of 2026-11-06) | 1.5 |
 | V3-23 | Distribution: official MCP registry entry, ghcr publish, Docker MCP Catalog, listings | registry, CI secrets | — | V3-16 | blocked-owner | 2 |
 | V3-24 | 2.0 contract cleanup: the open v2 §3 renames plus the new inconsistencies; old names stay hidden but callable through 2.x; env aliases print a warning | tool surface | — | V3-05, V3-09, V3-45, V3-46 | blocked-owner | 12 |
 | V3-25 | Default profile `standard` (≈50 tools); hide gated irreversible tools. Panel 2026-10-29 (MCP-R3/R4): omit `profile` from schemas when the profile is locked (the "more than one profile" trigger never fires) and tolerate it at call time; gate-aware listing with a plan-only prefix on write descriptions | `src/mcp/registry.ts`, packages | — | V3-08 | deferred to 1.2.0 (D550; `tools/list` unchanged in 1.1.0) | 4 |
@@ -475,9 +475,10 @@ PRD-R10 (1.2.0 `standard` profile). Unused reserve: D551–D560.
 
 ### Priority order after the panel
 
-1. **Release before ~2026-11-01:** V3-29, V3-21 (owner), V3-30, V3-31,
+1. **Release, overdue since 2026-11-01:** V3-29, V3-21 (owner), V3-30, V3-31,
    V3-32, V3-33, V3-34, V3-36, V3-37, V3-38 (owner) → **V3-22 (owner's yes)**.
-   Fallback: `1.1.0-rc.1` on the `beta` dist-tag.
+   Fallback: `1.1.0-rc.1` on the `beta` dist-tag. Neither went out by the date;
+   see `docs/reviews/2026-11-06-state-analysis.md`.
 2. **First two weeks after:** V3-23, V3-16, V3-17, V3-72, V3-25, V3-07,
    V3-08; V3-39, V3-40, V3-41, V3-47; V3-49, V3-50; V3-74, V3-73.
 3. **Before any 2.0 contract change:** V3-45, V3-46, V3-48, V3-79.
