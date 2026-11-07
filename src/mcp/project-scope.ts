@@ -192,643 +192,757 @@ function segmentsOf(path: string): string[] | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Guard state and refusals
+// ---------------------------------------------------------------------------
+
+/** What every step of one guard shares. */
+interface ScopeContext {
+  readonly keys: readonly string[];
+  readonly allowed: ReadonlySet<string>;
+  readonly scopeText: string;
+  readonly inner: JiraRequestFn;
+  readonly deployment: JiraDeployment;
+  readonly platformRoot: JiraApiRoot;
+  /** Per-guard memo: one tool call resolves each entity at most once. */
+  readonly memo: Map<string, Promise<string | undefined>>;
+}
+
+function deny(ctx: ScopeContext, what: string): JiraError {
+  return createJiraError({
+    kind: 'permission',
+    reason: `${what} is outside the project scope of this server (JIRA_PROJECTS: ${ctx.scopeText}). Nothing was sent to Jira.`,
+    remediation: SCOPE_REMEDIATION,
+  });
+}
+
+/**
+ * The refusal for a named entity: it names the entity and, once resolved,
+ * the project that put it out of scope — or says the project could not be
+ * resolved, which fails closed the same way.
+ */
+function denyEntity(
+  ctx: ScopeContext,
+  what: string,
+  project: string | undefined,
+): JiraError {
+  return deny(
+    ctx,
+    project === undefined
+      ? `${what} could not be resolved to a project, so it`
+      : `${what} (project ${project})`,
+  );
+}
+
+function unbalanced(ctx: ScopeContext): JiraError {
+  return createJiraError({
+    kind: 'validation',
+    reason:
+      'The JQL has unbalanced quotes or parentheses, so it cannot be confined to ' +
+      `the projects in JIRA_PROJECTS (${ctx.scopeText}). Nothing was sent to Jira.`,
+    remediation: 'Close every quote and parenthesis in the JQL and call again.',
+  });
+}
+
+function remember(
+  ctx: ScopeContext,
+  key: string,
+  load: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  let hit = ctx.memo.get(key);
+  if (hit === undefined) {
+    hit = load();
+    ctx.memo.set(key, hit);
+  }
+  return hit;
+}
+
+/** A resolution read inheriting the triggering request's profile, budget and signal. */
+async function read(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  spec: JiraRequestSpec,
+): Promise<unknown> {
+  const response = await ctx.inner({
+    ...spec,
+    ...(origin.profile === undefined ? {} : { profile: origin.profile }),
+    ...(origin.deadlineAt === undefined ? {} : { deadlineAt: origin.deadlineAt }),
+    ...(origin.signal === undefined ? {} : { signal: origin.signal }),
+  });
+  return response.data;
+}
+
+// ---------------------------------------------------------------------------
+// Resolvers: entity → project key (upper-cased), or undefined
+// ---------------------------------------------------------------------------
+
+function projectKeyOf(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  projectRef: string,
+): Promise<string | undefined> {
+  const upper = projectRef.toUpperCase();
+  if (ctx.allowed.has(upper)) return Promise.resolve(upper);
+  // A key outside the list is refused without a read; only a numeric id
+  // needs Jira to say which project it is.
+  if (!NUMERIC_ID.test(projectRef)) return Promise.resolve(upper);
+  return remember(ctx, `project:${projectRef}`, async () =>
+    ref(
+      record(
+        await read(ctx, origin, {
+          method: 'GET',
+          root: ctx.platformRoot,
+          path: `/project/${encodeURIComponent(projectRef)}`,
+          pathTemplate: '/project/{projectIdOrKey}',
+        }),
+      )?.['key'],
+    )?.toUpperCase(),
+  );
+}
+
+function issueProjectOf(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  issueRef: string,
+): Promise<string | undefined> {
+  const key = ISSUE_KEY.exec(issueRef);
+  if (key !== null && !ctx.allowed.has((key[1] ?? '').toUpperCase())) {
+    // The key's prefix is already out of scope; no read needed to refuse.
+    return Promise.resolve((key[1] ?? '').toUpperCase());
+  }
+  // An in-scope prefix is still confirmed: a moved issue answers to its old
+  // key from its new project.
+  return remember(ctx, `issue:${issueRef.toUpperCase()}`, async () =>
+    issueProjectKey(
+      await read(ctx, origin, {
+        method: 'GET',
+        root: ctx.platformRoot,
+        path: `/issue/${encodeURIComponent(issueRef)}`,
+        pathTemplate: '/issue/{issueIdOrKey}',
+        query: { fields: 'project' },
+      }),
+    ),
+  );
+}
+
+function boardProjectOf(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  boardId: string,
+): Promise<string | undefined> {
+  return remember(ctx, `board:${boardId}`, async () => {
+    const location = record(
+      record(
+        await read(ctx, origin, {
+          method: 'GET',
+          root: 'agile',
+          path: `/board/${encodeURIComponent(boardId)}`,
+          pathTemplate: '/board/{boardId}',
+        }),
+      )?.['location'],
+    );
+    const key = ref(location?.['projectKey']);
+    if (key !== undefined) return key.toUpperCase();
+    const id = ref(location?.['projectId']);
+    return id === undefined ? undefined : projectKeyOf(ctx, origin, id);
+  });
+}
+
+function sprintProjectOf(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  sprintId: string,
+): Promise<string | undefined> {
+  return remember(ctx, `sprint:${sprintId}`, async () => {
+    const board = ref(
+      record(
+        await read(ctx, origin, {
+          method: 'GET',
+          root: 'agile',
+          path: `/sprint/${encodeURIComponent(sprintId)}`,
+          pathTemplate: '/sprint/{sprintId}',
+        }),
+      )?.['originBoardId'],
+    );
+    return board === undefined ? undefined : boardProjectOf(ctx, origin, board);
+  });
+}
+
+function componentProjectOf(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  id: string,
+): Promise<string | undefined> {
+  return remember(ctx, `component:${id}`, async () => {
+    const data = record(
+      await read(ctx, origin, {
+        method: 'GET',
+        root: ctx.platformRoot,
+        path: `/component/${encodeURIComponent(id)}`,
+        pathTemplate: '/component/{id}',
+      }),
+    );
+    const key = ref(data?.['project']);
+    if (key !== undefined) return key.toUpperCase();
+    const projectId = ref(data?.['projectId']);
+    return projectId === undefined ? undefined : projectKeyOf(ctx, origin, projectId);
+  });
+}
+
+function versionProjectOf(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  id: string,
+): Promise<string | undefined> {
+  return remember(ctx, `version:${id}`, async () => {
+    const projectId = ref(
+      record(
+        await read(ctx, origin, {
+          method: 'GET',
+          root: ctx.platformRoot,
+          path: `/version/${encodeURIComponent(id)}`,
+          pathTemplate: '/version/{id}',
+        }),
+      )?.['projectId'],
+    );
+    return projectId === undefined ? undefined : projectKeyOf(ctx, origin, projectId);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Assertions
+// ---------------------------------------------------------------------------
+
+function assertKey(ctx: ScopeContext, key: string | undefined, what: string): void {
+  if (key === undefined || !ctx.allowed.has(key)) throw denyEntity(ctx, what, key);
+}
+
+async function assertProject(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  projectRef: string,
+): Promise<void> {
+  assertKey(
+    ctx,
+    await projectKeyOf(ctx, origin, projectRef),
+    `Project ${JSON.stringify(projectRef)}`,
+  );
+}
+
+async function assertIssue(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  issueRef: string,
+): Promise<void> {
+  assertKey(
+    ctx,
+    await issueProjectOf(ctx, origin, issueRef),
+    `Issue ${JSON.stringify(issueRef)}`,
+  );
+}
+
+async function assertBoard(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  boardId: string,
+): Promise<void> {
+  assertKey(ctx, await boardProjectOf(ctx, origin, boardId), `Board ${boardId}`);
+}
+
+async function assertSprint(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  sprintId: string,
+): Promise<void> {
+  assertKey(ctx, await sprintProjectOf(ctx, origin, sprintId), `Sprint ${sprintId}`);
+}
+
+async function assertComponent(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  id: string,
+): Promise<void> {
+  assertKey(ctx, await componentProjectOf(ctx, origin, id), `Component ${id}`);
+}
+
+async function assertVersion(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  id: string,
+): Promise<void> {
+  assertKey(ctx, await versionProjectOf(ctx, origin, id), `Version ${id}`);
+}
+
+/**
+ * Many issues at once (bulk, rank, sprint moves): out-of-scope key prefixes
+ * are refused outright, the rest are confirmed with one search per batch.
+ * Every reference must come back, in scope.
+ */
+async function assertIssues(
+  ctx: ScopeContext,
+  origin: JiraRequestSpec,
+  refs: readonly string[],
+): Promise<void> {
+  if (refs.length === 1 && refs[0] !== undefined) {
+    return assertIssue(ctx, origin, refs[0]);
+  }
+  for (const issueRef of refs) {
+    const key = ISSUE_KEY.exec(issueRef);
+    if (key !== null && !ctx.allowed.has((key[1] ?? '').toUpperCase())) {
+      throw denyEntity(
+        ctx,
+        `Issue ${JSON.stringify(issueRef)}`,
+        (key[1] ?? '').toUpperCase(),
+      );
+    }
+  }
+  for (let start = 0; start < refs.length; start += SEARCH_BATCH) {
+    const batch = refs.slice(start, start + SEARCH_BATCH);
+    const jql = `issuekey in (${batch.map((entry) => JSON.stringify(entry)).join(', ')})`;
+    const data = record(
+      await read(ctx, origin, {
+        method: 'POST',
+        root: ctx.platformRoot,
+        path: ctx.deployment === 'datacenter' ? '/search' : '/search/jql',
+        body: { jql, fields: ['project'], maxResults: SEARCH_BATCH },
+        safe: true,
+      }),
+    );
+    const found = new Map<string, string | undefined>();
+    for (const issue of Array.isArray(data?.['issues']) ? data['issues'] : []) {
+      const project = issueProjectKey(issue);
+      const rec = record(issue);
+      const id = ref(rec?.['id']);
+      const key = ref(rec?.['key']);
+      if (id !== undefined) found.set(id, project);
+      if (key !== undefined) found.set(key.toUpperCase(), project);
+    }
+    for (const issueRef of batch) {
+      assertKey(
+        ctx,
+        found.get(issueRef.toUpperCase()),
+        `Issue ${JSON.stringify(issueRef)}`,
+      );
+    }
+  }
+}
+
+/** The bulk-fetch reads (D149, D150) name their issues in `issueIdsOrKeys`. */
+async function assertBulkFetch(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  body: Record<string, unknown> | undefined,
+): Promise<void> {
+  const refs = issueRefs(body?.['issueIdsOrKeys']);
+  if (refs.length === 0) throw deny(ctx, 'A bulk read without issues');
+  await assertIssues(ctx, req, refs);
+}
+
+async function checkQueryRefs(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  projects: readonly string[],
+  issues: readonly string[],
+): Promise<void> {
+  for (const name of projects) {
+    const value = queryRef(req.query, name);
+    if (value === undefined) continue;
+    for (const part of value.split(',')) {
+      if (part.trim().length > 0) await assertProject(ctx, req, part.trim());
+    }
+  }
+  for (const name of issues) {
+    const value = queryRef(req.query, name);
+    if (value !== undefined) await assertIssue(ctx, req, value);
+  }
+}
+
+/** Belt and braces: an issue a response carries must be in scope. */
+function assertResponse(ctx: ScopeContext, data: unknown): void {
+  const rec = record(data);
+  if (rec === undefined) return;
+  const issues = Array.isArray(rec['issues']) ? rec['issues'] : [rec];
+  for (const issue of issues) {
+    const key = issueProjectKey(issue);
+    if (key !== undefined && !ctx.allowed.has(key)) {
+      const issueKey = ref(record(issue)?.['key']);
+      throw denyEntity(
+        ctx,
+        issueKey === undefined
+          ? 'A returned issue'
+          : `Returned issue ${JSON.stringify(issueKey)}`,
+        key,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rewrites and response filters
+// ---------------------------------------------------------------------------
+
+function rewriteQueryJql(ctx: ScopeContext, req: JiraRequestSpec): Admission {
+  const jql = scopeJql(queryRef(req.query, 'jql'), ctx.keys);
+  if (jql === undefined) throw unbalanced(ctx);
+  return { req: { ...req, query: { ...req.query, jql } } };
+}
+
+function rewriteBodyJql(ctx: ScopeContext, req: JiraRequestSpec): Admission {
+  const body = record(req.body) ?? {};
+  const jql = scopeJql(ref(body['jql']), ctx.keys);
+  if (jql === undefined) throw unbalanced(ctx);
+  return { req: { ...req, body: { ...body, jql } } };
+}
+
+function filterProjects(ctx: ScopeContext, data: unknown): unknown {
+  if (Array.isArray(data)) {
+    return data.filter((project) =>
+      ctx.allowed.has(ref(record(project)?.['key'])?.toUpperCase() ?? ''),
+    );
+  }
+  const rec = record(data);
+  if (rec === undefined || !Array.isArray(rec['values'])) return data;
+  return {
+    ...rec,
+    values: rec['values'].filter((project) =>
+      ctx.allowed.has(ref(record(project)?.['key'])?.toUpperCase() ?? ''),
+    ),
+  };
+}
+
+function filterBoards(ctx: ScopeContext, data: unknown): unknown {
+  const rec = record(data);
+  if (rec === undefined || !Array.isArray(rec['values'])) return data;
+  return {
+    ...rec,
+    values: rec['values'].filter((board) => {
+      const key = ref(record(record(board)?.['location'])?.['projectKey']);
+      return key !== undefined && ctx.allowed.has(key.toUpperCase());
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Route classification: the platform root
+// ---------------------------------------------------------------------------
+
+const GLOBAL_PLATFORM = new Set([
+  'myself',
+  'serverInfo',
+  'field',
+  'issueLinkType',
+  'priority',
+  'resolution',
+  'issuetype',
+  'label',
+  'configuration',
+  'status',
+  'jql',
+  'filter',
+]);
+
+async function admitIssueRoute(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  seg: readonly string[],
+  body: Record<string, unknown> | undefined,
+): Promise<Admission> {
+  const [, second, third] = seg;
+  const fields = record(body?.['fields']);
+  const parent = entityRef(fields?.['parent']);
+
+  if (second === undefined) {
+    // POST /issue — the new issue's project, and its parent when it has one.
+    const project = entityRef(fields?.['project']);
+    if (project === undefined) throw deny(ctx, 'An issue without a project');
+    await assertProject(ctx, req, project);
+    if (parent !== undefined) await assertIssue(ctx, req, parent);
+    return { req };
+  }
+  if (second === 'bulkfetch' && third === undefined) {
+    // POST /issue/bulkfetch (D149) — every issue it names.
+    await assertBulkFetch(ctx, req, body);
+    return { req };
+  }
+  if (second === 'createmeta') {
+    if (third === undefined) throw deny(ctx, 'Create metadata without a project');
+    await assertProject(ctx, req, third);
+    return { req };
+  }
+  await assertIssue(ctx, req, second);
+  if (parent !== undefined) await assertIssue(ctx, req, parent);
+  return { req };
+}
+
+async function admitIssueLinkRoute(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  linkId: string | undefined,
+  body: Record<string, unknown> | undefined,
+): Promise<Admission> {
+  if (linkId === undefined) {
+    await assertIssues(
+      ctx,
+      req,
+      [entityRef(body?.['inwardIssue']), entityRef(body?.['outwardIssue'])].filter(
+        (entry): entry is string => entry !== undefined,
+      ),
+    );
+    return { req };
+  }
+  const link = record(
+    await read(ctx, req, {
+      method: 'GET',
+      root: ctx.platformRoot,
+      path: `/issueLink/${encodeURIComponent(linkId)}`,
+      pathTemplate: '/issueLink/{linkId}',
+    }),
+  );
+  const ends = [entityRef(link?.['inwardIssue']), entityRef(link?.['outwardIssue'])];
+  if (ends.some((end) => end === undefined))
+    throw denyEntity(ctx, `Issue link ${linkId}`, undefined);
+  for (const end of ends) if (end !== undefined) await assertIssue(ctx, req, end);
+  return { req };
+}
+
+async function admitComponentRoute(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  id: string | undefined,
+  body: Record<string, unknown> | undefined,
+): Promise<Admission> {
+  if (id === undefined) {
+    const project = ref(body?.['project']) ?? ref(body?.['projectId']);
+    if (project === undefined) throw deny(ctx, 'A component without a project');
+    await assertProject(ctx, req, project);
+    return { req };
+  }
+  await assertComponent(ctx, req, id);
+  const target = queryRef(req.query, 'moveIssuesTo');
+  if (target !== undefined) await assertComponent(ctx, req, target);
+  return { req };
+}
+
+async function admitVersionRoute(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  id: string | undefined,
+  body: Record<string, unknown> | undefined,
+): Promise<Admission> {
+  if (id === undefined) {
+    const project = ref(body?.['projectId']) ?? ref(body?.['project']);
+    if (project === undefined) throw deny(ctx, 'A version without a project');
+    await assertProject(ctx, req, project);
+    return { req };
+  }
+  await assertVersion(ctx, req, id);
+  for (const name of ['moveFixIssuesTo', 'moveAffectedIssuesTo']) {
+    const target = ref(body?.[name]);
+    if (target !== undefined) await assertVersion(ctx, req, target);
+  }
+  return { req };
+}
+
+async function admitPlatform(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  seg: readonly string[],
+): Promise<Admission> {
+  const [head, second, third] = seg;
+  const body = record(req.body);
+  if (head === undefined) throw deny(ctx, 'This request');
+  if (GLOBAL_PLATFORM.has(head)) return { req };
+
+  switch (head) {
+    case 'user':
+      await checkQueryRefs(ctx, req, ['project', 'projectKeys'], ['issueKey']);
+      return { req };
+    case 'mypermissions':
+      await checkQueryRefs(
+        ctx,
+        req,
+        ['projectKey', 'projectId'],
+        ['issueKey', 'issueId'],
+      );
+      return { req };
+    case 'statuses':
+      await checkQueryRefs(ctx, req, ['projectId'], []);
+      return { req };
+    case 'project':
+      if (second === undefined || second === 'search')
+        return { req, filter: (data) => filterProjects(ctx, data) };
+      await assertProject(ctx, req, second);
+      return { req };
+    case 'issue':
+      return admitIssueRoute(ctx, req, seg, body);
+    case 'changelog':
+      // POST /changelog/bulkfetch (D150) — every issue it names.
+      if (second === 'bulkfetch' && third === undefined) {
+        await assertBulkFetch(ctx, req, body);
+        return { req };
+      }
+      throw deny(ctx, 'This changelog route');
+    case 'issueLink':
+      return admitIssueLinkRoute(ctx, req, second, body);
+    case 'component':
+      return admitComponentRoute(ctx, req, second, body);
+    case 'version':
+      return admitVersionRoute(ctx, req, second, body);
+    case 'search':
+      if (second === undefined || second === 'jql') {
+        return req.method === 'GET'
+          ? rewriteQueryJql(ctx, req)
+          : rewriteBodyJql(ctx, req);
+      }
+      if (second === 'approximate-count') return rewriteBodyJql(ctx, req);
+      throw deny(ctx, 'This search route');
+    case 'bulk':
+      if (second === 'queue') return { req };
+      if (second === 'issues' && third !== undefined) {
+        const refs = issueRefs(body?.['selectedIssueIdsOrKeys']);
+        if (refs.length === 0) throw deny(ctx, 'A bulk request without issues');
+        await assertIssues(ctx, req, refs);
+        return { req };
+      }
+      throw deny(ctx, 'This bulk route');
+    case 'attachment':
+      // Jira's attachment metadata names no issue: nothing to check against.
+      throw deny(ctx, 'An attachment addressed by id');
+    default:
+      throw deny(ctx, `The route ${req.pathTemplate ?? `/${head}`}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Route classification: the agile and software roots
+// ---------------------------------------------------------------------------
+
+async function admitAgile(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  seg: readonly string[],
+): Promise<Admission> {
+  const [head, second, third] = seg;
+  const body = record(req.body);
+  switch (head) {
+    case 'board':
+      if (second === undefined) {
+        await checkQueryRefs(ctx, req, ['projectKeyOrId'], []);
+        return { req, filter: (data) => filterBoards(ctx, data) };
+      }
+      await assertBoard(ctx, req, second);
+      if ((third === 'backlog' || third === 'issue') && req.method === 'GET') {
+        return rewriteQueryJql(ctx, req);
+      }
+      return { req };
+    case 'sprint': {
+      if (second === undefined) {
+        const board = ref(body?.['originBoardId']);
+        if (board === undefined) throw deny(ctx, 'A sprint without a board');
+        await assertBoard(ctx, req, board);
+        return { req };
+      }
+      await assertSprint(ctx, req, second);
+      const board = ref(body?.['originBoardId']);
+      if (board !== undefined) await assertBoard(ctx, req, board);
+      if (third === 'issue') {
+        if (req.method === 'GET') return rewriteQueryJql(ctx, req);
+        await assertIssues(ctx, req, issueRefs(body?.['issues']));
+      }
+      return { req };
+    }
+    case 'backlog':
+      if (second === 'issue') {
+        await assertIssues(ctx, req, issueRefs(body?.['issues']));
+        return { req };
+      }
+      throw deny(ctx, 'This backlog route');
+    case 'issue': {
+      if (second === undefined) throw deny(ctx, 'This agile route');
+      if (second === 'rank') {
+        const refs = [
+          ...issueRefs(body?.['issues']),
+          ...[ref(body?.['rankBeforeIssue']), ref(body?.['rankAfterIssue'])].filter(
+            (entry): entry is string => entry !== undefined,
+          ),
+        ];
+        await assertIssues(ctx, req, refs);
+        return { req };
+      }
+      await assertIssue(ctx, req, second);
+      const board = queryRef(req.query, 'boardId');
+      if (board !== undefined) await assertBoard(ctx, req, board);
+      return { req };
+    }
+    default:
+      throw deny(ctx, `The agile route ${req.pathTemplate ?? `/${head ?? ''}`}`);
+  }
+}
+
+/**
+ * The Cloud Jira Software issue reads (D500) — the sprint-issue and backlog
+ * GETs moved off the agile root. They are scoped exactly as their agile
+ * twins were (the board or sprint must be in scope, and the project clause
+ * is ANDed into the JQL); any other route on this root is refused, since no
+ * served tool sends one.
+ */
+async function admitSoftware(
+  ctx: ScopeContext,
+  req: JiraRequestSpec,
+  seg: readonly string[],
+): Promise<Admission> {
+  const [head, second, third, extra] = seg;
+  const isRead =
+    req.method === 'GET' &&
+    second !== undefined &&
+    extra === undefined &&
+    ((head === 'sprint' && third === 'issue') ||
+      (head === 'board' && (third === 'backlog' || third === 'issue')));
+  if (!isRead) throw deny(ctx, `The Jira Software route ${req.pathTemplate ?? req.path}`);
+  return admitAgile(ctx, req, seg);
+}
+
+async function admit(ctx: ScopeContext, req: JiraRequestSpec): Promise<Admission> {
+  const seg = segmentsOf(req.path);
+  if (seg === undefined) throw deny(ctx, 'This request');
+  const root = req.root ?? 'v3';
+  if (root === 'agile') return admitAgile(ctx, req, seg);
+  if (root === 'software') return admitSoftware(ctx, req, seg);
+  if (root === 'v3' || root === 'v2') return admitPlatform(ctx, req, seg);
+  // `secure` is the Data Center attachment servlet — an attachment by id.
+  throw deny(ctx, 'An attachment addressed by id');
+}
+
+// ---------------------------------------------------------------------------
 // The guard
 // ---------------------------------------------------------------------------
 
 export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
-  const keys = deps.keys;
-  const allowed = new Set(keys);
-  const platformRoot: JiraApiRoot = deps.deployment === 'datacenter' ? 'v2' : 'v3';
-  const scopeText = keys.join(', ');
-
-  const deny = (what: string): JiraError =>
-    createJiraError({
-      kind: 'permission',
-      reason: `${what} is outside the project scope of this server (JIRA_PROJECTS: ${scopeText}). Nothing was sent to Jira.`,
-      remediation: SCOPE_REMEDIATION,
-    });
-
-  /**
-   * The refusal for a named entity: it names the entity and, once resolved,
-   * the project that put it out of scope — or says the project could not be
-   * resolved, which fails closed the same way.
-   */
-  const denyEntity = (what: string, project: string | undefined): JiraError =>
-    deny(
-      project === undefined
-        ? `${what} could not be resolved to a project, so it`
-        : `${what} (project ${project})`,
-    );
-
-  // Per-guard memo: one tool call resolves each entity at most once.
-  const memo = new Map<string, Promise<string | undefined>>();
-  const remember = (
-    key: string,
-    load: () => Promise<string | undefined>,
-  ): Promise<string | undefined> => {
-    let hit = memo.get(key);
-    if (hit === undefined) {
-      hit = load();
-      memo.set(key, hit);
-    }
-    return hit;
-  };
-
-  /** A resolution read inheriting the triggering request's profile, budget and signal. */
-  const read = async (
-    origin: JiraRequestSpec,
-    spec: JiraRequestSpec,
-  ): Promise<unknown> => {
-    const response = await deps.inner({
-      ...spec,
-      ...(origin.profile === undefined ? {} : { profile: origin.profile }),
-      ...(origin.deadlineAt === undefined ? {} : { deadlineAt: origin.deadlineAt }),
-      ...(origin.signal === undefined ? {} : { signal: origin.signal }),
-    });
-    return response.data;
-  };
-
-  // --- Resolvers: entity → project key (upper-cased), or undefined ---------
-
-  const projectKeyOf = (
-    origin: JiraRequestSpec,
-    projectRef: string,
-  ): Promise<string | undefined> => {
-    const upper = projectRef.toUpperCase();
-    if (allowed.has(upper)) return Promise.resolve(upper);
-    // A key outside the list is refused without a read; only a numeric id
-    // needs Jira to say which project it is.
-    if (!NUMERIC_ID.test(projectRef)) return Promise.resolve(upper);
-    return remember(`project:${projectRef}`, async () =>
-      ref(
-        record(
-          await read(origin, {
-            method: 'GET',
-            root: platformRoot,
-            path: `/project/${encodeURIComponent(projectRef)}`,
-            pathTemplate: '/project/{projectIdOrKey}',
-          }),
-        )?.['key'],
-      )?.toUpperCase(),
-    );
-  };
-
-  const issueProjectOf = (
-    origin: JiraRequestSpec,
-    issueRef: string,
-  ): Promise<string | undefined> => {
-    const key = ISSUE_KEY.exec(issueRef);
-    if (key !== null && !allowed.has((key[1] ?? '').toUpperCase())) {
-      // The key's prefix is already out of scope; no read needed to refuse.
-      return Promise.resolve((key[1] ?? '').toUpperCase());
-    }
-    // An in-scope prefix is still confirmed: a moved issue answers to its old
-    // key from its new project.
-    return remember(`issue:${issueRef.toUpperCase()}`, async () =>
-      issueProjectKey(
-        await read(origin, {
-          method: 'GET',
-          root: platformRoot,
-          path: `/issue/${encodeURIComponent(issueRef)}`,
-          pathTemplate: '/issue/{issueIdOrKey}',
-          query: { fields: 'project' },
-        }),
-      ),
-    );
-  };
-
-  const boardProjectOf = (
-    origin: JiraRequestSpec,
-    boardId: string,
-  ): Promise<string | undefined> =>
-    remember(`board:${boardId}`, async () => {
-      const location = record(
-        record(
-          await read(origin, {
-            method: 'GET',
-            root: 'agile',
-            path: `/board/${encodeURIComponent(boardId)}`,
-            pathTemplate: '/board/{boardId}',
-          }),
-        )?.['location'],
-      );
-      const key = ref(location?.['projectKey']);
-      if (key !== undefined) return key.toUpperCase();
-      const id = ref(location?.['projectId']);
-      return id === undefined ? undefined : projectKeyOf(origin, id);
-    });
-
-  const sprintProjectOf = (
-    origin: JiraRequestSpec,
-    sprintId: string,
-  ): Promise<string | undefined> =>
-    remember(`sprint:${sprintId}`, async () => {
-      const board = ref(
-        record(
-          await read(origin, {
-            method: 'GET',
-            root: 'agile',
-            path: `/sprint/${encodeURIComponent(sprintId)}`,
-            pathTemplate: '/sprint/{sprintId}',
-          }),
-        )?.['originBoardId'],
-      );
-      return board === undefined ? undefined : boardProjectOf(origin, board);
-    });
-
-  const componentProjectOf = (
-    origin: JiraRequestSpec,
-    id: string,
-  ): Promise<string | undefined> =>
-    remember(`component:${id}`, async () => {
-      const data = record(
-        await read(origin, {
-          method: 'GET',
-          root: platformRoot,
-          path: `/component/${encodeURIComponent(id)}`,
-          pathTemplate: '/component/{id}',
-        }),
-      );
-      const key = ref(data?.['project']);
-      if (key !== undefined) return key.toUpperCase();
-      const projectId = ref(data?.['projectId']);
-      return projectId === undefined ? undefined : projectKeyOf(origin, projectId);
-    });
-
-  const versionProjectOf = (
-    origin: JiraRequestSpec,
-    id: string,
-  ): Promise<string | undefined> =>
-    remember(`version:${id}`, async () => {
-      const projectId = ref(
-        record(
-          await read(origin, {
-            method: 'GET',
-            root: platformRoot,
-            path: `/version/${encodeURIComponent(id)}`,
-            pathTemplate: '/version/{id}',
-          }),
-        )?.['projectId'],
-      );
-      return projectId === undefined ? undefined : projectKeyOf(origin, projectId);
-    });
-
-  // --- Assertions -----------------------------------------------------------
-
-  const assertKey = (key: string | undefined, what: string): void => {
-    if (key === undefined || !allowed.has(key)) throw denyEntity(what, key);
-  };
-
-  const assertProject = async (
-    origin: JiraRequestSpec,
-    projectRef: string,
-  ): Promise<void> => {
-    assertKey(
-      await projectKeyOf(origin, projectRef),
-      `Project ${JSON.stringify(projectRef)}`,
-    );
-  };
-
-  const assertIssue = async (
-    origin: JiraRequestSpec,
-    issueRef: string,
-  ): Promise<void> => {
-    assertKey(
-      await issueProjectOf(origin, issueRef),
-      `Issue ${JSON.stringify(issueRef)}`,
-    );
-  };
-
-  const assertBoard = async (origin: JiraRequestSpec, boardId: string): Promise<void> => {
-    assertKey(await boardProjectOf(origin, boardId), `Board ${boardId}`);
-  };
-
-  const assertSprint = async (
-    origin: JiraRequestSpec,
-    sprintId: string,
-  ): Promise<void> => {
-    assertKey(await sprintProjectOf(origin, sprintId), `Sprint ${sprintId}`);
-  };
-
-  const assertComponent = async (origin: JiraRequestSpec, id: string): Promise<void> => {
-    assertKey(await componentProjectOf(origin, id), `Component ${id}`);
-  };
-
-  const assertVersion = async (origin: JiraRequestSpec, id: string): Promise<void> => {
-    assertKey(await versionProjectOf(origin, id), `Version ${id}`);
-  };
-
-  /**
-   * Many issues at once (bulk, rank, sprint moves): out-of-scope key prefixes
-   * are refused outright, the rest are confirmed with one search per batch.
-   * Every reference must come back, in scope.
-   */
-  const assertIssues = async (
-    origin: JiraRequestSpec,
-    refs: readonly string[],
-  ): Promise<void> => {
-    if (refs.length === 1 && refs[0] !== undefined) return assertIssue(origin, refs[0]);
-    for (const issueRef of refs) {
-      const key = ISSUE_KEY.exec(issueRef);
-      if (key !== null && !allowed.has((key[1] ?? '').toUpperCase())) {
-        throw denyEntity(
-          `Issue ${JSON.stringify(issueRef)}`,
-          (key[1] ?? '').toUpperCase(),
-        );
-      }
-    }
-    for (let start = 0; start < refs.length; start += SEARCH_BATCH) {
-      const batch = refs.slice(start, start + SEARCH_BATCH);
-      const jql = `issuekey in (${batch.map((entry) => JSON.stringify(entry)).join(', ')})`;
-      const data = record(
-        await read(origin, {
-          method: 'POST',
-          root: platformRoot,
-          path: deps.deployment === 'datacenter' ? '/search' : '/search/jql',
-          body: { jql, fields: ['project'], maxResults: SEARCH_BATCH },
-          safe: true,
-        }),
-      );
-      const found = new Map<string, string | undefined>();
-      for (const issue of Array.isArray(data?.['issues']) ? data['issues'] : []) {
-        const project = issueProjectKey(issue);
-        const rec = record(issue);
-        const id = ref(rec?.['id']);
-        const key = ref(rec?.['key']);
-        if (id !== undefined) found.set(id, project);
-        if (key !== undefined) found.set(key.toUpperCase(), project);
-      }
-      for (const issueRef of batch) {
-        assertKey(found.get(issueRef.toUpperCase()), `Issue ${JSON.stringify(issueRef)}`);
-      }
-    }
-  };
-
-  /** The bulk-fetch reads (D149, D150) name their issues in `issueIdsOrKeys`. */
-  const assertBulkFetch = async (
-    req: JiraRequestSpec,
-    body: Record<string, unknown> | undefined,
-  ): Promise<void> => {
-    const refs = issueRefs(body?.['issueIdsOrKeys']);
-    if (refs.length === 0) throw deny('A bulk read without issues');
-    await assertIssues(req, refs);
-  };
-
-  // --- Route classification ------------------------------------------------
-
-  const rewriteQueryJql = (req: JiraRequestSpec): Admission => {
-    const jql = scopeJql(queryRef(req.query, 'jql'), keys);
-    if (jql === undefined) throw unbalanced();
-    return { req: { ...req, query: { ...req.query, jql } } };
-  };
-
-  const rewriteBodyJql = (req: JiraRequestSpec): Admission => {
-    const body = record(req.body) ?? {};
-    const jql = scopeJql(ref(body['jql']), keys);
-    if (jql === undefined) throw unbalanced();
-    return { req: { ...req, body: { ...body, jql } } };
-  };
-
-  const unbalanced = (): JiraError =>
-    createJiraError({
-      kind: 'validation',
-      reason:
-        'The JQL has unbalanced quotes or parentheses, so it cannot be confined to ' +
-        `the projects in JIRA_PROJECTS (${scopeText}). Nothing was sent to Jira.`,
-      remediation: 'Close every quote and parenthesis in the JQL and call again.',
-    });
-
-  const filterProjects = (data: unknown): unknown => {
-    if (Array.isArray(data)) {
-      return data.filter((project) =>
-        allowed.has(ref(record(project)?.['key'])?.toUpperCase() ?? ''),
-      );
-    }
-    const rec = record(data);
-    if (rec === undefined || !Array.isArray(rec['values'])) return data;
-    return {
-      ...rec,
-      values: rec['values'].filter((project) =>
-        allowed.has(ref(record(project)?.['key'])?.toUpperCase() ?? ''),
-      ),
-    };
-  };
-
-  const filterBoards = (data: unknown): unknown => {
-    const rec = record(data);
-    if (rec === undefined || !Array.isArray(rec['values'])) return data;
-    return {
-      ...rec,
-      values: rec['values'].filter((board) => {
-        const key = ref(record(record(board)?.['location'])?.['projectKey']);
-        return key !== undefined && allowed.has(key.toUpperCase());
-      }),
-    };
-  };
-
-  const checkQueryRefs = async (
-    req: JiraRequestSpec,
-    projects: readonly string[],
-    issues: readonly string[],
-  ): Promise<void> => {
-    for (const name of projects) {
-      const value = queryRef(req.query, name);
-      if (value === undefined) continue;
-      for (const part of value.split(',')) {
-        if (part.trim().length > 0) await assertProject(req, part.trim());
-      }
-    }
-    for (const name of issues) {
-      const value = queryRef(req.query, name);
-      if (value !== undefined) await assertIssue(req, value);
-    }
-  };
-
-  const GLOBAL_PLATFORM = new Set([
-    'myself',
-    'serverInfo',
-    'field',
-    'issueLinkType',
-    'priority',
-    'resolution',
-    'issuetype',
-    'label',
-    'configuration',
-    'status',
-    'jql',
-    'filter',
-  ]);
-
-  const admitPlatform = async (
-    req: JiraRequestSpec,
-    seg: readonly string[],
-  ): Promise<Admission> => {
-    const [head, second, third] = seg;
-    const body = record(req.body);
-    if (head === undefined) throw deny('This request');
-    if (GLOBAL_PLATFORM.has(head)) return { req };
-
-    switch (head) {
-      case 'user':
-        await checkQueryRefs(req, ['project', 'projectKeys'], ['issueKey']);
-        return { req };
-      case 'mypermissions':
-        await checkQueryRefs(req, ['projectKey', 'projectId'], ['issueKey', 'issueId']);
-        return { req };
-      case 'statuses':
-        await checkQueryRefs(req, ['projectId'], []);
-        return { req };
-      case 'project':
-        if (second === undefined || second === 'search')
-          return { req, filter: filterProjects };
-        await assertProject(req, second);
-        return { req };
-      case 'issue':
-        return admitIssueRoute(req, seg, body);
-      case 'changelog':
-        // POST /changelog/bulkfetch (D150) — every issue it names.
-        if (second === 'bulkfetch' && third === undefined) {
-          await assertBulkFetch(req, body);
-          return { req };
-        }
-        throw deny('This changelog route');
-      case 'issueLink': {
-        if (second === undefined) {
-          await assertIssues(
-            req,
-            [entityRef(body?.['inwardIssue']), entityRef(body?.['outwardIssue'])].filter(
-              (entry): entry is string => entry !== undefined,
-            ),
-          );
-          return { req };
-        }
-        const link = record(
-          await read(req, {
-            method: 'GET',
-            root: platformRoot,
-            path: `/issueLink/${encodeURIComponent(second)}`,
-            pathTemplate: '/issueLink/{linkId}',
-          }),
-        );
-        const ends = [
-          entityRef(link?.['inwardIssue']),
-          entityRef(link?.['outwardIssue']),
-        ];
-        if (ends.some((end) => end === undefined))
-          throw denyEntity(`Issue link ${second}`, undefined);
-        for (const end of ends) if (end !== undefined) await assertIssue(req, end);
-        return { req };
-      }
-      case 'component': {
-        if (second === undefined) {
-          const project = ref(body?.['project']) ?? ref(body?.['projectId']);
-          if (project === undefined) throw deny('A component without a project');
-          await assertProject(req, project);
-          return { req };
-        }
-        await assertComponent(req, second);
-        const target = queryRef(req.query, 'moveIssuesTo');
-        if (target !== undefined) await assertComponent(req, target);
-        return { req };
-      }
-      case 'version': {
-        if (second === undefined) {
-          const project = ref(body?.['projectId']) ?? ref(body?.['project']);
-          if (project === undefined) throw deny('A version without a project');
-          await assertProject(req, project);
-          return { req };
-        }
-        await assertVersion(req, second);
-        for (const name of ['moveFixIssuesTo', 'moveAffectedIssuesTo']) {
-          const target = ref(body?.[name]);
-          if (target !== undefined) await assertVersion(req, target);
-        }
-        return { req };
-      }
-      case 'search':
-        if (second === undefined || second === 'jql') {
-          return req.method === 'GET' ? rewriteQueryJql(req) : rewriteBodyJql(req);
-        }
-        if (second === 'approximate-count') return rewriteBodyJql(req);
-        throw deny('This search route');
-      case 'bulk':
-        if (second === 'queue') return { req };
-        if (second === 'issues' && third !== undefined) {
-          const refs = issueRefs(body?.['selectedIssueIdsOrKeys']);
-          if (refs.length === 0) throw deny('A bulk request without issues');
-          await assertIssues(req, refs);
-          return { req };
-        }
-        throw deny('This bulk route');
-      case 'attachment':
-        // Jira's attachment metadata names no issue: nothing to check against.
-        throw deny('An attachment addressed by id');
-      default:
-        throw deny(`The route ${req.pathTemplate ?? `/${head}`}`);
-    }
-  };
-
-  const admitIssueRoute = async (
-    req: JiraRequestSpec,
-    seg: readonly string[],
-    body: Record<string, unknown> | undefined,
-  ): Promise<Admission> => {
-    const [, second, third] = seg;
-    const fields = record(body?.['fields']);
-    const parent = entityRef(fields?.['parent']);
-
-    if (second === undefined) {
-      // POST /issue — the new issue's project, and its parent when it has one.
-      const project = entityRef(fields?.['project']);
-      if (project === undefined) throw deny('An issue without a project');
-      await assertProject(req, project);
-      if (parent !== undefined) await assertIssue(req, parent);
-      return { req };
-    }
-    if (second === 'bulkfetch' && third === undefined) {
-      // POST /issue/bulkfetch (D149) — every issue it names.
-      await assertBulkFetch(req, body);
-      return { req };
-    }
-    if (second === 'createmeta') {
-      if (third === undefined) throw deny('Create metadata without a project');
-      await assertProject(req, third);
-      return { req };
-    }
-    await assertIssue(req, second);
-    if (parent !== undefined) await assertIssue(req, parent);
-    return { req };
-  };
-
-  const admitAgile = async (
-    req: JiraRequestSpec,
-    seg: readonly string[],
-  ): Promise<Admission> => {
-    const [head, second, third] = seg;
-    const body = record(req.body);
-    switch (head) {
-      case 'board':
-        if (second === undefined) {
-          await checkQueryRefs(req, ['projectKeyOrId'], []);
-          return { req, filter: filterBoards };
-        }
-        await assertBoard(req, second);
-        if ((third === 'backlog' || third === 'issue') && req.method === 'GET') {
-          return rewriteQueryJql(req);
-        }
-        return { req };
-      case 'sprint': {
-        if (second === undefined) {
-          const board = ref(body?.['originBoardId']);
-          if (board === undefined) throw deny('A sprint without a board');
-          await assertBoard(req, board);
-          return { req };
-        }
-        await assertSprint(req, second);
-        const board = ref(body?.['originBoardId']);
-        if (board !== undefined) await assertBoard(req, board);
-        if (third === 'issue') {
-          if (req.method === 'GET') return rewriteQueryJql(req);
-          await assertIssues(req, issueRefs(body?.['issues']));
-        }
-        return { req };
-      }
-      case 'backlog':
-        if (second === 'issue') {
-          await assertIssues(req, issueRefs(body?.['issues']));
-          return { req };
-        }
-        throw deny('This backlog route');
-      case 'issue': {
-        if (second === undefined) throw deny('This agile route');
-        if (second === 'rank') {
-          const refs = [
-            ...issueRefs(body?.['issues']),
-            ...[ref(body?.['rankBeforeIssue']), ref(body?.['rankAfterIssue'])].filter(
-              (entry): entry is string => entry !== undefined,
-            ),
-          ];
-          await assertIssues(req, refs);
-          return { req };
-        }
-        await assertIssue(req, second);
-        const board = queryRef(req.query, 'boardId');
-        if (board !== undefined) await assertBoard(req, board);
-        return { req };
-      }
-      default:
-        throw deny(`The agile route ${req.pathTemplate ?? `/${head ?? ''}`}`);
-    }
-  };
-
-  /**
-   * The Cloud Jira Software issue reads (D500) — the sprint-issue and backlog
-   * GETs moved off the agile root. They are scoped exactly as their agile
-   * twins were (the board or sprint must be in scope, and the project clause
-   * is ANDed into the JQL); any other route on this root is refused, since no
-   * served tool sends one.
-   */
-  const admitSoftware = async (
-    req: JiraRequestSpec,
-    seg: readonly string[],
-  ): Promise<Admission> => {
-    const [head, second, third, extra] = seg;
-    const isRead =
-      req.method === 'GET' &&
-      second !== undefined &&
-      extra === undefined &&
-      ((head === 'sprint' && third === 'issue') ||
-        (head === 'board' && (third === 'backlog' || third === 'issue')));
-    if (!isRead) throw deny(`The Jira Software route ${req.pathTemplate ?? req.path}`);
-    return admitAgile(req, seg);
-  };
-
-  const admit = async (req: JiraRequestSpec): Promise<Admission> => {
-    const seg = segmentsOf(req.path);
-    if (seg === undefined) throw deny('This request');
-    const root = req.root ?? 'v3';
-    if (root === 'agile') return admitAgile(req, seg);
-    if (root === 'software') return admitSoftware(req, seg);
-    if (root === 'v3' || root === 'v2') return admitPlatform(req, seg);
-    // `secure` is the Data Center attachment servlet — an attachment by id.
-    throw deny('An attachment addressed by id');
-  };
-
-  /** Belt and braces: an issue a response carries must be in scope. */
-  const assertResponse = (data: unknown): void => {
-    const rec = record(data);
-    if (rec === undefined) return;
-    const issues = Array.isArray(rec['issues']) ? rec['issues'] : [rec];
-    for (const issue of issues) {
-      const key = issueProjectKey(issue);
-      if (key !== undefined && !allowed.has(key)) {
-        const issueKey = ref(record(issue)?.['key']);
-        throw denyEntity(
-          issueKey === undefined
-            ? 'A returned issue'
-            : `Returned issue ${JSON.stringify(issueKey)}`,
-          key,
-        );
-      }
-    }
+  const ctx: ScopeContext = {
+    keys: deps.keys,
+    allowed: new Set(deps.keys),
+    scopeText: deps.keys.join(', '),
+    inner: deps.inner,
+    deployment: deps.deployment,
+    platformRoot: deps.deployment === 'datacenter' ? 'v2' : 'v3',
+    memo: new Map(),
   };
 
   const jira: JiraRequestFn = async <T = unknown>(
     req: JiraRequestSpec,
   ): Promise<JiraResponse<T>> => {
-    const admission = await admit(req);
-    const response = await deps.inner<T>(admission.req);
+    const admission = await admit(ctx, req);
+    const response = await ctx.inner<T>(admission.req);
     if (req.accept === 'binary') return response;
     const data =
       admission.filter === undefined ? response.data : admission.filter(response.data);
-    assertResponse(data);
+    assertResponse(ctx, data);
     return admission.filter === undefined ? response : { ...response, data: data as T };
   };
 
   return {
     jira,
     check: async (req: JiraRequestSpec): Promise<void> => {
-      await admit(req);
+      await admit(ctx, req);
     },
   };
 }

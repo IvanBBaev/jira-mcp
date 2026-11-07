@@ -53,7 +53,7 @@ const SAFE_ALLOWLIST: Readonly<Record<string, string>> = {
     'Issue bulkfetch: reads up to the cap of issues by key or id (D527).',
   'src/api/issues/changelog.ts › getChangelogsBulk · POST CHANGELOG_BULKFETCH_PATH':
     'Changelog bulkfetch: reads the change history of many issues (D527).',
-  "src/mcp/project-scope.ts › createProjectScope › assertIssues · POST deps.deployment === 'datacenter' ? '/search' : '/search/jql'":
+  "src/mcp/project-scope.ts › assertIssues · POST ctx.deployment === 'datacenter' ? '/search' : '/search/jql'":
     'The JIRA_PROJECTS guard resolving issue keys to projects: a search.',
   "src/cli/doctor.ts › PROBES › run · POST '/search/jql'":
     'The doctor search probe: one-row search, a read.',
