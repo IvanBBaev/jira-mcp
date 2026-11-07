@@ -437,7 +437,7 @@ takes a number outside its row.
 
 | ID | Item | Source | Owns | IDs | Deps | Status | Est h |
 |---|---|---|---|---|---|---|---|
-| V3-64 | Paging documentation: every paged description names its cap and continuation field, with a test | MCP-R6 | `src/tools/*.ts` (description strings), `src/mcp/paging-doc.test.ts` (new) | CC-5360–5369 | V3-05 | todo | 3 |
+| V3-64 | Paging documentation: every paged description names its cap and continuation field, with a test | MCP-R6 | `src/tools/*.ts` (description strings), `src/mcp/paging-doc.test.ts` (new) | CC-5360–5369 | V3-05 | done 0cd885a (test lives at `src/tools/paging-doc.test.ts` — the mcp zone may not import the manifest; `jira_list_filters` has no server cap, so its description says Jira sets the max; CC-5360–5363 used; also touched README tool tables, CORNER-CASES) | 3 |
 | V3-65 | Changelog `order: "newest"` and key-or-id project arguments (additive) | MCP-R8 | `src/tools/issues.ts`, `src/tools/meta.ts`, `src/tools/agile.ts`, `src/api/projects.ts` (resolver) | D542, CC-5370–5389 | V3-12 | todo | 3.5 |
 | V3-66 | Completions stage B: `projectKey` from a TTL cache | MCP-R10 | `src/mcp/completions.ts`, `src/mcp/server.ts` | CC-5390–5399 | V3-62 | todo | 2 |
 | V3-68 | Reversible batch update `jira_update_issues` (≤ 50 issues, one plan) — reopens a parked item | MCP-R9 | `src/tools/issues-write.ts`, `src/api/issues/*` | D543–D544 | V3-09, V3-12 | parked (D548 feature freeze) | 6 |
