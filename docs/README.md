@@ -17,11 +17,11 @@
 | [TESTING.md](TESTING.md) | Test tiers, fixtures, network fence, coverage, the `check` gate. |
 | [CORNER-CASES.md](CORNER-CASES.md) | Enumerated behaviours as stable `CC-nn` ids, referenced by test names and the plan. |
 | [DECISIONS.md](DECISIONS.md) | Decision ledger: accepted D-rows, open owner O-rows, gates A–C. |
-| [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | Phases 0–13 with exits and milestones. |
+| [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | Phases 0–16 and waves 1–6 with exits and milestones; the release-progress block. |
 | [WORK-PACKAGES.md](WORK-PACKAGES.md) | Parallel-execution overlay: agent-sized work packages in waves. |
-| [ROADMAP.md](ROADMAP.md) | Post-v1 items (v1.5 / v2). |
+| [ROADMAP.md](ROADMAP.md) | Post-1.0 work: v1.5 / v2 items, the v3 and role-panel work packages (`V3-nn` rows), the priority order, parked items. |
 | [RELEASING.md](RELEASING.md) | Publish-day runbook: the owner actions no file can perform. |
-| [reviews/](reviews/) | Panel review reports (dated, immutable once published). |
+| [reviews/](reviews/) | Dated review and analysis reports (panels, baselines, state and backlog analyses), immutable once published. |
 
 ## Fact ownership (single-writer rule)
 

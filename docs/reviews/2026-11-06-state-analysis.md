@@ -4,7 +4,10 @@ A measured snapshot of `main` at `8de2d0f`, one week after the role panel
 (`2026-10-29-role-panel.md`). It answers three questions: what is true now,
 what is blocked and by whom, and what to do next. Source has not changed since
 2026-10-31. Every number below was measured on 2026-11-06 unless its row says
-otherwise. No live tenant was touched.
+otherwise. No live tenant was touched. A companion,
+`2026-11-07-backlog-analysis.md`, holds the dependency graph, the freeze matrix,
+the owner-decision and risk registers, the modularity proposals and the
+coverage gaps that this snapshot only summarises.
 
 ## Verdict
 
@@ -165,8 +168,9 @@ already running sprint reads is the group most likely to hit section 1.
 ## 7. Documentation drift
 
 Fixed with this analysis: the project status file, the release-progress block,
-the ROADMAP priority order, the V3-22 row, the O-2 count, and the wave 6 note in
-IMPLEMENTATION-PLAN.
+the ROADMAP priority order, the V3-22 row, the O-2 count, the wave 6 note in
+IMPLEMENTATION-PLAN, and three stale rows of the `docs/README.md` document map
+(plan phases, roadmap scope, the reviews folder).
 
 Checked and correct, no change needed:
 
@@ -182,7 +186,7 @@ owner's replacement decision, and this review does not invent one.
 
 | Item | State | Recommendation |
 |---|---|---|
-| Worktree `_branches/jira-mcp-v3-55` | Clean, on `wp/v3-55`, no commits, since 2026-10-31 | Start V3-55 or remove it |
+| Worktree `_branches/jira-mcp-v3-55` | Clean, on `wp/v3-55`, no commits, since 2026-10-31 (removed on 2026-11-07 without landing) | Start V3-55 or remove it |
 | Remote branch `oauth-3lo` | Stale at `de551e2` | Delete |
 | PR #7, typescript 5.9.3→6.0.3 | Stale; `main` already has 6.0.3 | Close |
 | PRs #20, #22, #23 | Actions group, `@hono/node-server`, minor and patch | Rebase after the push, then merge if CI is green |
