@@ -61,12 +61,12 @@ import {
   type AgileIssue,
   type AgileSprint,
   type BoardConfiguration,
+  type JiraApi,
+  type PageStopReason,
   type RankFailure,
   type SprintIssuesResult,
   type SprintLifecycleState,
-} from '../api/agile.js';
-import type { JiraApi } from '../api/port.js';
-import type { PageStopReason } from '../api/shared.js';
+} from '../api/port.js';
 import { createJiraError } from '../core/errors.js';
 import { defineTool, outputArg, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { currentRecentWrites } from '../mcp/recent-writes.js';
@@ -302,7 +302,11 @@ export const listBoardsTool = defineTool<z.infer<typeof listBoardsInput>, BoardL
   },
   handler(args, ctx) {
     return guarded(async () => {
-      const page = clampPageSize(args.maxResults, DEFAULT_AGILE_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(
+        args.maxResults,
+        ctx.api.limits.agilePageSize,
+        'startAt',
+      );
       const loop = await ctx.api.listBoards({
         ...pagedOptions(ctx, args.startAt, page.pageSize),
         projectKeyOrId: args.projectKeyOrId,
@@ -410,7 +414,11 @@ export const listSprintsTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
-      const page = clampPageSize(args.maxResults, DEFAULT_AGILE_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(
+        args.maxResults,
+        ctx.api.limits.agilePageSize,
+        'startAt',
+      );
       const loop = await ctx.api.listSprints({
         ...pagedOptions(ctx, args.startAt, page.pageSize),
         boardId: args.boardId,
@@ -597,7 +605,7 @@ export const getSprintIssuesTool = defineTool<
       const cursor = issueCursor(args.startAt, args.nextPageToken);
       const page = clampPageSize(
         args.maxResults,
-        DEFAULT_AGILE_PAGE_SIZE,
+        ctx.api.limits.agilePageSize,
         'nextPageToken',
       );
       const loop = await ctx.api.listSprintIssues({
@@ -678,7 +686,7 @@ export const getBacklogTool = defineTool<z.infer<typeof getBacklogInput>, Backlo
       const cursor = issueCursor(args.startAt, args.nextPageToken);
       const page = clampPageSize(
         args.maxResults,
-        DEFAULT_AGILE_PAGE_SIZE,
+        ctx.api.limits.agilePageSize,
         'nextPageToken',
       );
       const loop = await ctx.api.listBacklogIssues({

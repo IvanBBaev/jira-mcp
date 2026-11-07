@@ -32,7 +32,6 @@
 import { open, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { MAX_SEARCH_RESULTS } from '../api/search.js';
 import { createJiraError, isJiraError } from '../core/errors.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
@@ -287,7 +286,7 @@ async function boardsOf(
 async function sweep(args: AnalyzeArgs, ctx: ToolCtx): Promise<Sweep> {
   const jql = portfolioJql(args);
   const maxIssues = args.maxIssues ?? DEFAULT_PORTFOLIO_ISSUES;
-  const pageSize = Math.min(MAX_SEARCH_RESULTS, maxIssues);
+  const pageSize = Math.min(ctx.api.limits.maxSearchResults, maxIssues);
   const maxPages = Math.max(
     1,
     Math.min(Math.ceil(maxIssues / pageSize), ctx.limits.maxPages),

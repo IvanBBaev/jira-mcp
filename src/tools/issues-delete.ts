@@ -49,31 +49,32 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import type { AgileSprint, DeleteSprintResult } from '../api/agile.js';
-import type { DeleteAttachmentResult, JiraAttachment } from '../api/attachments.js';
-import type { BulkEditAction, BulkSubmitResult } from '../api/bulk.js';
 import type {
+  AgileSprint,
+  BulkEditAction,
+  BulkSubmitResult,
   ComponentRelatedIssueCounts,
-  DeleteComponentResult,
-  DeleteVersionResult,
-  ProjectComponent,
-  ProjectVersion,
-  VersionRelatedIssueCounts,
-} from '../api/collab.js';
-import type {
+  DeleteAttachmentResult,
   DeleteCommentResult,
+  DeleteComponentResult,
   DeleteIssueLinkResult,
   DeleteIssueResult,
   DeleteRemoteLinkResult,
+  DeleteSprintResult,
+  DeleteVersionResult,
   DeleteWorklogResult,
   IssueComment,
   IssueDetail,
   IssueLinkDetail,
-  LinkedIssueRef,
   IssueWorklog,
+  JiraAttachment,
   JiraVisibility,
+  LinkedIssueRef,
+  ProjectComponent,
+  ProjectVersion,
   RemoteLink,
-} from '../api/issues.js';
+  VersionRelatedIssueCounts,
+} from '../api/port.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import { callBase, guarded } from '../mcp/tool-helpers.js';

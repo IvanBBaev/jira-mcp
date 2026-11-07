@@ -23,12 +23,19 @@
 //     FORMAT — `adfFromMarkdown`, `extractMentions`, `richTextLoss`,
 //     `shapeIssueFields` — since ADF is exactly what a Data Center adapter
 //     would replace.
-//   * OUT: constants, types, and pure helpers whose meaning does not depend on
-//     the backend (`resolveTransitionId`, `startedInstant`, `filterFields`).
-//     Tools keep importing those directly. `src/tools/port-boundary.test.ts`
-//     enforces the split: a tool that imports any other api-ring FUNCTION
-//     directly fails the suite, so a new tool cannot bypass the port by
-//     accident.
+//   * IN, as data: the page-size caps a handler clamps to at run time, as
+//     {@link JiraApi.limits} (`ApiLimits`, D538). An adapter whose backend
+//     pages differently sets its own; the tools read `ctx.api.limits`.
+//   * OUT of the adapter, but still owned here: the DTO types, the constants
+//     that shape a tool's schema or description, and the pure helpers whose
+//     meaning does not depend on the backend (`resolveTransitionId`,
+//     `startedInstant`, `filterFields`). This module RE-EXPORTS them, so the
+//     tools ring imports from `api/port.js` and from no other api module
+//     (D538). `src/tools/port-boundary.test.ts` enforces it: a tool that
+//     imports `api/<module>.js` directly, or any port function other than
+//     the pure helpers, fails the suite, so a new tool cannot bypass the port
+//     by accident. Schema bounds stay static on purpose — the published tool
+//     contract does not change with the deployment (that is V3-63).
 //
 // The signatures are the Cloud functions' own (`typeof`), on purpose: the port
 // is the domain contract the tools were already written against, and a second
@@ -37,6 +44,7 @@
 
 import { adfFromMarkdown, extractMentions, richTextLoss } from './adf.js';
 import {
+  DEFAULT_AGILE_PAGE_SIZE,
   closeSprint,
   updateSprint,
   rankIssues,
@@ -62,6 +70,7 @@ import {
 } from './attachments.js';
 import { getBulkStatus, submitBulkDelete, submitBulkEdit } from './bulk.js';
 import {
+  COLLAB_PAGE_SIZE,
   addVote,
   addWatcher,
   createComponent,
@@ -84,6 +93,8 @@ import {
 } from './collab.js';
 import { createFilter, getFilter, searchFilters, updateFilter } from './filters.js';
 import {
+  MAX_BULK_CHANGELOG_RESULTS,
+  MAX_PAGE_SIZE,
   addComment,
   addRemoteLink,
   addWorklog,
@@ -128,8 +139,14 @@ import {
   listStatuses,
 } from './meta.js';
 import { getMyPermissions } from './permissions.js';
-import { approximateCount, parseJql, searchIssues } from './search.js';
 import {
+  MAX_SEARCH_RESULTS,
+  approximateCount,
+  parseJql,
+  searchIssues,
+} from './search.js';
+import {
+  MAX_USER_SEARCH_RESULTS,
   getMyself,
   resolveMentionNames,
   searchUsers,
@@ -141,6 +158,157 @@ import type { JiraDeployment } from '../core/types.js';
 
 /** Which backend an adapter speaks to. Only `cloud` has an adapter so far (D106). */
 export type { JiraDeployment };
+
+// ---------------------------------------------------------------------------
+// What the tools ring imports besides `ctx.api` (D538): DTO types, schema and
+// description constants, and the pure helpers. Re-exported unchanged, by
+// identity, from the module that defines them.
+// ---------------------------------------------------------------------------
+
+export type { AdfNode, MentionTarget, RichTextLoss } from './adf.js';
+export {
+  BOARD_TYPES,
+  DEFAULT_AGILE_PAGE_SIZE,
+  DEFAULT_SPRINT_ISSUE_FIELDS,
+  MAX_MOVE_ISSUES,
+  SOFTWARE_COMMENT_CAP,
+  SPRINT_STATES,
+} from './agile.js';
+export type {
+  AgileBoard,
+  AgileIssue,
+  AgileSprint,
+  BoardConfiguration,
+  DeleteSprintResult,
+  RankFailure,
+  SprintIssuesResult,
+  SprintLifecycleState,
+} from './agile.js';
+export { DEFAULT_ATTACHMENT_MIME, MAX_MEDIA_NAME_CHARS } from './attachments.js';
+export type {
+  DeleteAttachmentResult,
+  JiraAttachment,
+  MediaReadResult,
+  MediaStore,
+  MediaWriteResult,
+} from './attachments.js';
+export type { BulkEditAction, BulkStatusResult, BulkSubmitResult } from './bulk.js';
+export { ASSIGNEE_TYPES, COLLAB_PAGE_SIZE, VERSION_STATUSES } from './collab.js';
+export type {
+  ComponentRelatedIssueCounts,
+  DeleteComponentResult,
+  DeleteVersionResult,
+  ProjectComponent,
+  ProjectRole,
+  ProjectVersion,
+  RoleActor,
+  VersionRelatedIssueCounts,
+  WatcherList,
+} from './collab.js';
+export { FILTER_PAGE_SIZE } from './filters.js';
+export type { FilterListScope, SavedFilter } from './filters.js';
+export {
+  AMBIGUOUS_TRANSITION,
+  DEFAULT_CHANGELOG_PAGE_SIZE,
+  DEFAULT_COMMENT_ORDER_BY,
+  DEFAULT_COMMENT_PAGE_SIZE,
+  DEFAULT_WORKLOG_PAGE_SIZE,
+  MAX_BULK_CHANGELOG_ISSUES,
+  MAX_BULK_CHANGELOG_RESULTS,
+  MAX_BULK_ISSUES,
+  MAX_BULK_ISSUES_EFFICIENT,
+  MAX_PAGE_SIZE,
+  NO_TRANSITION_MATCHES,
+  WORKLOG_STARTED_PATTERN,
+  resolveTransitionId,
+  startedInstant,
+} from './issues.js';
+export type {
+  AddRemoteLinkResult,
+  AssignIssueResult,
+  ChangelogResult,
+  ChangelogsBulkResult,
+  CommentsResult,
+  CreatedIssue,
+  DeleteCommentResult,
+  DeleteIssueLinkResult,
+  DeleteIssueResult,
+  DeleteRemoteLinkResult,
+  DeleteWorklogResult,
+  IssueComment,
+  IssueDetail,
+  IssueLinkDetail,
+  IssuesBulkResult,
+  IssueWorklog,
+  JiraVisibility,
+  LinkedIssueRef,
+  LinkIssuesResult,
+  RemoteLink,
+  RemoteLinksResult,
+  TransitionIssueResult,
+  TransitionsResult,
+  UpdateIssueResult,
+  WorklogsResult,
+} from './issues.js';
+export { filterFields, filterLabels } from './meta.js';
+export type {
+  CreateMetaField,
+  FieldInfo,
+  IssueTypeInfo,
+  IssueTypeRef,
+  LinkTypeInfo,
+  PriorityInfo,
+  ProjectDetail,
+  ProjectSummary,
+  ResolutionInfo,
+  StatusInfo,
+  TimeTrackingConfig,
+} from './meta.js';
+export { MAX_PERMISSION_KEYS } from './permissions.js';
+export type { PermissionCheck } from './permissions.js';
+export {
+  DEFAULT_SEARCH_FIELDS,
+  DEFAULT_SEARCH_MAX_RESULTS,
+  JQL_REMEDIATION,
+  MAX_PARSE_QUERIES,
+  MAX_RECONCILE_ISSUES,
+  MAX_SEARCH_RESULTS,
+} from './search.js';
+export type { ParsedJql, SearchIssue, SearchIssuesResult } from './search.js';
+export type { ClassicLoopResult, PageStopReason } from './shared.js';
+export { DEFAULT_USER_SEARCH_MAX_RESULTS, MAX_USER_SEARCH_RESULTS } from './users.js';
+export type { MyselfResult, ShapedUser } from './users.js';
+
+/**
+ * The page-size caps a tool handler clamps a caller's `maxResults` to at run
+ * time (D538). Per adapter, because a backend that pages differently needs
+ * different caps; the Cloud values are {@link CLOUD_LIMITS}. The schema and
+ * description text keep the Cloud constants: the tool contract is static.
+ */
+export interface ApiLimits {
+  /** Issue sub-resource pages: comments, changelog, worklogs. */
+  readonly maxPageSize: number;
+  /** `jira_get_changelogs` (bulk), and the sprint summary's changelog read. */
+  readonly maxBulkChangelogResults: number;
+  /** One `/search/jql` page. */
+  readonly maxSearchResults: number;
+  /** One user-search page. */
+  readonly maxUserSearchResults: number;
+  /** One component, version or watcher page. */
+  readonly collabPageSize: number;
+  /** One Jira Software (agile) page. */
+  readonly agilePageSize: number;
+}
+
+/** The Jira Cloud caps: today's api-ring constants, frozen. */
+export const CLOUD_LIMITS: ApiLimits = Object.freeze({
+  maxPageSize: MAX_PAGE_SIZE,
+  maxBulkChangelogResults: MAX_BULK_CHANGELOG_RESULTS,
+  maxSearchResults: MAX_SEARCH_RESULTS,
+  maxUserSearchResults: MAX_USER_SEARCH_RESULTS,
+  collabPageSize: COLLAB_PAGE_SIZE,
+  agilePageSize: DEFAULT_AGILE_PAGE_SIZE,
+});
 
 /**
  * Every api-ring function the tools ring may call. One flat namespace: the
@@ -158,6 +326,8 @@ export interface JiraApi {
    * routes the backend lacks is never listed rather than failing when called.
    */
   readonly serves?: ReadonlySet<string>;
+  /** Run-time page-size caps for this backend (D538). */
+  readonly limits: ApiLimits;
 
   // --- wire body format (ADF on Cloud) ---
   readonly adfFromMarkdown: typeof adfFromMarkdown;
@@ -290,6 +460,7 @@ export interface JiraApi {
  */
 export const CLOUD_API: JiraApi = Object.freeze({
   deployment: 'cloud',
+  limits: CLOUD_LIMITS,
 
   adfFromMarkdown,
   extractMentions,

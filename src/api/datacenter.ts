@@ -386,6 +386,9 @@ const adfFromMarkdown: JiraApi['adfFromMarkdown'] = (text, options) => {
 export const DATACENTER_API: JiraApi = Object.freeze({
   deployment: 'datacenter',
   serves: DATACENTER_TOOLS,
+  // The Cloud caps, unchanged (D538): no live Data Center host has shown
+  // different page sizes yet, so the adapter keeps today's behaviour.
+  limits: CLOUD_API.limits,
 
   getMyself: getMyselfDataCenter,
   getMyPermissions: (options) =>

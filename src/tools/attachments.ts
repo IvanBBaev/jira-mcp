@@ -67,7 +67,7 @@ import {
   type MediaReadResult,
   type MediaStore,
   type MediaWriteResult,
-} from '../api/attachments.js';
+} from '../api/port.js';
 import { createJiraError, isJiraError } from '../core/errors.js';
 import { MAX_ATTACHMENT_BYTES } from '../core/http-util.js';
 import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';

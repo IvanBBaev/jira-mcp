@@ -34,27 +34,26 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { type AdfNode, type MentionTarget } from '../api/adf.js';
 import {
   AMBIGUOUS_TRANSITION,
   NO_TRANSITION_MATCHES,
-  WORKLOG_STARTED_PATTERN,
   resolveTransitionId,
   startedInstant,
-} from '../api/issues.js';
-import type {
-  AddRemoteLinkResult,
-  AssignIssueResult,
-  CreatedIssue,
-  IssueComment,
-  IssueWorklog,
-  JiraVisibility,
-  LinkIssuesResult,
-  TransitionIssueResult,
-  UpdateIssueResult,
-} from '../api/issues.js';
-import type { RichTextLoss } from '../api/adf.js';
-import type { JiraApi } from '../api/port.js';
+  WORKLOG_STARTED_PATTERN,
+  type AddRemoteLinkResult,
+  type AdfNode,
+  type AssignIssueResult,
+  type CreatedIssue,
+  type IssueComment,
+  type IssueWorklog,
+  type JiraApi,
+  type JiraVisibility,
+  type LinkIssuesResult,
+  type MentionTarget,
+  type RichTextLoss,
+  type TransitionIssueResult,
+  type UpdateIssueResult,
+} from '../api/port.js';
 import { createJiraError } from '../core/errors.js';
 import type { JiraError } from '../core/types.js';
 import { defineTool, writeToolInput, z } from '../mcp/define.js';

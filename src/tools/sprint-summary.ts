@@ -25,12 +25,7 @@
 // a bound that trips marks its half `partial` with a note, never silently.
 // ---------------------------------------------------------------------------
 
-import {
-  DEFAULT_AGILE_PAGE_SIZE,
-  type AgileIssue,
-  type AgileSprint,
-} from '../api/agile.js';
-import { MAX_BULK_CHANGELOG_RESULTS } from '../api/issues.js';
+import type { AgileIssue, AgileSprint } from '../api/port.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import { READ_ANNOTATIONS, callBase, guarded } from '../mcp/tool-helpers.js';
@@ -315,7 +310,7 @@ async function readIssues(
     ...callBase(ctx),
     sprintId,
     fields,
-    pageSize: DEFAULT_AGILE_PAGE_SIZE,
+    pageSize: ctx.api.limits.agilePageSize,
     maxPages: Math.min(MAX_SUMMARY_ISSUE_PAGES, ctx.limits.maxPages),
   });
   return {
@@ -366,7 +361,7 @@ async function readScopeChanges(
       ...callBase(ctx),
       issues: issues.map((issue) => issue.key),
       ...(sprintFieldIds.size === 0 ? {} : { fieldIds: [...sprintFieldIds] }),
-      maxResults: MAX_BULK_CHANGELOG_RESULTS,
+      maxResults: ctx.api.limits.maxBulkChangelogResults,
       ...(token === undefined ? {} : { nextPageToken: token }),
     });
     pages += 1;

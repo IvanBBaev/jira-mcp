@@ -1212,7 +1212,9 @@ test('CC-263: an unserved port member throws unsupported rather than calling Clo
   }
   assert.equal(jira.calls.length, 0);
   // Every served member is a real implementation, not a stub.
-  for (const name of Object.keys(CLOUD_API).filter((key) => key !== 'deployment')) {
+  for (const name of Object.keys(CLOUD_API).filter(
+    (key) => key !== 'deployment' && key !== 'limits',
+  )) {
     assert.equal(typeof Reflect.get(DATACENTER_API, name), 'function', name);
   }
   assert.ok(Object.isFrozen(DATACENTER_API));
@@ -1223,7 +1225,9 @@ test('CC-263: every Data Center stub names its own port member (TSN-02)', async 
   // name string is the only part the compiler cannot tie to its key.
   const jira = createFakeJiraRequest();
   let stubs = 0;
-  for (const name of Object.keys(CLOUD_API).filter((key) => key !== 'deployment')) {
+  for (const name of Object.keys(CLOUD_API).filter(
+    (key) => key !== 'deployment' && key !== 'limits',
+  )) {
     const member: unknown = Reflect.get(DATACENTER_API, name);
     assert.equal(typeof member, 'function', name);
     try {

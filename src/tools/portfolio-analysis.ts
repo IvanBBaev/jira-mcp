@@ -32,7 +32,7 @@
 // the sweep did not request is simply absent from the normalised issue.
 // ---------------------------------------------------------------------------
 
-import type { SearchIssue } from '../api/search.js';
+import type { SearchIssue } from '../api/port.js';
 
 // ---------------------------------------------------------------------------
 // 1. Vocabulary

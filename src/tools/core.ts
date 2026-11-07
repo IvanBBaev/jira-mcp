@@ -27,8 +27,11 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import { MAX_PERMISSION_KEYS, type PermissionCheck } from '../api/permissions.js';
-import type { MyselfResult } from '../api/users.js';
+import {
+  MAX_PERMISSION_KEYS,
+  type MyselfResult,
+  type PermissionCheck,
+} from '../api/port.js';
 import type { Counters } from '../core/telemetry.js';
 import type { TransportKind, WriteMode } from '../core/types.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';

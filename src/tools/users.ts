@@ -31,12 +31,12 @@
 // its `jira` seam.
 // ---------------------------------------------------------------------------
 
-import type { PageStopReason } from '../api/shared.js';
 import {
   DEFAULT_USER_SEARCH_MAX_RESULTS,
   MAX_USER_SEARCH_RESULTS,
+  type PageStopReason,
   type ShapedUser,
-} from '../api/users.js';
+} from '../api/port.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import {
@@ -238,7 +238,11 @@ export const searchUsersTool = defineTool<
   handler(args, ctx) {
     return guarded(async () => {
       // D508: clamped here, so the hint can name the value asked for.
-      const page = clampPageSize(args.maxResults, MAX_USER_SEARCH_RESULTS, 'startAt');
+      const page = clampPageSize(
+        args.maxResults,
+        ctx.api.limits.maxUserSearchResults,
+        'startAt',
+      );
       const result = await ctx.api.searchUsers({
         ...callBase(ctx),
         query: args.query,

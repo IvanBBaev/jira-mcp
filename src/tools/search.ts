@@ -55,21 +55,21 @@
 // ---------------------------------------------------------------------------
 
 import {
-  FILTER_PAGE_SIZE,
-  type FilterListScope,
-  type SavedFilter,
-} from '../api/filters.js';
-import type { JiraApi } from '../api/port.js';
-import {
   DEFAULT_SEARCH_FIELDS,
   DEFAULT_SEARCH_MAX_RESULTS,
+  FILTER_PAGE_SIZE,
   JQL_REMEDIATION,
   MAX_PARSE_QUERIES,
   MAX_RECONCILE_ISSUES,
   MAX_SEARCH_RESULTS,
-} from '../api/search.js';
-import type { ParsedJql, SearchIssue, SearchIssuesResult } from '../api/search.js';
-import type { PageStopReason } from '../api/shared.js';
+  type FilterListScope,
+  type JiraApi,
+  type PageStopReason,
+  type ParsedJql,
+  type SavedFilter,
+  type SearchIssue,
+  type SearchIssuesResult,
+} from '../api/port.js';
 import type { ErrorRecord, JiraError } from '../core/types.js';
 import { defineTool, outputArg, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { errorResult, toErrorRecord } from '../mcp/errors.js';
@@ -405,7 +405,11 @@ export const searchTool = defineTool({
           ? currentRecentWrites().snapshot(ctx.clock.now())
           : undefined;
       // CC-04 / D508: clamped here, so the hint can name the value asked for.
-      const page = clampPageSize(args.maxResults, MAX_SEARCH_RESULTS, 'nextPageToken');
+      const page = clampPageSize(
+        args.maxResults,
+        ctx.api.limits.maxSearchResults,
+        'nextPageToken',
+      );
       const result = await ctx.api.searchIssues({
         ...callBase(ctx),
         jql: args.jql,

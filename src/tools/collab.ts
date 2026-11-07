@@ -56,13 +56,13 @@ import {
   ASSIGNEE_TYPES,
   COLLAB_PAGE_SIZE,
   VERSION_STATUSES,
-  type WatcherList,
+  type PageStopReason,
   type ProjectComponent,
   type ProjectRole,
   type ProjectVersion,
   type RoleActor,
-} from '../api/collab.js';
-import type { PageStopReason } from '../api/shared.js';
+  type WatcherList,
+} from '../api/port.js';
 import { defineTool, toolInput, writeToolInput, z } from '../mcp/define.js';
 import { ok, type EnvelopeOptions } from '../mcp/result.js';
 import {
@@ -519,7 +519,11 @@ export const listComponentsTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
-      const page = clampPageSize(args.maxResults, COLLAB_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(
+        args.maxResults,
+        ctx.api.limits.collabPageSize,
+        'startAt',
+      );
       const loop = await ctx.api.listComponents({
         ...pagedOptions(ctx, args.startAt, page.pageSize),
         project: args.project,
@@ -749,7 +753,11 @@ export const listVersionsTool = defineTool<
   },
   handler(args, ctx) {
     return guarded(async () => {
-      const page = clampPageSize(args.maxResults, COLLAB_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(
+        args.maxResults,
+        ctx.api.limits.collabPageSize,
+        'startAt',
+      );
       const loop = await ctx.api.listVersions({
         ...pagedOptions(ctx, args.startAt, page.pageSize),
         project: args.project,

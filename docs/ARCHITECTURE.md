@@ -98,8 +98,11 @@ core  ←  api  ←  mcp  ←  tools
     api-ring function a tool may call — each one that talks to Jira, and the
     converters that speak a wire body format — and `CLOUD_API` is the existing
     functions by identity. Tools reach them only as `ctx.api.<fn>`; the
-    registry picks the adapter once per server. `tools/port-boundary.test.ts`
-    refuses a direct import that would go around it.
+    registry picks the adapter once per server. The port also re-exports the
+    DTO types, schema constants and pure helpers the tools use, and carries
+    the run-time page caps as `JiraApi.limits` (`ctx.api.limits`, D538), so
+    `tools/**` imports `api/port.js` and no other api module.
+    `tools/port-boundary.test.ts` refuses an import that would go around it.
 - **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
   `result.ts`, `taint.ts`, `transport.ts`, `transport-http.ts`, `write-mode.ts`,
   `write-pipeline.ts` (the one constructor of the write gate and its ordered

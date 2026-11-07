@@ -43,7 +43,6 @@
 // Layering: `core ← api ← mcp ← tools`. Tools are the composition root.
 // ---------------------------------------------------------------------------
 
-import type { BulkStatusResult } from '../api/bulk.js';
 import {
   DEFAULT_CHANGELOG_PAGE_SIZE,
   DEFAULT_COMMENT_ORDER_BY,
@@ -54,17 +53,16 @@ import {
   MAX_BULK_ISSUES,
   MAX_BULK_ISSUES_EFFICIENT,
   MAX_PAGE_SIZE,
-} from '../api/issues.js';
-import type {
-  ChangelogResult,
-  ChangelogsBulkResult,
-  CommentsResult,
-  IssueDetail,
-  IssuesBulkResult,
-  RemoteLinksResult,
-  TransitionsResult,
-  WorklogsResult,
-} from '../api/issues.js';
+  type BulkStatusResult,
+  type ChangelogResult,
+  type ChangelogsBulkResult,
+  type CommentsResult,
+  type IssueDetail,
+  type IssuesBulkResult,
+  type RemoteLinksResult,
+  type TransitionsResult,
+  type WorklogsResult,
+} from '../api/port.js';
 import { defineTool, outputArg, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import {
@@ -315,7 +313,7 @@ export const getCommentsTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<CommentsResult>> =>
     guarded(async () => {
-      const page = clampPageSize(args.maxResults, MAX_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(args.maxResults, ctx.api.limits.maxPageSize, 'startAt');
       const comments = await ctx.api.listComments({
         ...callBase(ctx),
         issue: args.issue,
@@ -394,7 +392,7 @@ export const getChangelogTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<ChangelogResult>> =>
     guarded(async () => {
-      const page = clampPageSize(args.maxResults, MAX_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(args.maxResults, ctx.api.limits.maxPageSize, 'startAt');
       const changelog = await ctx.api.listChangelog({
         ...callBase(ctx),
         issue: args.issue,
@@ -463,7 +461,7 @@ export const getChangelogsBulkTool = defineTool({
     guarded(async () => {
       const page = clampPageSize(
         args.maxResults,
-        MAX_BULK_CHANGELOG_RESULTS,
+        ctx.api.limits.maxBulkChangelogResults,
         'nextPageToken',
       );
       const result = await ctx.api.getChangelogsBulk({
@@ -509,7 +507,7 @@ export const getWorklogsTool = defineTool({
   },
   handler: async (args, ctx): Promise<ToolResult<WorklogsResult>> =>
     guarded(async () => {
-      const page = clampPageSize(args.maxResults, MAX_PAGE_SIZE, 'startAt');
+      const page = clampPageSize(args.maxResults, ctx.api.limits.maxPageSize, 'startAt');
       const worklogs = await ctx.api.listWorklogs({
         ...callBase(ctx),
         issue: args.issue,

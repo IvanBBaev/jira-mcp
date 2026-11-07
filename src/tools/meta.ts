@@ -39,21 +39,23 @@
 // `ctx.jira`, which `api/meta.ts` receives as its `jira` seam.
 // ---------------------------------------------------------------------------
 
-import { filterFields, filterLabels } from '../api/meta.js';
-import type {
-  CreateMetaField,
-  FieldInfo,
-  IssueTypeInfo,
-  IssueTypeRef,
-  LinkTypeInfo,
-  PriorityInfo,
-  ProjectDetail,
-  ProjectSummary,
-  ResolutionInfo,
-  StatusInfo,
-  TimeTrackingConfig,
-} from '../api/meta.js';
-import type { ClassicLoopResult, PageStopReason } from '../api/shared.js';
+import {
+  filterFields,
+  filterLabels,
+  type ClassicLoopResult,
+  type CreateMetaField,
+  type FieldInfo,
+  type IssueTypeInfo,
+  type IssueTypeRef,
+  type LinkTypeInfo,
+  type PageStopReason,
+  type PriorityInfo,
+  type ProjectDetail,
+  type ProjectSummary,
+  type ResolutionInfo,
+  type StatusInfo,
+  type TimeTrackingConfig,
+} from '../api/port.js';
 import { defineTool, toolInput, z } from '../mcp/define.js';
 import { ok } from '../mcp/result.js';
 import {
