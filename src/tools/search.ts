@@ -284,6 +284,22 @@ function shapeRow(api: JiraApi, issue: SearchIssue): SearchIssueRow {
   };
 }
 
+/**
+ * The envelope of a search the caller cancelled before Jira answered a page
+ * (CC-5352): the same `transport` kind and wording the HTTP client gives a
+ * cancelled request, because nothing was read.
+ */
+function searchCancelled(): ToolResult<never> {
+  return err({
+    kind: 'transport',
+    message:
+      'POST /rest/api/3/search/jql was cancelled by the caller. Call again if the result is still needed.',
+    reason: 'POST /rest/api/3/search/jql was cancelled by the caller.',
+    retryable: false,
+    remediation: 'Call again if the result is still needed.',
+  });
+}
+
 function searchData(api: JiraApi, result: SearchIssuesResult): SearchData {
   return {
     issues: result.issues.map((issue) => shapeRow(api, issue)),
@@ -399,6 +415,10 @@ export const searchTool = defineTool({
         reconcileIssues: args.reconcileIssues,
         recentlyWrittenIssueIds,
       });
+      // CC-5352: a sweep cancelled before its first page has no rows and no
+      // cursor, which `searchData` would render as `hasMore: false` — a
+      // complete, empty answer. Say it was cancelled instead.
+      if (result.stopReason === 'aborted' && result.pages === 0) return searchCancelled();
       // Summaries, descriptions and comments are Jira free text (D15, CC-35):
       // `ok` brands the envelope and appends `untrusted_content` itself.
       return ok(searchData(ctx.api, result), {

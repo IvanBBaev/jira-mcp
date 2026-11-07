@@ -309,6 +309,30 @@ function withProfile(inner: JiraRequestFn, profile: string): JiraRequestFn {
     inner<T>(req.profile === undefined ? { ...req, profile } : req);
 }
 
+/** The cancellation and budget of one tool call, as every request inherits them. */
+interface CallControls {
+  readonly signal: AbortSignal | undefined;
+  readonly deadlineAt: number;
+}
+
+/**
+ * Bind the call's `signal` and `deadlineAt` onto every request the call issues
+ * (V3-58, TSN-04). Forwarding them used to be a convention each api helper had
+ * to follow; a helper that forgot the spread sent a request no client could
+ * cancel and no budget could stop. Here it is structure: a request that names
+ * its own `signal` or `deadlineAt` keeps it, one that names neither inherits
+ * the call's.
+ */
+function withCallControls(inner: JiraRequestFn, controls: CallControls): JiraRequestFn {
+  const { signal, deadlineAt } = controls;
+  return <T = unknown>(req: JiraRequestSpec): Promise<JiraResponse<T>> =>
+    inner<T>({
+      ...req,
+      deadlineAt: req.deadlineAt ?? deadlineAt,
+      ...(req.signal === undefined && signal !== undefined ? { signal } : {}),
+    });
+}
+
 /**
  * The log-safe projection of an `ErrorRecord`, mirroring `toLogFields` for the
  * case where the failure never was a thrown `JiraError` (a handler returned
@@ -521,10 +545,13 @@ export function createRegistry(
       );
     }
 
+    const deadlineAt = startedAt + settings.callBudgetMs;
+    // Bound first, so every seam above it — the profile, the project scope's
+    // own lookups, the gate — sends with the call's signal and deadline, and
+    // the meta cache below sees an aborted signal and steps aside (CC-5350).
+    const bound = withCallControls(cachedJira, { signal: options.signal, deadlineAt });
     const profiled =
-      control.profile === undefined
-        ? cachedJira
-        : withProfile(cachedJira, control.profile);
+      control.profile === undefined ? bound : withProfile(bound, control.profile);
     // The JIRA_PROJECTS scope guard (D400): built per call so its resolution
     // memo never outlives the call, and placed under the gate so the gate's
     // own seams wrap it unchanged.
@@ -548,7 +575,7 @@ export function createRegistry(
         maxResultChars: settings.maxResultChars,
         maxPages: settings.maxPages,
       },
-      deadlineAt: startedAt + settings.callBudgetMs,
+      deadlineAt,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.progress === undefined ? {} : { progress: options.progress }),
     });

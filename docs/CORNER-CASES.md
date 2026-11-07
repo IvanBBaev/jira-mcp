@@ -4377,3 +4377,20 @@ fake handles, and the download peak is measured on the byte sink.
   read is spent.
 - **CC-5337** — a failed read of the live description fails the call; a loss
   that cannot be measured is not assumed to be none.
+
+## Cancellation bound in the registry (V3-58, 2026-11-07)
+
+- **CC-5350** — every registered tool, called with an already-aborted signal in
+  apply mode with every gate open, sends zero requests to the wire; a tool
+  that needs Jira answers `kind=transport` "cancelled by the caller", or — a
+  paged read — `paging.stopReason: "aborted"` with `partial: true`. A write is
+  planned with a live signal first, so the cancel lands on its apply path. The
+  contract test names every tool's arguments, so a new tool fails it until it
+  has an entry (`src/tools/abort-contract.test.ts`).
+- **CC-5351** — the registry binds the call's `signal` and `deadlineAt` onto
+  every request of the call, below the profile, project-scope and gate seams.
+  A request that names its own `signal` or `deadlineAt` keeps it; an api
+  helper that forgets the spread no longer loses cancellation or the budget.
+- **CC-5352** — `jira_search` cancelled before its first page answers
+  `kind=transport` "cancelled by the caller" instead of `issues: []` with
+  `hasMore: false`, which read as a complete, empty result.

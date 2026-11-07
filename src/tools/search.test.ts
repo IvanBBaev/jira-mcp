@@ -1515,3 +1515,19 @@ test('CC-1541: jira_update_filter plans a diff of the named fields bound to thei
   assert.ok(context.version !== undefined);
   assert.notEqual(later.version, context.version);
 });
+
+test('CC-5352: jira_search cancelled before its first page says so instead of "no issues"', async () => {
+  const fake = createFakeJiraRequest();
+  const controller = new AbortController();
+  controller.abort();
+
+  const result = await searchTool.handler(
+    { jql: JQL },
+    { ...ctxOf(fake), signal: controller.signal },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.kind, 'transport');
+  assert.match(String(result.error?.message), /cancelled by the caller/u);
+  assert.equal(fake.calls.length, 0);
+});

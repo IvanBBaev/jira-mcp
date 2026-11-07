@@ -1007,6 +1007,77 @@ test('the handler receives the limits, deadline and signal of the call', async (
   assert.equal(seen?.signal, controller.signal);
 });
 
+test('CC-5351: every request inherits the call signal and deadline unless it names its own', async () => {
+  const own = new AbortController();
+  const probe = defineTool({
+    name: 'jira_probe',
+    title: 'Probe',
+    description: 'Sends one bare request and one with its own controls.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    input: toolInput({}),
+    async handler(_args, ctx: ToolCtx) {
+      // No spread of ctx.signal / ctx.deadlineAt: the forgotten-forward case.
+      await ctx.jira({ method: 'GET', path: '/myself' });
+      await ctx.jira({
+        method: 'GET',
+        path: '/serverInfo',
+        signal: own.signal,
+        deadlineAt: 42,
+      });
+      return ok({});
+    },
+  });
+  const h = harness(settingsOf({ callBudgetMs: 5_000 }));
+  h.jira.on('GET /rest/api/3/myself', jiraOk({}));
+  h.jira.on('GET /rest/api/3/serverInfo', jiraOk({}));
+  const registry = createRegistry([packageOf('core', [probe])], h.deps);
+  const controller = new AbortController();
+
+  const result = await registry.call('jira_probe', {}, { signal: controller.signal });
+
+  assert.equal(result.structuredContent.ok, true, result.text);
+  const [bare, explicit] = h.jira.calls;
+  assert.equal(bare?.signal, controller.signal);
+  assert.equal(bare?.deadlineAt, 1_000 + 5_000);
+  assert.equal(explicit?.signal, own.signal);
+  assert.equal(explicit?.deadlineAt, 42);
+});
+
+test('CC-5351: a call without a signal still binds the deadline and adds no signal key', async () => {
+  const probe = defineTool({
+    name: 'jira_probe',
+    title: 'Probe',
+    description: 'Sends one bare request.',
+    package: 'core',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    input: toolInput({}),
+    async handler(_args, ctx: ToolCtx) {
+      await ctx.jira({ method: 'GET', path: '/myself' });
+      return ok({});
+    },
+  });
+  const h = harness(settingsOf({ callBudgetMs: 7_000 }));
+  h.jira.on('GET /rest/api/3/myself', jiraOk({}));
+  const registry = createRegistry([packageOf('core', [probe])], h.deps);
+
+  await registry.call('jira_probe', {});
+
+  const [req] = h.jira.calls;
+  assert.equal(req?.deadlineAt, 1_000 + 7_000);
+  assert.equal(req !== undefined && 'signal' in req, false);
+});
+
 test('control fields never reach the handler', async () => {
   let seen: unknown;
   const probe = defineTool({
