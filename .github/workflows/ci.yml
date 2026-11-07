@@ -117,6 +117,38 @@ jobs:
           path: mcpb/dist/
           if-no-files-found: error
 
+  # The consumer's install, not the lockfile's (V3-75): the publish build,
+  # packed, installed into an empty directory with no lockfile, then the
+  # installed `jira-mcp-ai` binary must answer MCP `initialize` and `tools/list`
+  # over stdio with the package version and every tool of the manifest
+  # (`scripts/smoke-pack.mjs`). `resolved` takes whatever the dependency ranges
+  # give on the day, so a breaking SDK minor turns this red before a user meets
+  # it; `lower-bound` pins `@modelcontextprotocol/sdk` to the floor of the range
+  # `package.json` declares, the only test of that promise. `npm install` needs
+  # the registry, which is why this lives here and not in `npm run check`.
+  smoke:
+    name: tarball smoke (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [resolved, lower-bound]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build:publish
+      - run: npm run tarball:publish
+      - name: Pack, install clean and handshake
+        run: |
+          tarball="$(npm pack --json --pack-destination "$RUNNER_TEMP" | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename)')"
+          if [ "${{ matrix.sdk }}" = lower-bound ]; then set -- --lower-bound; else set --; fi
+          node scripts/smoke-pack.mjs --tarball "$RUNNER_TEMP/$tarball" "$@"
+
   # Suite 9 (docs/TESTING.md): the read-only half of Gate C against the scratch
   # site, asking the one question fixtures cannot — has Atlassian changed the
   # wire? It runs `scripts/verify-live.mjs` WITHOUT --write/--irreversible/

@@ -264,7 +264,9 @@ in the publish chain fires and you would otherwise be packing whatever the last
 anyone measures coverage again (§3.1).
 
 Then drive one MCP `initialize` + `tools/list` over stdin and confirm the tool
-count. A binary that prints its version proves less than it looks: the version
+count — `node scripts/smoke-pack.mjs --tarball /tmp/rehearse/jira-mcp-ai-<version>.tgz`
+does exactly that against a clean install, and CI job `smoke` runs it on every
+push, once more with the SDK pinned to its declared floor (`--lower-bound`). A binary that prints its version proves less than it looks: the version
 falls back to `0.0.0` when `package.json` cannot be read, which is also the
 pre-release value — patch the installed `package.json` to a sentinel if you want
 that check to mean anything.

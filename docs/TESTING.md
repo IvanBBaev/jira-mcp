@@ -495,6 +495,16 @@ docs/README.md. CI runs `check:publish` on Node 22 and 24 and `audit:prod` as
 its own `audit` job. Run before finishing any
 change; report the real result.
 
+`tarball` proves the file list, not that the package starts. CI job `smoke`
+(V3-75) runs `scripts/smoke-pack.mjs` on the packed publish build: it installs
+the tarball into an empty directory with no lockfile, spawns the installed
+`jira-mcp-ai` binary and completes MCP `initialize` + `tools/list` over stdio,
+asserting the package version and the manifest's tool count. It runs twice —
+`resolved` takes whatever the dependency ranges give on the day, and
+`lower-bound` pins `@modelcontextprotocol/sdk` to the floor of its declared
+range. `npm install` needs the registry, so the job sits outside `check`; the
+script's pure helpers are pinned by `src/testing/smoke-pack.test.ts`.
+
 Two release-only steps sit outside `check` and run from `prepublishOnly`
 (`check:publish && build:publish && tarball:publish`): `build:publish` compiles
 with `tsconfig.publish.json`, which turns `sourceMap` and `declarationMap` off,
