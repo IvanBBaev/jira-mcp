@@ -66,13 +66,9 @@ import type {
   ToolCtx,
   ToolResult,
 } from './types.js';
-import {
-  PLAN_NOTICE_LINE,
-  createWriteGate,
-  isPlanResult,
-  splitControlFields,
-} from './write-mode.js';
+import { PLAN_NOTICE_LINE, isPlanResult, splitControlFields } from './write-mode.js';
 import type { WriteGate } from './write-mode.js';
+import { buildWritePipeline } from './write-pipeline.js';
 
 // ---------------------------------------------------------------------------
 // Selection vocabulary
@@ -412,16 +408,15 @@ export function createRegistry(
   const { settings } = deps;
   const api = deps.api ?? CLOUD_API;
   const selection = selectPackages(manifest, settings, api);
+  // A registry built without a server gets the same pipeline with the gate
+  // layer alone (D523). No confirmer: there is no client to ask, so under
+  // `elicit` an irreversible apply fails closed (D303).
   const gate =
     deps.gate ??
-    createWriteGate({
-      writeMode: settings.writeMode,
-      allowIrreversible: settings.allowIrreversible,
-      // No confirmer here: a registry built without a server has no client to
-      // ask, so under `elicit` an irreversible apply fails closed (D303).
-      irreversibleConfirm: settings.irreversibleConfirm,
+    buildWritePipeline({
+      settings,
       redact: (value: unknown) => deps.redactor.redact(value),
-    });
+    }).gate;
   // One cache per registry, applied to the plain seam once: every tool call
   // shares it, and it sits UNDER the gate seams (plan capture, payload guard)
   // so a plan-mode read warms it like an apply-mode one (D123). The profile

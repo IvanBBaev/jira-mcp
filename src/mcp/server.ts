@@ -21,11 +21,10 @@
 // model needs to fix its own call. With `setRequestHandler` the registry stays
 // the single call boundary and every outcome is an envelope.
 //
-// THE JOURNAL IS WIRED HERE, AND ONLY HERE. `RegistryDeps` and `WriteGateDeps`
-// have no `journal` seam (both are frozen-by-convention contracts owned by other
-// work packages), but `RegistryDeps.gate` is injectable — so an executed write is
-// detected where the truth actually is: at the request seam. See
-// {@link journalingGate}.
+// THE WRITE PIPELINE IS BUILT HERE, through `buildWritePipeline`
+// (`mcp/write-pipeline.ts`, D523): the gate, the journal (CC-33) and the
+// recent-writes layer (CC-02) in their one pinned order. `journalingGate` and
+// `recordingGate` live there and are re-exported below.
 // ---------------------------------------------------------------------------
 
 import type { MediaStore } from '../api/attachments.js';
@@ -44,25 +43,16 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 
-import { isJiraError } from '../core/errors.js';
-import { NO_CID, currentCid } from '../core/log.js';
 import type {
   Clock,
   JiraRequestFn,
-  JiraRequestSpec,
-  JiraResponse,
   Journal,
-  JournalStatus,
   Logger,
   Redactor,
   Rng,
   Settings,
 } from '../core/types.js';
-import {
-  sessionRecentWrites,
-  withRecentWrites,
-  writtenIssueIds,
-} from './recent-writes.js';
+import { sessionRecentWrites, withRecentWrites } from './recent-writes.js';
 import type { RecentWrites } from './recent-writes.js';
 import {
   EXPORT_MIME,
@@ -81,14 +71,16 @@ import { clientHints, type ClientHintOptions } from './client-hints.js';
 import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import { toInputSchema } from './schema.js';
 import type { ConnectableServer } from './transport.js';
-import type { AnyToolSpec, PackageSpec, ToolResult } from './types.js';
-import {
-  LOCAL_PLAN_OWNER,
-  createWriteGate,
-  planFingerprint,
-  type IrreversibleConfirmer,
-} from './write-mode.js';
-import type { PlanOwner, PlanStore, WriteGate, WriteGateCall } from './write-mode.js';
+import type { AnyToolSpec, PackageSpec } from './types.js';
+import { LOCAL_PLAN_OWNER, type IrreversibleConfirmer } from './write-mode.js';
+import type { PlanOwner, PlanStore, WriteGate } from './write-mode.js';
+import { buildWritePipeline } from './write-pipeline.js';
+
+export {
+  JOURNAL_UNAVAILABLE_MESSAGE,
+  journalingGate,
+  recordingGate,
+} from './write-pipeline.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -226,255 +218,6 @@ export function toCallToolResult(rendered: RenderedResult): CallToolResult {
 }
 
 // ---------------------------------------------------------------------------
-// Journaling (CC-33)
-// ---------------------------------------------------------------------------
-
-/** The `journal_unavailable` hint's message. The write itself is unaffected. */
-export const JOURNAL_UNAVAILABLE_MESSAGE =
-  'The write was performed, but it could not be recorded in the write journal ' +
-  '(JIRA_JOURNAL_PATH). This result is unaffected — do NOT retry the write. The ' +
-  'audit trail for this call is missing; check that the journal path is writable.';
-
-/** A mutation that actually left the process, and what came back. */
-interface ExecutedWrite {
-  readonly httpStatus?: number;
-}
-
-/** GET is a read; so is anything `core/http.ts` may safely replay (`safe: true`). */
-function isMutation(req: JiraRequestSpec): boolean {
-  return req.method !== 'GET' && req.safe !== true;
-}
-
-function httpStatusOf(error: unknown): number | undefined {
-  return isJiraError(error) ? error.httpStatus : undefined;
-}
-
-/**
- * The issue this call touched, for the journal's `issueKey` field.
- *
- * Read from the ARGUMENTS first (`issue`, then `inwardIssue` for a link), and
- * from the result only for a create, where the key did not exist until the write
- * happened. A multi-issue call reports no key rather than an arbitrary one — the
- * `argsHash` still identifies the call uniquely, and a half-true audit field is
- * worse than an absent one.
- */
-function issueKeyOf(
-  args: Record<string, unknown>,
-  result?: ToolResult<unknown>,
-): string | undefined {
-  for (const field of ['issue', 'inwardIssue']) {
-    const value = args[field];
-    if (typeof value === 'string' && value !== '') return value;
-  }
-  const data: unknown = result?.data;
-  if (data !== null && typeof data === 'object') {
-    const key: unknown = (data as { key?: unknown }).key;
-    if (typeof key === 'string' && key !== '') return key;
-  }
-  return undefined;
-}
-
-/** Append the `journal_unavailable` hint without disturbing the rest. */
-function withJournalHint(result: ToolResult<unknown>): ToolResult<unknown> {
-  return {
-    ...result,
-    hints: [
-      ...(result.hints ?? []),
-      { code: 'journal_unavailable', message: JOURNAL_UNAVAILABLE_MESSAGE },
-    ],
-  };
-}
-
-/**
- * Wrap a {@link WriteGate} so every EXECUTED write is journaled.
- *
- * The detection is at the request seam rather than at the result, because only
- * the seam can tell the three outcomes apart that all look like "a write tool
- * returned":
- *
- * - PLAN MODE — the gate's own capturing seam intercepts the mutation before it
- *   reaches this observer, so nothing is journaled. That is the contract:
- *   "plan-mode calls are not journaled (nothing happened)".
- * - REFUSED APPLY — a missing, stale or mismatched `plan_id` returns
- *   `write_gated` without ever invoking the handler. Nothing observed, nothing
- *   journaled.
- * - LOCAL FAILURE — the handler rejected the arguments, or a read it needed
- *   failed, before issuing its mutation. Again nothing reached the wire.
- *
- * Only a mutation the handler actually issued produces a line. One that threw
- * with no HTTP status is journaled as attempted even if the throw came before
- * the wire (credential resolution, a host check): the seam cannot tell that
- * from a transport failure after the bytes left, and an audit trail must err
- * toward the write that may have landed (OBSERVABILITY.md). A mutation that
- * came back 4xx IS journaled, with `ok: false` and its status: the request was
- * made, and "was this attempted?" is the question the journal exists to answer.
- *
- * The FIRST mutation wins when a tool issues several (a transition with a
- * comment): it is the operation the plan described and the tool is named after.
- */
-export function journalingGate(
-  inner: WriteGate,
-  deps: { readonly journal: Journal },
-): WriteGate {
-  return {
-    get outstandingPlans(): number {
-      return inner.outstandingPlans;
-    },
-
-    async execute(call: WriteGateCall): Promise<ToolResult<unknown>> {
-      // Reads never journal, and wrapping their seam would only add a frame.
-      if (call.tool.writeTier === undefined) return inner.execute(call);
-
-      let executed: ExecutedWrite | undefined;
-      const observing: JiraRequestFn = async <T = unknown>(
-        req: JiraRequestSpec,
-      ): Promise<JiraResponse<T>> => {
-        if (!isMutation(req)) return call.jira<T>(req);
-        try {
-          const response = await call.jira<T>(req);
-          executed ??= { httpStatus: response.status };
-          return response;
-        } catch (error) {
-          executed ??= { httpStatus: httpStatusOf(error) };
-          throw error;
-        }
-      };
-
-      const record = (
-        write: ExecutedWrite,
-        outcome: boolean,
-        result?: ToolResult<unknown>,
-      ): Promise<JournalStatus> => {
-        const issueKey = issueKeyOf(call.args, result);
-        return deps.journal.append({
-          // The registry runs the whole call inside `runWithCid`, so the ambient
-          // id is this call's — the same one every http and retry event carries.
-          // `NO_CID` is unreachable through the registry and exists so a direct
-          // gate test still produces a well-formed line.
-          cid: currentCid() ?? NO_CID,
-          tool: call.tool.name,
-          // The plan binding doubles as the journal's `argsHash`: one canonical
-          // hash of (tool, profile, normalized args), already proven stable
-          // enough to gate an apply, and structurally incapable of a value.
-          argsHash: planFingerprint(call.tool.name, call.args, call.control.profile),
-          ok: outcome,
-          ...(write.httpStatus === undefined ? {} : { httpStatus: write.httpStatus }),
-          ...(issueKey === undefined ? {} : { issueKey }),
-        });
-      };
-
-      let result: ToolResult<unknown>;
-      try {
-        result = await inner.execute({ ...call, jira: observing });
-      } catch (error) {
-        // The handler propagated a failure — the registry above renders it into
-        // an envelope. If the mutation had already left the process, the request
-        // still happened, and that is precisely what the journal records. The
-        // error is re-thrown untouched: journaling never changes an outcome, and
-        // a failed append here has no envelope left to hint on.
-        if (executed !== undefined) await record(executed, false);
-        throw error;
-      }
-      if (executed === undefined) return result;
-
-      const status = await record(executed, result.ok, result);
-
-      // CC-33: a failed append is a hint, never a failed tool. Telling the model
-      // a completed write failed would make it retry a mutation that succeeded.
-      return status === 'ok' ? result : withJournalHint(result);
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Recently written issues (CC-02)
-// ---------------------------------------------------------------------------
-
-/**
- * Wrap a {@link WriteGate} so every APPLIED write leaves its issue ids in the
- * session registry, where `jira_search` picks them up as `reconcileIssues`.
- *
- * The detection is {@link journalingGate}'s, for the same reason: only the
- * request seam can tell an applied write from a plan-mode capture, a refused
- * apply or a handler that failed before sending anything. A plan-mode call never
- * reaches this observer at all — the gate's capturing seam is further in — which
- * is exactly the CC-02 rule that a plan must not pollute the registry with an
- * issue nothing touched.
- *
- * Two conditions, both necessary. The mutation must have LEFT THE PROCESS, and
- * the tool must have reported `ok`. A 4xx write is journaled (it was attempted)
- * but NOT recorded here: reconciling an id whose write was rejected only costs
- * the next search work for nothing, and the registry is meant to say "this
- * exists but the index may not know yet".
- *
- * Recording never changes an outcome: the result travels through untouched, a
- * throw is not caught, and an id that cannot be determined is simply not
- * recorded (see {@link writtenIssueIds}).
- */
-export function recordingGate(
-  inner: WriteGate,
-  deps: { readonly recent: RecentWrites; readonly clock?: Clock },
-): WriteGate {
-  return {
-    get outstandingPlans(): number {
-      return inner.outstandingPlans;
-    },
-
-    async execute(call: WriteGateCall): Promise<ToolResult<unknown>> {
-      // An irreversible write deletes or bulk-enqueues: the ids it names are
-      // gone, or not written yet, and a bulk batch of them would evict the
-      // real recent writes from the 50-id registry (CC-192).
-      if (call.tool.writeTier === undefined || call.tool.writeTier === 'irreversible') {
-        return inner.execute(call);
-      }
-
-      let executed = false;
-      const observing: JiraRequestFn = async <T = unknown>(
-        req: JiraRequestSpec,
-      ): Promise<JiraResponse<T>> => {
-        if (isMutation(req)) executed = true;
-        return call.jira<T>(req);
-      };
-
-      let result: ToolResult<unknown>;
-      try {
-        result = await inner.execute({ ...call, jira: observing });
-      } catch (error) {
-        // A handler that lets its JiraError escape (the registry's catch-all
-        // turns it into the envelope) is judged the same way.
-        if (executed && isJiraError(error) && wasApplied({ ok: false, error })) {
-          deps.recent.record(writtenIssueIds(call.args), deps.clock?.now());
-        }
-        throw error;
-      }
-      if (executed && wasApplied(result))
-        deps.recent.record(writtenIssueIds(call.args, result), deps.clock?.now());
-      return result;
-    },
-  };
-}
-
-/**
- * Whether Jira accepted the write. A success, or an `ambiguous_write` that
- * carries a 2xx: Jira said yes and only the reply body was lost (CC-205), so
- * the ids the arguments name are as written as any success's (CC-221). An
- * ambiguous write with no status may or may not have landed and stays out.
- */
-function wasApplied(result: {
-  readonly ok: boolean;
-  readonly error?: { readonly kind: string; readonly httpStatus?: number };
-}): boolean {
-  if (result.ok) return true;
-  const status = result.error?.httpStatus;
-  return (
-    result.error?.kind === 'ambiguous_write' &&
-    status !== undefined &&
-    status >= 200 &&
-    status < 300
-  );
-}
-
-// ---------------------------------------------------------------------------
 // The server
 // ---------------------------------------------------------------------------
 
@@ -517,24 +260,23 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     },
   };
 
-  const baseGate =
-    deps.gate ??
-    createWriteGate({
-      writeMode: settings.writeMode,
-      allowIrreversible: settings.allowIrreversible,
-      irreversibleConfirm: settings.irreversibleConfirm,
-      confirmer,
-      store: deps.planStore,
-      owner: () => planOwnerScope.getStore(),
-      redact: (value: unknown) => deps.redactor.redact(value),
-    });
-
-  const journaled =
-    deps.journal === undefined
-      ? baseGate
-      : journalingGate(baseGate, { journal: deps.journal });
-
   const recent = deps.recentWrites ?? sessionRecentWrites;
+  // The one production construction of the write gate (D523): gate → journal →
+  // recent_writes, each layer present when its dependency is. D535:
+  // `JIRA_RECONCILE_WRITES=false` leaves the recent-writes layer out, so every
+  // read sends only what its caller named.
+  const pipeline = buildWritePipeline({
+    settings,
+    redact: (value: unknown) => deps.redactor.redact(value),
+    gate: deps.gate,
+    confirmer,
+    store: deps.planStore,
+    owner: () => planOwnerScope.getStore(),
+    journal: deps.journal,
+    recentWrites: recent,
+    clock: deps.clock,
+  });
+
   const registry = createRegistry(deps.packages, {
     settings,
     jira: deps.jira,
@@ -544,14 +286,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     redactor: deps.redactor,
     ...(deps.api === undefined ? {} : { api: deps.api }),
     ...(deps.media === undefined ? {} : { media: deps.media }),
-    // CC-02 outermost: it observes the result the journal may already have
-    // hinted on, and journaling stays the last thing that can touch an envelope.
-    // D535: `JIRA_RECONCILE_WRITES=false` leaves the ring unwritten, so every
-    // read sends only what its caller named.
-    gate:
-      settings.reconcileWrites === false
-        ? journaled
-        : recordingGate(journaled, { recent, clock: deps.clock }),
+    gate: pipeline.gate,
   });
 
   // The documentation half of the surface (D124): built from the SAME manifest

@@ -102,7 +102,8 @@ core  ←  api  ←  mcp  ←  tools
     refuses a direct import that would go around it.
 - **`src/mcp/`** — MCP plumbing: `server.ts`, `define.ts`, `registry.ts`,
   `result.ts`, `taint.ts`, `transport.ts`, `transport-http.ts`, `write-mode.ts`,
-  `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`, `schema.ts`
+  `write-pipeline.ts` (the one constructor of the write gate and its ordered
+  layers, D523–D524), `recent-writes.ts`, `tool-helpers.ts`, `errors.ts`, `types.ts`, `schema.ts`
   (the listed-schema trim), `output-schema.ts` (the envelope `outputSchema`,
   D131), `client-hints.ts` (Claude Code `_meta` keys, D130), `resources.ts` (the reference catalogue and the
   server instructions, D124) and `prompts.ts` (`definePrompt` and the prompt
