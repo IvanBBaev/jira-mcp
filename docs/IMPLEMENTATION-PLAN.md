@@ -18,12 +18,12 @@
 
 | | |
 |---|---|
-| Release target | `1.1.0` — `main` as a minor release with one announced break (D547, ROADMAP V3-22) (current version `1.0.0` on npm, 74 commits unpushed) |
-| Progress | **99 %** — 298 h of 301 h earned |
-| Remaining | **3 h** Opus 5.5 (0 h workable now, 3 h blocked) |
-| Blocked by | the owner's yes for push, tag and publish (D547 date passed 2026-11-01); npm trusted publisher, `NPM_TOKEN` removal and revoke (D86); rotation of the pasted API token |
+| Release target | `1.1.0` — `main` as a minor release with one announced break (D547, ROADMAP V3-22) (current version `1.0.0` on npm; `main` pushed 2026-11-07, not tagged) |
+| Progress | **99.2 %** — 298.5 h of 301 h earned |
+| Remaining | **2.5 h** Opus 5.5 (0 h workable now, 2.5 h blocked) |
+| Blocked by | the owner's yes for tag and publish (D547 date passed 2026-11-01); npm trusted publisher, `NPM_TOKEN` removal and revoke (D86); rotation of the pasted API token |
 | Calibration | Phase 13.1–13.3 landed in ~1.5 h of commits (2026-09-26 13:51→15:14); defect hunts 17–20 ran ~1 h each (2026-10-10 18:43→22:43); phases 9–12 took one session of 4–5 h each; 2026-10-30 landed about 30 rows across parallel sessions, so commit times do not give per-row hours and estimates stay as written |
-| Updated | 2026-11-06 at `8de2d0f` |
+| Updated | 2026-11-08 at `363ac51` |
 
 Out of target: the Data Center preview stays a labelled UNVERIFIED preview
 (D104, D106, D549). Gate C, the fixture set and the weekly live suite, rows
@@ -59,7 +59,7 @@ R03–R07 until 2026-11-06, moved to ROADMAP V3-39, V3-47 and V3-48: D121 releas
 | R02 | Rotate the API token pasted in chat; delete stranded `SAN-1204`/`SAN-1205` | CLAUDE.md status | `blocked-owner` | 0.5 |
 | R08 | Flip docs to 1.0.0: README status, live counts, CHANGELOG, RELEASING, site | D87, D121 | `done` | 3 |
 | R09 | Publish `1.0.0`: tag, publish workflow, registry and provenance checks | RELEASING.md §4–§5, D121 | `done` | 1.5 |
-| R10 | Push `main` (74 commits) and read the first Actions run on them | V3-22, 2026-11-06 analysis | `blocked-owner` | 0.5 |
+| R10 | Push `main` and read the first Actions run on it — pushed 2026-11-07, CI, CodeQL and Docker green on `988b7df` and on `60db4ec` | V3-22, 2026-11-06 analysis | `done` | 0.5 |
 | R11 | Publish `1.1.0`: tag, publish workflow, registry and provenance checks | V3-22, D547 | `blocked-owner` | 1.5 |
 
 ### History
@@ -68,6 +68,7 @@ R03–R07 until 2026-11-06, moved to ROADMAP V3-39, V3-47 and V3-48: D121 releas
 - 2026-10-16 `5f605ca` — 88.4 %, 20 h left (±0 pp; 57 commits — defect hunts 23–36 (CC-5xx–CC-8xx), the 0.9.5 changelog, CI action bumps — are quality work outside the 1.0.0 rows; no status, estimate or scope change, every remaining row still owner/external-blocked)
 - 2026-10-16 `8b03d46` — 88.4 %, 20 h left (±0 pp; 23 commits — defect hunts 37–43 (CC-860/861, CC-880, CC-900, CC-920–922, CC-960–964, CC-980–982) — are quality work outside the 1.0.0 rows; no status, estimate or scope change, every remaining row still owner/external-blocked)
 - 2026-11-06 `8de2d0f` — 99 %, 3 h left (+10.6 pp, mostly from the new target, not new progress; target moved from `1.0.0`, shipped 2026-10-19 by D121, to `1.1.0` per D547. R08 and R09 were already `done`, so the 88.4 % header was stale: 91 % before this run. Removed R03–R07: D121 and D547, carried by V3-39, V3-47 and V3-48. Added D19–D23, 140.5 h of finished post-1.0 work, with D19 at a new 24 h estimate and the rest at ROADMAP hours, plus R10 and R11. No re-estimates. Every remaining row is owner-blocked)
+- 2026-11-08 `363ac51` — 99.2 %, 2.5 h left (+0.2 pp; R10 done: `main` pushed 2026-11-07, CI, CodeQL and Docker green on `988b7df` and `60db4ec`. The 18 V3 rows landed since `8de2d0f` (V3-13, V3-19, V3-55, V3-57…V3-62, V3-64, V3-66, V3-69…V3-72, V3-74, V3-75, V3-81) are work outside the release rows; no estimate or scope change. V3-64 changed tool descriptions before the tag, which the 2026-11-06 analysis held back under D550: the pushed `main` already carries them, so 1.1.0's `tools/list` includes them unless the owner reverts `0cd885a`. Left: tag and publish (R11), trusted publisher (R01), token rotation (R02), all owner acts)
 <!-- release-progress:end -->
 
 ## Standing decisions
