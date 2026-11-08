@@ -1350,10 +1350,9 @@
           <span class="eyebrow">Model Context Protocol server</span>
           <h1 id="h-overview">jira-mcp-ai</h1>
           <p class="lead">
-            Give your AI assistant a real seat in Jira Cloud — JQL search, issue reads,
-            transitions, comments, worklogs, boards and sprints. It runs on your
-            machine, with your API token, fenced to a single host, and every write is
-            disarmed until you say otherwise.
+            The Jira MCP server that cannot do what you did not approve. Every write is
+            a plan first. Scope is enforced on every call, not just hidden from the
+            menu. Bulk edits, ranks and sprints, on your machine, with your own token.
           </p>
 
           <div class="badges">
@@ -1386,29 +1385,29 @@
           <div class="term">
             <div class="term-bar" aria-hidden="true">
               <i></i><i></i><i></i>
-              <span>assistant · jira-mcp-ai (stdio)</span>
+              <span>assistant · jira-mcp-ai (stdio) · JIRA_PROJECTS=SCRATCH</span>
             </div>
             <div
               class="term-body"
               id="term"
               role="img"
               tabindex="0"
-              aria-label="Transcript: the assistant reads the available transitions, plans a transition and a worklog — both explicitly not performed in plan mode — then applies both after the operator agrees."
+              aria-label="Transcript recorded against the offline fake Jira: the assistant plans a transition and a worklog, both explicitly not performed; a call on an issue outside JIRA_PROJECTS is refused with nothing sent to Jira; the operator then applies both plans and a re-read shows the issue Done."
             >
-<span class="l" style="--i:0"><span class="u">you ›</span> <span class="t">Move NOVA-142 to In Progress and log the 2h I spent.</span></span>
-<span class="l" style="--i:1"></span>
-<span class="l" style="--i:2"><span class="o">▸</span> jira_get_transitions <span class="d">— read</span>   <span class="d">11</span> To Do · <span class="d">21</span> In Progress · <span class="d">31</span> Done</span>
-<span class="l" style="--i:3"><span class="o">▸</span> jira_transition_issue <span class="d">— plan</span></span>
-<span class="l" style="--i:4"><span class="d">  would POST  </span>/issue/NOVA-142/transitions  <span class="d">{"transition":{"id":"21"}}</span></span>
-<span class="l" style="--i:5"><span class="d">  plan_id     </span>plan_9f31c04ab2…</span>
-<span class="l" style="--i:6"><span class="w">  ⚠ NOT performed — plan mode.</span></span>
-<span class="l" style="--i:7"><span class="o">▸</span> jira_add_worklog <span class="d">— plan</span>   2h  <span class="d">plan_id</span> plan_c04d11be7f…</span>
-<span class="l" style="--i:8"></span>
-<span class="l" style="--i:9"><span class="u">you ›</span> <span class="t">Both look right — apply them.</span></span>
-<span class="l" style="--i:10"></span>
-<span class="l" style="--i:11"><span class="o">▸</span> jira_transition_issue <span class="d">— apply</span>   <span class="o">ok</span>  NOVA-142 → In Progress</span>
+<span class="l" style="--i:0"><span class="u">you ›</span> <span class="t">Move SCRATCH-1 to Done and log the 2h I spent.</span></span>
+<span class="l" style="--i:1"><span class="o">▸</span> jira_transition_issue <span class="d">— plan</span></span>
+<span class="l" style="--i:2"><span class="d">  would POST  </span>/issue/SCRATCH-1/transitions  <span class="d">status</span> In Progress → Done</span>
+<span class="l" style="--i:3"><span class="o">▸</span> jira_add_worklog <span class="d">— plan</span>   2h</span>
+<span class="l" style="--i:4"><span class="w">  ⚠ NOT performed — plan mode. Nothing was sent to Jira.</span></span>
+<span class="l" style="--i:5"></span>
+<span class="l" style="--i:6"><span class="u">you ›</span> <span class="t">Close LEGACY-1 too while you are at it.</span></span>
+<span class="l" style="--i:7"><span class="o">▸</span> jira_transition_issue LEGACY-1 <span class="d">— refused (permission)</span></span>
+<span class="l" style="--i:8"><span class="w">  ⚠ outside the project scope (JIRA_PROJECTS: SCRATCH). Nothing was sent to Jira.</span></span>
+<span class="l" style="--i:9"></span>
+<span class="l" style="--i:10"><span class="u">you ›</span> <span class="t">The SCRATCH-1 plans look right. Apply them.</span></span>
+<span class="l" style="--i:11"><span class="o">▸</span> jira_transition_issue <span class="d">— apply</span>   <span class="o">ok</span>  SCRATCH-1 → Done</span>
 <span class="l" style="--i:12"><span class="o">▸</span> jira_add_worklog <span class="d">— apply</span>   <span class="o">ok</span>  2h logged</span>
-<span class="l" style="--i:13"><span class="o">▸</span> jira_get_issue <span class="d">— read</span>   <span class="d">status</span> In Progress · <span class="d">timespent</span> 2h</span>
+<span class="l" style="--i:13"><span class="o">▸</span> jira_get_issue <span class="d">— read</span>   <span class="d">status</span> Done</span>
 <span class="l" style="--i:14"><span class="caret"></span></span>
             </div>
           </div>

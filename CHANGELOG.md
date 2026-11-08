@@ -311,6 +311,13 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, 
   so `jira_parse_jql` is now described as a diagnosis tool, not a step to run
   first. `docs/JIRA-API.md` gains a dated Platform watch table that is
   re-read before every release.
+- The README and the project site now open with what the server refuses to do
+  (plan before every write, project scope checked on every call, a human
+  confirmation for irreversible writes), add a dated "When to use which"
+  comparison with the Atlassian Rovo server and `sooperset/mcp-atlassian`, and
+  answer the GPL question for users. The demo transcript is recorded from a
+  real run against the offline fake Jira by `scripts/record-demo.mjs`, which
+  can also render it as a GIF.
 
 Decisions: D124, D127, D500–D505, D508, D511–D514, D525–D527, D531, D532.
 

@@ -1,18 +1,74 @@
 # jira-mcp-ai
 
+**The Jira MCP server that cannot do what you did not approve.**
+
+Every write is a plan first. Scope is enforced on every call, not just hidden
+from the menu. Bulk edits, ranks and sprints, on your machine, with your own
+token.
+
 An [MCP](https://modelcontextprotocol.io) server for **Jira Cloud**: it gives an
 MCP-capable agent (Claude Code, Claude Desktop, or any other client) tools to
 search, read and — behind an explicit gate — write Jira issues, using your own
 Atlassian account: an API token, or OAuth 2.0 (3LO) through `jira-mcp-ai login`
 ([`docs/AUTH.md`](docs/AUTH.md)).
 
-Two things shape the design:
+What "cannot" means here, concretely:
 
-- **Writes are gated.** Write tools default to describing what they *would* do
-  instead of doing it. Executing requires both an opt-in configuration and an
-  explicit flag on the call. See [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
-- **Jira content is untrusted input.** Issue text arrives from whoever filed the
-  ticket. It is labelled as data, never merged into the agent's instructions.
+- **A write is a plan until you apply it.** Every write tool first answers with
+  the request it *would* send and a `plan_id`; nothing reaches Jira. Executing
+  takes `JIRA_WRITE_MODE=apply` in the configuration *and* `apply: true` with
+  that `plan_id` on the call. From <!-- version:next -->1.1.0<!-- /version -->
+  an issue-write plan also shows a field-by-field diff, and the apply is
+  refused if the issue changed since the plan.
+- **Out of scope is refused before anything is sent.** With
+  `JIRA_PROJECTS=SCRATCH`, a call that names `LEGACY-1` fails at call time with
+  "Nothing was sent to Jira", and searches are narrowed to the listed projects
+  (<!-- version:next -->1.1.0<!-- /version -->, unreleased).
+- **Irreversible writes need a human.** Deletes and bulk edits refuse unless
+  `JIRA_ALLOW_IRREVERSIBLE` is set, even in apply mode. With
+  `JIRA_IRREVERSIBLE_CONFIRM=elicit` (<!-- version:next -->1.1.0<!-- /version -->)
+  each such apply also asks you through an MCP form that the model cannot
+  answer for you.
+
+Jira content is untrusted input as well: issue text arrives from whoever filed
+the ticket, and it is labelled as data, never merged into the agent's
+instructions. See [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+
+### The demo
+
+Recorded against the offline fake Jira (`scripts/fake-jira.mjs`) with
+`JIRA_PROJECTS=SCRATCH` and `JIRA_WRITE_MODE=apply`. The "you" lines are
+scripted; every other line is the server's real answer:
+
+```text
+you › Move SCRATCH-1 to Done and log the 2h I spent.
+▸ jira_transition_issue — plan
+  would POST /issue/SCRATCH-1/transitions   status In Progress → Done
+▸ jira_add_worklog — plan   2h
+  NOT performed — plan mode. Nothing was sent to Jira.
+
+you › Close LEGACY-1 too while you are at it.
+▸ jira_transition_issue LEGACY-1 — refused (permission)
+  Issue "LEGACY-1" (project LEGACY) is outside the project scope of this
+  server (JIRA_PROJECTS: SCRATCH). Nothing was sent to Jira.
+
+you › The SCRATCH-1 plans look right. Apply them.
+▸ jira_transition_issue — apply   ok   SCRATCH-1 → Done
+▸ jira_add_worklog — apply   ok   2h logged
+▸ jira_get_issue — read   status Done
+```
+
+To reproduce it, or to render it as a GIF (needs
+[`agg`](https://github.com/asciinema/agg) on `PATH`):
+
+```sh
+npm run build
+node scripts/record-demo.mjs                              # transcript
+node scripts/record-demo.mjs --gif docs/assets/demo.gif   # GIF
+```
+
+The script fails instead of recording if a plan executes, if any write reaches
+the fake before the apply, or if anything about `LEGACY-1` reaches it at all.
 
 > **Status: latest release <!-- version:released -->1.0.0<!-- /version -->; this
 > branch is `main`.** The specification in [`docs/`](docs/README.md) is
@@ -34,6 +90,39 @@ Two things shape the design:
 >
 > See [the implementation plan](docs/IMPLEMENTATION-PLAN.md) and
 > [`CHANGELOG.md`](CHANGELOG.md).
+
+## When to use which
+
+As of **2026-10-29**. The Atlassian column is taken from Atlassian's
+[Rovo MCP supported-tools page](https://developer.atlassian.com/cloud/rovo-mcp/guides/supported-tools/)
+(updated 2026-10-27). The `sooperset/mcp-atlassian` column is taken from its
+repository and the
+[CVE-2026-77243 advisory](https://app.opencve.io/cve/CVE-2026-77243).
+A cell marked *not verified* is one we could not confirm from a primary
+source; corrections are welcome. The jira-mcp-ai column describes `main`
+(<!-- version:next -->1.1.0<!-- /version -->, unreleased).
+
+| | **jira-mcp-ai** | **Atlassian Rovo MCP server** | **sooperset/mcp-atlassian** |
+|---|---|---|---|
+| Where it runs | Your machine (stdio, or HTTP on loopback) | Hosted by Atlassian | Your machine or Docker, stdio or HTTP |
+| Org-admin action needed | No | Yes, for API-token auth and the delete/manage tool groups | No |
+| Confluence | No (by design) | Yes | Yes |
+| Preview before every write | Yes (plan, then apply) | Only for screen updates and hierarchy conversion | *not verified* |
+| Human confirmation the model cannot give | Yes, opt-in (MCP elicitation) | Agent-level confirmation for destructive tools; mechanism not documented | *not verified* |
+| Project allow-list enforced at call time | Yes (`JIRA_PROJECTS`) | No allow-list; Atlassian permissions and admin tool groups | `JIRA_PROJECTS_FILTER`; call-time enforcement since 0.22.0 (CVE-2026-77243; listing only before) |
+| Bulk edit / delete (up to 1000 issues) | Yes | No | *not verified* |
+| Rank issues; create and update filters | Yes; yes | No; list filters only | *not verified* |
+| Sprint lifecycle | Yes | Yes (since 2026-08-29) | *not verified* |
+| Audit log, IP allow-list | No (local stderr logs only) | Yes (Atlassian Administration) | No |
+| Jira Data Center | Unverified preview | No | Yes |
+| Licence | GPL-3.0-only | Proprietary service | MIT (*not verified*) |
+
+**In short.** Use the Rovo server if you want Jira and Confluence hosted by
+Atlassian, with its audit logs and IP allow-listing. Use `sooperset/mcp-atlassian`
+if you want Jira and Confluence together, including on Data Center. Use
+**jira-mcp-ai** if an agent will *write* to your Jira and you need it unable to
+touch the wrong project, to bulk-edit without a preview, or to delete without a
+human saying yes, without asking your org admin for anything.
 
 ## Requirements
 
@@ -391,6 +480,10 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Copyright (C) 2026 Ivan Baev. Licensed under
 [GPL-3.0-only](LICENSE). Versions up to and including 1.0.0-beta.1 were published under MIT and remain available under it.
+
+**Does using it make my code GPL?** No. Running the server, and connecting
+your agent or your tools to it, does not put your code under the GPL. The
+licence matters only if you distribute a modified copy of the server itself.
 
 Jira and Atlassian are trademarks of Atlassian Pty Ltd. This project is an
 independent, unofficial client and is not affiliated with or endorsed by
