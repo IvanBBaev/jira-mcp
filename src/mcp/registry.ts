@@ -275,6 +275,13 @@ export interface RegistryDeps {
   readonly api?: JiraApi | undefined;
   /** The export directory, where `output: "file"` writes (D152, D531); absent = not configured. */
   readonly media?: MediaStore | undefined;
+  /**
+   * D540 — the gated surface, already computed by the process-scoped half of
+   * the server from this same manifest, settings and adapter. Absent = computed
+   * here. Passing one computed from anything else makes the registry disagree
+   * with what `tools/list` advertises.
+   */
+  readonly selection?: PackageSelection | undefined;
 }
 
 /** Per-call inputs the transport knows and the registry does not. */
@@ -407,7 +414,7 @@ export function createRegistry(
 ): ToolRegistry {
   const { settings } = deps;
   const api = deps.api ?? CLOUD_API;
-  const selection = selectPackages(manifest, settings, api);
+  const selection = deps.selection ?? selectPackages(manifest, settings, api);
   // A registry built without a server gets the same pipeline with the gate
   // layer alone (D523). No confirmer: there is no client to ask, so under
   // `elicit` an irreversible apply fails closed (D303).

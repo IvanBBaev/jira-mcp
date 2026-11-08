@@ -357,7 +357,7 @@ async function serve(): Promise<void> {
       version: SERVER_VERSION,
     });
 
-    const { buildServer } = await import('./mcp/server.js');
+    const { buildServer, createServerFactory } = await import('./mcp/server.js');
     const { createNodeMediaStore } = await import('./tools/attachments.js');
     const { resolveExportDir } = await import('./core/settings.js');
     const exportDir = resolveExportDir(settings);
@@ -388,8 +388,10 @@ async function serve(): Promise<void> {
 
     // WHICH transport is this file's one branch on `settings.transport` (D101).
     // stdio builds its single Server eagerly — one process, one session. http
-    // hands over the FACTORY instead: each MCP session gets its own `buildServer`
-    // product, so no eager Server is constructed here. Plans live in ONE store
+    // hands over the FACTORY instead: each MCP session gets its own server
+    // product, so no eager Server is constructed here. The factory computes the
+    // process-scoped half (selection, catalogues, listed schemas, instructions)
+    // once; a session adds only its own state (D540). Plans live in ONE store
     // shared by those servers (D513), each bound to the session and credential
     // that planned it (D512), with a TTL and a per-session quota (D514); a
     // session's plans are dropped as it ends (CC-117).
@@ -399,14 +401,14 @@ async function serve(): Promise<void> {
       const { createRecentWrites } = await import('./mcp/recent-writes.js');
       const { createPlanStore, PLAN_TTL_MS } = await import('./mcp/write-mode.js');
       const planStore = createPlanStore({ clock, ttlMs: PLAN_TTL_MS });
+      const factory = createServerFactory({ ...serverDeps, planStore });
       handle = await connectHttpTransport({
         settings,
         logger,
         clock,
         // Each session also gets its own recent-writes registry, so one client's
         // writes never widen another client's searches (CC-244).
-        createServer: () =>
-          buildServer({ ...serverDeps, planStore, recentWrites: createRecentWrites() }),
+        createServer: () => factory.build({ recentWrites: createRecentWrites() }),
         onSessionClosed: (sessionId) => {
           planStore.dropSession(sessionId);
         },

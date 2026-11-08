@@ -154,6 +154,10 @@ The entry concern splits into:
   the mcp ring without importing `tools/` — and it cannot live in `src/index.ts`,
   which is import-free at module scope (below) while `buildServer` is
   synchronous. Tests drive it with fixture tools and a fake request function.
+  It is the one-shot form of `createServerFactory(deps)` (D540), which computes
+  the process-scoped surface (selection, catalogues, completer, listed tools,
+  instructions) once and whose `build({ recentWrites })` adds only the session
+  half (recent writes, the gate bound to that session's `Server`, the registry).
 - `main()` (`src/index.ts`) — the real bootstrap: `loadSettings()` → `collectSecrets` →
   `createRedactor` → `createLogger` → `createJiraRequest` → registry → transport.
   Guarded by `process.argv[1] === fileURLToPath(import.meta.url)` so importing the
@@ -337,8 +341,8 @@ HTTP-level detail extraction reads Jira's `errorMessages[]` / `errors{}` /
 
   Sessions: one MCP session per `Mcp-Session-Id`, created on `initialize` and
   destroyed on `DELETE` or idle timeout. One SDK `Server` binds one transport,
-  so each session gets its own `buildServer` product from an injected
-  factory; tearing a session down aborts its in-flight calls. The plan_id
+  so each session gets its own server from one `createServerFactory` (D540),
+  sharing the process-scoped surface; tearing a session down aborts its in-flight calls. The plan_id
   table is one store for the whole process (D513), so a wire that answers a
   session from another `Server` still finds its plans; each plan is bound to
   the session and credential fingerprint that planned it (D512), and the

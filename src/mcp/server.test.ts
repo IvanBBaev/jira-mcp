@@ -47,6 +47,7 @@ import { ok } from './result.js';
 import {
   JOURNAL_UNAVAILABLE_MESSAGE,
   buildServer,
+  createServerFactory,
   journalingGate,
   planOwnerOf,
   recordingGate,
@@ -1397,6 +1398,97 @@ test('[CC-244] each server’s tool calls read the registry it records into', as
     });
     assert.deepEqual(sessionRecentWrites.snapshot(), []);
   } finally {
+    sessionRecentWrites.clear();
+  }
+});
+
+/** Connect an SDK client to an already-built server. */
+async function connectTo(server: ReturnType<typeof buildServer>): Promise<Session> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: 'jira-mcp-test', version: '0.0.0' });
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: async (): Promise<void> => {
+      await client.close();
+      await server.close();
+    },
+  };
+}
+
+test('D540: sessions of one factory share the process-scoped surface by identity', async () => {
+  const { deps } = makeHarness();
+  // Every read of the manifest is counted: selection, catalogues, prompts and
+  // schema conversion all walk it, so a session build that recomputed any of
+  // them would show up here.
+  let manifestReads = 0;
+  const packages = new Proxy(MANIFEST, {
+    get(target, key, receiver): unknown {
+      manifestReads += 1;
+      return Reflect.get(target, key, receiver) as unknown;
+    },
+  });
+  const factory = createServerFactory({ ...deps, packages });
+  const { surface } = factory;
+  assert.ok(Object.isFrozen(surface.listed));
+  assert.ok(manifestReads > 0);
+  const afterSurface = manifestReads;
+
+  const first = await connectTo(factory.build({ recentWrites: createRecentWrites() }));
+  const second = await connectTo(factory.build({ recentWrites: createRecentWrites() }));
+  try {
+    assert.equal(manifestReads, afterSurface, 'a session build re-read the manifest');
+    // Building sessions recomputes nothing: the surface is the same object
+    // graph after two builds, not an equal copy.
+    assert.equal(factory.surface, surface);
+    assert.equal(factory.surface.listed, surface.listed);
+    assert.equal(factory.surface.selection, surface.selection);
+
+    // Both sessions advertise exactly the shared entries, and the same
+    // handshake instructions.
+    const expected = surface.listed.map((tool) => tool.name);
+    for (const { client } of [first, second]) {
+      const listed = await client.listTools();
+      assert.deepEqual(
+        listed.tools.map((tool) => tool.name),
+        expected,
+      );
+      assert.equal(client.getInstructions(), surface.instructions);
+    }
+
+    // A second factory is a second process-scoped computation.
+    assert.notEqual(createServerFactory(deps).surface.listed, surface.listed);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+});
+
+test('D540: the session half stays per session — recent writes do not cross', async () => {
+  const { deps, jira } = makeHarness({ settings: { writeMode: 'apply' } });
+  const packages: readonly PackageSpec[] = MANIFEST.map((spec) =>
+    spec.id === 'core' ? { ...spec, tools: [...spec.tools, probeTool] } : spec,
+  );
+  jira.on(
+    'POST /rest/api/3/issue',
+    jiraOk({ id: '10042', key: 'ABC-42' }, { status: 201 }),
+  );
+  const factory = createServerFactory({ ...deps, packages });
+
+  sessionRecentWrites.clear();
+  const first = await connectTo(factory.build({ recentWrites: createRecentWrites() }));
+  const second = await connectTo(factory.build({ recentWrites: createRecentWrites() }));
+  try {
+    await applyWrite(first.client, 'jira_fx_create', { summary: 'S' });
+    assert.deepEqual(dataOf(await callTool(first.client, 'jira_fx_recent'))['ids'], [
+      '10042',
+    ]);
+    assert.deepEqual(dataOf(await callTool(second.client, 'jira_fx_recent'))['ids'], []);
+    assert.deepEqual(sessionRecentWrites.snapshot(), []);
+  } finally {
+    await first.close();
+    await second.close();
     sessionRecentWrites.clear();
   }
 });

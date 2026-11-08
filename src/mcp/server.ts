@@ -21,6 +21,15 @@
 // model needs to fix its own call. With `setRequestHandler` the registry stays
 // the single call boundary and every outcome is an envelope.
 //
+// PROCESS SCOPE vs SESSION SCOPE (D540). `createServerFactory` computes the
+// half that depends only on the manifest, the settings and the adapter — the
+// gated selection, the reference and prompt catalogues, the completer, the
+// listed tools and the instructions — ONCE, and `build` adds the half a session
+// owns: its recent-writes registry, the write gate bound to its own SDK
+// `Server` (the elicitation confirmer), the registry around that gate and the
+// `Server` itself. The HTTP transport builds one product per session from one
+// factory; stdio builds one; `buildServer` is the one-shot form.
+//
 // THE WRITE PIPELINE IS BUILT HERE, through `buildWritePipeline`
 // (`mcp/write-pipeline.ts`, D523): the gate, the journal (CC-33) and the
 // recent-writes layer (CC-02) in their one pinned order. `journalingGate` and
@@ -61,11 +70,15 @@ import {
   isExportUri,
   readExport,
 } from './exports.js';
-import { createCompleter } from './completions.js';
+import { createCompleter, type Completer } from './completions.js';
 import { createProgressSink } from './progress.js';
-import { createPromptCatalogue } from './prompts.js';
-import { createRegistry } from './registry.js';
-import { createReferenceCatalogue, serverInstructions } from './resources.js';
+import { createPromptCatalogue, type PromptCatalogue } from './prompts.js';
+import { createRegistry, selectPackages, type PackageSelection } from './registry.js';
+import {
+  createReferenceCatalogue,
+  serverInstructions,
+  type ReferenceCatalogue,
+} from './resources.js';
 import type { RenderedResult } from './result.js';
 import { clientHints, type ClientHintOptions } from './client-hints.js';
 import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
@@ -222,16 +235,130 @@ export function toCallToolResult(rendered: RenderedResult): CallToolResult {
 // ---------------------------------------------------------------------------
 
 /**
+ * What a single session owns (D540). Everything else in {@link BuildServerDeps}
+ * is process-scoped and shared by every session a factory builds.
+ */
+export interface SessionDeps {
+  /**
+   * This session's recent-writes registry (CC-244). Absent = the factory's
+   * `recentWrites`, else the ambient {@link sessionRecentWrites}.
+   */
+  readonly recentWrites?: RecentWrites | undefined;
+}
+
+/**
+ * The process-scoped half of the server (D540): derived from the manifest, the
+ * settings and the adapter alone, computed once per factory and shared by
+ * every session it builds — the same objects, not equal copies.
+ */
+export interface ServerSurface {
+  /** The gated selection; every session's registry serves exactly this. */
+  readonly selection: PackageSelection;
+  readonly catalogue: ReferenceCatalogue;
+  readonly prompts: PromptCatalogue;
+  readonly completer: Completer;
+  /** The `tools/list` entries, converted once (frozen array). */
+  readonly listed: readonly Tool[];
+  /** The handshake `instructions` text. */
+  readonly instructions: string;
+}
+
+/** Builds session servers over one shared {@link ServerSurface} (D540). */
+export interface ServerFactory {
+  readonly surface: ServerSurface;
+  /** One connectable server with its own session state. */
+  build(session?: SessionDeps): ConnectableServer;
+}
+
+/** Compute the process-scoped half (D540). Pure: no I/O, no SDK object. */
+function buildSurface(deps: BuildServerDeps): ServerSurface {
+  const { settings } = deps;
+  const selection = selectPackages(deps.packages, settings, deps.api);
+  const tools = selection.packages.flatMap((pkg) => pkg.tools);
+
+  // The documentation half of the surface (D124): built from the SAME manifest
+  // and exclusions the registry holds, so the index never names a tool the
+  // registry does not know about.
+  const catalogue = createReferenceCatalogue({
+    manifest: deps.packages,
+    excludedTools: selection.excludedTools,
+  });
+  // Ready-made workflows (D125), gated on the tools they name: a prompt whose
+  // steps call a tool this configuration lacks is not listed at all.
+  const prompts = createPromptCatalogue({
+    manifest: deps.packages,
+    registeredTools: new Set(tools.map((tool) => tool.name)),
+    excludedTools: selection.excludedTools,
+  });
+  // Argument completion (D154), stage A: closed sets from the manifest only —
+  // no Jira call ever runs on behalf of a keystroke.
+  const completer = createCompleter({
+    prompts: prompts.prompts,
+    toolNames: deps.packages.flatMap((pkg) => pkg.tools.map((tool) => tool.name)),
+  });
+
+  // Schemas are converted ONCE per process, not per session or per
+  // `tools/list`: the manifest is immutable, the conversion is pure, and a
+  // schema the SDK cannot render should fail at startup rather than on a
+  // client's first request.
+  const hints: ClientHintOptions = { maxResultChars: settings.maxResultChars };
+  const listed: readonly Tool[] = Object.freeze(
+    tools.map((spec) => toMcpTool(spec, hints)),
+  );
+
+  const instructions = serverInstructions({
+    serverName: deps.serverName,
+    version: deps.version,
+    deployment: settings.deployment,
+    toolCount: tools.length,
+    packageCount: selection.enabledPackages.length,
+    writeMode: settings.writeMode,
+    allowIrreversible: settings.allowIrreversible,
+    profileLocked: settings.lockProfile,
+    references: catalogue.references,
+    prompts: prompts.prompts.map((prompt) => prompt.name),
+  });
+
+  return { selection, catalogue, prompts, completer, listed, instructions };
+}
+
+/**
+ * Split the server into its process-scoped and session-scoped halves (D540).
+ *
+ * The surface is computed here, once; each `build` call returns a fresh SDK
+ * `Server` with its own write gate, registry and recent-writes registry over
+ * that surface. `deps.planStore` and `deps.gate`, when given, are shared by
+ * every session like the rest of `deps`.
+ */
+export function createServerFactory(deps: BuildServerDeps): ServerFactory {
+  const surface = buildSurface(deps);
+  return {
+    surface,
+    build: (session: SessionDeps = {}): ConnectableServer =>
+      buildSessionServer(deps, surface, session),
+  };
+}
+
+/**
  * Build a connectable MCP server from injected dependencies.
  *
  * Returns the SDK `Server` behind the structural {@link ConnectableServer}: the
  * caller chooses the transport (`mcp/transport.ts`), and nothing here assumes
  * one exists. Handler registration is complete before the function returns, so a
  * client that sends `initialize` and `tools/list` in the same tick cannot race
- * the wiring.
+ * the wiring. The one-shot form of {@link createServerFactory}.
  */
 export function buildServer(deps: BuildServerDeps): ConnectableServer {
+  return createServerFactory(deps).build();
+}
+
+function buildSessionServer(
+  deps: BuildServerDeps,
+  surface: ServerSurface,
+  session: SessionDeps,
+): ConnectableServer {
   const { settings } = deps;
+  const { catalogue, prompts, completer, listed } = surface;
 
   // Bound late: the gate is built before the SDK server it asks through, and
   // is only ever called once a client has connected (D303).
@@ -260,7 +387,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     },
   };
 
-  const recent = deps.recentWrites ?? sessionRecentWrites;
+  const recent = session.recentWrites ?? deps.recentWrites ?? sessionRecentWrites;
   // The one production construction of the write gate (D523): gate → journal →
   // recent_writes, each layer present when its dependency is. D535:
   // `JIRA_RECONCILE_WRITES=false` leaves the recent-writes layer out, so every
@@ -277,6 +404,8 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     clock: deps.clock,
   });
 
+  // Per session because the gate is: its confirmer asks THIS session's client.
+  // The selection is the surface's, so it is not recomputed.
   const registry = createRegistry(deps.packages, {
     settings,
     jira: deps.jira,
@@ -287,27 +416,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
     ...(deps.api === undefined ? {} : { api: deps.api }),
     ...(deps.media === undefined ? {} : { media: deps.media }),
     gate: pipeline.gate,
-  });
-
-  // The documentation half of the surface (D124): built from the SAME manifest
-  // and exclusions the registry holds, so the index never names a tool the
-  // registry does not know about.
-  const catalogue = createReferenceCatalogue({
-    manifest: deps.packages,
-    excludedTools: registry.excludedTools,
-  });
-  // Ready-made workflows (D125), gated on the tools they name: a prompt whose
-  // steps call a tool this configuration lacks is not listed at all.
-  const prompts = createPromptCatalogue({
-    manifest: deps.packages,
-    registeredTools: new Set(registry.tools.map((tool) => tool.name)),
-    excludedTools: registry.excludedTools,
-  });
-  // Argument completion (D154), stage A: closed sets from the manifest only —
-  // no Jira call ever runs on behalf of a keystroke.
-  const completer = createCompleter({
-    prompts: prompts.prompts,
-    toolNames: deps.packages.flatMap((pkg) => pkg.tools.map((tool) => tool.name)),
+    selection: surface.selection,
   });
 
   const server = new Server(
@@ -327,18 +436,7 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
         completions: {},
         logging: {},
       },
-      instructions: serverInstructions({
-        serverName: deps.serverName,
-        version: deps.version,
-        deployment: settings.deployment,
-        toolCount: registry.tools.length,
-        packageCount: registry.enabledPackages.length,
-        writeMode: settings.writeMode,
-        allowIrreversible: settings.allowIrreversible,
-        profileLocked: settings.lockProfile,
-        references: catalogue.references,
-        prompts: prompts.prompts.map((prompt) => prompt.name),
-      }),
+      instructions: surface.instructions,
     },
   );
 
@@ -381,12 +479,6 @@ export function buildServer(deps: BuildServerDeps): ConnectableServer {
   server.setRequestHandler(CompleteRequestSchema, (request) =>
     completer.complete(request.params),
   );
-
-  // Schemas are converted ONCE, here, not per `tools/list`: the manifest is
-  // immutable, the conversion is pure, and a schema the SDK cannot render should
-  // fail at startup rather than on a client's first request.
-  const hints: ClientHintOptions = { maxResultChars: settings.maxResultChars };
-  const listed: readonly Tool[] = registry.tools.map((spec) => toMcpTool(spec, hints));
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...listed] }));
 
