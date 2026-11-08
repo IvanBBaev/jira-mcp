@@ -459,7 +459,7 @@ takes a number outside its row.
 | V3-75 | Packed-tarball clean-install smoke and an SDK lower-bound job | OPS-R6 | `.github/workflows/ci.yml` (new job), `scripts/smoke-pack.mjs` (new) | — | V3-74 | done ab6290a (also touched `.c8rc.json` (driver excluded by name), `docs/TESTING.md` §Gate, `docs/RELEASING.md` §3; test `src/testing/smoke-pack.test.ts`; job `smoke` on the required-check list is OPS-04/owner) | 2 |
 | V3-76 | Close the plugin version-pin window (atomic bump-and-tag push or a ref-pinned marketplace source); post-release checklist | OPS-R7 | `docs/RELEASING.md`, `.claude-plugin/marketplace.json` | — | V3-73 | todo | 1 |
 | V3-77 | CI, coverage and Dependabot hygiene: drop the duplicate coverage job, exclude the rehearsal script, per-file safety floors, derive counts in tests, `delete_branch_on_merge`, unstick #20/#21 | OPS-R8, QA-R8 | `.github/workflows/ci.yml` (`coverage` job), `.c8rc.json`, `src/tools/index.test.ts`; GitHub settings | — | V3-74, V3-15, V3-33 | todo (settings part blocked-owner) | 2.5 |
-| V3-81 | Supply-chain criteria for V3-16/17/23: digest-pinned, non-root, multi-arch image with SBOM and provenance; MCPB on the Release; OIDC-only distribution | OPS-R9 | `docs/DECISIONS.md` (D520/D521 amendment) | — | — | todo | 0.5 |
+| V3-81 | Supply-chain criteria for V3-16/17/23: digest-pinned, non-root, multi-arch image with SBOM and provenance; MCPB on the Release; OIDC-only distribution | OPS-R9 | `docs/DECISIONS.md` (D520/D521 amendment) | D552 | — | done 9b3bd03 (D552; open gap: no automated refresh of the base-image digest, a precondition of V3-23's first ghcr push) | 0.5 |
 
 ### Product and owner lane
 
@@ -471,7 +471,7 @@ takes a number outside its row.
 
 Rows V3-16, V3-17 and V3-23 (Docker, MCPB, distribution) already cover
 PRD-R6…R8; they now also carry V3-81's criteria. V3-07 + V3-25 cover
-PRD-R10 (1.2.0 `standard` profile). Unused reserve: D551–D560.
+PRD-R10 (1.2.0 `standard` profile). Unused reserve: D553–D560.
 
 ### Priority order after the panel
 
