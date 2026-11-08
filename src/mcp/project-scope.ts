@@ -873,6 +873,7 @@ async function admitAgile(
       if (board !== undefined) await assertBoard(ctx, req, board);
       return { req };
     }
+    case undefined:
     default:
       throw deny(ctx, `The agile route ${req.pathTemplate ?? `/${head ?? ''}`}`);
   }

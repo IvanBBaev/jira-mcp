@@ -75,7 +75,7 @@ function windowedList<T>(
 
 /** Case-insensitive substring over a row's name and description. */
 function matchesQuery(
-  row: { readonly name: string; readonly description?: string },
+  row: { readonly name: string; readonly description?: string | undefined },
   query: string | undefined,
 ): boolean {
   const needle = trimmed(query)?.toLowerCase();

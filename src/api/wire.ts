@@ -38,8 +38,8 @@ export const SHAPE_REMEDIATION =
 
 /** The request controls an api call forwards to every request it sends. */
 export interface WireControls {
-  readonly signal?: AbortSignal;
-  readonly deadlineAt?: number;
+  readonly signal?: AbortSignal | undefined;
+  readonly deadlineAt?: number | undefined;
 }
 
 /** The options every api call carries: the wire plus its controls. */
@@ -50,10 +50,10 @@ export interface WireOptions extends WireControls {
 /** The paging controls of a classic (`startAt`/`maxResults`) read. */
 export interface ClassicRunOptions {
   readonly jira: JiraRequestFn;
-  readonly signal?: AbortSignal;
-  readonly pageSize?: number;
-  readonly maxPages?: number;
-  readonly startAt?: number;
+  readonly signal?: AbortSignal | undefined;
+  readonly pageSize?: number | undefined;
+  readonly maxPages?: number | undefined;
+  readonly startAt?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -123,17 +123,17 @@ export interface FilterBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request issued. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** The paging controls of {@link searchFilters}. */
 export interface FilterPagedBase extends FilterBase {
   /** Rows per request; defaults to {@link FILTER_PAGE_SIZE}. */
-  readonly pageSize?: number;
+  readonly pageSize?: number | undefined;
   /** Hard page cap; defaults to `DEFAULT_MAX_PAGES` from `api/shared.ts`. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
   /** Offset to start from — resume a `max_pages` stop from its `nextStartAt`. */
-  readonly startAt?: number;
+  readonly startAt?: number | undefined;
 }
 
 /** Options for a single-request filter read. */
@@ -164,7 +164,7 @@ export type GetFilterOptions = FilterOptions & {
  */
 export interface FilterOwner {
   readonly accountId: string;
-  readonly displayName?: string;
+  readonly displayName?: string | undefined;
 }
 
 /**
@@ -176,19 +176,19 @@ export interface SavedFilter {
   readonly id: string;
   readonly name: string;
   /** Free text written by a tenant user; present when expanded/returned. */
-  readonly description?: string;
+  readonly description?: string | undefined;
   /**
    * Cloud: `{accountId, displayName?}`. Data Center (D115): the Data Center
    * user projection `{name?, key?, displayName, active?}` — never an accountId.
    */
-  readonly owner?: FilterOwner | DataCenterUser;
+  readonly owner?: FilterOwner | DataCenterUser | undefined;
   /** The saved JQL — the field the whole tool exists for. */
-  readonly jql?: string;
+  readonly jql?: string | undefined;
   /**
    * Whether the AUTHENTICATED user favourited it. Per-caller state, so it is
    * reported by {@link getFilter} only (see {@link FILTER_SEARCH_EXPAND}).
    */
-  readonly favourite?: boolean;
+  readonly favourite?: boolean | undefined;
 }
 
 /**

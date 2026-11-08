@@ -39,11 +39,11 @@ export function errorName(error: unknown): string {
 export interface FailInit {
   kind: JiraErrorKind;
   message: string;
-  httpStatus?: number;
-  jiraMessages?: readonly string[];
-  retryable?: boolean;
+  httpStatus?: number | undefined;
+  jiraMessages?: readonly string[] | undefined;
+  retryable?: boolean | undefined;
   remediation: string;
-  detail?: string;
+  detail?: string | undefined;
   cause?: unknown;
 }
 

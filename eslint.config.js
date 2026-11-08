@@ -55,13 +55,15 @@ const noAbortSignalTimeout = {
 };
 
 // ARCHITECTURE.md §MCP server style: zod runtime usage is quarantined to
-// src/mcp/define.ts so a future zod-v4 migration (D9) stays a bounded change.
-// Type-only imports are fine anywhere — they vanish at build time.
+// src/mcp/define.ts, which exports a curated `z` (D537), so a zod major or a
+// schema-library swap stays a one-file change and the builders tool modules
+// may reach are reviewed. Type-only imports are fine anywhere — they vanish
+// at build time.
 const noZodRuntimeImport = {
   selector: "ImportDeclaration[importKind!='type'][source.value=/^zod(\\u002F.*)?$/]",
   message:
-    'zod runtime usage is quarantined to src/mcp/define.ts (ARCHITECTURE.md / D9). ' +
-    'Import the re-exported helpers from mcp/define.js, or use `import type`.',
+    'zod runtime usage is quarantined to src/mcp/define.ts (ARCHITECTURE.md / D537). ' +
+    'Import the curated `z` and helpers from mcp/define.js, or use `import type`.',
 };
 
 // ARCHITECTURE.md §Error model / D536: redaction and the cause-then-recovery
@@ -139,6 +141,46 @@ export default tseslint.config(
       // are forbidden in the server source; console.warn/error (stderr, via the
       // redacting logger) remain allowed.
       'no-console': ['error', { allow: ['warn', 'error'] }],
+      // D537 / TSN-08: a switch over a union must name every member. A
+      // `default:` does not count as coverage, so adding a member to a union
+      // (an `AuthMode`, a tool kind) fails lint at every switch that forgot
+      // it; unreachable defaults call `assertNever` from core/assert-never.ts.
+      '@typescript-eslint/switch-exhaustiveness-check': [
+        'error',
+        {
+          considerDefaultExhaustiveForUnions: false,
+          requireDefaultForNonUnion: false,
+          allowDefaultCaseForExhaustiveSwitch: true,
+        },
+      ],
+      // D537 / TSN-13: type-only imports are spelled `import type`, which
+      // `verbatimModuleSyntax` then keeps out of the emitted JavaScript.
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'separate-type-imports' },
+      ],
+      // D537 / TSN-08 `strictTypeChecked` trial (959 hits over src/, 2026-11-08):
+      // the rules with a handful of hits are adopted here; the rest stay off
+      // until a work package budgets them — no-unnecessary-condition 599 (585
+      // in tests), restrict-template-expressions 135, no-unnecessary-type-
+      // arguments 71, no-confusing-void-expression 54, no-unnecessary-type-
+      // conversion 26, no-deprecated 25, no-dynamic-delete 19, no-non-null-
+      // assertion 14 (tests only), no-misused-spread 4 (deliberate code-point
+      // splits), no-unnecessary-type-parameters 2 (test helpers), and
+      // no-unnecessary-boolean-literal-compare 5 (its fixes drop `=== true` on
+      // values the types call boolean but the runtime may leave undefined,
+      // such as `process.stdin.isTTY`).
+      '@typescript-eslint/no-unnecessary-template-expression': 'error',
+      '@typescript-eslint/restrict-plus-operands': [
+        'error',
+        {
+          allowAny: false,
+          allowBoolean: false,
+          allowNullish: false,
+          allowNumberAndString: false,
+          allowRegExp: false,
+        },
+      ],
     },
   },
 

@@ -238,25 +238,25 @@ interface AgileBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every page request. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** The paging controls shared by the three read loops. */
 interface AgilePagedBase extends AgileBase {
   /** Page size to request; defaults to {@link DEFAULT_AGILE_PAGE_SIZE}. */
-  readonly pageSize?: number;
+  readonly pageSize?: number | undefined;
   /** Hard page cap; defaults to `DEFAULT_MAX_PAGES` from `api/shared.ts`. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
   /** Offset to start from — resume a `max_pages` stop from its `nextStartAt`. */
-  readonly startAt?: number;
+  readonly startAt?: number | undefined;
 }
 
 /** Options for {@link listBoards}. */
 export type ListBoardsOptions = AgilePagedBase & {
   /** Only boards of this project (key or numeric id). */
-  readonly projectKeyOrId?: string | number;
+  readonly projectKeyOrId?: string | number | undefined;
   /** Only boards of this type. */
-  readonly type?: BoardType;
+  readonly type?: BoardType | undefined;
 } & BudgetGuard;
 
 /** Options for {@link listSprints}. */
@@ -264,7 +264,7 @@ export type ListSprintsOptions = AgilePagedBase & {
   /** The board whose sprints to list. */
   readonly boardId: number | string;
   /** One state or several; several are sent as the CSV Jira expects. */
-  readonly state?: SprintState | readonly SprintState[];
+  readonly state?: SprintState | readonly SprintState[] | undefined;
 } & BudgetGuard;
 
 /** Options for {@link listSprintIssues}. */
@@ -275,14 +275,14 @@ export type ListSprintIssuesOptions = AgilePagedBase & {
    * {@link DEFAULT_SPRINT_ISSUE_FIELDS} (CC-03) and reports
    * `fieldsDefaulted: true`.
    */
-  readonly fields?: readonly string[];
+  readonly fields?: readonly string[] | undefined;
   /** Extra JQL, ANDed by Jira with "issue is in this sprint". */
-  readonly jql?: string;
+  readonly jql?: string | undefined;
   /**
    * Cloud only (D501): resume a partial read with the previous result's
    * `nextPageToken`. Data Center refuses it and resumes by `startAt`.
    */
-  readonly nextPageToken?: string;
+  readonly nextPageToken?: string | undefined;
   /**
    * Cloud software root only (D535): numeric issue ids Jira should refresh in
    * its index before answering — the session's recent writes. Sent as the CSV
@@ -290,7 +290,7 @@ export type ListSprintIssuesOptions = AgilePagedBase & {
    * read; never on the D525 agile fallback or Data Center, whose routes do not
    * take it. Validated like `/search/jql`'s list (numeric, at most 50).
    */
-  readonly reconcileIssues?: readonly string[];
+  readonly reconcileIssues?: readonly string[] | undefined;
 } & BudgetGuard;
 
 /** Options for {@link moveIssuesToSprint}. */
@@ -312,15 +312,15 @@ export type CreateSprintOptions = AgileBase & {
   readonly name: string;
   /** The board the sprint is created on (Jira calls it `originBoardId`). */
   readonly originBoardId: number | string;
-  readonly goal?: string;
+  readonly goal?: string | undefined;
   /**
    * ISO-8601 timestamps, forwarded VERBATIM. The worklog offset rule (D16 /
    * CC-23) is a `/rest/api/3/issue/{key}/worklog` rule and does not apply here:
    * the Agile API takes the sprint window as an absolute instant and Atlassian
    * documents it as `2015-04-11T15:22:00.000+10:00` (JIRA-API.md §Agile).
    */
-  readonly startDate?: string;
-  readonly endDate?: string;
+  readonly startDate?: string | undefined;
+  readonly endDate?: string | undefined;
 } & BudgetGuard;
 
 /** Options for {@link startSprint}. */
@@ -340,12 +340,12 @@ export type StartSprintOptions = AgileBase & {
 export type UpdateSprintOptions = AgileBase & {
   readonly sprintId: number | string;
   /** A new name; whitespace is refused, as on create. */
-  readonly name?: string;
+  readonly name?: string | undefined;
   /** A new goal; the empty string clears it. */
-  readonly goal?: string;
+  readonly goal?: string | undefined;
   /** A new window, forwarded verbatim like {@link CreateSprintOptions}. */
-  readonly startDate?: string;
-  readonly endDate?: string;
+  readonly startDate?: string | undefined;
+  readonly endDate?: string | undefined;
 } & BudgetGuard;
 
 /** Options for {@link rankIssues} (D136): exactly one anchor. */
@@ -353,11 +353,11 @@ export type RankIssuesOptions = AgileBase & {
   /** Issue keys or ids, 1…{@link MAX_MOVE_ISSUES}, kept in this order. */
   readonly issues: readonly string[];
   /** Place the issues directly before this one. */
-  readonly rankBeforeIssue?: string;
+  readonly rankBeforeIssue?: string | undefined;
   /** Place the issues directly after this one. */
-  readonly rankAfterIssue?: string;
+  readonly rankAfterIssue?: string | undefined;
   /** The rank field to write; Jira defaults to the site's global Rank field. */
-  readonly rankCustomFieldId?: number;
+  readonly rankCustomFieldId?: number | undefined;
 } & BudgetGuard;
 
 /** Options for {@link setEstimate} (D137). */
@@ -403,13 +403,13 @@ export type SprintLifecycleState = Extract<SprintState, 'active' | 'closed'>;
 export type ListBacklogIssuesOptions = AgilePagedBase & {
   readonly boardId: number | string;
   /** As {@link ListSprintIssuesOptions.fields}: empty or absent injects the default set. */
-  readonly fields?: readonly string[];
+  readonly fields?: readonly string[] | undefined;
   /** Extra JQL, ANDed by Jira with "issue is in this board's backlog". */
-  readonly jql?: string;
+  readonly jql?: string | undefined;
   /** As {@link ListSprintIssuesOptions.nextPageToken}. */
-  readonly nextPageToken?: string;
+  readonly nextPageToken?: string | undefined;
   /** As {@link ListSprintIssuesOptions.reconcileIssues}. */
-  readonly reconcileIssues?: readonly string[];
+  readonly reconcileIssues?: readonly string[] | undefined;
 } & BudgetGuard;
 
 /**
@@ -709,8 +709,8 @@ export const AGILE_BACKLOG_TEMPLATE = '/board/{boardId}/backlog';
 export async function listAgileIssuePage(
   options: AgilePagedBase &
     BudgetGuard & {
-      readonly fields?: readonly string[];
-      readonly jql?: string;
+      readonly fields?: readonly string[] | undefined;
+      readonly jql?: string | undefined;
     },
   path: string,
   pathTemplate: string,
@@ -788,10 +788,10 @@ export const SOFTWARE_BACKLOG_TEMPLATE = '/board/{boardId}/backlog';
 async function listSoftwareIssuePage(
   options: AgilePagedBase &
     BudgetGuard & {
-      readonly fields?: readonly string[];
-      readonly jql?: string;
-      readonly nextPageToken?: string;
-      readonly reconcileIssues?: readonly string[];
+      readonly fields?: readonly string[] | undefined;
+      readonly jql?: string | undefined;
+      readonly nextPageToken?: string | undefined;
+      readonly reconcileIssues?: readonly string[] | undefined;
     },
   path: string,
   pathTemplate: string,
@@ -835,9 +835,9 @@ async function listSoftwareIssuePage(
 async function readSoftwareIssuePage(
   options: AgilePagedBase &
     BudgetGuard & {
-      readonly fields?: readonly string[];
-      readonly jql?: string;
-      readonly reconcileIssues?: readonly string[];
+      readonly fields?: readonly string[] | undefined;
+      readonly jql?: string | undefined;
+      readonly reconcileIssues?: readonly string[] | undefined;
     },
   path: string,
   pathTemplate: string,
@@ -1866,7 +1866,7 @@ function staleSprintState(error: unknown, state: SprintLifecycleState): unknown 
     kind: error.kind,
     reason: sentence(
       `Jira refused to move this sprint to ${state}` +
-        `${said.length === 0 ? '' : `: ${said.join('; ')}`}`,
+        (said.length === 0 ? '' : `: ${said.join('; ')}`),
     ),
     remediation: state === 'active' ? SPRINT_START_REMEDIATION : SPRINT_CLOSE_REMEDIATION,
     httpStatus: error.httpStatus,

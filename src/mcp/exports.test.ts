@@ -127,6 +127,6 @@ test('[CC-1561] the resource link and the export read only answer for export uri
   const notFound = (error: unknown): boolean =>
     error instanceof McpError && error.code === RESOURCE_NOT_FOUND;
   await assert.rejects(readExport('jira://exports/../etc/passwd', media), notFound);
-  await assert.rejects(readExport(`${uri.replace('abcd', 'abce')}`, media), notFound);
+  await assert.rejects(readExport(uri.replace('abcd', 'abce'), media), notFound);
   await assert.rejects(readExport(uri, undefined), notFound);
 });

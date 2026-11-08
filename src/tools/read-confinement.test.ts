@@ -168,6 +168,7 @@ function answer(req: JiraRequestSpec): unknown {
       };
     case 'statuses':
     case 'label':
+    case undefined:
     default:
       return PAGE;
   }

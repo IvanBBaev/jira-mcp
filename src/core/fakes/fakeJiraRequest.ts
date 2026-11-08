@@ -35,9 +35,9 @@ export type JiraStubResult =
   | {
       readonly data: unknown;
       /** Defaults to 200. */
-      readonly status?: number;
+      readonly status?: number | undefined;
       /** Lowercased on the way out, like the real client's. */
-      readonly headers?: Readonly<Record<string, string>>;
+      readonly headers?: Readonly<Record<string, string>> | undefined;
     }
   | { readonly error: Error };
 

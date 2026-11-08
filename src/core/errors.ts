@@ -139,7 +139,7 @@ const SERAPH_OK = 'OK';
 
 export interface StatusKindContext {
   /** Response headers, lowercased by the client (CC-18 detection). */
-  readonly headers?: JiraResponseHeaders;
+  readonly headers?: JiraResponseHeaders | undefined;
 }
 
 function isLoginDenied(headers: JiraResponseHeaders | undefined): boolean {
@@ -265,16 +265,16 @@ export interface JiraErrorOptions {
   /** The cause sentence. The remediation is appended to form `message`. */
   readonly reason: string;
   /** Overrides {@link REMEDIATION}; pass `''` to append nothing. */
-  readonly remediation?: string;
-  readonly httpStatus?: number;
-  readonly jiraMessages?: readonly string[];
-  readonly detail?: string;
+  readonly remediation?: string | undefined;
+  readonly httpStatus?: number | undefined;
+  readonly jiraMessages?: readonly string[] | undefined;
+  readonly detail?: string | undefined;
   /** Defaults to the kind's `RETRYABLE_ERROR_KINDS` membership. */
-  readonly retryable?: boolean;
+  readonly retryable?: boolean | undefined;
   /** Underlying error for the `Error` cause chain. */
   readonly cause?: unknown;
   /** Redaction choke point; without one, only credential SHAPES are stripped. */
-  readonly redactor?: Redactor;
+  readonly redactor?: Redactor | undefined;
 }
 
 /**

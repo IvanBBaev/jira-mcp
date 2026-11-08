@@ -47,7 +47,7 @@ import { createServer as createHttpServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { loadStreamableHttpTransport } from './sdk.js';
-import type { AuthInfo, StreamableHTTPServerTransport } from './sdk.js';
+import type { AuthInfo, StreamableHTTPServerTransport, Transport } from './sdk.js';
 
 import { DEFAULT_HTTP_BIND, MIN_HTTP_TOKEN_LENGTH } from '../core/settings.js';
 import { createJiraError } from '../core/errors.js';
@@ -491,7 +491,11 @@ export async function connectHttpTransport(
       };
       initializing += 1;
       try {
-        await entry.server.connect(entry.transport);
+        // The SDK's declarations are built without `exactOptionalPropertyTypes`,
+        // so its HTTP transport class (`onclose: (() => void) | undefined`) does
+        // not structurally satisfy its own `Transport` interface under this
+        // repo's tsconfig (D537). Same object, type-level bridge only.
+        await entry.server.connect(entry.transport as Transport);
         trackResponse(entry, res);
         // The SDK refuses a non-initialize POST without a session on its
         // own (400).

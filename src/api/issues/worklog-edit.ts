@@ -32,17 +32,17 @@ export interface UpdateWorklogInput {
   /** Numeric worklog id, as `jira_get_worklogs` reports it. */
   readonly worklogId: string | number;
   /** Mutually exclusive with {@link UpdateWorklogInput.timeSpent}. */
-  readonly timeSpentSeconds?: number;
+  readonly timeSpentSeconds?: number | undefined;
   /** Jira duration string, e.g. `2h 30m`. */
-  readonly timeSpent?: string;
+  readonly timeSpent?: string | undefined;
   /** New start, epoch milliseconds; needs {@link UpdateWorklogInput.utcOffsetMinutes}. */
-  readonly startedAt?: number;
+  readonly startedAt?: number | undefined;
   /** D16/CC-23 — minutes east of UTC the new `started` is rendered in. */
-  readonly utcOffsetMinutes?: number;
+  readonly utcOffsetMinutes?: number | undefined;
   /** The new comment; replaces the stored one outright. */
-  readonly comment?: string | AdfNode;
+  readonly comment?: string | AdfNode | undefined;
   /** The restriction to resend; filled from the stored entry by {@link updateWorklog}. */
-  readonly visibility?: JiraVisibility;
+  readonly visibility?: JiraVisibility | undefined;
 }
 
 export type UpdateWorklogOptions = IssueRequestBase &

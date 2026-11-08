@@ -709,8 +709,8 @@ export interface StoredTokens {
   readonly clientId: string;
   readonly scopes: readonly string[];
   readonly refreshToken: string;
-  readonly accessToken?: string;
-  readonly expiresAt?: number;
+  readonly accessToken?: string | undefined;
+  readonly expiresAt?: number | undefined;
   readonly obtainedAt: number;
 }
 
@@ -1283,14 +1283,14 @@ export interface OAuthResolverDeps {
   readonly authRequest: AuthRequestFn;
   readonly clock: Clock;
   readonly logger: Logger;
-  readonly redactor?: Redactor;
-  readonly allowedHosts?: readonly string[];
+  readonly redactor?: Redactor | undefined;
+  readonly allowedHosts?: readonly string[] | undefined;
   /**
    * The profile a call that names none resolves to (`JIRA_ACTIVE_PROFILE`).
    * `login`, `logout` and `doctor` all key the store by it; the resolver must
    * too, or a grant stored under it is invisible to every tool call (CC-206).
    */
-  readonly activeProfile?: string;
+  readonly activeProfile?: string | undefined;
 }
 
 function storedIsFresh(stored: StoredTokens, now: number): boolean {

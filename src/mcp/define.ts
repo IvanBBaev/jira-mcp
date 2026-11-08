@@ -23,14 +23,14 @@
 // CPU proving the same thing again.
 //
 // THE ZOD QUARANTINE LIVES HERE. `eslint.config.js` bans runtime `zod` imports
-// in every other file (ARCHITECTURE.md §MCP server style, D9), so the schema
-// builders below — and the re-exported `z` — are the only legal way for a tool
+// in every other file (ARCHITECTURE.md §MCP server style, D537), so the schema
+// builders below — and the curated `z` — are the only legal way for a tool
 // module to reach zod values. Keep every runtime zod touch inside this file.
 //
 // Layering: `core ← api ← mcp ← tools`. This file imports `core` types only.
 // ---------------------------------------------------------------------------
 
-import { z } from 'zod';
+import { z as zod } from 'zod';
 
 import { createJiraError } from '../core/errors.js';
 import type { JiraError } from '../core/types.js';
@@ -38,11 +38,33 @@ import { PACKAGE_IDS, WRITE_TIERS } from './types.js';
 import type { AnyToolSpec, ToolAnnotations, ToolSpec } from './types.js';
 
 /**
- * Re-exported so tool modules can build schemas without importing `zod`
- * directly — which eslint forbids outside this file. Prefer {@link toolInput} /
- * {@link writeToolInput} for the object itself; `z` is for the leaves.
+ * The zod surface tool modules may use (D537 / TSN-13): the leaf builders the
+ * manifest actually needs, so a tool module cannot reach the rest of zod
+ * (coercion, preprocessors, codecs, the global registry) without this list
+ * growing in review. Prefer {@link toolInput} / {@link writeToolInput} for the
+ * object itself; `z` is for the leaves. Add a builder here only when a tool
+ * needs it.
  */
-export { z } from 'zod';
+export const z = {
+  array: zod.array,
+  boolean: zod.boolean,
+  enum: zod.enum,
+  number: zod.number,
+  object: zod.object,
+  record: zod.record,
+  string: zod.string,
+  union: zod.union,
+  unknown: zod.unknown,
+  ZodIssueCode: zod.ZodIssueCode,
+} as const;
+
+/** The zod types that go with {@link z}; type-only, erased at build time. */
+// eslint-disable-next-line @typescript-eslint/no-namespace -- types-only companion of the `z` value
+export declare namespace z {
+  export type infer<T> = zod.infer<T>;
+  export type RefinementCtx = zod.RefinementCtx;
+  export type ZodType = zod.ZodType;
+}
 
 // ---------------------------------------------------------------------------
 // Name and strictness probes
@@ -61,7 +83,7 @@ const STRICTNESS_PROBE = '__jira_mcp_strictness_probe__';
  * pass the inner issues through, and a stripping object simply succeeds or fails
  * without ever mentioning the probe key.
  */
-export function rejectsUnknownKeys(schema: z.ZodTypeAny): boolean {
+export function rejectsUnknownKeys(schema: zod.ZodTypeAny): boolean {
   const parsed = schema.safeParse({ [STRICTNESS_PROBE]: 1 });
   if (parsed.success) return false;
   return parsed.error.issues.some((issue) => issue.code === 'unrecognized_keys');
@@ -72,7 +94,11 @@ export function rejectsUnknownKeys(schema: z.ZodTypeAny): boolean {
  * unrecognized key. Missing-required-field issues are irrelevant here, so the
  * probe works on a schema with any number of required arguments.
  */
-export function declaresKey(schema: z.ZodTypeAny, key: string, sample: unknown): boolean {
+export function declaresKey(
+  schema: zod.ZodTypeAny,
+  key: string,
+  sample: unknown,
+): boolean {
   const parsed = schema.safeParse({ [key]: sample });
   if (parsed.success) return true;
   return !parsed.error.issues.some(
@@ -130,19 +156,19 @@ export const PLAN_ID_DESCRIPTION =
   'Refused when the arguments changed since the plan.';
 
 /** The shared `profile` argument, identical on every tool. */
-export const profileArg = z.string().min(1).optional().describe(PROFILE_DESCRIPTION);
+export const profileArg = zod.string().min(1).optional().describe(PROFILE_DESCRIPTION);
 
 /** The file-output switch (D152); only a tool that declares `fileOutput` takes it. */
-export const outputArg = z
+export const outputArg = zod
   .enum(['inline', 'file'])
   .optional()
   .describe(OUTPUT_DESCRIPTION);
 
 /** The `apply` gate flag, present on write tools only. */
-export const applyArg = z.boolean().optional().describe(APPLY_DESCRIPTION);
+export const applyArg = zod.boolean().optional().describe(APPLY_DESCRIPTION);
 
 /** The `plan_id` binding, present on write tools only. */
-export const planIdArg = z.string().min(1).optional().describe(PLAN_ID_DESCRIPTION);
+export const planIdArg = zod.string().min(1).optional().describe(PLAN_ID_DESCRIPTION);
 
 /**
  * Input schema for a READ tool: the caller's shape plus the auto-injected
@@ -153,10 +179,10 @@ export const planIdArg = z.string().min(1).optional().describe(PLAN_ID_DESCRIPTI
  * strips them before the handler runs, so a tool that redefined one would find
  * its own field silently removed.
  */
-export function toolInput<Shape extends z.ZodRawShape>(
+export function toolInput<Shape extends zod.ZodRawShape>(
   shape: Shape,
-): z.ZodObject<Shape & { profile: typeof profileArg }, z.core.$strict> {
-  return z.object({ ...shape, profile: profileArg }).strict();
+): zod.ZodObject<Shape & { profile: typeof profileArg }, zod.core.$strict> {
+  return zod.object({ ...shape, profile: profileArg }).strict();
 }
 
 /**
@@ -164,17 +190,17 @@ export function toolInput<Shape extends z.ZodRawShape>(
  * plan-gate fields (D14). A read tool must NOT carry these — `defineTool`
  * rejects the mismatch.
  */
-export function writeToolInput<Shape extends z.ZodRawShape>(
+export function writeToolInput<Shape extends zod.ZodRawShape>(
   shape: Shape,
-): z.ZodObject<
+): zod.ZodObject<
   Shape & {
     apply: typeof applyArg;
     plan_id: typeof planIdArg;
     profile: typeof profileArg;
   },
-  z.core.$strict
+  zod.core.$strict
 > {
-  return z
+  return zod
     .object({ ...shape, apply: applyArg, plan_id: planIdArg, profile: profileArg })
     .strict();
 }
@@ -324,7 +350,7 @@ export function defineTool<In, Out>(spec: ToolSpec<In, Out>): ToolSpec<In, Out> 
 export function checkToolSchema(spec: AnyToolSpec): void {
   const { name } = spec;
   const isWrite = spec.annotations.readOnlyHint === false;
-  const input: z.ZodTypeAny = spec.input;
+  const input: zod.ZodTypeAny = spec.input;
 
   if (!rejectsUnknownKeys(input)) {
     throw specError(

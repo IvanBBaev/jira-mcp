@@ -32,7 +32,7 @@ export interface GetCommentBase extends IssueRequestBase {
   /** Numeric comment id, as `jira_get_comments` reports it. */
   readonly commentId: string | number;
   /** Body rendering, exactly as {@link listComments} means it. */
-  readonly format?: 'text' | 'markdown';
+  readonly format?: 'text' | 'markdown' | undefined;
 }
 
 export type GetCommentOptions = GetCommentBase & BudgetGuard;

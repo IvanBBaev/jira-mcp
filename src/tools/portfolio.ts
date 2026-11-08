@@ -560,9 +560,9 @@ function reportTool(
 /** What the composition root injects into {@link createPortfolioPackage}. */
 export interface PortfolioDeps {
   /** `JIRA_REPORT_DIR`. Absent ⇒ the report tool refuses with `kind: 'config'`. */
-  readonly reportDir?: string;
+  readonly reportDir?: string | undefined;
   /** Overrides {@link reportDir} — tests use it. */
-  readonly store?: ReportStore;
+  readonly store?: ReportStore | undefined;
 }
 
 export function createPortfolioPackage(deps: PortfolioDeps = {}): PackageSpec {

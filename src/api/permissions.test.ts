@@ -27,7 +27,7 @@ function answer(
     name: key
       .toLowerCase()
       .split('_')
-      .map((word) => word[0]?.toUpperCase() + word.slice(1))
+      .map((word) => `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`)
       .join(' '),
     type: key === 'ADMINISTER' || key === 'BULK_CHANGE' ? 'GLOBAL' : 'PROJECT',
     description: `Ability to ${key.toLowerCase().replace('_', ' ')}.`,

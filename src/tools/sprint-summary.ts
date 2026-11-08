@@ -85,14 +85,14 @@ type SprintSummaryArgs = z.infer<typeof sprintSummaryInput>;
 /** One issue as the summary lists it. */
 export interface SummaryIssueRow {
   readonly key: string;
-  readonly summary?: string;
-  readonly status?: string;
+  readonly summary?: string | undefined;
+  readonly status?: string | undefined;
   readonly category: Category;
-  readonly issueType?: string;
+  readonly issueType?: string | undefined;
   /** The board's estimate; absent when the board has none or the issue is unestimated. */
-  readonly estimate?: number;
+  readonly estimate?: number | undefined;
   /** Set when the issue joined the sprint after it started. */
-  readonly addedAt?: string;
+  readonly addedAt?: string | undefined;
 }
 
 /** Counts (or estimate sums) by status category. */

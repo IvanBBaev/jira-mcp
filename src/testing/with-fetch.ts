@@ -30,7 +30,7 @@ export interface RecordedRequest {
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
   /** Request body decoded as text, or `undefined` when there was none. */
-  readonly body?: string;
+  readonly body?: string | undefined;
 }
 
 /**

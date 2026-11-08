@@ -53,13 +53,13 @@ export interface AddRemoteLinkInput {
   /** Absolute http(s) URL — the link target. */
   readonly url: string;
   readonly title: string;
-  readonly summary?: string;
-  readonly relationship?: string;
+  readonly summary?: string | undefined;
+  readonly relationship?: string | undefined;
   /**
    * The upsert key. A link on this issue with the same `globalId` is REPLACED;
    * without one every call adds a new link.
    */
-  readonly globalId?: string;
+  readonly globalId?: string | undefined;
 }
 
 export type AddRemoteLinkOptions = IssueRequestBase & AddRemoteLinkInput & BudgetGuard;

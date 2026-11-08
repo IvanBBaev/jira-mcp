@@ -311,6 +311,7 @@ function answer(req: JiraRequestSpec): unknown {
       return { accountId: 'acc-me', displayName: 'Me' };
     case 'field':
       return [];
+    case undefined:
     default:
       return read ? EMPTY_PAGE : {};
   }

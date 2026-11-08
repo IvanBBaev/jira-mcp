@@ -3413,7 +3413,7 @@ test('[CC-1550] getChangelogsBulk refuses bad refs or page size before sending',
       (error: unknown) =>
         error instanceof JiraError &&
         error.kind === 'validation' &&
-        /Nothing was sent|issue key or id/.test(error.message + error.reason),
+        /Nothing was sent|issue key or id/.test(`${error.message} ${error.reason ?? ''}`),
     );
   }
   assert.equal(fake.calls.length, 0);

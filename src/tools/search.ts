@@ -589,7 +589,10 @@ const FILTER_PARTIAL_NOTES: Readonly<
 /** {@link callBase} plus the one-page cap and the caller's paging controls. */
 function filterPageOptions(
   ctx: ToolCtx,
-  args: { readonly startAt?: number; readonly maxResults?: number },
+  args: {
+    readonly startAt?: number | undefined;
+    readonly maxResults?: number | undefined;
+  },
 ) {
   return {
     ...callBase(ctx),

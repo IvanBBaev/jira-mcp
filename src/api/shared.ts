@@ -130,16 +130,16 @@ export interface TokenCursor {
    * The cursor for this page. `undefined` on the first page of a fresh loop —
    * the builder then sends no token at all rather than `nextPageToken=undefined`.
    */
-  readonly nextPageToken?: string;
+  readonly nextPageToken?: string | undefined;
 }
 
 /** The narrowed view of one token-model response. */
 export interface TokenPage<T> {
   readonly items: readonly T[];
   /** Absent (or empty) means "no more pages". */
-  readonly nextPageToken?: string;
+  readonly nextPageToken?: string | undefined;
   /** `true` ends the loop even if a token is still present. */
-  readonly isLast?: boolean;
+  readonly isLast?: boolean | undefined;
 }
 
 /** What the classic `request` builder is told about the page it must build. */
@@ -154,19 +154,19 @@ export interface ClassicCursor {
 export interface ClassicPage<T> {
   readonly items: readonly T[];
   /** `true` ends the loop. */
-  readonly isLast?: boolean;
+  readonly isLast?: boolean | undefined;
   /** Total matching rows, when the endpoint reports one. */
-  readonly total?: number;
+  readonly total?: number | undefined;
   /** The offset the server echoed; falls back to the requested one. */
-  readonly startAt?: number;
+  readonly startAt?: number | undefined;
   /** The page size the server actually applied — it may cap the requested one. */
-  readonly maxResults?: number;
+  readonly maxResults?: number | undefined;
   /**
    * Rows the server sent, when a reader dropped some it could not map. The
    * offset and the short-page test count SERVER rows: measuring them by the
    * kept `items` stops early and re-reads the tail (CC-161).
    */
-  readonly scanned?: number;
+  readonly scanned?: number | undefined;
 }
 
 /**
@@ -196,8 +196,8 @@ export function budgetOf(guard: BudgetGuard): BudgetGuard {
 
 /** Loop controls stamped onto every outgoing request. */
 interface LoopControls {
-  readonly signal?: AbortSignal;
-  readonly deadlineAt?: number;
+  readonly signal?: AbortSignal | undefined;
+  readonly deadlineAt?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

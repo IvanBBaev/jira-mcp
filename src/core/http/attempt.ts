@@ -32,7 +32,7 @@ async function sendOnce(
     fetchFn(target.url, {
       method: ctx.method,
       headers: target.headers,
-      body: target.body,
+      ...(target.body === undefined ? {} : { body: target.body }),
       signal: guard.signal,
       // The platform never follows a redirect for us: the target is
       // attacker-influenced data, and an automatic follow would leak the

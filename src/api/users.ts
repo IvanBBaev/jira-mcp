@@ -227,14 +227,14 @@ export interface GetMyselfBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /**
    * Bypass the per-process cache and re-read `/myself` from Jira (D16). The
    * fresh answer replaces the cached one. Nothing in the tool ring sets this
    * today; it exists so a long-lived process that suspects a stale identity has
    * a way out that is not "restart the server".
    */
-  readonly refresh?: boolean;
+  readonly refresh?: boolean | undefined;
 }
 
 /** Options for {@link getMyself}. */
@@ -278,22 +278,22 @@ export interface SearchUsersBase {
    * O-5 — restrict to users assignable to issues in this project (id or key).
    * Switches the call to {@link ASSIGNABLE_USER_SEARCH_PATH}.
    */
-  readonly project?: string;
+  readonly project?: string | undefined;
   /**
    * O-5 — restrict to users assignable to this specific issue. Switches the
    * call to {@link ASSIGNABLE_USER_SEARCH_PATH} and WINS over `project`: an
    * issue's assignable set is the narrower, more specific question, and sending
    * both leaves the choice to undocumented server behaviour.
    */
-  readonly issueKey?: string;
+  readonly issueKey?: string | undefined;
   /** Page size; clamped to {@link MAX_USER_SEARCH_RESULTS}. */
-  readonly maxResults?: number;
+  readonly maxResults?: number | undefined;
   /** Offset of the first page; defaults to 0. */
-  readonly startAt?: number;
+  readonly startAt?: number | undefined;
   /** Page cap; defaults to {@link DEFAULT_USER_SEARCH_MAX_PAGES}. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
   /** Cancellation from the MCP request. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /**
    * Whether the caller will show `emailAddress`. {@link searchUsers} ignores it
    * — dropping the email is the tool ring's job there — but the Data Center
@@ -301,7 +301,7 @@ export interface SearchUsersBase {
    * Data Center allowlist, which keeps no email, so the promise could not be
    * kept.
    */
-  readonly includeEmail?: boolean;
+  readonly includeEmail?: boolean | undefined;
 }
 
 /** Options for {@link searchUsers}. */

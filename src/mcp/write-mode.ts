@@ -59,6 +59,7 @@ import type {
   IrreversibleConfirm,
   WriteMode,
 } from '../core/types.js';
+import { assertNever } from '../core/assert-never.js';
 import { systemSecureRandom } from '../core/rng.js';
 import type { SecureRandom } from '../core/rng.js';
 import { CONTROL_FIELD_NAMES } from './define.js';
@@ -925,7 +926,7 @@ export type GateRefusal =
   | 'declined'
   | 'payload'
   | 'stale'
-  | PlanConsumeOutcome;
+  | Exclude<PlanConsumeOutcome, 'ok'>;
 
 function refusal(reason: GateRefusal): string {
   switch (reason) {
@@ -989,11 +990,13 @@ function refusal(reason: GateRefusal): string {
         'That plan_id is unknown, already used, or was issued by an earlier server ' +
         'process. Plans are single-use and in-memory. Nothing was sent to Jira.'
       );
-    default:
+    case 'mismatch':
       return (
         'The arguments changed between the plan and this apply, so the plan_id no ' +
         'longer describes this request. Nothing was sent to Jira.'
       );
+    default:
+      return assertNever(reason, 'gate refusal');
   }
 }
 

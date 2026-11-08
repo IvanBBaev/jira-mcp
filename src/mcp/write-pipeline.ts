@@ -150,7 +150,7 @@ export const JOURNAL_UNAVAILABLE_MESSAGE =
 
 /** A mutation that actually left the process, and what came back. */
 interface ExecutedWrite {
-  readonly httpStatus?: number;
+  readonly httpStatus?: number | undefined;
 }
 
 /** GET is a read; so is anything `core/http.ts` may safely replay (`safe: true`). */
@@ -375,7 +375,7 @@ export function recordingGate(
  */
 function wasApplied(result: {
   readonly ok: boolean;
-  readonly error?: { readonly kind: string; readonly httpStatus?: number };
+  readonly error?: { readonly kind: string; readonly httpStatus?: number | undefined };
 }): boolean {
   if (result.ok) return true;
   const status = result.error?.httpStatus;

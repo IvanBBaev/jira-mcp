@@ -89,10 +89,10 @@ function loadRecorder(): Promise<RecordModule> {
 // --- the shape of what lands on disk ---------------------------------------
 
 interface RecordedRequest {
-  readonly method?: string;
+  readonly method?: string | undefined;
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
-  readonly headersDropped?: readonly string[];
+  readonly headersDropped?: readonly string[] | undefined;
   readonly body?: unknown;
 }
 

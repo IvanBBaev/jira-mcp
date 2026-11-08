@@ -238,6 +238,7 @@ function sampleValue(field: string, schema: JsonSchema): unknown {
       );
     case 'object':
       return sampleObject(schema, () => false);
+    case undefined:
     default:
       throw new Error(`no sample for ${field}: ${JSON.stringify(schema)}`);
   }

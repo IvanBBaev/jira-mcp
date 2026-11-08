@@ -2164,7 +2164,7 @@ test('CC-92: an error body that cannot be read costs the snippet, not the verdic
 
 test('a runtime without a global fetch fails as config, before anything is sent', async () => {
   const previous = globalThis.fetch;
-  (globalThis as { fetch?: typeof fetch }).fetch = undefined;
+  (globalThis as { fetch?: typeof fetch | undefined }).fetch = undefined;
   try {
     const { request, clock } = harness();
 
@@ -2797,7 +2797,7 @@ test('the redactor covers the OAuth path too', async () => {
 
 test('a runtime without a global fetch fails the OAuth path as config too', async () => {
   const previous = globalThis.fetch;
-  (globalThis as { fetch?: typeof fetch }).fetch = undefined;
+  (globalThis as { fetch?: typeof fetch | undefined }).fetch = undefined;
   try {
     const { authRequest, clock } = authHarness();
 

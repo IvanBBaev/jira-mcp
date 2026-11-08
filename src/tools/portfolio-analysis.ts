@@ -489,11 +489,11 @@ export interface HotspotFinding {
 /** Options of {@link analysePortfolio}. */
 export interface AnalysisOptions {
   /** Loose threshold, 0…1. Default {@link DEFAULT_SIMILARITY}. */
-  readonly similarity?: number;
+  readonly similarity?: number | undefined;
   /** Strict threshold, 0…1. Default {@link DEFAULT_DUPLICATE_SIMILARITY}. */
-  readonly duplicateSimilarity?: number;
+  readonly duplicateSimilarity?: number | undefined;
   /** Also pair issues of the SAME project. Default false: cross-board only. */
-  readonly includeSameProject?: boolean;
+  readonly includeSameProject?: boolean | undefined;
 }
 
 /** Everything {@link analysePortfolio} found. */

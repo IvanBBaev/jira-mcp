@@ -417,7 +417,7 @@ describe('env ↔ docs sync', () => {
         `${row.name}: docs/CONFIGURATION.md:${row.line} documents ` +
           `${row.defaultValue === undefined ? NO_DEFAULT_CELL : `\`${row.defaultValue}\``} ` +
           'but an empty environment produces ' +
-          `${probe(settings) === undefined ? '(unset)' : `\`${String(probe(settings))}\``}`,
+          (probe(settings) === undefined ? '(unset)' : `\`${String(probe(settings))}\``),
       );
     }
   });

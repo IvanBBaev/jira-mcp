@@ -164,7 +164,7 @@ export interface AttachmentCallBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Options for {@link listAttachments}. */

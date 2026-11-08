@@ -657,12 +657,12 @@ function bulkDeleteBefore(issues: readonly string[]): BulkDeleteBefore {
 
 function bulkEditBefore(args: {
   readonly issues: readonly string[];
-  readonly labels?: readonly string[];
-  readonly labelsAction?: BulkEditAction;
-  readonly priorityId?: string;
-  readonly assigneeAccountId?: string | null;
-  readonly fixVersionIds?: readonly string[];
-  readonly fixVersionsAction?: BulkEditAction;
+  readonly labels?: readonly string[] | undefined;
+  readonly labelsAction?: BulkEditAction | undefined;
+  readonly priorityId?: string | undefined;
+  readonly assigneeAccountId?: string | null | undefined;
+  readonly fixVersionIds?: readonly string[] | undefined;
+  readonly fixVersionsAction?: BulkEditAction | undefined;
 }): BulkEditBefore {
   const edits: BulkEditsBefore = {
     ...(args.labels === undefined || args.labelsAction === undefined

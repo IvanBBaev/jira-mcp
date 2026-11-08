@@ -869,11 +869,11 @@ export interface AttachmentsDeps {
    * `JIRA_MEDIA_DIR`. Absent ⇒ the two byte-moving tools refuse with
    * `kind: 'config'` naming the setting, and the metadata tool still works.
    */
-  readonly mediaDir?: string;
+  readonly mediaDir?: string | undefined;
   /** `JIRA_MEDIA_MAX_BYTES` (D531); `0` or absent = no quota. */
-  readonly mediaMaxBytes?: number;
+  readonly mediaMaxBytes?: number | undefined;
   /** Overrides {@link mediaDir} with a store built elsewhere — tests use it. */
-  readonly store?: MediaStore;
+  readonly store?: MediaStore | undefined;
 }
 
 /**

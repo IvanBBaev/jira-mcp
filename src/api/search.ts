@@ -155,33 +155,33 @@ export interface SearchIssuesBase {
   /** The JQL to run. Sent verbatim; a syntax error is Jira's 400 to report. */
   readonly jql: string;
   /** Fields to request. Omitted/empty → {@link DEFAULT_SEARCH_FIELDS} (CC-03). */
-  readonly fields?: readonly string[];
+  readonly fields?: readonly string[] | undefined;
   /** Page size; clamped to {@link MAX_SEARCH_RESULTS} (CC-04). */
-  readonly maxResults?: number;
+  readonly maxResults?: number | undefined;
   /**
    * A cursor the CALLER already holds (the model paging on). Sent as-is: if it
    * has expired the call fails fast with remediation rather than silently
    * restarting at page one and returning rows the model has already seen (CC-01).
    */
-  readonly nextPageToken?: string;
+  readonly nextPageToken?: string | undefined;
   /** `expand` sections; joined into the comma string the endpoint expects. */
-  readonly expand?: readonly string[] | string;
+  readonly expand?: readonly string[] | string | undefined;
   /**
    * Issue IDs to reconcile against the search index (CC-02). Defaults to
    * {@link SearchIssuesBase.recentlyWrittenIssueIds} when that is supplied and
    * this is not. Numeric IDs only — see {@link MAX_RECONCILE_ISSUES}.
    */
-  readonly reconcileIssues?: readonly (string | number)[];
+  readonly reconcileIssues?: readonly (string | number)[] | undefined;
   /**
    * IDs written moments ago by this session (CC-02). Feeds `reconcileIssues` AND
    * is checked against the rows that came back, so the tool ring can say WHICH
    * write has not landed in the index yet instead of guessing from a short page.
    */
-  readonly recentlyWrittenIssueIds?: readonly (string | number)[];
+  readonly recentlyWrittenIssueIds?: readonly (string | number)[] | undefined;
   /** Page cap; defaults to {@link DEFAULT_SEARCH_MAX_PAGES}. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
   /** Cancellation from the MCP request. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Options for {@link searchIssues}. */
@@ -229,7 +229,7 @@ export interface SearchIssuesResult {
 export interface ApproximateCountBase {
   readonly jira: JiraRequestFn;
   readonly jql: string;
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Options for {@link approximateCount}. */
@@ -581,8 +581,8 @@ export const MAX_PARSE_QUERIES = 20;
 export interface ParseJqlOptions {
   readonly jira: JiraRequestFn;
   readonly queries: readonly string[];
-  readonly signal?: AbortSignal;
-  readonly deadlineAt?: number;
+  readonly signal?: AbortSignal | undefined;
+  readonly deadlineAt?: number | undefined;
 }
 
 /** One query's verdict, in the order the queries were sent. */

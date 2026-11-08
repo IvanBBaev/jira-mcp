@@ -15,18 +15,18 @@ export interface CreateIssueInput {
   readonly issueType: string;
   readonly summary: string;
   /** Plain text (converted) or a raw ADF document. */
-  readonly description?: string | AdfNode;
-  readonly assigneeAccountId?: string;
-  readonly reporterAccountId?: string;
+  readonly description?: string | AdfNode | undefined;
+  readonly assigneeAccountId?: string | undefined;
+  readonly reporterAccountId?: string | undefined;
   /** Priority name (`High`) or numeric id. */
-  readonly priority?: string;
-  readonly labels?: readonly string[];
+  readonly priority?: string | undefined;
+  readonly labels?: readonly string[] | undefined;
   /** Parent issue key or id — an epic for a story, a story for a subtask. */
-  readonly parent?: string;
+  readonly parent?: string | undefined;
   /** `YYYY-MM-DD`, passed through; Jira validates the calendar. */
-  readonly dueDate?: string;
+  readonly dueDate?: string | undefined;
   /** Raw passthrough for custom fields (`customfield_10011`). */
-  readonly fields?: Readonly<Record<string, unknown>>;
+  readonly fields?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export type CreateIssueOptions = IssueRequestBase & CreateIssueInput & BudgetGuard;
@@ -39,23 +39,23 @@ export interface CreatedIssue {
 
 export interface UpdateIssueInput {
   readonly issue: string;
-  readonly summary?: string;
+  readonly summary?: string | undefined;
   /** Text or ADF — either REPLACES the whole field (CC-31). `null` clears it. */
-  readonly description?: string | AdfNode | null;
+  readonly description?: string | AdfNode | null | undefined;
   /** `null` unassigns. */
-  readonly assigneeAccountId?: string | null;
-  readonly priority?: string;
+  readonly assigneeAccountId?: string | null | undefined;
+  readonly priority?: string | undefined;
   /** REPLACES the whole label list. Use add/remove for incremental edits. */
-  readonly labels?: readonly string[];
-  readonly labelsAdd?: readonly string[];
-  readonly labelsRemove?: readonly string[];
+  readonly labels?: readonly string[] | undefined;
+  readonly labelsAdd?: readonly string[] | undefined;
+  readonly labelsRemove?: readonly string[] | undefined;
   /** `null` un-parents (removes the epic link / detaches a subtask). */
-  readonly parent?: string | null;
-  readonly dueDate?: string | null;
+  readonly parent?: string | null | undefined;
+  readonly dueDate?: string | null | undefined;
   /** Raw passthrough for custom fields. */
-  readonly fields?: Readonly<Record<string, unknown>>;
+  readonly fields?: Readonly<Record<string, unknown>> | undefined;
   /** Default true, matching Jira. `false` suppresses the change notification. */
-  readonly notifyUsers?: boolean;
+  readonly notifyUsers?: boolean | undefined;
 }
 
 export type UpdateIssueOptions = IssueRequestBase & UpdateIssueInput & BudgetGuard;
@@ -71,11 +71,11 @@ export interface TransitionIssueInput {
   /** The id from {@link listTransitions} — resolve a name first. */
   readonly transitionId: string;
   /** Resolution name or id, for a transition screen that demands one. */
-  readonly resolution?: string;
+  readonly resolution?: string | undefined;
   /** Any other transition-screen fields, raw. */
-  readonly fields?: Readonly<Record<string, unknown>>;
+  readonly fields?: Readonly<Record<string, unknown>> | undefined;
   /** Comment added as part of the transition. */
-  readonly comment?: string | AdfNode;
+  readonly comment?: string | AdfNode | undefined;
 }
 
 export type TransitionIssueOptions = IssueRequestBase &
@@ -93,7 +93,7 @@ export interface AddCommentInput {
   /** Plain text (converted) or a raw ADF document. */
   readonly body: string | AdfNode;
   /** Restrict to a project role or a group. */
-  readonly visibility?: JiraVisibility;
+  readonly visibility?: JiraVisibility | undefined;
 }
 
 export type AddCommentOptions = IssueRequestBase & AddCommentInput & BudgetGuard;
@@ -120,7 +120,7 @@ export interface UpdateCommentInput {
    * "public", so {@link updateComment} reads the stored one back and resends
    * it (CC-510).
    */
-  readonly visibility?: JiraVisibility | null;
+  readonly visibility?: JiraVisibility | null | undefined;
 }
 
 export type UpdateCommentOptions = IssueRequestBase & UpdateCommentInput & BudgetGuard;
@@ -131,14 +131,14 @@ export interface AssignIssueInput {
    * The accountId to assign to (Jira Cloud). Mutually exclusive with `username`
    * and `unassign` (CC-22); refused on Data Center (D111).
    */
-  readonly accountId?: string;
+  readonly accountId?: string | undefined;
   /**
    * The username to assign to — Jira Data Center only (D111). Refused on Cloud,
    * which identifies users by accountId only.
    */
-  readonly username?: string;
+  readonly username?: string | undefined;
   /** `true` sends an explicit null, which is how Jira clears an assignee. */
-  readonly unassign?: boolean;
+  readonly unassign?: boolean | undefined;
 }
 
 export type AssignIssueOptions = IssueRequestBase & AssignIssueInput & BudgetGuard;
@@ -166,9 +166,9 @@ export type AssignIssueResult = CloudAssignIssueResult | DataCenterAssignIssueRe
 export interface AddWorklogInput {
   readonly issue: string;
   /** Preferred. Mutually exclusive with {@link AddWorklogInput.timeSpent}. */
-  readonly timeSpentSeconds?: number;
+  readonly timeSpentSeconds?: number | undefined;
   /** Jira duration string, e.g. `2h 30m`. */
-  readonly timeSpent?: string;
+  readonly timeSpent?: string | undefined;
   /**
    * When the work started, in epoch milliseconds. Required by the REQUEST
    * BUILDER; {@link addWorklog} defaults it from the injected `Clock`.
@@ -182,7 +182,7 @@ export interface AddWorklogInput {
    * {@link utcOffsetMinutesForZone} converts a zone name into one.
    */
   readonly utcOffsetMinutes: number;
-  readonly comment?: string | AdfNode;
+  readonly comment?: string | AdfNode | undefined;
 }
 
 export type AddWorklogOptions = IssueRequestBase &
@@ -199,8 +199,8 @@ export interface LinkIssuesInput {
   /** The issue at the outward end — the one that "blocks". */
   readonly outwardIssue: string;
   /** Comment added to the inward issue alongside the link. */
-  readonly comment?: string | AdfNode;
-  readonly commentVisibility?: JiraVisibility;
+  readonly comment?: string | AdfNode | undefined;
+  readonly commentVisibility?: JiraVisibility | undefined;
 }
 
 export type LinkIssuesOptions = IssueRequestBase & LinkIssuesInput & BudgetGuard;

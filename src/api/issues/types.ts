@@ -10,19 +10,19 @@ import type { ShapedUser } from '../users.js';
 
 /** Comment/worklog visibility, passed through as Jira words it. */
 export interface JiraVisibility {
-  readonly type?: string;
-  readonly value?: string;
-  readonly identifier?: string;
+  readonly type?: string | undefined;
+  readonly value?: string | undefined;
+  readonly identifier?: string | undefined;
 }
 
 /** A linked issue, projected to the handful of fields a model reasons about. */
 export interface LinkedIssueRef {
-  readonly id?: string;
+  readonly id?: string | undefined;
   readonly key: string;
-  readonly summary?: string;
-  readonly status?: string;
-  readonly issueType?: string;
-  readonly priority?: string;
+  readonly summary?: string | undefined;
+  readonly status?: string | undefined;
+  readonly issueType?: string | undefined;
+  readonly priority?: string | undefined;
 }
 
 /**
@@ -212,45 +212,45 @@ export interface IssueRequestBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /**
    * Which user dialect the read shaping projects (D106) — and the shaping of
    * the comment or worklog a write answers with (D109). Absent means `cloud`,
    * so every existing caller is unchanged; the Data Center adapter passes
    * `datacenter`. It changes how users are recognised and nothing else.
    */
-  readonly deployment?: JiraDeployment;
+  readonly deployment?: JiraDeployment | undefined;
 }
 
 /** Offsets and caps shared by the three classic lists. */
 export interface ClassicListBase extends IssueRequestBase {
   /** Issue key (`PROJ-1`) or numeric id. */
   readonly issue: string;
-  readonly startAt?: number;
+  readonly startAt?: number | undefined;
   /** Page size; clamped to {@link MAX_PAGE_SIZE}. */
-  readonly maxResults?: number;
+  readonly maxResults?: number | undefined;
   /** Page cap; defaults to {@link DEFAULT_LIST_MAX_PAGES}. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
 }
 
 export interface GetIssueBase extends IssueRequestBase {
   /** Issue key (`PROJ-1`) or numeric id. */
   readonly issue: string;
   /** Fields to request; omitted means Jira's navigable set. */
-  readonly fields?: readonly string[];
+  readonly fields?: readonly string[] | undefined;
   /** `expand` sections, passed through unmodified (`changelog`, `renderedFields`). */
-  readonly expand?: readonly string[] | string;
+  readonly expand?: readonly string[] | string | undefined;
   /** Issue property keys to fetch alongside the fields. */
-  readonly properties?: readonly string[];
+  readonly properties?: readonly string[] | undefined;
   /** `true` returns ADF trees instead of flattened text (TOOLS.md §Read shaping). */
-  readonly raw?: boolean;
+  readonly raw?: boolean | undefined;
   /**
    * How rich-text fields are rendered when `raw` is off: `text` (default)
    * flattens, `markdown` keeps the documented subset (TOOLS.md §Read shaping).
    * A rendering choice only — same request, same fields, same places.
    * Ignored under `raw`, which returns the documents themselves.
    */
-  readonly format?: 'text' | 'markdown';
+  readonly format?: 'text' | 'markdown' | undefined;
 }
 
 export type GetIssueOptions = GetIssueBase & BudgetGuard;
@@ -343,11 +343,11 @@ export interface GetChangelogsBulkBase extends IssueRequestBase {
   /** Issue keys or ids, 1–{@link MAX_BULK_CHANGELOG_ISSUES} after de-duplication. */
   readonly issues: readonly string[];
   /** Field ids to keep (`status`, `assignee`, `customfield_10020`); empty means every field. */
-  readonly fieldIds?: readonly string[];
+  readonly fieldIds?: readonly string[] | undefined;
   /** Histories per page, 1–{@link MAX_BULK_CHANGELOG_RESULTS}; Jira's default when absent. */
-  readonly maxResults?: number;
+  readonly maxResults?: number | undefined;
   /** Cursor from the previous page; send it with the SAME issues and fieldIds. */
-  readonly nextPageToken?: string;
+  readonly nextPageToken?: string | undefined;
 }
 
 export type GetChangelogsBulkOptions = GetChangelogsBulkBase & BudgetGuard;
@@ -372,13 +372,13 @@ export interface ChangelogsBulkResult {
 
 export interface ListCommentsBase extends ClassicListBase {
   /** `-created` (default), `created`, `-updated`, `updated`. */
-  readonly orderBy?: string;
+  readonly orderBy?: string | undefined;
   /**
    * How comment bodies are rendered: `text` (default) flattens, `markdown`
    * keeps the documented subset (TOOLS.md §Read shaping). A rendering choice
    * only — same request, same shape, same fields either way.
    */
-  readonly format?: 'text' | 'markdown';
+  readonly format?: 'text' | 'markdown' | undefined;
 }
 
 export type ListCommentsOptions = ListCommentsBase & BudgetGuard;
@@ -388,7 +388,7 @@ export type ListChangelogOptions = ClassicListBase & BudgetGuard;
 export interface ListTransitionsBase extends IssueRequestBase {
   readonly issue: string;
   /** Ask for `transitions.fields` — the transition screen, needed for CC-21. */
-  readonly expandFields?: boolean;
+  readonly expandFields?: boolean | undefined;
 }
 
 export type ListTransitionsOptions = ListTransitionsBase & BudgetGuard;

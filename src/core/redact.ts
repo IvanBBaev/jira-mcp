@@ -450,8 +450,11 @@ export function createRedactor(config: RedactorConfig = {}): Redactor {
         return value.toString();
       case 'object':
         break;
-      default:
-        // function / symbol — never serializable, never useful in a log line.
+      case 'undefined':
+      case 'function':
+      case 'symbol':
+        // `undefined` returned above; function / symbol — never serializable,
+        // never useful in a log line.
         return placeholder;
     }
 

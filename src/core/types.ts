@@ -171,7 +171,7 @@ export interface LogEvent {
   /** Epoch milliseconds, stamped from the injected {@link Clock}. */
   readonly ts: number;
   /** Event-specific metadata; see the table's "Fields" column. */
-  readonly fields?: LogFields;
+  readonly fields?: LogFields | undefined;
 }
 
 /**
@@ -336,7 +336,7 @@ export type JiraDeployment = (typeof DEPLOYMENTS)[number];
  */
 export interface OAuthSettings {
   /** `JIRA_OAUTH_CLIENT_ID`. Required in oauth mode; not a secret. */
-  readonly clientId?: string;
+  readonly clientId?: string | undefined;
   /**
    * `JIRA_OAUTH_CLIENT_SECRET`. Secret; registered with the redactor.
    *
@@ -345,7 +345,7 @@ export interface OAuthSettings {
    * it (D98). Optional in the type only because `basic` mode never reads it;
    * `core/settings.ts` raises a finding when oauth mode leaves it unset.
    */
-  readonly clientSecret?: string;
+  readonly clientSecret?: string | undefined;
   /** `JIRA_OAUTH_GRANT` (default `authorization_code`). See {@link OAuthGrant}. */
   readonly grant: OAuthGrant;
   /** `JIRA_OAUTH_SCOPES`. Space-joined into the authorize request. */
@@ -354,7 +354,7 @@ export interface OAuthSettings {
    * `JIRA_OAUTH_CLOUD_ID`. Pins the site; otherwise discovery picks it. Required
    * by the `client_credentials` grant, which has no discovery step.
    */
-  readonly cloudId?: string;
+  readonly cloudId?: string | undefined;
   /** `JIRA_OAUTH_TOKEN_FILE`. The 0600 token store `login` writes. */
   readonly tokenFile: string;
   /** `JIRA_OAUTH_REDIRECT_PORT` (default 8250). The loopback callback port. */
@@ -421,13 +421,13 @@ export interface Settings {
    * `JIRA_SITE` (required). Short name, host, or full URL; a path is stripped on
    * Cloud (CC-27) and kept as the context path under `datacenter` (CC-257).
    */
-  readonly site?: string;
+  readonly site?: string | undefined;
   /** `JIRA_EMAIL` (required). Atlassian account email for Basic auth. */
-  readonly email?: string;
+  readonly email?: string | undefined;
   /** `JIRA_API_TOKEN` (required). Secret; registered with the redactor. */
-  readonly apiToken?: string;
+  readonly apiToken?: string | undefined;
   /** `JIRA_TOKEN_EXPIRES`. ISO date; warns ≤ 30 days out (`token_expiry_warning`). */
-  readonly tokenExpires?: string;
+  readonly tokenExpires?: string | undefined;
   /**
    * `JIRA_AUTH_MODE` (default `basic`). In `oauth` the email/token pair is not
    * required and the bearer token comes from the store `login` wrote (D91).
@@ -441,7 +441,7 @@ export interface Settings {
    * (`<oauth.gatewayOrigin>/ex/jira/<cloudId>`), which is the only route a
    * scoped API token is accepted on. Profiles with their own site go direct.
    */
-  readonly cloudId?: string;
+  readonly cloudId?: string | undefined;
   /**
    * `JIRA_DEPLOYMENT` (default `cloud`). `datacenter` is a startup error unless
    * {@link Settings.datacenterPreview} is set (D106).
@@ -458,14 +458,14 @@ export interface Settings {
    * `Authorization: Bearer`. Secret; registered with the redactor. Required
    * when `authMode` is `pat`, read in no other mode.
    */
-  readonly pat?: string;
+  readonly pat?: string | undefined;
   /** `JIRA_ALLOWED_HOSTS`. Extra exact hosts or anchored regexes; suffix match banned. */
   readonly allowedHosts: readonly string[];
 
   /** `JIRA_PROFILE_<NAME>_*`, keyed by profile name. */
   readonly profiles: Readonly<Record<string, ProfileConfig>>;
   /** `JIRA_ACTIVE_PROFILE`. Used when a tool call does not name one. */
-  readonly activeProfile?: string;
+  readonly activeProfile?: string | undefined;
   /** `JIRA_LOCK_PROFILE` (default true per O-6). Per-call switching is rejected. */
   readonly lockProfile: boolean;
 
@@ -485,7 +485,7 @@ export interface Settings {
    * upper-cased and de-duplicated. Empty or absent means no scope guard;
    * `loadSettings` always sets it, hand-built test settings may omit it.
    */
-  readonly projects?: readonly string[];
+  readonly projects?: readonly string[] | undefined;
   /** `JIRA_WRITE_MODE` (default `plan`). */
   readonly writeMode: WriteMode;
   /**
@@ -506,7 +506,7 @@ export interface Settings {
    * `false` keeps the ring empty; a caller's own `reconcileIssues` still goes.
    * `loadSettings` always sets it, hand-built test settings may omit it (on).
    */
-  readonly reconcileWrites?: boolean;
+  readonly reconcileWrites?: boolean | undefined;
 
   /** `JIRA_REQUEST_TIMEOUT_MS` (default 30000). */
   readonly requestTimeoutMs: number;
@@ -533,7 +533,7 @@ export interface Settings {
    * `JIRA_EXPORT_DIR` says otherwise. Unset ⇒ the binary attachment tools refuse with a `config`
    * error; metadata listing needs no directory (D45).
    */
-  readonly mediaDir?: string;
+  readonly mediaDir?: string | undefined;
   /**
    * `JIRA_MEDIA_MAX_BYTES` (default 1 GiB). Byte quota on each output
    * directory — the media dir and the export dir — checked before every write;
@@ -547,13 +547,13 @@ export interface Settings {
    * directory itself, which uploads read from (D531). Use
    * `resolveExportDir` for the effective directory.
    */
-  readonly exportDir?: string;
+  readonly exportDir?: string | undefined;
   /**
    * `JIRA_REPORT_DIR`. Directory `jira_portfolio_report` writes its Markdown
    * reports into. Unset ⇒ that tool refuses with a `config` error;
    * `jira_portfolio_analyze` needs no directory (D126).
    */
-  readonly reportDir?: string;
+  readonly reportDir?: string | undefined;
 
   /** `JIRA_TRANSPORT` (default `stdio`). */
   readonly transport: TransportKind;
@@ -564,17 +564,17 @@ export interface Settings {
    * transport listens on. The loader always sets it; absent means the
    * loopback default, so hand-built settings need not name it.
    */
-  readonly httpBind?: string;
+  readonly httpBind?: string | undefined;
   /**
    * `JIRA_HTTP_TOKEN`. Required for http transport, at least 32 characters
    * there (D532); secret (CC-30).
    */
-  readonly httpToken?: string;
+  readonly httpToken?: string | undefined;
 
   /** `JIRA_LOG_LEVEL` (default `info`). All output to stderr. */
   readonly logLevel: LogLevel;
   /** `JIRA_JOURNAL_PATH`. Enables the append-only JSONL write journal. */
-  readonly journalPath?: string;
+  readonly journalPath?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -631,25 +631,25 @@ export interface JiraErrorInit {
   /** Cause first, then the recovery action. Redacted at construction time. */
   readonly message: string;
   /** Upstream HTTP status when the error came from the wire. */
-  readonly httpStatus?: number;
+  readonly httpStatus?: number | undefined;
   /** Jira's own `errorMessages[]` / flattened `errors{}` entries, verbatim. */
-  readonly jiraMessages?: readonly string[];
+  readonly jiraMessages?: readonly string[] | undefined;
   /** Defaults to membership in {@link RETRYABLE_ERROR_KINDS}. */
-  readonly retryable?: boolean;
+  readonly retryable?: boolean | undefined;
   /** What the caller should do next; the model reads this. */
-  readonly remediation?: string;
+  readonly remediation?: string | undefined;
   /**
    * The cause sentence alone, without the appended remediation.
    * `createJiraError` always sets it; a direct construction may omit it, and
    * then `message` is the only rendering of the cause.
    */
-  readonly reason?: string;
+  readonly reason?: string | undefined;
   /**
    * Bounded (≤ 200 chars), redacted body snippet for a non-JSON error body
    * (CC-15) — the sole exception to the never-log list, and it lives here on the
    * error rather than in a log event.
    */
-  readonly detail?: string;
+  readonly detail?: string | undefined;
   /** Underlying error, attached via the standard `Error` cause chain. */
   readonly cause?: unknown;
 }
@@ -666,12 +666,12 @@ export interface JiraErrorInit {
  */
 export class JiraError extends Error {
   readonly kind: JiraErrorKind;
-  readonly httpStatus?: number;
-  readonly jiraMessages?: readonly string[];
+  readonly httpStatus?: number | undefined;
+  readonly jiraMessages?: readonly string[] | undefined;
   readonly retryable: boolean;
-  readonly remediation?: string;
-  readonly reason?: string;
-  readonly detail?: string;
+  readonly remediation?: string | undefined;
+  readonly reason?: string | undefined;
+  readonly detail?: string | undefined;
 
   constructor(init: JiraErrorInit) {
     super(init.message, init.cause === undefined ? undefined : { cause: init.cause });
@@ -844,7 +844,7 @@ export interface JiraRequestSpec {
   readonly path: string;
 
   /** Which API root `path` is relative to. Defaults to `v3`. */
-  readonly root?: JiraApiRoot;
+  readonly root?: JiraApiRoot | undefined;
 
   /**
    * The route with placeholders — `/issue/{key}` — used for the `pathTemplate`
@@ -853,9 +853,9 @@ export interface JiraRequestSpec {
    * carrying an id MUST set this; the logger falls back to `path` only for
    * constant routes, which are their own template.
    */
-  readonly pathTemplate?: string;
+  readonly pathTemplate?: string | undefined;
 
-  readonly query?: QueryParams;
+  readonly query?: QueryParams | undefined;
 
   /** JSON-serializable request body; ADF documents travel here. */
   readonly body?: unknown;
@@ -864,7 +864,7 @@ export interface JiraRequestSpec {
    * How to decode a successful body. Defaults to `json`; `binary` yields a
    * `Uint8Array` in {@link JiraResponse.data} and is only honoured for reads.
    */
-  readonly accept?: JiraAcceptMode;
+  readonly accept?: JiraAcceptMode | undefined;
 
   /**
    * `multipart/form-data` file parts. Mutually exclusive with `body`, POST
@@ -872,7 +872,7 @@ export interface JiraRequestSpec {
    * A multipart request is an unsafe write by construction: it is never
    * replayed on an ambiguous failure.
    */
-  readonly multipart?: readonly JiraMultipartFile[];
+  readonly multipart?: readonly JiraMultipartFile[] | undefined;
 
   /**
    * Marks a request that is a pure READ despite its verb, so 502/503/504 and
@@ -881,10 +881,10 @@ export interface JiraRequestSpec {
    * §Rate limiting and retries). Never set it on anything that mutates: an
    * unsafe write is never replayed, it surfaces `ambiguous_write` (CC-12/13).
    */
-  readonly safe?: boolean;
+  readonly safe?: boolean | undefined;
 
   /** Overrides `JIRA_REQUEST_TIMEOUT_MS` for this request. */
-  readonly timeoutMs?: number;
+  readonly timeoutMs?: number | undefined;
 
   /**
    * Call-budget deadline in `clock.now()` epoch ms, computed ONCE per tool call
@@ -894,16 +894,16 @@ export interface JiraRequestSpec {
    * per-request budget would not compose across a paginated loop. On breach:
    * `kind=budget_exceeded`.
    */
-  readonly deadlineAt?: number;
+  readonly deadlineAt?: number | undefined;
 
   /** Overrides `JIRA_RETRY_ATTEMPTS` for this request. */
-  readonly retryAttempts?: number;
+  readonly retryAttempts?: number | undefined;
 
   /** Cancellation from the MCP request; the client forwards it to `fetch`. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 
   /** Profile whose credentials this request uses; defaults to the active one. */
-  readonly profile?: string;
+  readonly profile?: string | undefined;
 }
 
 /**

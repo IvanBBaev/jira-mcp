@@ -128,14 +128,14 @@ export interface PackagesDeps {
    * `JIRA_MEDIA_DIR`. Absent ⇒ the attachments byte-moving tools refuse with
    * `kind: 'config'` naming the setting; the metadata tool still works.
    */
-  readonly mediaDir?: string;
+  readonly mediaDir?: string | undefined;
   /** `JIRA_MEDIA_MAX_BYTES` (D531): the media directory's byte quota, `0` = off. */
-  readonly mediaMaxBytes?: number;
+  readonly mediaMaxBytes?: number | undefined;
   /**
    * `JIRA_REPORT_DIR`. Absent ⇒ `jira_portfolio_report` refuses with
    * `kind: 'config'`; `jira_portfolio_analyze` still works (D126).
    */
-  readonly reportDir?: string;
+  readonly reportDir?: string | undefined;
 }
 
 /**

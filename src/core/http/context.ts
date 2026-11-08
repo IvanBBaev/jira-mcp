@@ -46,7 +46,7 @@ export type AttemptOutcome =
 export interface HopTarget {
   readonly url: string;
   readonly headers: Record<string, string>;
-  readonly body?: string | FormData;
+  readonly body?: string | FormData | undefined;
 }
 
 /**
@@ -69,8 +69,8 @@ export interface ClientContext {
   readonly clock: Clock;
   readonly rng: Rng;
   readonly logger: Logger;
-  readonly telemetry?: Telemetry;
-  readonly redactor?: Redactor;
+  readonly telemetry?: Telemetry | undefined;
+  readonly redactor?: Redactor | undefined;
   readonly fail: Fail;
   /** Per-host queueing: the only state two concurrent calls share. */
   readonly pool: SemaphorePool;

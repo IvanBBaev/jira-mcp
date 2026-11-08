@@ -224,15 +224,15 @@ const listWatchersInput = toolInput({ issue: issueArg });
 interface WatcherListData {
   readonly issue: string;
   /** Whether the ACCOUNT THIS SERVER AUTHENTICATES AS is watching. */
-  readonly isWatching?: boolean;
+  readonly isWatching?: boolean | undefined;
   /** Jira's own count; it can exceed `watchers.length` on a restricted read. */
-  readonly watchCount?: number;
+  readonly watchCount?: number | undefined;
   /** Cloud users by accountId; on Data Center, by name/key (D106). */
   readonly watchers: WatcherList['watchers'];
   /** `false` ⇒ Jira withheld the list; it does NOT mean nobody is watching. */
   readonly watchersVisible: boolean;
   /** Prose for `watchersVisible: false`, so a reader who skips booleans sees it. */
-  readonly note?: string;
+  readonly note?: string | undefined;
 }
 
 // CC-47 — a 200 with the watcher list withheld is NOT an empty watcher list, and
@@ -682,7 +682,9 @@ export const updateComponentTool = defineTool<
  * there, the rule the sprint echo follows for its goal (CC-176, CC-600). A create
  * echoes only what the caller sent, so it stays unbranded.
  */
-function echoBrand(echoed: { readonly description?: string }): EnvelopeOptions {
+function echoBrand(echoed: {
+  readonly description?: string | undefined;
+}): EnvelopeOptions {
   const { description } = echoed;
   return typeof description === 'string' && description !== '' ? { untrusted: true } : {};
 }

@@ -194,7 +194,7 @@ const capabilitiesInput = toolInput({});
  */
 export function capabilitiesTool(
   source: CapabilitiesSource,
-): ToolSpec<{ profile?: string }, CapabilitiesInfo> {
+): ToolSpec<{ profile?: string | undefined }, CapabilitiesInfo> {
   return defineTool({
     name: 'jira_capabilities',
     title: 'Describe this server',

@@ -153,7 +153,7 @@ export interface BulkBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request issued. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Options for a single-request bulk call. */
@@ -236,25 +236,25 @@ export interface BulkStatusResult {
    * vocabulary documented today (module header rule 5).
    */
   readonly status: string;
-  readonly progressPercent?: number;
-  readonly totalIssueCount?: number;
+  readonly progressPercent?: number | undefined;
+  readonly totalIssueCount?: number | undefined;
   /**
    * How many issues the task SUCCEEDED on — `processedAccessibleIssues.length`.
    * Despite the wire name, failures are not in it; they are {@link failedCount}.
    */
-  readonly processedCount?: number;
+  readonly processedCount?: number | undefined;
   /** How many issues FAILED — the size of the wire's per-issue error map. */
-  readonly failedCount?: number;
+  readonly failedCount?: number | undefined;
   /**
    * Issues the submit named that the task will never touch: unknown ids and
    * issues the account cannot see, folded into one count by Jira on purpose
    * (existence is not leaked to an account without Browse).
    */
-  readonly invalidOrInaccessibleIssueCount?: number;
+  readonly invalidOrInaccessibleIssueCount?: number | undefined;
   /** Epoch milliseconds, passed through as numbers (module header rule 6). */
-  readonly created?: number;
-  readonly started?: number;
-  readonly updated?: number;
+  readonly created?: number | undefined;
+  readonly started?: number | undefined;
+  readonly updated?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

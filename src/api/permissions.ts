@@ -83,13 +83,13 @@ export interface PermissionCheck {
 
 export interface GetMyPermissionsBase {
   readonly jira: JiraRequestFn;
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Permission keys to evaluate; at least one, at most {@link MAX_PERMISSION_KEYS}. */
   readonly permissions: readonly string[];
   /** Project key or numeric id; ignored on the wire when `issueKey` is given. */
-  readonly projectKey?: string;
+  readonly projectKey?: string | undefined;
   /** Issue key or numeric id; the most specific scope, wins over the project. */
-  readonly issueKey?: string;
+  readonly issueKey?: string | undefined;
 }
 
 export type GetMyPermissionsOptions = GetMyPermissionsBase & BudgetGuard;

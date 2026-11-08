@@ -182,19 +182,19 @@ export interface CollabBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request issued. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** The user dialect watchers and component leads are read in (D106). */
-  readonly deployment?: JiraDeployment;
+  readonly deployment?: JiraDeployment | undefined;
 }
 
 /** The paging controls of the two paginated reads. */
 export interface CollabPagedBase extends CollabBase {
   /** Rows per request; defaults to {@link COLLAB_PAGE_SIZE}. */
-  readonly pageSize?: number;
+  readonly pageSize?: number | undefined;
   /** Hard page cap; defaults to `DEFAULT_MAX_PAGES` from `api/shared.ts`. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
   /** Offset to start from — resume a `max_pages` stop from its `nextStartAt`. */
-  readonly startAt?: number;
+  readonly startAt?: number | undefined;
 }
 
 /** Options for a single-request collaboration call. */
@@ -212,12 +212,12 @@ export type WatcherOptions = ListWatchersOptions & {
    * The account to add or remove on Jira Cloud — accountId only, never a
    * username (CC-19). Refused on Data Center (D111).
    */
-  readonly accountId?: string;
+  readonly accountId?: string | undefined;
   /**
    * The user to add or remove on Jira Data Center (D111), by username. Refused
    * on Cloud, which identifies users by accountId only.
    */
-  readonly username?: string;
+  readonly username?: string | undefined;
 };
 
 /** Options for {@link addVote} and {@link removeVote} — the vote is always yours. */
@@ -229,7 +229,7 @@ export type ListComponentsOptions = CollabPagedBase &
     /** Project key (`ABC`) or numeric project id. */
     readonly project: string;
     /** Literal substring Jira matches against component name and description. */
-    readonly query?: string;
+    readonly query?: string | undefined;
   };
 
 /** Options for {@link createComponent}. */
@@ -241,19 +241,19 @@ export type CreateComponentOptions = CollabOptions & {
   readonly project: string;
   readonly name: string;
   /** PLAIN TEXT, not ADF (module header rule 4). */
-  readonly description?: string;
-  readonly leadAccountId?: string;
-  readonly assigneeType?: ComponentAssigneeType;
+  readonly description?: string | undefined;
+  readonly leadAccountId?: string | undefined;
+  readonly assigneeType?: ComponentAssigneeType | undefined;
 };
 
 /** Options for {@link updateComponent} — a partial PUT (module header rule 5). */
 export type UpdateComponentOptions = CollabOptions & {
   readonly componentId: string | number;
-  readonly name?: string;
+  readonly name?: string | undefined;
   /** PLAIN TEXT. `''` is a real value here: it CLEARS the description. */
-  readonly description?: string;
-  readonly leadAccountId?: string;
-  readonly assigneeType?: ComponentAssigneeType;
+  readonly description?: string | undefined;
+  readonly leadAccountId?: string | undefined;
+  readonly assigneeType?: ComponentAssigneeType | undefined;
 };
 
 /** Options for {@link getComponent} and {@link getComponentRelatedIssueCounts}. */
@@ -272,7 +272,7 @@ export interface DeleteComponentInput {
    * Component that inherits the deleted one's issues. Omitted, Jira strips the
    * component off every issue that referenced it instead.
    */
-  readonly moveIssuesTo?: string | number;
+  readonly moveIssuesTo?: string | number | undefined;
 }
 
 /** Options for {@link deleteComponent}. */
@@ -284,15 +284,15 @@ export type ListVersionsOptions = CollabPagedBase &
     /** Project key (`ABC`) or numeric project id. */
     readonly project: string;
     /** Literal substring Jira matches against version name and description. */
-    readonly query?: string;
+    readonly query?: string | undefined;
     /** Restrict to these lifecycle states; omitted means every state. */
-    readonly status?: readonly VersionStatus[];
+    readonly status?: readonly VersionStatus[] | undefined;
     /**
      * Ask Jira for `expand=issuesstatus`, so each row carries
      * {@link ProjectVersion.issueStatus} — counted in the same request, never
      * one extra call per version (D148). Jira Cloud only.
      */
-    readonly issueCounts?: boolean;
+    readonly issueCounts?: boolean | undefined;
   };
 
 /** Options for {@link createVersion}. */
@@ -304,27 +304,27 @@ export type CreateVersionOptions = CollabOptions & {
   readonly projectId: string | number;
   readonly name: string;
   /** PLAIN TEXT, not ADF (module header rule 4). */
-  readonly description?: string;
+  readonly description?: string | undefined;
   /** `YYYY-MM-DD`. */
-  readonly startDate?: string;
+  readonly startDate?: string | undefined;
   /** `YYYY-MM-DD`. */
-  readonly releaseDate?: string;
-  readonly released?: boolean;
-  readonly archived?: boolean;
+  readonly releaseDate?: string | undefined;
+  readonly released?: boolean | undefined;
+  readonly archived?: boolean | undefined;
 };
 
 /** Options for {@link updateVersion} — a partial PUT (module header rule 5). */
 export type UpdateVersionOptions = CollabOptions & {
   readonly versionId: string | number;
-  readonly name?: string;
+  readonly name?: string | undefined;
   /** PLAIN TEXT. `''` is a real value here: it CLEARS the description. */
-  readonly description?: string;
+  readonly description?: string | undefined;
   /** `YYYY-MM-DD`. */
-  readonly startDate?: string;
+  readonly startDate?: string | undefined;
   /** `YYYY-MM-DD`. */
-  readonly releaseDate?: string;
-  readonly released?: boolean;
-  readonly archived?: boolean;
+  readonly releaseDate?: string | undefined;
+  readonly released?: boolean | undefined;
+  readonly archived?: boolean | undefined;
 };
 
 /** Options for {@link getVersion} and {@link getVersionRelatedIssueCounts}. */
@@ -341,9 +341,9 @@ export type GetVersionOptions = CollabOptions & {
 export interface DeleteVersionInput {
   readonly versionId: string | number;
   /** Version that replaces this one in `fixVersion` fields; omitted clears them. */
-  readonly moveFixIssuesTo?: string | number;
+  readonly moveFixIssuesTo?: string | number | undefined;
   /** Same for `affectedVersion` fields; omitted clears them. */
-  readonly moveAffectedIssuesTo?: string | number;
+  readonly moveAffectedIssuesTo?: string | number | undefined;
 }
 
 /** Options for {@link deleteVersion}. */
@@ -368,16 +368,16 @@ export type GetProjectRoleOptions = ListProjectRolesOptions & {
 /** A user on this surface. Narrower than `UserRef`: no avatars, no `self`. */
 export interface CollabUser {
   readonly accountId: string;
-  readonly displayName?: string;
-  readonly active?: boolean;
+  readonly displayName?: string | undefined;
+  readonly active?: boolean | undefined;
 }
 
 /** What `GET /issue/{key}/watchers` reports, reduced. */
 export interface WatcherList {
   /** Whether the AUTHENTICATED account is watching — per-caller state. */
-  readonly isWatching?: boolean;
+  readonly isWatching?: boolean | undefined;
   /** Jira's own count; can exceed `watchers.length` on a restricted read. */
-  readonly watchCount?: number;
+  readonly watchCount?: number | undefined;
   /**
    * The watchers themselves. Jira omits this array entirely when the caller
    * lacks "View voters and watchers", which is NOT the same as "nobody watches
@@ -421,14 +421,14 @@ export interface ProjectComponent {
   readonly id: string;
   readonly name: string;
   /** Free text written by a tenant user. PLAIN, never ADF. */
-  readonly description?: string;
+  readonly description?: string | undefined;
   /** The project key Jira echoes back on the row. */
-  readonly project?: string;
-  readonly projectId?: number;
-  readonly lead?: CollabUser | DataCenterUser;
-  readonly assigneeType?: string;
+  readonly project?: string | undefined;
+  readonly projectId?: number | undefined;
+  readonly lead?: CollabUser | DataCenterUser | undefined;
+  readonly assigneeType?: string | undefined;
   /** `false` ⇒ Jira will fall back to the project default when assigning. */
-  readonly isAssigneeTypeValid?: boolean;
+  readonly isAssigneeTypeValid?: boolean | undefined;
 }
 
 /** A project version (a "release"), reduced to what a model can act on. */
@@ -436,32 +436,32 @@ export interface ProjectVersion {
   readonly id: string;
   readonly name: string;
   /** Free text written by a tenant user. PLAIN, never ADF. */
-  readonly description?: string;
-  readonly projectId?: number;
-  readonly archived?: boolean;
-  readonly released?: boolean;
+  readonly description?: string | undefined;
+  readonly projectId?: number | undefined;
+  readonly archived?: boolean | undefined;
+  readonly released?: boolean | undefined;
   /** `YYYY-MM-DD`, exactly as stored. */
-  readonly startDate?: string;
+  readonly startDate?: string | undefined;
   /** `YYYY-MM-DD`, exactly as stored. */
-  readonly releaseDate?: string;
+  readonly releaseDate?: string | undefined;
   /** Jira's own verdict: unreleased and past its `releaseDate`. */
-  readonly overdue?: boolean;
+  readonly overdue?: boolean | undefined;
   /**
    * Issues whose `fixVersion` names this version, counted by STATUS CATEGORY
    * (D148). Present only when the read asked for it. A status category is not
    * a resolution: `done` counts Done-category statuses, whatever the
    * resolution field says.
    */
-  readonly issueStatus?: VersionIssueStatus;
+  readonly issueStatus?: VersionIssueStatus | undefined;
 }
 
 /** `issuesStatusForFixVersion`, allowlisted: the four counts and nothing else. */
 export interface VersionIssueStatus {
-  readonly toDo?: number;
-  readonly inProgress?: number;
-  readonly done?: number;
+  readonly toDo?: number | undefined;
+  readonly inProgress?: number | undefined;
+  readonly done?: number | undefined;
   /** Issues in a status that belongs to no category. */
-  readonly unmapped?: number;
+  readonly unmapped?: number | undefined;
 }
 
 /** The result of a component write: what Jira stored, plus the status. */
@@ -484,17 +484,17 @@ export interface VersionChange {
  */
 export interface ComponentRelatedIssueCounts {
   /** Issues whose `components` field names this component. */
-  readonly issueCount?: number;
+  readonly issueCount?: number | undefined;
 }
 
 /** What `GET /version/{id}/relatedIssueCounts` reports — same allowlist rule. */
 export interface VersionRelatedIssueCounts {
   /** Issues naming this version in `fixVersion`. */
-  readonly issuesFixedCount?: number;
+  readonly issuesFixedCount?: number | undefined;
   /** Issues naming this version in `affectedVersion`. */
-  readonly issuesAffectedCount?: number;
+  readonly issuesAffectedCount?: number | undefined;
   /** Issues naming this version in a custom version-picker field. */
-  readonly issueCountWithCustomFieldsShowingVersion?: number;
+  readonly issueCountWithCustomFieldsShowingVersion?: number | undefined;
 }
 
 /** The receipt of {@link deleteComponent}, built locally: Jira answers 204. */
@@ -530,18 +530,18 @@ export interface ProjectRole {
 export interface RoleActor {
   /** `atlassian-user-role-actor` | `atlassian-group-role-actor`. */
   readonly type: string;
-  readonly accountId?: string;
+  readonly accountId?: string | undefined;
   /**
    * Jira Data Center only (D110): a user actor's `name`, in place of the
    * accountId Data Center does not have. Never set on Cloud or on a group.
    */
-  readonly name?: string;
-  readonly displayName?: string;
+  readonly name?: string | undefined;
+  readonly displayName?: string | undefined;
 }
 
 /** One project role with the accounts and groups in it. */
 export interface ProjectRoleDetail extends ProjectRole {
-  readonly description?: string;
+  readonly description?: string | undefined;
   readonly actors: readonly RoleActor[];
 }
 
@@ -1068,11 +1068,11 @@ async function voteCall(
 function addVersionFields(
   body: Record<string, unknown>,
   options: {
-    readonly description?: string;
-    readonly startDate?: string;
-    readonly releaseDate?: string;
-    readonly released?: boolean;
-    readonly archived?: boolean;
+    readonly description?: string | undefined;
+    readonly startDate?: string | undefined;
+    readonly releaseDate?: string | undefined;
+    readonly released?: boolean | undefined;
+    readonly archived?: boolean | undefined;
   },
 ): void {
   // `''` is kept on purpose: an empty description is how a description is cleared.

@@ -114,17 +114,17 @@ export interface MetaBase {
   /** The only way to reach Jira (`core/types.ts` §Wire). */
   readonly jira: JiraRequestFn;
   /** Cancellation from the MCP request; stamped onto every request issued. */
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** The user dialect a project `lead` is read in (D106); absent means `cloud`. */
-  readonly deployment?: JiraDeployment;
+  readonly deployment?: JiraDeployment | undefined;
 }
 
 /** Paged calls additionally accept the two loop caps. */
 export interface MetaPagedBase extends MetaBase {
   /** Rows per request; defaults to the endpoint's documented cap. */
-  readonly pageSize?: number;
+  readonly pageSize?: number | undefined;
   /** Hard page cap; defaults to `DEFAULT_MAX_PAGES` in `api/shared.ts`. */
-  readonly maxPages?: number;
+  readonly maxPages?: number | undefined;
 }
 
 /** Options for a single-request meta read. */
@@ -215,8 +215,8 @@ export type GetTimeTrackingConfigOptions = MetaOptions;
  */
 export interface UserRef {
   readonly accountId: string;
-  readonly displayName?: string;
-  readonly active?: boolean;
+  readonly displayName?: string | undefined;
+  readonly active?: boolean | undefined;
 }
 
 /** One row of `/project/search`. */
@@ -225,52 +225,52 @@ export interface ProjectSummary {
   readonly key: string;
   readonly name: string;
   /** `software` | `service_desk` | `business`. */
-  readonly projectTypeKey?: string;
+  readonly projectTypeKey?: string | undefined;
   /** `classic` | `next-gen`. */
-  readonly style?: string;
+  readonly style?: string | undefined;
   /** True for team-managed (next-gen) projects. */
-  readonly simplified?: boolean;
-  readonly isPrivate?: boolean;
+  readonly simplified?: boolean | undefined;
+  readonly isPrivate?: boolean | undefined;
   /** Present only when the request expanded `lead`. A DC user on Data Center. */
-  readonly lead?: UserRef | DataCenterUser;
+  readonly lead?: UserRef | DataCenterUser | undefined;
 }
 
 /** An issue type, as `/project/{key}` and the createmeta endpoints report one. */
 export interface IssueTypeRef {
   readonly id: string;
   readonly name: string;
-  readonly description?: string;
-  readonly subtask?: boolean;
+  readonly description?: string | undefined;
+  readonly subtask?: boolean | undefined;
   /** 0 = base, -1 = subtask, 1+ = epic and above. */
-  readonly hierarchyLevel?: number;
+  readonly hierarchyLevel?: number | undefined;
 }
 
 /** A project component. */
 export interface ComponentRef {
   readonly id: string;
   readonly name: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
 }
 
 /** A project version (fixVersion candidate). */
 export interface VersionRef {
   readonly id: string;
   readonly name: string;
-  readonly released?: boolean;
-  readonly archived?: boolean;
+  readonly released?: boolean | undefined;
+  readonly archived?: boolean | undefined;
   /** `YYYY-MM-DD`, as Jira sends it. Never parsed here — no clock in this ring. */
-  readonly releaseDate?: string;
+  readonly releaseDate?: string | undefined;
 }
 
 /** What `GET /project/{idOrKey}` yields. */
 export interface ProjectDetail extends ProjectSummary {
-  readonly description?: string;
+  readonly description?: string | undefined;
   /** Present with the default expand; the create tools read it. */
-  readonly issueTypes?: readonly IssueTypeRef[];
+  readonly issueTypes?: readonly IssueTypeRef[] | undefined;
   /** Returned without an expand. */
-  readonly components?: readonly ComponentRef[];
+  readonly components?: readonly ComponentRef[] | undefined;
   /** Returned without an expand. */
-  readonly versions?: readonly VersionRef[];
+  readonly versions?: readonly VersionRef[] | undefined;
 }
 
 /** One row of `GET /field`. */
@@ -279,21 +279,21 @@ export interface FieldInfo {
   readonly id: string;
   readonly name: string;
   /** Usually equal to `id`; Jira sends both. */
-  readonly key?: string;
+  readonly key?: string | undefined;
   readonly custom: boolean;
   /** `schema.type` — `string`, `array`, `option`, `number`, … */
-  readonly schemaType?: string;
+  readonly schemaType?: string | undefined;
   /** `schema.items` for array-typed fields. */
-  readonly schemaItems?: string;
+  readonly schemaItems?: string | undefined;
   /** `schema.custom` — the field-type plugin key of a custom field. */
-  readonly customType?: string;
+  readonly customType?: string | undefined;
   /** `schema.customId` — the numeric tail of `customfield_10014`. */
-  readonly customId?: number;
+  readonly customId?: number | undefined;
   /** JQL names this field answers to; the model needs them to write JQL. */
-  readonly clauseNames?: readonly string[];
-  readonly searchable?: boolean;
-  readonly orderable?: boolean;
-  readonly navigable?: boolean;
+  readonly clauseNames?: readonly string[] | undefined;
+  readonly searchable?: boolean | undefined;
+  readonly orderable?: boolean | undefined;
+  readonly navigable?: boolean | undefined;
 }
 
 /**
@@ -345,16 +345,16 @@ export interface CreateMetaField {
   readonly name: string;
   /** Jira's own `required` flag: an unset required field fails the create. */
   readonly required: boolean;
-  readonly key?: string;
-  readonly schemaType?: string;
-  readonly schemaItems?: string;
-  readonly customType?: string;
-  readonly hasDefaultValue?: boolean;
+  readonly key?: string | undefined;
+  readonly schemaType?: string | undefined;
+  readonly schemaItems?: string | undefined;
+  readonly customType?: string | undefined;
+  readonly hasDefaultValue?: boolean | undefined;
   /** `set`, `add`, `remove`, … — the verbs `update` accepts for this field. */
-  readonly operations?: readonly string[];
-  readonly allowedValues?: readonly AllowedValue[];
+  readonly operations?: readonly string[] | undefined;
+  readonly allowedValues?: readonly AllowedValue[] | undefined;
   /** Present instead of `allowedValues` for open-ended pickers. */
-  readonly autoCompleteUrl?: string;
+  readonly autoCompleteUrl?: string | undefined;
 }
 
 /**
@@ -374,17 +374,17 @@ export interface CreateMetaResult extends ClassicLoopResult<CreateMetaField> {
 export interface StatusInfo {
   readonly id: string;
   readonly name: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   /**
    * `TODO` | `IN_PROGRESS` | `DONE` — a bare STRING here, unlike the nested
    * `statusCategory` OBJECT an issue's `status` field carries. Same word, two
    * wire shapes; conflating them is how a status filter silently matches nothing.
    */
-  readonly statusCategory?: string;
+  readonly statusCategory?: string | undefined;
   /** `GLOBAL` for a tenant-wide status, `PROJECT` for a project-scoped one. */
-  readonly scopeType?: string;
+  readonly scopeType?: string | undefined;
   /** Numeric project id when `scopeType` is `PROJECT`. */
-  readonly scopeProjectId?: string;
+  readonly scopeProjectId?: string | undefined;
 }
 
 /** One row of `GET /issueLinkType`. */
@@ -401,19 +401,19 @@ export interface LinkTypeInfo {
 export interface PriorityInfo {
   readonly id: string;
   readonly name: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   /** The colour Jira paints the priority with, e.g. `#ff7452`. */
-  readonly statusColor?: string;
+  readonly statusColor?: string | undefined;
   /** The priority a new issue gets when none is set. */
-  readonly isDefault?: boolean;
+  readonly isDefault?: boolean | undefined;
 }
 
 /** One row of `GET /resolution/search` (D138). */
 export interface ResolutionInfo {
   readonly id: string;
   readonly name: string;
-  readonly description?: string;
-  readonly isDefault?: boolean;
+  readonly description?: string | undefined;
+  readonly isDefault?: boolean | undefined;
 }
 
 /**
@@ -422,22 +422,22 @@ export interface ResolutionInfo {
  */
 export interface TimeTrackingConfig {
   readonly enabled: boolean;
-  readonly workingHoursPerDay?: number;
-  readonly workingDaysPerWeek?: number;
+  readonly workingHoursPerDay?: number | undefined;
+  readonly workingDaysPerWeek?: number | undefined;
   /** How Jira displays durations: `pretty` ("2d 4h"), `days` or `hours`. */
-  readonly timeFormat?: string;
+  readonly timeFormat?: string | undefined;
   /** Unit a bare number is read in when a user logs work, e.g. `minute`. */
-  readonly defaultUnit?: string;
+  readonly defaultUnit?: string | undefined;
   /** `workingHoursPerDay` × 3600 — one "1d" in seconds. */
-  readonly secondsPerDay?: number;
+  readonly secondsPerDay?: number | undefined;
   /** `secondsPerDay` × `workingDaysPerWeek` — one "1w" in seconds. */
-  readonly secondsPerWeek?: number;
+  readonly secondsPerWeek?: number | undefined;
 }
 
 /** One row of `GET /issuetype` (D138). */
 export interface IssueTypeInfo extends IssueTypeRef {
   /** Numeric project id for a team-managed (project-scoped) type; absent when global. */
-  readonly scopeProjectId?: string;
+  readonly scopeProjectId?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------

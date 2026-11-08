@@ -7,7 +7,13 @@ import { ENVELOPE_OUTPUT_SCHEMA } from './output-schema.js';
 import { err, ok, renderResult } from './result.js';
 import type { ToolResult } from './types.js';
 
-const validate = new AjvJsonSchemaValidator().getValidator(ENVELOPE_OUTPUT_SCHEMA ?? {});
+// The SDK's schema types are built without `exactOptionalPropertyTypes` (D537):
+// the tool-facing `outputSchema` and the validator's `JsonSchemaType` disagree
+// only on whether an optional key may hold `undefined`.
+type ValidatorSchema = Parameters<AjvJsonSchemaValidator['getValidator']>[0];
+const validate = new AjvJsonSchemaValidator().getValidator(
+  (ENVELOPE_OUTPUT_SCHEMA ?? {}) as ValidatorSchema,
+);
 
 /** What a client receives as `structuredContent` for `result` at `budget`. */
 function emitted(result: ToolResult<unknown>, budget = 25_000): unknown {

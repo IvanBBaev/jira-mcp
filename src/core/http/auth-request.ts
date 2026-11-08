@@ -110,8 +110,8 @@ function normaliseOrigin(origin: string): string {
 
 /** `error` / `error_description` as the OAuth spec defines them, if present. */
 function oauthErrorFields(json: unknown): {
-  code?: string;
-  description?: string;
+  code?: string | undefined;
+  description?: string | undefined;
 } {
   if (typeof json !== 'object' || json === null || Array.isArray(json)) return {};
   const body = json as Record<string, unknown>;
@@ -237,7 +237,7 @@ async function authAttempt(call: AuthCall, attempt: number): Promise<AttemptOutc
       fetchFn(call.target.toString(), {
         method,
         headers: call.headers,
-        body: call.payload,
+        ...(call.payload === undefined ? {} : { body: call.payload }),
         signal: guard.signal,
         // Same reason as the Jira path: an automatic follow would carry the
         // Authorization header — or the token request body — to whatever
