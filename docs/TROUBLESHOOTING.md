@@ -139,7 +139,7 @@ text; the entries below are for the person who runs the server.
   the package or tier the tool needs
   ([CONFIGURATION.md §Tool surface gating](CONFIGURATION.md#tool-surface-gating)).
   The full contract is
-  [THREAT-MODEL.md §Write safety](THREAT-MODEL.md#write-safety-normative-gate-contract--single-owner-this-document).
+  [THREAT-MODEL.md §Write safety](THREAT-MODEL.md).
 - **`doctor` check:** `gating`.
 
 ### `unexpected_shape`
