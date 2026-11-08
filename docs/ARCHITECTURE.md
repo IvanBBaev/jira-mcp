@@ -36,7 +36,7 @@ TypeScript. It follows the house template established by its sibling repos:
   a `bearer` arm and `HostRef` carries a path prefix). Parked by D104 and
   **un-parked in stages by D106** (IMPLEMENTATION-PLAN.md Phase 13). The
   domain-level seam D104 found missing now exists — `api/port.ts` (§Layering) —
-  and a second adapter plugs into it: `api/datacenter.ts`, a read-only,
+  and a second adapter plugs into it: `api/datacenter/` (D518), a read-only,
   unverified preview reachable only behind `JIRA_DATACENTER_PREVIEW=true`
   (D107). An adapter declares the tools it serves (`JiraApi.serves`), and the
   registry excludes the rest.
@@ -94,6 +94,13 @@ core  ←  api  ←  mcp  ←  tools
     input normalization, errors) and then by sub-domain (reads, bulk,
     changelog, deletes, worklog edit, issue links, remote links). Importers
     use the barrel, never a module under `api/issues/`.
+  - **`api/datacenter/`** holds the Data Center adapter (`adapter.ts`) and its
+    endpoint twins, one module per Cloud domain (`search`, `attachments`,
+    `agile`, `meta`, `filters`, `collab`, `users`, `issues`) (D518). The twins
+    import the Cloud helpers they share; the Cloud modules never import from
+    `api/datacenter/` (an eslint zone), they only re-export the moved names, and
+    `api/datacenter.ts` is a barrel over `datacenter/adapter.ts`. Removing Data
+    Center is a directory delete plus those re-export lines.
   - **`api/port.ts`** is the domain-level port (D106): `JiraApi` names every
     api-ring function a tool may call — each one that talks to Jira, and the
     converters that speak a wire body format — and `CLOUD_API` is the existing

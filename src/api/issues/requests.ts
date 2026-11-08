@@ -12,7 +12,6 @@ import {
   nameOrIdRef,
   normalizeLabels,
   resolveAssignee,
-  resolveDataCenterAssignee,
   resolveTimeSpent,
 } from './input.js';
 import {
@@ -36,6 +35,7 @@ import type {
   UpdateCommentInput,
   UpdateIssueInput,
 } from './write-types.js';
+export { assignIssueDataCenterRequest } from '../datacenter/issues.js';
 
 // ---------------------------------------------------------------------------
 // 6. Write request builders (CC-20)
@@ -235,23 +235,6 @@ export function assignIssueRequest(input: AssignIssueInput): JiraRequestSpec {
     // Explicit null, never an omitted key: an empty body leaves the assignee
     // untouched, which would report success for a no-op.
     body: { accountId },
-  };
-}
-
-/**
- * {@link assignIssueRequest} on Jira Data Center (D111) —
- * `PUT /rest/api/2/issue/{issueIdOrKey}/assignee` with `{ "name": … }`, and an
- * explicit `{ "name": null }` to unassign.
- */
-export function assignIssueDataCenterRequest(input: AssignIssueInput): JiraRequestSpec {
-  const name = resolveDataCenterAssignee(input);
-  return {
-    method: 'PUT',
-    root: 'v2',
-    path: issuePath(input.issue, '/assignee'),
-    pathTemplate: ISSUE_ASSIGNEE_PATH_TEMPLATE,
-    // Explicit null for the same reason as on Cloud.
-    body: { name },
   };
 }
 

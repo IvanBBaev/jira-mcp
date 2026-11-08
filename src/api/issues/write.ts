@@ -4,17 +4,11 @@ import { createJiraError, isJiraError } from '../../core/errors.js';
 import { asRecord } from '../guards.js';
 import { requireText, responseShapeError, send } from '../wire.js';
 import { requireIssueRecord, requireString, staleTransition } from './errors.js';
-import {
-  commentIdSegment,
-  issuePath,
-  resolveAssignee,
-  resolveDataCenterAssignee,
-} from './input.js';
+import { commentIdSegment, issuePath, resolveAssignee } from './input.js';
 import { ISSUE_COMMENT_ITEM_PATH_TEMPLATE } from './paths.js';
 import {
   addCommentRequest,
   addWorklogRequest,
-  assignIssueDataCenterRequest,
   assignIssueRequest,
   createIssueRequest,
   linkIssuesRequest,
@@ -39,6 +33,7 @@ import type {
   UpdateIssueOptions,
   UpdateIssueResult,
 } from './write-types.js';
+export { assignIssueDataCenter } from '../datacenter/issues.js';
 
 // ---------------------------------------------------------------------------
 // 7. Writes
@@ -179,18 +174,6 @@ export async function assignIssue(
   const accountId = resolveAssignee(options);
   await send(options, assignIssueRequest(options));
   return { issue: options.issue, accountId, assigned: true };
-}
-
-/**
- * {@link assignIssue} on Jira Data Center (D111) — the user is a username. The
- * same idempotency holds; UNVERIFIED like the rest of the adapter.
- */
-export async function assignIssueDataCenter(
-  options: AssignIssueOptions,
-): Promise<AssignIssueResult> {
-  const username = resolveDataCenterAssignee(options);
-  await send(options, assignIssueDataCenterRequest(options));
-  return { issue: options.issue, username, assigned: true };
 }
 
 /**

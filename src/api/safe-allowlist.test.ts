@@ -41,11 +41,11 @@ const SRC = join(ROOT, 'src');
 const SAFE_ALLOWLIST: Readonly<Record<string, string>> = {
   'src/api/search.ts › searchIssues › buildSpec · POST SEARCH_JQL_PATH':
     'JQL search: the body carries the query, nothing is stored.',
-  'src/api/search.ts › searchIssuesDataCenter › request · POST DATACENTER_SEARCH_PATH':
+  'src/api/datacenter/search.ts › searchIssuesDataCenter › request · POST DATACENTER_SEARCH_PATH':
     'Data Center JQL search page: a read with the JQL in the body.',
   'src/api/search.ts › approximateCount · POST APPROXIMATE_COUNT_PATH':
     'Approximate issue count for a JQL: a read.',
-  'src/api/search.ts › countIssuesDataCenter · POST DATACENTER_SEARCH_PATH':
+  'src/api/datacenter/search.ts › countIssuesDataCenter · POST DATACENTER_SEARCH_PATH':
     'Data Center count: a zero-row search, a read.',
   'src/api/search.ts › parseJql · POST JQL_PARSE_PATH':
     'JQL validation: Jira parses the queries and stores nothing.',

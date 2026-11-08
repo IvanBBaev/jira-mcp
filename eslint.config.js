@@ -90,6 +90,19 @@ const noSdkDynamicImport = {
   message: SDK_SEAM_MESSAGE,
 };
 
+// D518 / V3-13: the Data Center twins live in src/api/datacenter/. Cloud api
+// modules must not depend on them, so removing Data Center (V3-27, 3.0) stays a
+// directory delete. A static `import` of a `datacenter/` module or of the
+// `datacenter.js` barrel is banned outside that directory; `export … from` stays
+// allowed, because the Cloud modules keep re-exporting the moved names as
+// compatibility barrels. adapters.ts picks the adapter, so it is exempt.
+const noDataCenterImport = {
+  selector: 'ImportDeclaration[source.value=/(^|\\u002F)datacenter(\\u002F|\\.js$)/]',
+  message:
+    'Cloud api modules must not import the Data Center adapter (D518): keep the ' +
+    'dependency one-way, from src/api/datacenter/ to the Cloud modules.',
+};
+
 export default tseslint.config(
   {
     ignores: [
@@ -222,6 +235,26 @@ export default tseslint.config(
         noAbortSignalTimeout,
         noZodRuntimeImport,
         noDirectJiraError,
+      ],
+    },
+  },
+  // The Cloud api modules carry the base bans plus the Data Center one (D518).
+  {
+    files: ['src/api/**/*.ts'],
+    ignores: [
+      'src/api/datacenter/**',
+      'src/api/datacenter.ts',
+      'src/api/adapters.ts',
+      'src/**/*.test.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        noAbortSignalTimeout,
+        noZodRuntimeImport,
+        noDirectJiraError,
+        noSdkDynamicImport,
+        noDataCenterImport,
       ],
     },
   },

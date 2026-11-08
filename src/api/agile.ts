@@ -80,6 +80,7 @@ import {
 } from './shared.js';
 import { isRecord } from './guards.js';
 import { runClassic, writeControls } from './wire.js';
+export { listSprintIssuesDataCenter } from './datacenter/agile.js';
 
 // ---------------------------------------------------------------------------
 // 1. Constants and closed vocabularies
@@ -698,34 +699,6 @@ export async function listBacklogIssues(
   );
 }
 
-/**
- * {@link listSprintIssues} on Jira Data Center —
- * `GET /rest/agile/1.0/sprint/{sprintId}/issue` (D502).
- *
- * Data Center has no `/rest/software/1.0`; its agile route is not deprecated
- * and still pages by `startAt` with a `total`, so this twin keeps the classic
- * loop. A `nextPageToken` names a Cloud cursor and is refused (CC-5004).
- */
-export async function listSprintIssuesDataCenter(
-  options: ListSprintIssuesOptions,
-): Promise<SprintIssuesResult> {
-  if (trimmedOrUndefined(options.nextPageToken) !== undefined) {
-    throw createJiraError({
-      kind: 'validation',
-      reason:
-        'nextPageToken is a Jira Cloud cursor; Jira Data Center pages sprint issues by offset.',
-      remediation:
-        'Drop nextPageToken and resume with startAt = paging.nextStartAt from the previous result.',
-    });
-  }
-  const sprintId = agileId(options.sprintId, 'sprintId');
-  return listAgileIssuePage(
-    options,
-    `/sprint/${sprintId}/issue`,
-    AGILE_SPRINT_ISSUES_TEMPLATE,
-  );
-}
-
 /** `pathTemplate` of the sprint-issue read on the `agile` root (DC, and the D525 fallback). */
 export const AGILE_SPRINT_ISSUES_TEMPLATE = '/sprint/{sprintId}/issue';
 
@@ -733,7 +706,7 @@ export const AGILE_SPRINT_ISSUES_TEMPLATE = '/sprint/{sprintId}/issue';
 export const AGILE_BACKLOG_TEMPLATE = '/board/{boardId}/backlog';
 
 /** The offset-paged issue read on the `agile` root, shared by DC and the D525 fallback. */
-async function listAgileIssuePage(
+export async function listAgileIssuePage(
   options: AgilePagedBase &
     BudgetGuard & {
       readonly fields?: readonly string[];
@@ -1490,7 +1463,7 @@ export async function deleteSprint(
  * check doubles as the guarantee that no unencoded caller string reaches the
  * URL (`JiraRequestSpec.path` requires pre-encoded segments).
  */
-function agileId(value: number | string, name: string): string {
+export function agileId(value: number | string, name: string): string {
   const text = typeof value === 'number' ? String(value) : value.trim();
   if (!/^[1-9][0-9]*$/.test(text)) {
     throw createJiraError({
@@ -1562,7 +1535,7 @@ function requireSprintName(value: string): string {
 }
 
 /** Optional free text: trimmed, and absent rather than empty. */
-function trimmedOrUndefined(value: string | undefined): string | undefined {
+export function trimmedOrUndefined(value: string | undefined): string | undefined {
   const text = value?.trim();
   return text === undefined || text.length === 0 ? undefined : text;
 }

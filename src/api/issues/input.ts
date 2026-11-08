@@ -2,10 +2,11 @@
 
 import { createJiraError } from '../../core/errors.js';
 import { encodeSegment } from '../../core/http-util.js';
-import { refuseAccountIdOnDataCenter, refuseUsernameOnCloud } from '../users.js';
+import { refuseUsernameOnCloud } from '../users.js';
 import { requireText } from '../wire.js';
 import { ISSUE_COLLECTION_PATH, MAX_PAGE_SIZE } from './paths.js';
 import type { AddWorklogInput, AssignIssueInput } from './write-types.js';
+export { resolveDataCenterAssignee } from '../datacenter/issues.js';
 
 // ---------------------------------------------------------------------------
 // 11. Paths and input normalization
@@ -118,40 +119,6 @@ export function resolveAssignee(input: AssignIssueInput): string | null {
     });
   }
   return requireText(input.accountId ?? '', 'accountId');
-}
-
-/**
- * CC-22 on Jira Data Center (D111) — `username` and `unassign` are mutually
- * exclusive, one is required, and an `accountId` is refused first: Data Center
- * has none.
- */
-export function resolveDataCenterAssignee(input: AssignIssueInput): string | null {
-  refuseAccountIdOnDataCenter(input.accountId);
-  const unassign = input.unassign === true;
-  const named = input.username !== undefined && input.username.trim() !== '';
-  if (unassign && named) {
-    throw createJiraError({
-      kind: 'validation',
-      reason:
-        'username and unassign: true were both supplied, so the intended ' +
-        'assignee is ambiguous.',
-      remediation:
-        'Pass username to assign, or unassign: true to clear the assignee — ' +
-        'never both.',
-    });
-  }
-  if (unassign) return null;
-  if (!named) {
-    throw createJiraError({
-      kind: 'validation',
-      reason:
-        'An assignment on Jira Data Center needs either a username or unassign: true.',
-      remediation:
-        'Jira Data Center identifies users by username — the `name` its user ' +
-        'fields return.',
-    });
-  }
-  return requireText(input.username ?? '', 'username');
 }
 
 /** Exactly one of `timeSpentSeconds` / `timeSpent`, as TOOLS.md specifies. */
