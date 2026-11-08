@@ -164,7 +164,7 @@ server may list),
 use `JIRA_TOOL_PACKAGES=reader`, which is read-only, or list only the packages
 you need, for example `core,search,issues,issues-write`. Claude Code defers
 MCP tools behind tool search, so there `all` is fine. A test holds these
-figures (D510), so the table cannot go stale unnoticed.
+figures, so the table cannot go stale unnoticed (rationale: D510).
 
 ## Tools
 

@@ -83,7 +83,7 @@ export function taint<T>(source: string, content: T): Tainted<T> {
   }
   if (isTainted(content)) {
     throw new TypeError(
-      'taint(): content is already tainted — D15 allows exactly one envelope ' +
+      'taint(): content is already tainted — exactly one envelope is allowed ' +
         'per result, so wrap once at the boundary and never re-wrap',
     );
   }
@@ -108,7 +108,7 @@ export function renderTainted(value: unknown): string {
   if (!isTainted(value)) {
     throw new TypeError(
       'renderTainted(): refusing to render un-branded remote content — wrap it ' +
-        'with taint() first (CC-35)',
+        'with taint() first',
     );
   }
   const body = typeof value.content === 'string' ? value.content : String(value.content);

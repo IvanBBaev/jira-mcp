@@ -259,6 +259,12 @@ Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, 
   runs every read tool and fails when a new one has no test arguments. The
   multi-issue read and the bulk change-history read now retry on a 502, 503
   or 504 like any other read.
+- Startup errors, warnings, `doctor` lines and error remediations no longer
+  carry internal decision or corner-case reference numbers; the text around
+  them is unchanged. CONFIGURATION.md explains each behaviour in prose
+  and cites a decision only as a trailing "(rationale: Dnnn)", and the
+  `JIRA_JOURNAL_PATH` row now says what the journal really records: applied
+  writes only, metadata only, rotated at about 5 MB.
 - The MCP SDK floor is `^1.32.1` (was `^1.30.0`).
 - Documentation: install steps keep the API token out of every client config
   (`doctor --save`, then a user-scope `claude mcp add`, Claude Desktop, and

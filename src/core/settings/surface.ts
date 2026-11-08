@@ -52,7 +52,7 @@ export function readSurface(read: EnvReader, add: Add): SurfaceSettings {
       severity: 'warning',
       code: 'core_package_undeniable',
       message:
-        'JIRA_PACKAGES_DENY lists "core"; the core package is force-re-added (CC-29) because capabilities and doctor depend on it. Remove it from the deny list to silence this.',
+        'JIRA_PACKAGES_DENY lists "core"; the core package is force-re-added because capabilities and doctor depend on it. Remove it from the deny list to silence this.',
       field: 'JIRA_PACKAGES_DENY',
     });
   }

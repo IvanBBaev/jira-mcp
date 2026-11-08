@@ -56,7 +56,7 @@ export function readTransport(read: EnvReader, add: Add): TransportSettings {
     add({
       severity: 'error',
       code: 'http_token_missing',
-      message: `JIRA_TRANSPORT=http requires JIRA_HTTP_TOKEN; the HTTP transport fails closed without it (CC-30). ${TOKEN_HINT}`,
+      message: `JIRA_TRANSPORT=http requires JIRA_HTTP_TOKEN; the HTTP transport fails closed without it. ${TOKEN_HINT}`,
       field: 'JIRA_HTTP_TOKEN',
     });
   } else if (transport === 'http' && httpToken !== undefined) {
@@ -67,7 +67,7 @@ export function readTransport(read: EnvReader, add: Add): TransportSettings {
       add({
         severity: 'error',
         code: 'http_token_too_short',
-        message: `JIRA_HTTP_TOKEN is ${String(length)} characters; the http transport needs at least ${String(MIN_HTTP_TOKEN_LENGTH)} (D532). ${TOKEN_HINT}`,
+        message: `JIRA_HTTP_TOKEN is ${String(length)} characters; the http transport needs at least ${String(MIN_HTTP_TOKEN_LENGTH)}. ${TOKEN_HINT}`,
         field: 'JIRA_HTTP_TOKEN',
       });
     }
@@ -88,7 +88,7 @@ function readBind(read: EnvReader, add: Add, transport: TransportKind): string {
     add({
       severity: 'error',
       code: 'http_bind_invalid',
-      message: `JIRA_HTTP_BIND must be an IP address such as 127.0.0.1 or 0.0.0.0, not a hostname (D532); got ${JSON.stringify(raw)}.`,
+      message: `JIRA_HTTP_BIND must be an IP address such as 127.0.0.1 or 0.0.0.0, not a hostname; got ${JSON.stringify(raw)}.`,
       field: 'JIRA_HTTP_BIND',
     });
     return DEFAULT_HTTP_BIND;
@@ -97,7 +97,7 @@ function readBind(read: EnvReader, add: Add, transport: TransportKind): string {
     add({
       severity: 'warning',
       code: 'http_bind_not_loopback',
-      message: `JIRA_HTTP_BIND=${raw} listens beyond loopback: anything that can reach this address and holds the token can run every enabled tool against your Jira (D532). Meant for a container published as \`-p 127.0.0.1:<port>:<port>\` only; requests must still name 127.0.0.1 or localhost in Host.`,
+      message: `JIRA_HTTP_BIND=${raw} listens beyond loopback: anything that can reach this address and holds the token can run every enabled tool against your Jira. Meant for a container published as \`-p 127.0.0.1:<port>:<port>\` only; requests must still name 127.0.0.1 or localhost in Host.`,
       field: 'JIRA_HTTP_BIND',
     });
   }

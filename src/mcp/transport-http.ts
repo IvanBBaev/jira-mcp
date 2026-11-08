@@ -292,7 +292,7 @@ export async function connectHttpTransport(
       kind: 'config',
       reason:
         'JIRA_TRANSPORT=http requires JIRA_HTTP_TOKEN; the HTTP transport fails ' +
-        'closed without it (CC-30).',
+        'closed without it.',
       retryable: false,
       remediation:
         'Set a random bearer token in JIRA_HTTP_TOKEN or use the stdio transport.',
@@ -302,7 +302,7 @@ export async function connectHttpTransport(
   if ([...token].length < MIN_HTTP_TOKEN_LENGTH) {
     throw createJiraError({
       kind: 'config',
-      reason: `JIRA_HTTP_TOKEN is shorter than ${String(MIN_HTTP_TOKEN_LENGTH)} characters; the HTTP transport refuses it (D532).`,
+      reason: `JIRA_HTTP_TOKEN is shorter than ${String(MIN_HTTP_TOKEN_LENGTH)} characters; the HTTP transport refuses it.`,
       retryable: false,
       remediation: 'Generate one with `openssl rand -hex 32`.',
     });

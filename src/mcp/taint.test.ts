@@ -196,7 +196,7 @@ test('taint() refuses a non-string source with its own message', () => {
     message: 'taint(): source must be a non-empty string',
   });
   assert.throws(() => taint('jira_get_issue', taint('jira_get_issue', 'body')), {
-    message: /already tainted — D15 allows exactly one envelope per result/,
+    message: /already tainted — exactly one envelope is allowed per result/,
   });
   assert.throws(() => renderTainted({ content: 'raw' }), {
     message:

@@ -960,7 +960,7 @@ test('a missing JIRA_HTTP_TOKEN is refused with a config error, and nothing bind
       assert.ok(error instanceof JiraError);
       assert.equal(error.kind, 'config');
       assert.match(error.message, /JIRA_HTTP_TOKEN/);
-      assert.match(error.message, /CC-30/);
+      assert.match(error.message, /fails closed without it/);
       return true;
     },
   );

@@ -1172,7 +1172,7 @@ const PROBES: readonly Probe[] = [
               }
             : {
                 status: 'ok',
-                text: `Jira ${deployment}${suffix} — served by the unverified Data Center preview (D106)`,
+                text: `Jira ${deployment}${suffix} — served by the unverified Data Center preview`,
               },
         ];
       }
@@ -1409,7 +1409,7 @@ const PROBES: readonly Probe[] = [
                 status: 'warn',
                 text: `transport http (bound to ${bind}:${String(settings.httpPort)}, beyond loopback)`,
                 remediation:
-                  'Publish it to the host loopback only, e.g. `docker run -p 127.0.0.1:<port>:<port>` (D532).',
+                  'Publish it to the host loopback only, e.g. `docker run -p 127.0.0.1:<port>:<port>`.',
               },
       );
 

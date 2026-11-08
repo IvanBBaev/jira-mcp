@@ -2,7 +2,7 @@
 /**
  * docs-lint — mechanical enforcement of the rules docs/README.md states in prose.
  *
- * Eleven checks:
+ * Twelve checks:
  *   1. link      — every relative markdown link inside docs/** resolves, and a
  *                  `#anchor` names a heading that actually exists in the target.
  *   2. banner    — every spec doc carries a `> Status:` banner in its first lines,
@@ -34,6 +34,9 @@
  *  11. platform-watch — the "Last reviewed" date of docs/JIRA-API.md
  *                  §Platform watch is not older than the newest release in
  *                  CHANGELOG.md (JIR-10).
+ *  12. tracker-id — user docs carry no `CC-nn` and cite a `Dnnn` only in a
+ *                  trailing "(rationale: Dnnn)" group; string literals in the
+ *                  shipped source under `src/` carry neither (DOC-17).
  *
  * Run standalone (`node scripts/docs-lint.mjs`) or as part of `npm run check`.
  * Exit code 1 with one `path:line: message` per finding; 0 when clean.
@@ -45,6 +48,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import {
   loadPackages,
   loadReleased,
@@ -983,6 +987,111 @@ function checkPlatformWatch() {
   }
 }
 
+// --- check 12: no tracker ids in user docs or runtime strings ---------------
+
+/**
+ * `Dnnn` and `CC-nn` are contributor vocabulary: they mean something to a
+ * person with DECISIONS.md and CORNER-CASES.md open and nothing to a user
+ * reading a startup error or a configuration table (DOC-17). The rule: user
+ * docs and runtime strings explain the behaviour. A user doc may still point at
+ * the decision behind a behaviour, but only as a trailing
+ * `(rationale: Dnnn[, Dnnn…])` group (or `(…; rationale: Dnnn)` after a
+ * pointer), at most one per line; a `CC-nn` id never
+ * appears in them. Runtime strings — every string or template literal in the
+ * shipped source, which is everything under `src/` except tests and the test
+ * harness — carry no id at all.
+ *
+ * Comments are not strings, so the source half parses each file with the
+ * TypeScript scanner instead of matching text: an id in a comment is a
+ * contributor note and stays.
+ */
+const USER_DOCS = [
+  'README.md',
+  'docs/CONFIGURATION.md',
+  'docs/TROUBLESHOOTING.md',
+  'docs/ADMIN-OVERVIEW.md',
+  'docs/index.html',
+];
+const TRACKER_ID_RE = /\b(?:D\d{2,}|CC-\d+)\b/g;
+const RATIONALE_RE = /\brationale:\s+D\d{2,}(?:,\s*D\d{2,})*\)/g;
+const RUNTIME_ROOT = join(REPO_ROOT, 'src');
+const RUNTIME_SKIP_DIRS = new Set(['testing']);
+
+function checkUserDocTrackerIds() {
+  for (const name of USER_DOCS) {
+    const file = join(REPO_ROOT, name);
+    if (!existsSync(file)) continue;
+    const text = readFileSync(file, 'utf8');
+    const allowed = [];
+    const perLine = new Map();
+    for (const m of text.matchAll(RATIONALE_RE)) {
+      allowed.push([m.index, m.index + m[0].length]);
+      const line = lineOf(text, m.index);
+      perLine.set(line, (perLine.get(line) ?? 0) + 1);
+    }
+    for (const [line, count] of perLine) {
+      if (count > 1) {
+        report(file, line, `${count} rationale groups on one line — merge them into one`);
+      }
+    }
+    for (const m of text.matchAll(TRACKER_ID_RE)) {
+      const inRationale = allowed.some(([s, e]) => m.index >= s && m.index < e);
+      if (inRationale) continue;
+      report(
+        file,
+        lineOf(text, m.index),
+        m[0].startsWith('CC-')
+          ? `${m[0]} in a user doc — describe the behaviour instead`
+          : `${m[0]} in a user doc outside a "(rationale: ${m[0]})" group`,
+      );
+    }
+  }
+}
+
+function listRuntimeSource(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!RUNTIME_SKIP_DIRS.has(entry.name)) out.push(...listRuntimeSource(full));
+    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+      out.push(full);
+    }
+  }
+  return out.sort();
+}
+
+function checkRuntimeStringTrackerIds() {
+  for (const file of listRuntimeSource(RUNTIME_ROOT)) {
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(file, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const visit = (node) => {
+      if (
+        ts.isStringLiteral(node) ||
+        ts.isNoSubstitutionTemplateLiteral(node) ||
+        ts.isTemplateHead(node) ||
+        ts.isTemplateMiddle(node) ||
+        ts.isTemplateTail(node)
+      ) {
+        for (const m of node.text.matchAll(TRACKER_ID_RE)) {
+          const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+          report(
+            file,
+            line + 1,
+            `${m[0]} in a runtime string — describe the behaviour; ids belong in comments`,
+          );
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+}
+
 // --- run -----------------------------------------------------------------
 
 if (!existsSync(DOCS_DIR)) {
@@ -1007,6 +1116,8 @@ checkResolvedStatus(files);
 checkSourceCornerCaseRefs(cornerCases);
 checkCapabilities();
 checkPlatformWatch();
+checkUserDocTrackerIds();
+checkRuntimeStringTrackerIds();
 await checkCounts();
 
 const parked = OWNED_LITERALS.filter((r) => r.enabled === false).length;

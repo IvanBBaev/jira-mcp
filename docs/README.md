@@ -5,23 +5,49 @@
 
 ## Index
 
+Grouped by who reads it. User and admin documents explain behaviour in plain
+prose and cite a decision at most as a trailing "(rationale: Dnnn)"; the
+contributor documents carry the `Dnnn` / `CC-nn` ids (docs-lint check 12).
+
+### Use it — people running the server
+
 | Document | What it is |
 |---|---|
+| [../README.md](../README.md) | Install, register with a client, first call, the tool tables. |
+| [CONFIGURATION.md](CONFIGURATION.md) | Every env var with its default. |
+| [AUTH.md](AUTH.md) | Credential lifecycle, storage, profiles, the doctor ops contract. |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | One entry per error kind: symptom, cause, fix, the `doctor` check that covers it. |
+| [TOOLS.md](TOOLS.md) | Tool catalog: packages, names, inputs, defaults, hint/error vocabularies. |
+
+### Approve it — Jira admins and security reviewers
+
+| Document | What it is |
+|---|---|
+| [ADMIN-OVERVIEW.md](ADMIN-OVERVIEW.md) | One page: controls, identity, scopes, egress, data at rest, audit, revocation. |
+| [THREAT-MODEL.md](THREAT-MODEL.md) | Security posture; **normative write-gate contract**; data handling. |
+| [../SECURITY.md](../SECURITY.md) | How to report a vulnerability. |
+
+### Build it — contributors
+
+| Document | What it is |
+|---|---|
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Setup, the `check` gate, commit and review conventions. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Layering, DI boundary, MCP style, envelopes, seams — read first. |
 | [JIRA-API.md](JIRA-API.md) | Jira Cloud wire constraints: endpoints, pagination, ADF, retry policy. |
-| [TOOLS.md](TOOLS.md) | Tool catalog: packages, names, inputs, defaults, hint/error vocabularies. |
-| [CONFIGURATION.md](CONFIGURATION.md) | Every env var with its default. |
-| [ADMIN-OVERVIEW.md](ADMIN-OVERVIEW.md) | One page for Jira admins and security reviewers: controls, identity, scopes, egress, data at rest, audit, revocation. |
-| [AUTH.md](AUTH.md) | Credential lifecycle, storage, profiles, the doctor ops contract. |
-| [THREAT-MODEL.md](THREAT-MODEL.md) | Security posture; **normative write-gate contract**; data handling. |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | Log-event contract, never-log list, correlation ids, startup, call budget. |
 | [TESTING.md](TESTING.md) | Test tiers, fixtures, network fence, coverage, the `check` gate. |
 | [CORNER-CASES.md](CORNER-CASES.md) | Enumerated behaviours as stable `CC-nn` ids, referenced by test names and the plan. |
 | [DECISIONS.md](DECISIONS.md) | Decision ledger: accepted D-rows, open owner O-rows, gates A–C. |
-| [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | Phases 0–16 and waves 1–6 with exits and milestones; the release-progress block. |
-| [WORK-PACKAGES.md](WORK-PACKAGES.md) | Parallel-execution overlay: agent-sized work packages in waves. |
-| [ROADMAP.md](ROADMAP.md) | Post-1.0 work: v1.5 / v2 items, the v3 and role-panel work packages (`V3-nn` rows), the priority order, parked items. |
+
+### Run the project — maintainers
+
+| Document | What it is |
+|---|---|
+| [ROADMAP.md](ROADMAP.md) | Post-1.0 work: the v1.5 and v2 history, the v3 and role-panel work packages (`V3-nn` rows), the priority order, parked items. |
+| [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | Phases 0–16 and v2 waves 1–6 with exits and milestones; the release-progress block. |
+| [WORK-PACKAGES.md](WORK-PACKAGES.md) | Historical: the parallel-execution overlay that cut the v1 phases into agent-sized work packages. |
 | [RELEASING.md](RELEASING.md) | Publish-day runbook: the owner actions no file can perform. |
+| [../CHANGELOG.md](../CHANGELOG.md) | Release notes. |
 | [reviews/](reviews/) | Dated review and analysis reports (panels, baselines, state and backlog analyses), immutable once published. |
 
 ## Fact ownership (single-writer rule)

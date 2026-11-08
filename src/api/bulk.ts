@@ -111,7 +111,7 @@ const PRIORITY_REMEDIATION =
 
 const ASSIGNEE_REMEDIATION =
   'Pass the accountId of the new assignee, or null to unassign — never a ' +
-  'username or an email address (CC-19).';
+  'username or an email address.';
 
 const VERSION_REMEDIATION =
   'Pass numeric version ids from the project version list, never version names.';

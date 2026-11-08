@@ -5,7 +5,7 @@
 > kind**: what you see, the likely cause, what to do, and which `doctor` check
 > covers it. The kinds themselves are defined in
 > [TOOLS.md §Error-kind catalog](TOOLS.md#error-kind-catalog); `doctor`,
-> startup errors and `--help` link here through `src/core/doc-url.ts` (D545).
+> startup errors and `--help` link here through `src/core/doc-url.ts` (rationale: D545).
 
 Start with `npx -y jira-mcp-ai doctor` in the same environment the client uses:
 it checks the configuration, probes the site and prints one finding per problem.
