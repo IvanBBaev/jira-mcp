@@ -1175,7 +1175,10 @@ describe('loadSettings — Data Center (D106)', () => {
     const finding = report.findings[0];
     assert.equal(finding?.severity, 'error');
     assert.equal(finding?.field, 'JIRA_DEPLOYMENT');
-    assert.match(finding?.message ?? '', /Phase 13/);
+    assert.match(
+      finding?.message ?? '',
+      /CONFIGURATION\.md#jira-data-center-phase-13--unverified-preview/,
+    );
     // Everything the adapter will need is still parsed and resolved, so doctor
     // can check a prepared configuration.
     assert.equal(settings.deployment, 'datacenter');

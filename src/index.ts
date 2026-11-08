@@ -94,7 +94,15 @@ export const EXIT_FAILURE = 1;
  */
 export const EXIT_CONFIG = 2;
 
-const USAGE = `jira-mcp-ai — MCP server for Jira Cloud.
+/**
+ * The `--help` text. Its links come from `core/doc-url.ts` (D545), which this
+ * file may only load lazily (see the header), so the caller passes them in.
+ */
+export function usage(links: {
+  readonly configuration: string;
+  readonly troubleshooting: string;
+}): string {
+  return `jira-mcp-ai — MCP server for Jira Cloud.
 
 Usage:
   jira-mcp-ai                 Serve the MCP protocol over stdio (default).
@@ -108,7 +116,19 @@ With no subcommand the process serves MCP: JSON-RPC on stdin/stdout by default
 (register it as a stdio MCP server), or a loopback Streamable HTTP listener
 with JIRA_TRANSPORT=http; diagnostics always go to stderr.
 Configuration is environment-only (JIRA_*) — see
-https://github.com/IvanBBaev/jira-mcp/blob/main/docs/CONFIGURATION.md`;
+${links.configuration}
+When something fails, see
+${links.troubleshooting}`;
+}
+
+/** {@link usage} with the tag-pinned links of the installed version. */
+async function loadUsage(): Promise<string> {
+  const { docUrl } = await import('./core/doc-url.js');
+  return usage({
+    configuration: docUrl('CONFIGURATION.md', ''),
+    troubleshooting: docUrl('TROUBLESHOOTING.md', ''),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -162,7 +182,7 @@ export async function main(options: MainOptions = {}): Promise<void> {
     if (command === 'help' || command === '--help' || command === '-h') {
       // Stdout, like doctor's report: these paths never connect a transport, so
       // there is no JSON-RPC framing to corrupt.
-      process.stdout.write(`${USAGE}\n`);
+      process.stdout.write(`${await loadUsage()}\n`);
       return;
     }
     if (command === '--version' || command === '-v') {
@@ -171,7 +191,9 @@ export async function main(options: MainOptions = {}): Promise<void> {
       return;
     }
     if (command !== undefined) {
-      process.stderr.write(`jira-mcp-ai: unknown command "${command}".\n\n${USAGE}\n`);
+      process.stderr.write(
+        `jira-mcp-ai: unknown command "${command}".\n\n${await loadUsage()}\n`,
+      );
       process.exitCode = EXIT_CONFIG;
       return;
     }

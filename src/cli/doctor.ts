@@ -43,6 +43,7 @@ import {
   writeFileAtomic,
   type EnvLockOptions,
 } from '../core/env-lock.js';
+import { docUrl } from '../core/doc-url.js';
 import { toJiraError } from '../core/errors.js';
 import { gatewayHost, isCanonicalCloudHost, resolveHost } from '../core/host.js';
 import {
@@ -571,7 +572,8 @@ function identityFailure(ctx: DoctorContext, error: unknown): DoctorFinding {
       'The gateway accepts scoped API tokens only. A classic (unscoped) token goes direct: unset JIRA_CLOUD_ID. Otherwise check that JIRA_CLOUD_ID is the cloudId of JIRA_SITE.';
   } else if (kind === 'permission') {
     hint =
-      'A scoped API token carries only the scopes picked when it was created; /myself needs read:jira-user. Create a token with the scopes the enabled tools need (AUTH.md §Scoped API tokens).';
+      'A scoped API token carries only the scopes picked when it was created; /myself needs read:jira-user. Create a token with the scopes the enabled tools need: ' +
+      docUrl('AUTH.md', 'scoped-api-tokens');
   }
   if (hint === undefined) return finding;
   return {
@@ -1514,7 +1516,7 @@ function networkFindings(ctx: DoctorContext): readonly DoctorFinding[] {
         status: 'warn',
         text: `${proxyVar}=${shown} is set, but Node's fetch ignores it; requests go direct`,
         remediation: ctx.envProxySupported
-          ? 'Set NODE_USE_ENV_PROXY=1 in the server env (docs/CONFIGURATION.md §"Proxy and custom CA").'
+          ? `Set NODE_USE_ENV_PROXY=1 in the server env (${docUrl('CONFIGURATION.md', 'proxy-and-custom-ca')}).`
           : 'Upgrade to Node 22.21+ or 24.5+ and set NODE_USE_ENV_PROXY=1.',
       });
     }

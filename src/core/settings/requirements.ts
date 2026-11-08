@@ -3,6 +3,7 @@
 // nothing here reads the environment.
 
 import { effectiveCredentials } from '../credentials.js';
+import { docUrl } from '../doc-url.js';
 import { DEFAULT_OAUTH_GRANT } from './defaults.js';
 import type { AuthSettings } from './auth.js';
 import { profileVar, type ProfileSection } from './profiles.js';
@@ -219,8 +220,7 @@ export function checkDeployment(auth: AuthSettings, add: Add): void {
     add({
       severity: 'error',
       code: 'deployment_unavailable',
-      message:
-        'JIRA_DEPLOYMENT=datacenter selects a Data Center adapter (reads and a first set of writes) that has never been run against a Data Center instance (IMPLEMENTATION-PLAN.md Phase 13, D106). It starts only with JIRA_DATACENTER_PREVIEW=true, which says you accept that. Unset JIRA_DEPLOYMENT to use Jira Cloud.',
+      message: `JIRA_DEPLOYMENT=datacenter selects a Data Center adapter (reads and a first set of writes) that has never been run against a Data Center instance (D106; ${docUrl('CONFIGURATION.md', 'jira-data-center-phase-13--unverified-preview')}). It starts only with JIRA_DATACENTER_PREVIEW=true, which says you accept that. Unset JIRA_DEPLOYMENT to use Jira Cloud.`,
       field: 'JIRA_DEPLOYMENT',
     });
   } else if (deployment === 'datacenter') {

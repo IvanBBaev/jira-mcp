@@ -33,6 +33,7 @@ import {
   type EnvFileOptions,
 } from '../core/config.js';
 import { effectiveCredentials } from '../core/credentials.js';
+import { docUrl } from '../core/doc-url.js';
 import { createJiraError, toJiraError } from '../core/errors.js';
 import { createAuthRequest, type AuthRequestFn } from '../core/http.js';
 import { createLogger, NO_CID } from '../core/log.js';
@@ -73,8 +74,7 @@ export const EXIT_FLOW_FAILED = 1;
 export const EXIT_CONFIG = 2;
 
 /** What to do about an error-severity settings finding. */
-const CONFIG_REMEDIATION =
-  'Fix the JIRA_* variables listed above (names and defaults: docs/CONFIGURATION.md), then run this again. `jira-mcp-ai doctor` prints the same report.';
+const CONFIG_REMEDIATION = `Fix the JIRA_* variables listed above (names and defaults: ${docUrl('CONFIGURATION.md', '')}), then run this again. \`jira-mcp-ai doctor\` prints the same report.`;
 
 /**
  * Error findings about a value the OAuth commands never read, or check
