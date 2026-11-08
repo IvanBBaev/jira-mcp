@@ -110,7 +110,8 @@ core  ←  api  ←  mcp  ←  tools
   (the listed-schema trim), `output-schema.ts` (the envelope `outputSchema`,
   D131), `client-hints.ts` (Claude Code `_meta` keys, D130), `resources.ts` (the reference catalogue and the
   server instructions, D124) and `prompts.ts` (`definePrompt` and the prompt
-  catalogue, D125). No Jira endpoint knowledge: the one document the
+  catalogue, D125) and `sdk.ts` (the one module that imports the MCP SDK,
+  D539 — everything else takes the SDK surface from it; lint-enforced). No Jira endpoint knowledge: the one document the
   mcp ring serves is the write-mode contract it owns.
 - **`src/tools/`** — one file per package, each exporting a `PackageSpec`
   (`searchPackage`, `issuesPackage`, …) that `index.ts` composes into
@@ -184,7 +185,11 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
   `McpServer.registerTool`, whose private zod validation throws `McpError` and
   loses the `structuredContent` envelope.
 - JSON Schema derived from zod via the SDK's own `toJsonSchemaCompat`
-  (`@modelcontextprotocol/sdk/server/zod-json-schema-compat.js`).
+  (`@modelcontextprotocol/sdk/server/zod-json-schema-compat.js`, re-exported by
+  `mcp/sdk.ts`).
+- SDK seam (D539): only `src/mcp/sdk.ts` imports `@modelcontextprotocol/sdk`;
+  the Streamable HTTP transport class is loaded lazily through it, so stdio
+  never loads the HTTP stack. Tests may use the SDK client side directly.
 - Capabilities: `{ tools: { listChanged: true }, resources: {}, prompts: {}, completions: {}, logging: {} }`
   (docs-lint check 10 compares this line with `src/mcp/server.ts`); completions are
   pure, drawn from the manifest (D154, `mcp/completions.ts`);

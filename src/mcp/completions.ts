@@ -20,8 +20,8 @@
 // Layering: `core ← api ← mcp ← tools`. SDK types only.
 // ---------------------------------------------------------------------------
 
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
-import type { CompleteRequest, CompleteResult } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError } from './sdk.js';
+import type { CompleteRequest, CompleteResult } from './sdk.js';
 
 import { EXPORT_TEMPLATE } from './exports.js';
 import { TOOL_REFERENCE_TEMPLATE } from './resources.js';

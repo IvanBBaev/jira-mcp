@@ -26,12 +26,8 @@
 // Layering: `core ← api ← mcp ← tools`. SDK types only; no zod.
 // ---------------------------------------------------------------------------
 
-import { McpError } from '@modelcontextprotocol/sdk/types.js';
-import type {
-  ReadResourceResult,
-  Resource,
-  ResourceTemplate,
-} from '@modelcontextprotocol/sdk/types.js';
+import { McpError } from './sdk.js';
+import type { ReadResourceResult, Resource, ResourceTemplate } from './sdk.js';
 
 import type { JiraDeployment, WriteMode } from '../core/types.js';
 import type { ExclusionReason } from './registry.js';

@@ -17,7 +17,7 @@
 // envelope field later is not a breaking change for a validating client.
 // ---------------------------------------------------------------------------
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from './sdk.js';
 
 /**
  * JSON Schema of {@link ToolResult}, as `tools/list` advertises it: the member

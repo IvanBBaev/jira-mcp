@@ -30,8 +30,8 @@
 import type { MediaStore } from '../api/attachments.js';
 import type { JiraApi } from '../api/port.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
+  Server,
   CompleteRequestSchema,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
@@ -40,8 +40,8 @@ import {
   ReadResourceRequestSchema,
   CallToolRequestSchema,
   ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+} from './sdk.js';
+import type { CallToolResult, Tool } from './sdk.js';
 
 import type {
   Clock,

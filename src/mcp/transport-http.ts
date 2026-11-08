@@ -46,8 +46,8 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { loadStreamableHttpTransport } from './sdk.js';
+import type { AuthInfo, StreamableHTTPServerTransport } from './sdk.js';
 
 import { DEFAULT_HTTP_BIND, MIN_HTTP_TOKEN_LENGTH } from '../core/settings.js';
 import { createJiraError } from '../core/errors.js';
@@ -308,6 +308,10 @@ export async function connectHttpTransport(
     });
   }
 
+  // The SDK's HTTP transport class is loaded here, not at module load, so the
+  // stdio path never pulls it in (D539, `mcp/sdk.ts`).
+  const HttpServerTransport = await loadStreamableHttpTransport();
+
   const port = settings.httpPort;
   const bindHost = settings.httpBind ?? DEFAULT_HTTP_BIND;
   const expectedToken = Buffer.from(token, 'utf8');
@@ -464,7 +468,7 @@ export async function connectHttpTransport(
       };
       const entry: SessionEntry = {
         server: createServer(),
-        transport: new StreamableHTTPServerTransport({
+        transport: new HttpServerTransport({
           sessionIdGenerator: () => randomUUID(),
           enableJsonResponse: true,
           onsessioninitialized: (sessionId: string): void => {

@@ -23,8 +23,8 @@
 // Layering: `core ← api ← mcp ← tools`. SDK types only.
 // ---------------------------------------------------------------------------
 
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
-import type { GetPromptResult, Prompt } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError } from './sdk.js';
+import type { GetPromptResult, Prompt } from './sdk.js';
 
 import { createJiraError } from '../core/errors.js';
 import type { JiraError } from '../core/types.js';

@@ -22,11 +22,8 @@
 // the Rng, never from the wall clock or `Math.random`.
 // ---------------------------------------------------------------------------
 
-import type {
-  CallToolResult,
-  ReadResourceResult,
-} from '@modelcontextprotocol/sdk/types.js';
-import { McpError } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ReadResourceResult } from './sdk.js';
+import { McpError } from './sdk.js';
 
 import type { MediaStore } from '../api/attachments.js';
 import { createJiraError } from '../core/errors.js';

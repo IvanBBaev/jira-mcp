@@ -19,9 +19,8 @@
 // Layering: `core ← api ← mcp ← tools`. SDK only; no zod.
 // ---------------------------------------------------------------------------
 
-import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
-import type { AnyObjectSchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { toJsonSchemaCompat } from './sdk.js';
+import type { AnyObjectSchema, Tool } from './sdk.js';
 
 import type { AnyToolSpec } from './types.js';
 

@@ -26,8 +26,8 @@
 
 import type { Readable, Writable } from 'node:stream';
 
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { StdioServerTransport } from './sdk.js';
+import type { Transport } from './sdk.js';
 
 import type { Logger, Settings, TransportKind } from '../core/types.js';
 

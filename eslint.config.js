@@ -75,6 +75,21 @@ const noDirectJiraError = {
     '`new JiraError(...)` skips redaction and the remediation composition.',
 };
 
+// D539 / V3-61: `src/mcp/sdk.ts` is the one production module that imports the
+// MCP SDK, so an SDK major or the 3.0 wire (V3-28) changes a single file. Static
+// imports and re-exports are banned by `@typescript-eslint/no-restricted-imports`
+// (a separate rule name, so it does not clobber the layer patterns that live on
+// the base `no-restricted-imports`); a dynamic `import()` by this selector. Tests
+// are exempt: they drive the server through the SDK's client side.
+const SDK_SPECIFIERS = ['@modelcontextprotocol/sdk', '@modelcontextprotocol/sdk/*'];
+const SDK_SEAM_MESSAGE =
+  'Import the MCP SDK through src/mcp/sdk.ts (D539): it is the one module that ' +
+  'touches @modelcontextprotocol/sdk. Re-export the symbol there if it is missing.';
+const noSdkDynamicImport = {
+  selector: 'ImportExpression[source.value=/^@modelcontextprotocol\\u002Fsdk/]',
+  message: SDK_SEAM_MESSAGE,
+};
+
 export default tseslint.config(
   {
     ignores: [
@@ -165,14 +180,42 @@ export default tseslint.config(
     },
   },
 
-  // AbortSignal.timeout, the zod quarantine and the JiraError choke point. All
-  // three live on no-restricted-syntax, so they are configured together; the
-  // exempt files are excluded here and re-listed below with only the entries
+  // AbortSignal.timeout, the zod quarantine, the JiraError choke point and the
+  // SDK seam's dynamic-import half. All four live on no-restricted-syntax, so
+  // they are configured together; the exempt files are excluded here and re-listed below with only the entries
   // that still apply to them (splitting the rule across an `off` override
   // would drop the other bans with it).
   {
     files: ['src/**/*.ts'],
-    ignores: ['src/mcp/define.ts', 'src/core/errors.ts', 'src/**/*.test.ts'],
+    ignores: [
+      'src/mcp/define.ts',
+      'src/mcp/sdk.ts',
+      'src/core/errors.ts',
+      'src/**/*.test.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        noAbortSignalTimeout,
+        noZodRuntimeImport,
+        noDirectJiraError,
+        noSdkDynamicImport,
+      ],
+    },
+  },
+  {
+    files: ['src/mcp/define.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        noAbortSignalTimeout,
+        noDirectJiraError,
+        noSdkDynamicImport,
+      ],
+    },
+  },
+  {
+    files: ['src/mcp/sdk.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -183,9 +226,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/mcp/define.ts'],
+    files: ['src/**/*.ts'],
+    ignores: ['src/mcp/sdk.ts', 'src/**/*.test.ts'],
     rules: {
-      'no-restricted-syntax': ['error', noAbortSignalTimeout, noDirectJiraError],
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        { patterns: [{ group: SDK_SPECIFIERS, message: SDK_SEAM_MESSAGE }] },
+      ],
     },
   },
   {
