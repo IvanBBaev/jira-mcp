@@ -196,7 +196,9 @@ stderr so a dependency's stray `console.log` cannot reach the protocol stream
   never loads the HTTP stack. Tests may use the SDK client side directly.
 - Capabilities: `{ tools: { listChanged: true }, resources: {}, prompts: {}, completions: {}, logging: {} }`
   (docs-lint check 10 compares this line with `src/mcp/server.ts`); completions are
-  pure, drawn from the manifest (D154, `mcp/completions.ts`);
+  drawn from the manifest (D154, `mcp/completions.ts`), plus project keys from
+  one TTL-cached read per process, or the `JIRA_PROJECTS` keys (D551,
+  `mcp/project-keys.ts`);
   `instructions` come from `serverInstructions` (TOOLS.md §Reference resources);
   prompts are listed only when every tool they name is registered (TOOLS.md
   §Prompts).

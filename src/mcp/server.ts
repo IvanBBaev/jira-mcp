@@ -37,7 +37,7 @@
 // ---------------------------------------------------------------------------
 
 import type { MediaStore } from '../api/attachments.js';
-import type { JiraApi } from '../api/port.js';
+import { CLOUD_API, type JiraApi } from '../api/port.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   Server,
@@ -71,6 +71,7 @@ import {
   readExport,
 } from './exports.js';
 import { createCompleter, type Completer } from './completions.js';
+import { createProjectKeySource } from './project-keys.js';
 import { createProgressSink } from './progress.js';
 import { createPromptCatalogue, type PromptCatalogue } from './prompts.js';
 import { createRegistry, selectPackages, type PackageSelection } from './registry.js';
@@ -270,7 +271,10 @@ export interface ServerFactory {
   build(session?: SessionDeps): ConnectableServer;
 }
 
-/** Compute the process-scoped half (D540). Pure: no I/O, no SDK object. */
+/**
+ * Compute the process-scoped half (D540). No I/O here and no SDK object; the
+ * completer's project-key cache (D551) reads Jira only when a completion asks.
+ */
 function buildSurface(deps: BuildServerDeps): ServerSurface {
   const { settings } = deps;
   const selection = selectPackages(deps.packages, settings, deps.api);
@@ -290,11 +294,21 @@ function buildSurface(deps: BuildServerDeps): ServerSurface {
     registeredTools: new Set(tools.map((tool) => tool.name)),
     excludedTools: selection.excludedTools,
   });
-  // Argument completion (D154), stage A: closed sets from the manifest only —
-  // no Jira call ever runs on behalf of a keystroke.
+  // Argument completion: stage A, closed sets from the manifest (D154); stage
+  // B, project keys from one TTL-cached read shared by every session (D551) —
+  // at most one Jira read per TTL, never one per keystroke.
+  const projectKeys = createProjectKeySource({
+    api: deps.api ?? CLOUD_API,
+    jira: deps.jira,
+    clock: deps.clock,
+    ttlS: settings.metaCacheTtlS,
+    maxPages: settings.maxPages,
+    scope: settings.projects,
+  });
   const completer = createCompleter({
     prompts: prompts.prompts,
     toolNames: deps.packages.flatMap((pkg) => pkg.tools.map((tool) => tool.name)),
+    projectKeys,
   });
 
   // Schemas are converted ONCE per process, not per session or per

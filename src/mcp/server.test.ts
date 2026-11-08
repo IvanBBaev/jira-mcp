@@ -1606,3 +1606,62 @@ test('[CC-5105] a plan owner is the request session and credential; stdio is loc
     credential: 'local',
   });
 });
+
+const BOARD_PROMPT = definePrompt({
+  name: 'jira_fx_board',
+  title: 'Board',
+  description: 'Pings, then looks a project up.',
+  requires: ['jira_fx_ping', 'jira_fx_lookup'],
+  arguments: [
+    {
+      name: 'project',
+      description: 'Project key.',
+      required: true,
+      pattern: /[A-Z][A-Z0-9_]{1,49}/,
+      maxLength: 50,
+      completion: 'projectKey',
+    },
+  ],
+  example: { project: 'ABC' },
+  render: (args) => `Call jira_fx_ping, then jira_fx_lookup in ${args['project'] ?? ''}.`,
+});
+
+test('[CC-5399] sessions of one factory complete project keys from one shared read', async () => {
+  const { deps, jira } = makeHarness();
+  jira.on(
+    'GET /rest/api/3/project/search',
+    jiraOk({
+      startAt: 0,
+      maxResults: 50,
+      total: 2,
+      isLast: true,
+      values: [
+        { id: '1', key: 'ABC', name: 'Alpha' },
+        { id: '2', key: 'XYZ', name: 'Omega' },
+      ],
+    }),
+  );
+  const packages = MANIFEST.map((pkg, index) =>
+    index === 0 ? { ...pkg, prompts: [BOARD_PROMPT] } : pkg,
+  );
+  const factory = createServerFactory({ ...deps, packages });
+  const first = await connectTo(factory.build({ recentWrites: createRecentWrites() }));
+  const second = await connectTo(factory.build({ recentWrites: createRecentWrites() }));
+  try {
+    const ref = { type: 'ref/prompt', name: 'jira_fx_board' } as const;
+    const a = await first.client.complete({
+      ref,
+      argument: { name: 'project', value: 'a' },
+    });
+    const b = await second.client.complete({
+      ref,
+      argument: { name: 'project', value: '' },
+    });
+    assert.deepEqual(a.completion.values, ['ABC']);
+    assert.deepEqual(b.completion.values, ['ABC', 'XYZ']);
+    assert.deepEqual(jira.routes(), ['GET /rest/api/3/project/search']);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+});

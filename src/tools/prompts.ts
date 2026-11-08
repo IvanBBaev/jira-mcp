@@ -53,6 +53,7 @@ const PROJECT_ARG: PromptArgumentSpec = {
   required: true,
   pattern: PROJECT_KEY_PATTERN,
   maxLength: 50,
+  completion: 'projectKey',
 };
 
 /** `render` only ever sees validated arguments; a required one is present. */

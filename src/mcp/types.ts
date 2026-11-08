@@ -508,6 +508,12 @@ export interface PromptArgumentSpec {
    * must pass the argument's own pattern and length, checked at import time.
    */
   readonly values?: readonly string[];
+  /**
+   * A live source `completion/complete` offers values from (D551): today only
+   * `projectKey`, the project keys the default profile can see, cached for
+   * `JIRA_META_CACHE_TTL_S`. Exclusive with `values`.
+   */
+  readonly completion?: 'projectKey';
 }
 
 /**

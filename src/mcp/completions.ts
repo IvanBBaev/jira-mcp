@@ -1,17 +1,22 @@
 // ---------------------------------------------------------------------------
-// Completions — `completion/complete`, stage A (D154).
+// Completions — `completion/complete`, stage A (D154) and stage B (D551).
 //
-// Pure: every value comes from the manifest the server was built with, never
-// from Jira. Two sources:
+// Stage A is pure: values from the manifest the server was built with. Two
+// sources:
 //
 //   - a prompt argument that declares `values` (a closed set, such as the
 //     bulk-preflight action) completes to those values;
 //   - the `jira://reference/tools/{name}` template completes `name` to every
 //     tool in the manifest — registered here or not, as the template reads.
 //
-// Everything else completes to nothing: a free-text argument, a key, and the
-// export template (whose names exist only on disk). Live values — projects,
-// versions, sprints — are stage B and are not built.
+// Stage B adds one live source: a prompt argument marked `completion:
+// 'projectKey'` completes to the project keys from `mcp/project-keys.ts` — a
+// TTL-cached read, the scope's keys under `JIRA_PROJECTS`, nothing when it is
+// off or the read fails. Only keys the argument itself accepts are offered.
+//
+// Everything else completes to nothing: a free-text argument, an issue key,
+// and the export template (whose names exist only on disk). Versions and
+// sprints are not built.
 //
 // Matching is a case-insensitive prefix match; results are sorted for the
 // reference template, kept in declared order for a prompt argument, and capped
@@ -24,6 +29,8 @@ import { ErrorCode, McpError } from './sdk.js';
 import type { CompleteRequest, CompleteResult } from './sdk.js';
 
 import { EXPORT_TEMPLATE } from './exports.js';
+import type { ProjectKeySource } from './project-keys.js';
+import { acceptsArgumentValue } from './prompts.js';
 import { TOOL_REFERENCE_TEMPLATE } from './resources.js';
 import type { PromptSpec } from './types.js';
 
@@ -35,11 +42,13 @@ export interface CompletionDeps {
   readonly prompts: readonly PromptSpec[];
   /** Every tool name in the manifest, which the reference template accepts. */
   readonly toolNames: readonly string[];
+  /** Stage B project keys (D551). Absent = a `projectKey` argument completes to nothing. */
+  readonly projectKeys?: ProjectKeySource | undefined;
 }
 
 export interface Completer {
-  /** `completion/complete`. Throws `McpError` (InvalidParams) for an unknown ref. */
-  complete(params: CompleteRequest['params']): CompleteResult;
+  /** `completion/complete`. Rejects with `McpError` (InvalidParams) for an unknown ref. */
+  complete(params: CompleteRequest['params']): Promise<CompleteResult>;
 }
 
 function invalidParams(message: string): McpError {
@@ -70,7 +79,7 @@ export function createCompleter(deps: CompletionDeps): Completer {
   const toolNames = [...new Set(deps.toolNames)].sort();
 
   return {
-    complete(params) {
+    async complete(params) {
       const { ref, argument } = params;
       if (ref.type === 'ref/prompt') {
         const prompt = prompts.get(ref.name);
@@ -86,9 +95,16 @@ export function createCompleter(deps: CompletionDeps): Completer {
         if (arg === undefined) {
           throw invalidParams(`Prompt "${ref.name}" has no argument "${argument.name}".`);
         }
-        return arg.values === undefined
-          ? NOTHING
-          : completionOf(arg.values, argument.value);
+        if (arg.values !== undefined) return completionOf(arg.values, argument.value);
+        if (arg.completion !== 'projectKey' || deps.projectKeys === undefined) {
+          return NOTHING;
+        }
+        // The source never rejects: a failed read is already an empty list.
+        const keys = await deps.projectKeys();
+        return completionOf(
+          keys.filter((key) => acceptsArgumentValue(arg, key)),
+          argument.value,
+        );
       }
       if (ref.uri === TOOL_REFERENCE_TEMPLATE) {
         return argument.name === 'name'

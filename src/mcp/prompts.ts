@@ -92,6 +92,9 @@ function checkArgument(prompt: string, arg: PromptArgumentSpec): void {
     );
   }
   const { values } = arg;
+  if (values !== undefined && arg.completion !== undefined) {
+    throw specError(prompt, `argument "${arg.name}" declares both values and completion`);
+  }
   if (values === undefined) return;
   if (values.length === 0)
     throw specError(prompt, `argument "${arg.name}" has empty values`);
@@ -99,12 +102,7 @@ function checkArgument(prompt: string, arg: PromptArgumentSpec): void {
     throw specError(prompt, `argument "${arg.name}" lists a value twice`);
   }
   for (const value of values) {
-    const fits =
-      value !== '' &&
-      value.length <= max &&
-      !CONTROL_CHARACTER.test(value) &&
-      (arg.pattern === undefined || wholeMatch(arg.pattern, value));
-    if (!fits) {
+    if (!acceptsArgumentValue(arg, value)) {
       throw specError(
         prompt,
         `argument "${arg.name}" offers the value "${value}", which it would refuse`,
@@ -164,6 +162,20 @@ export function validatePromptArguments(
     out[arg.name] = value;
   }
   return out;
+}
+
+/**
+ * Would `prompts/get` take `value` for `arg`? Non-empty, within the length cap,
+ * free of control characters and matching the whole pattern. A completion
+ * offers only such values (D154, D551).
+ */
+export function acceptsArgumentValue(arg: PromptArgumentSpec, value: string): boolean {
+  return (
+    value !== '' &&
+    value.length <= (arg.maxLength ?? PROMPT_ARG_MAX) &&
+    !CONTROL_CHARACTER.test(value) &&
+    (arg.pattern === undefined || wholeMatch(arg.pattern, value))
+  );
 }
 
 /** True when `pattern` matches all of `value`, whatever anchors it was written with. */

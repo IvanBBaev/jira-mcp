@@ -738,9 +738,15 @@ Rules:
   refuses values the argument itself would refuse (CC-1569). Today only
   `jira_bulk_preflight`'s `action` declares them. The same request completes
   `name` in `jira://reference/tools/{name}` to every manifest tool name
-  (CC-1571). Every other argument, issue keys and export names included,
-  completes to nothing; nothing is fetched from Jira. At most 100 values,
-  with `total` and `hasMore` (CC-1572).
+  (CC-1571). A `project` argument (`completion: 'projectKey'`, D551)
+  completes to the project keys the default profile sees: one
+  `GET /project/search` read, cached for `JIRA_META_CACHE_TTL_S` and shared
+  by every session, so a warm completion sends nothing; under `JIRA_PROJECTS`
+  the scope's keys, with no read; a failed read completes to nothing and the
+  next read waits 30 s; `JIRA_META_CACHE_TTL_S=0` turns it off
+  (CC-5390–5399). Every other argument, issue keys and export names included,
+  completes to nothing. At most 100 values, with `total` and `hasMore`
+  (CC-1572).
 
 ## Jira Data Center (preview)
 

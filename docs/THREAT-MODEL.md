@@ -447,9 +447,14 @@ attachment *metadata* keeps working — it needs no directory (CC-58).
 - **Prompts, completions and export resources add no new channel.** Prompt
   texts (D125, D153) are server-authored; their arguments are pinned by
   pattern or length, and every text carries the read-only rule, so no prompt
-  asks for a write. Completions (D154) answer only from closed sets the server
-  already holds — declared prompt values and manifest tool names — and make no
-  Jira call. The `jira://exports/{name}` resource reads only names matching
+  asks for a write. Completions (D154) answer from closed sets the server
+  already holds — declared prompt values and manifest tool names — and, for a
+  `project` argument, from project keys (D551): one read of the projects the
+  default profile already sees, cached per process for
+  `JIRA_META_CACHE_TTL_S`, or the `JIRA_PROJECTS` keys with no call at all.
+  The credential is process-wide, so the cache shares nothing a session could
+  not read itself; only keys the argument's pattern accepts are offered. The
+  `jira://exports/{name}` resource reads only names matching
   the export pattern, so it is never a general reader over the export directory;
   what it returns is the same redacted rows the export wrote, and they are as
   untrusted as the read that produced them.

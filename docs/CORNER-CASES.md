@@ -3690,6 +3690,27 @@ Prompts (D125):
 - **CC-1573** — over the protocol the server advertises `completions: {}`,
   answers both kinds of ref, and refuses an unknown prompt.
 
+## Project-key completions (D551, V3-66, 2026-11-08)
+
+- **CC-5390** — one project read fills the cache; completions inside the TTL
+  send nothing. The read runs on the default profile with its own 5 s budget.
+- **CC-5391** — once the TTL has passed, the next completion reads again.
+- **CC-5392** — completions arriving while a read runs share that read.
+- **CC-5393** — a failed read completes to nothing and is not cached; for
+  30 s no new read goes out, then one does and its success is cached.
+- **CC-5394** — a read that throws before its first await does not leave the
+  source stuck on a settled in-flight promise.
+- **CC-5395** — under `JIRA_PROJECTS` the scope's keys, de-duplicated and
+  sorted, are offered and Jira is never called.
+- **CC-5396** — `JIRA_META_CACHE_TTL_S=0` without a scope turns project-key
+  completions off.
+- **CC-5397** — a `completion: 'projectKey'` argument completes by
+  case-insensitive prefix to the keys its own pattern and length accept;
+  another argument of the same prompt does not touch the source.
+- **CC-5398** — with no source, a `projectKey` argument completes to nothing.
+- **CC-5399** — two sessions of one factory complete project keys from one
+  shared read over the protocol.
+
 ## Sprint summary (D155, 2026-10-28)
 
 - **CC-1574** — a started sprint: counts and estimate sums by status category
