@@ -77,6 +77,22 @@ pattern and the wire-level error table live in JIRA-API.md, which owns them.
 
 ### Registering the app — and the tension in doing so
 
+Registration, step by step:
+
+1. In the Atlassian developer console, create an **OAuth 2.0 integration**.
+2. Under **Authorization**, enter the callback URL
+   `http://127.0.0.1:<JIRA_OAUTH_REDIRECT_PORT>/callback` and check that it
+   saves (§The redirect URI is the unverified part of this feature).
+3. Under **Permissions**, add the Jira API and the Jira Software scopes from
+   §Scopes — the default list, or a preset from §Scope presets.
+4. Copy the client id and secret into `JIRA_OAUTH_CLIENT_ID` and
+   `JIRA_OAUTH_CLIENT_SECRET` in the user env file, never a project file
+   (§Credential storage), and set `JIRA_AUTH_MODE=oauth`.
+5. Run `jira-mcp-ai login`, consent in the browser, then run
+   `jira-mcp-ai doctor` to confirm the grant and the site.
+
+Why it works this way:
+
 You register your own 3LO app in the Atlassian developer console and supply its
 credentials as `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET`
 (CONFIGURATION.md). Both are required in oauth mode; a missing secret is a
@@ -144,31 +160,110 @@ console. Two facts shape the default list:
 
 So any working deployment needs a *mixed* set. The exact default string is in
 CONFIGURATION.md (`JIRA_OAUTH_SCOPES`), which owns it; what follows is the
-mapping from this server's tool families onto it. `offline_access` is not a Jira
+mapping from this server's tools onto it. `offline_access` is not a Jira
 scope and appears on neither scopes page — it is documented only in the 3LO and
 refresh-token prose, and without it no refresh token is issued and the session
 dies at the first expiry.
 
-| Tool family | Scope | In the default set |
-|---|---|---|
-| Platform reads — search, count, issue, comments, transitions list, changelog, worklogs, attachment metadata and download, projects, components and versions lists, field/status/link-type/createmeta metadata, saved filters | `read:jira-work` | yes |
-| Platform writes — create/update issue, transition, add/edit comment, assign, add worklog, link issues, upload attachment, watchers, votes | `write:jira-work` | yes |
-| Irreversible tier — delete issue, delete comment, delete worklog | `write:jira-work` (its published description names issue deletion) | yes |
-| Users — user search, `myself` | `read:jira-user` | yes |
-| Project configuration — create/update component, create/update version, project roles | `manage:jira-project` ("Project settings, versions, components") | yes |
-| Irreversible tier (D102) — delete component, delete version | `manage:jira-project` (inferred — its published description names versions and components but does not say *delete*; the finding-1 rule applies: already in the default, and a 403 here is a documentation bug to file, not a configuration problem) | yes |
-| Irreversible tier (D102) — delete sprint | `delete:sprint:jira-software` | **no** — see finding 5 |
-| Boards — board listing | `read:board-scope:jira-software` | yes |
-| Sprint reads — sprint listing, sprint issues | `read:sprint:jira-software`, plus `read:issue:jira-software` for the issue payloads. The sprint-issue and backlog reads moved to `/rest/software/1.0` (D500); Atlassian lists the same scopes for the new routes (`read:sprint:jira-software` / `read:board-scope:jira-software`, `read:issue-details:jira`, `read:jql:jira`), so no scope changes | yes |
-| Sprint writes — move issue to sprint, start sprint, close sprint | `write:sprint:jira-software` ("Update sprints, move issues to sprints, and update the order of sprints") | yes |
-| Ranking and estimation on agile endpoints | `write:issue:jira-software` ("Rank and estimate issues") | yes |
-| Create sprint | see finding 2 | — |
-| Move issue to backlog | `write:board-scope:jira-software` (inferred — see finding 1) | yes |
-| `jira_capabilities` | none — it makes no HTTP call | n/a |
+The map is per tool, and a test binds it to the tool manifest: a tool added,
+renamed or removed without a row here fails the build, and so does a scope that
+is neither in the default list nor one of the documented exclusions
+(`src/tools/scope-map.test.ts`). Write tools list the read scope of their
+family too, because a plan reads the current state before it describes the
+write, and `JIRA_PROJECTS` resolves each issue to its project with a platform
+read.
 
-Verified against the full tool inventory (TOOLS.md owns the counts). The mapping
-is exhaustive over the surface; five things came out of doing it, and they are
-findings, not formatting:
+<!-- scope-map -->
+| Package | Tool | Scopes | Note |
+|---|---|---|---|
+| `core` | `jira_capabilities` | none | no HTTP call |
+| `core` | `jira_get_myself` | `read:jira-user` |  |
+| `core` | `jira_get_my_permissions` | `read:jira-work` |  |
+| `search` | `jira_search` | `read:jira-work` |  |
+| `search` | `jira_count` | `read:jira-work` |  |
+| `search` | `jira_parse_jql` | `read:jira-work` |  |
+| `search` | `jira_list_filters` | `read:jira-work` | finding 4 |
+| `search` | `jira_get_filter` | `read:jira-work` | finding 4 |
+| `search` | `jira_create_filter` | `read:jira-work`, `write:jira-work` | finding 4 |
+| `search` | `jira_update_filter` | `read:jira-work`, `write:jira-work` | finding 4 |
+| `issues` | `jira_get_issue` | `read:jira-work` |  |
+| `issues` | `jira_get_comments` | `read:jira-work` |  |
+| `issues` | `jira_get_transitions` | `read:jira-work` |  |
+| `issues` | `jira_get_changelog` | `read:jira-work` |  |
+| `issues` | `jira_get_changelogs_bulk` | `read:jira-work` |  |
+| `issues` | `jira_get_worklogs` | `read:jira-work` |  |
+| `issues` | `jira_get_remote_links` | `read:jira-work` |  |
+| `issues` | `jira_get_bulk_status` | `read:jira-work` |  |
+| `issues-write` | `jira_create_issue` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_update_issue` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_transition_issue` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_add_comment` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_update_comment` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_assign_issue` | `read:jira-work`, `write:jira-work` |  |
+| `issues-write` | `jira_add_worklog` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_update_worklog` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_link_issues` | `read:jira-work`, `write:jira-work` | `read:jira-user` as well with `resolveMentions: true` |
+| `issues-write` | `jira_add_remote_link` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_delete_issue` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_delete_comment` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_delete_worklog` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_unlink_issues` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_delete_attachment` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_delete_remote_link` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_delete_component` | `read:jira-work`, `manage:jira-project` | inferred: the scope names components, not deletes |
+| `issues-delete` | `jira_delete_version` | `read:jira-work`, `manage:jira-project` | inferred: the scope names versions, not deletes |
+| `issues-delete` | `jira_delete_sprint` | `read:sprint:jira-software`, `delete:sprint:jira-software` | not in the default (finding 5) |
+| `issues-delete` | `jira_bulk_delete_issues` | `read:jira-work`, `write:jira-work` |  |
+| `issues-delete` | `jira_bulk_edit_issues` | `read:jira-work`, `write:jira-work` |  |
+| `attachments` | `jira_list_attachments` | `read:jira-work` |  |
+| `attachments` | `jira_download_attachment` | `read:jira-work` | the media hop carries no credential |
+| `attachments` | `jira_upload_attachment` | `read:jira-work`, `write:jira-work` |  |
+| `collab` | `jira_list_watchers` | `read:jira-work` |  |
+| `collab` | `jira_add_watcher` | `read:jira-work`, `write:jira-work` | finding 4 |
+| `collab` | `jira_remove_watcher` | `read:jira-work`, `write:jira-work` | finding 4 |
+| `collab` | `jira_add_vote` | `read:jira-work`, `write:jira-work` | finding 4 |
+| `collab` | `jira_remove_vote` | `read:jira-work`, `write:jira-work` | finding 4 |
+| `collab` | `jira_list_components` | `read:jira-work` |  |
+| `collab` | `jira_create_component` | `read:jira-work`, `manage:jira-project` |  |
+| `collab` | `jira_update_component` | `read:jira-work`, `manage:jira-project` |  |
+| `collab` | `jira_list_versions` | `read:jira-work` |  |
+| `collab` | `jira_create_version` | `read:jira-work`, `manage:jira-project` |  |
+| `collab` | `jira_update_version` | `read:jira-work`, `manage:jira-project` |  |
+| `collab` | `jira_list_project_roles` | `manage:jira-project` | a read that needs the project-settings scope, and Administer Projects in Jira |
+| `meta` | `jira_list_projects` | `read:jira-work` |  |
+| `meta` | `jira_get_project` | `read:jira-work` |  |
+| `meta` | `jira_list_fields` | `read:jira-work` | finding 4 |
+| `meta` | `jira_get_create_meta` | `read:jira-work` | finding 4 |
+| `meta` | `jira_list_statuses` | `read:jira-work` | finding 4 |
+| `meta` | `jira_list_link_types` | `read:jira-work` |  |
+| `meta` | `jira_list_priorities` | `read:jira-work` |  |
+| `meta` | `jira_list_resolutions` | `read:jira-work` |  |
+| `meta` | `jira_list_issue_types` | `read:jira-work` |  |
+| `meta` | `jira_list_labels` | `read:jira-work` |  |
+| `meta` | `jira_get_timetracking_config` | `read:jira-work` |  |
+| `users` | `jira_search_users` | `read:jira-user` |  |
+| `agile` | `jira_list_boards` | `read:board-scope:jira-software` |  |
+| `agile` | `jira_get_board_config` | `read:board-scope:jira-software` |  |
+| `agile` | `jira_list_sprints` | `read:board-scope:jira-software`, `read:sprint:jira-software` |  |
+| `agile` | `jira_get_sprint_issues` | `read:sprint:jira-software`, `read:issue:jira-software` | moved to the software API root (D500); Atlassian lists the same Software scopes there |
+| `agile` | `jira_get_backlog` | `read:board-scope:jira-software`, `read:issue:jira-software` | moved to the software API root (D500); Atlassian lists the same Software scopes there |
+| `agile` | `jira_move_to_sprint` | `read:sprint:jira-software`, `write:sprint:jira-software` |  |
+| `agile` | `jira_move_to_backlog` | `read:board-scope:jira-software`, `write:board-scope:jira-software` | inferred (finding 1) |
+| `agile` | `jira_create_sprint` | `read:sprint:jira-software`, `write:sprint:jira-software` | unconfirmed (finding 2) |
+| `agile` | `jira_start_sprint` | `read:sprint:jira-software`, `write:sprint:jira-software` |  |
+| `agile` | `jira_close_sprint` | `read:sprint:jira-software`, `write:sprint:jira-software` |  |
+| `agile` | `jira_update_sprint` | `read:sprint:jira-software`, `write:sprint:jira-software` |  |
+| `agile` | `jira_rank_issues` | `read:issue:jira-software`, `write:issue:jira-software` |  |
+| `agile` | `jira_set_estimate` | `read:issue:jira-software`, `write:issue:jira-software` |  |
+| `agile` | `jira_sprint_summary` | `read:jira-work`, `read:board-scope:jira-software`, `read:sprint:jira-software`, `read:issue:jira-software` | also reads fields and changelogs |
+| `portfolio` | `jira_portfolio_analyze` | `read:jira-work`, `read:board-scope:jira-software` |  |
+| `portfolio` | `jira_portfolio_report` | `read:jira-work`, `read:board-scope:jira-software` |  |
+<!-- /scope-map -->
+
+The mapping is checked against the manifest, not against Atlassian: Atlassian
+publishes no complete scope-to-endpoint map, so the rows marked *inferred* or
+*unconfirmed* are this project's reading of the scope descriptions. Five things
+came out of building it, and they are findings, not formatting:
 
 1. **An inferred scope.** `jira_move_to_backlog` posts to the Agile backlog
    endpoint, and no scope in Atlassian's published Jira Software list obviously
@@ -229,6 +324,56 @@ Two rules that catch people out:
 - **Changing scopes forces re-consent.** Users who previously consented must
   consent again when an app's scopes change, so editing `JIRA_OAUTH_SCOPES`
   after a successful login means running `jira-mcp-ai login` again.
+
+### Scope presets
+
+Two narrower lists for operators who do not want the default's breadth. Each is
+a value for `JIRA_OAUTH_SCOPES` (run `login` again after changing it); for a
+scoped API token, pick the same scopes without `offline_access`, which is an
+OAuth-only scope. The same test checks each preset against the map above: it
+must cover what it promises, hold no scope that no covered tool uses, and the
+"not covered" lists below must be exactly the tools it leaves out.
+
+**Reader** — pair it with `JIRA_TOOL_PACKAGES=reader`. No `write:`, `manage:` or
+`delete:` scope at all, so even a misconfigured write gate cannot reach Jira.
+
+<!-- scope-preset:reader -->
+```text
+read:jira-work,read:jira-user,read:board-scope:jira-software,read:sprint:jira-software,read:issue:jira-software,offline_access
+```
+<!-- /scope-preset -->
+
+Every read tool works under it except <!-- tools:not-reader -->`jira_list_project_roles`<!-- /tools -->,
+which needs the project-settings scope.
+
+**Core writes** — everyday issue and sprint work: create, edit, transition,
+comment, worklogs, links, attachments, watchers, votes, filters, sprint moves,
+ranking and estimates. It leaves out project configuration
+(`manage:jira-project`), sprint deletion and the surplus epic scopes.
+
+<!-- scope-preset:core-writes -->
+```text
+read:jira-work,write:jira-work,read:jira-user,read:board-scope:jira-software,write:board-scope:jira-software,read:sprint:jira-software,write:sprint:jira-software,read:issue:jira-software,write:issue:jira-software,offline_access
+```
+<!-- /scope-preset -->
+
+Not covered: <!-- tools:not-core-writes -->`jira_list_project_roles`,
+`jira_create_component`, `jira_update_component`, `jira_delete_component`,
+`jira_create_version`, `jira_update_version`, `jira_delete_version`,
+`jira_delete_sprint`<!-- /tools -->. To keep those tools off the surface too,
+add `JIRA_PACKAGES_DENY=collab` (it also removes watchers and votes) — a
+denied tool is not offered at all, which beats a 403 at call time.
+
+**What a scope cannot do.** `write:jira-work` is one classic scope for editing
+an issue and for deleting it, so no scope list separates the standard tier from
+the irreversible platform deletes (`jira_delete_issue`, the bulk writes and
+their kin). That separation is the write gate's job: `JIRA_ALLOW_IRREVERSIBLE`
+stays unset unless the operator wants the tier (THREAT-MODEL.md §Write safety).
+
+The default list itself covers every tool except
+<!-- tools:not-default -->`jira_delete_sprint`<!-- /tools --> (finding 5), and
+carries two scopes no tool uses, <!-- scopes:default-surplus -->`read:epic:jira-software`,
+`write:epic:jira-software`<!-- /scopes --> (finding 3).
 
 ### The login flow, end to end
 
@@ -436,6 +581,22 @@ Administration; `JIRA_OAUTH_SCOPES` is not sent with this grant. What a service
 account may do inside a project is still its project roles — a missing role is
 a 403 like any user's. Atlassian's service accounts are an Atlassian Guard
 feature; whether a given org has them is outside this server's view.
+
+Service-account scope checklist:
+
+1. Decide the surface first — `JIRA_TOOL_PACKAGES`, `JIRA_PACKAGES_DENY`,
+   `JIRA_PACKAGES_READONLY` — then grant only the scopes that surface needs.
+2. Read-only automation: grant the **Reader** preset (§Scope presets) without
+   `offline_access`; a service account has no refresh token to ask for.
+3. Writing automation: grant **Core writes** without `offline_access`. Add
+   `manage:jira-project` only if the account manages components or versions,
+   and `delete:sprint:jira-software` only if it deletes sprints.
+4. Give the account project roles only in the projects it works in, and set
+   `JIRA_PROJECTS` to the same list — Jira's permission scheme is the
+   boundary, `JIRA_PROJECTS` keeps the agent from wandering inside it.
+5. Leave out `manage:jira-configuration`; no tool uses it.
+6. Run `jira-mcp-ai doctor` to confirm the account reaches the site. A later
+   403 from a tool is a missing scope or a missing project role.
 
 ## Credential storage
 

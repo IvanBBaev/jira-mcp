@@ -209,6 +209,12 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
 - Issues you just wrote show up in the next sprint and backlog reads, as they
   already did in `jira_search`: their ids are sent as `reconcileIssues` for
   60 s after the write. `JIRA_RECONCILE_WRITES=false` turns this off.
+- `docs/ADMIN-OVERVIEW.md`, one page for a Jira admin or security reviewer:
+  what each control enforces, whose identity the server acts as, egress
+  hosts, data at rest, the audit trail and how to revoke access. `docs/AUTH.md`
+  now maps every tool to its OAuth scopes, with Reader and Core-writes scope
+  presets and a service-account checklist; a test keeps the map in step with
+  the tool list.
 
 Decisions: D122–D126, D128–D155, D300–D303, D400, D506, D507, D509, D520, D521, D535.
 

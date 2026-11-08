@@ -367,6 +367,8 @@ What leaves your machine, what is written to disk, what is redacted from logs,
 and what the write gate does and does not promise are documented in
 [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md). Credential storage and lifecycle
 are in [`docs/AUTH.md`](docs/AUTH.md).
+A Jira admin or security reviewer deciding whether to allow this server can
+start with the one-page [`docs/ADMIN-OVERVIEW.md`](docs/ADMIN-OVERVIEW.md).
 
 To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 

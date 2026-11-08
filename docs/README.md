@@ -11,6 +11,7 @@
 | [JIRA-API.md](JIRA-API.md) | Jira Cloud wire constraints: endpoints, pagination, ADF, retry policy. |
 | [TOOLS.md](TOOLS.md) | Tool catalog: packages, names, inputs, defaults, hint/error vocabularies. |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every env var with its default. |
+| [ADMIN-OVERVIEW.md](ADMIN-OVERVIEW.md) | One page for Jira admins and security reviewers: controls, identity, scopes, egress, data at rest, audit, revocation. |
 | [AUTH.md](AUTH.md) | Credential lifecycle, storage, profiles, the doctor ops contract. |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | Security posture; **normative write-gate contract**; data handling. |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | Log-event contract, never-log list, correlation ids, startup, call budget. |
