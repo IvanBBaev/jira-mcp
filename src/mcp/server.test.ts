@@ -83,6 +83,7 @@ const BASE_SETTINGS: Settings = {
   writeMode: 'plan',
   allowIrreversible: false,
   irreversibleConfirm: 'off',
+  writeConfirm: 'off',
   requestTimeoutMs: 30_000,
   callBudgetMs: 120_000,
   hostConcurrency: 4,
@@ -858,6 +859,64 @@ test('[CC-3013] JIRA_IRREVERSIBLE_CONFIRM=elicit asks the client and honours the
         } else {
           assert.equal(asked.length, 1);
           assert.match(error?.message ?? '', /not given/);
+        }
+      },
+      elicit,
+    );
+  }
+});
+
+test('[CC-5241] JIRA_WRITE_CONFIRM=elicit asks the client before a standard write', async () => {
+  for (const answer of ['accept', 'decline', 'unsupported'] as const) {
+    const { deps, jira } = makeHarness({
+      settings: { writeMode: 'apply', writeConfirm: 'elicit' },
+    });
+    jira.on('POST /rest/api/3/issue', jiraOk({ key: 'ABC-7' }));
+    const asked: ElicitRequest[] = [];
+    const elicit: Elicitor | undefined =
+      answer === 'unsupported'
+        ? undefined
+        : (request) => {
+            asked.push(request);
+            return answer === 'accept'
+              ? { action: 'accept', content: { confirm: true } }
+              : { action: 'decline' };
+          };
+
+    await withSession(
+      deps,
+      async ({ client }) => {
+        const args = { summary: 'Hello' };
+        const planId = await planIdFor(client, 'jira_fx_create', args);
+        const result = await callTool(client, 'jira_fx_create', {
+          ...args,
+          apply: true,
+          plan_id: planId,
+        });
+
+        if (answer === 'accept') {
+          assert.equal(envelopeOf(result).ok, true);
+          assert.equal(asked.length, 1);
+          const params = asked[0]?.params as unknown as {
+            message: string;
+            requestedSchema: { properties: { confirm: { description: string } } };
+          };
+          assert.match(params.message, /^Confirm WRITE jira_fx_create: POST \/issue\./);
+          assert.equal(
+            params.requestedSchema.properties.confirm.description,
+            'Tick to send this write to Jira.',
+          );
+          assert.deepEqual(jira.routes(), ['POST /rest/api/3/issue']);
+          return;
+        }
+
+        const error = envelopeOf(result).error;
+        assert.equal(error?.kind, 'write_gated');
+        assert.deepEqual(jira.routes(), []);
+        if (answer === 'unsupported') {
+          assert.match(error?.message ?? '', /JIRA_WRITE_CONFIRM/);
+        } else {
+          assert.equal(asked.length, 1);
         }
       },
       elicit,

@@ -20,7 +20,7 @@
 // `buildWritePipeline` is the only place a production gate is constructed:
 // `buildServer` builds the full pipeline, and a registry built without a server
 // builds the same pipeline with nothing but the gate (no confirmer, so an
-// irreversible apply under `elicit` fails closed — D303).
+// apply that must be confirmed fails closed — D303, D529).
 //
 // THE JOURNAL IS WIRED HERE, AND ONLY HERE. `RegistryDeps` and `WriteGateDeps`
 // have no `journal` seam, but the gate is injectable — so an executed write is
@@ -65,13 +65,17 @@ export type WriteLayerName = (typeof WRITE_PIPELINE_LAYERS)[number];
 export interface WritePipelineDeps {
   readonly settings: Pick<
     Settings,
-    'writeMode' | 'allowIrreversible' | 'irreversibleConfirm' | 'reconcileWrites'
+    | 'writeMode'
+    | 'allowIrreversible'
+    | 'irreversibleConfirm'
+    | 'writeConfirm'
+    | 'reconcileWrites'
   >;
   /** Redaction choke point applied to a captured body. */
   readonly redact: (value: unknown) => unknown;
   /** Replaces the `gate` layer; tests only. The outer layers still wrap it. */
   readonly gate?: WriteGate | undefined;
-  /** How an irreversible apply asks a human (D303). Absent = nobody to ask. */
+  /** How an apply asks a human (D303, D529). Absent = nobody to ask. */
   readonly confirmer?: IrreversibleConfirmer | undefined;
   /** The shared plan store (D513). Absent = the gate keeps its own. */
   readonly store?: PlanStore | undefined;
@@ -122,6 +126,7 @@ export function buildWritePipeline(deps: WritePipelineDeps): WritePipeline {
       writeMode: settings.writeMode,
       allowIrreversible: settings.allowIrreversible,
       irreversibleConfirm: settings.irreversibleConfirm,
+      writeConfirm: settings.writeConfirm,
       confirmer: deps.confirmer,
       store: deps.store,
       owner: deps.owner,

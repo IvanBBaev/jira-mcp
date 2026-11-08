@@ -416,8 +416,8 @@ export function createRegistry(
   const api = deps.api ?? CLOUD_API;
   const selection = deps.selection ?? selectPackages(manifest, settings, api);
   // A registry built without a server gets the same pipeline with the gate
-  // layer alone (D523). No confirmer: there is no client to ask, so under
-  // `elicit` an irreversible apply fails closed (D303).
+  // layer alone (D523). No confirmer: there is no client to ask, so an apply
+  // that must be confirmed fails closed (D303, D529).
   const gate =
     deps.gate ??
     buildWritePipeline({

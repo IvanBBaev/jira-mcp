@@ -21,6 +21,7 @@ Jira site and Atlassian's own auth hosts.
 | `JIRA_WRITE_MODE` | operator | `plan` (default): writes return a plan only. `apply` lets a call with `apply: true` execute | Not a human check: in `apply` mode the model can plan and apply on its own |
 | `JIRA_ALLOW_IRREVERSIBLE` | operator | Deletes, unlinks and the bulk writes run only when it is set; `apply` alone never covers them | Planning a delete still works, by design |
 | `JIRA_IRREVERSIBLE_CONFIRM=elicit` | operator | A human yes in the client UI for each irreversible apply; the model cannot answer it | A client that auto-accepts collapses it |
+| `JIRA_WRITE_CONFIRM=elicit` / `tainted` | operator | A human yes in the client UI for every applied write (`elicit`), or for every write after the session read Jira content (`tainted`) | A client that auto-accepts collapses it; `tainted` sees tool results only, not resources or prompts |
 | `JIRA_PROJECTS` | operator | Every call is confined to the listed project keys; out-of-scope calls are refused before anything is sent | Not a Jira permission boundary; global metadata and saved filters stay readable |
 | `JIRA_LOCK_PROFILE` (on by default) | operator | One process, one tenant: a per-call profile switch is refused | Anyone who starts the process can unlock it |
 | Jira permissions and project roles | Jira admin | The real boundary: the server acts as the credential's user | — |

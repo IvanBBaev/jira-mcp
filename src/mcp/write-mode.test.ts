@@ -1733,6 +1733,7 @@ test('[CC-3017] nobody is asked for a standard write, under off, or for a plan t
     writeMode: 'apply',
     allowIrreversible: true,
     irreversibleConfirm: 'off',
+    writeConfirm: 'off',
     confirmer: never,
   });
   const offId = planIdOf(
@@ -1782,11 +1783,11 @@ test('confirmSummary caps the before excerpt and omits it when nothing was noted
     noted: true,
     value: 'y'.repeat(5000),
   });
-  assert.ok(long.startsWith(`${bare} It destroys: "`));
-  assert.ok(long.endsWith('…'));
-  assert.ok(
-    long.length <= bare.length + ' It destroys: '.length + CONFIRM_BEFORE_MAX_CHARS + 1,
-  );
+  assert.ok(long.startsWith(`${bare}\n`), 'the server-authored line comes first');
+  const quoted = long.split('\n')[1] ?? '';
+  assert.ok(quoted.endsWith('…⟧'));
+  const fenced = quoted.slice(quoted.indexOf('⟦'));
+  assert.equal(fenced.match(/y/g)?.length, CONFIRM_BEFORE_MAX_CHARS);
 });
 
 test('CC-62: noteBeforeState is a no-op outside plan mode and keeps the first snapshot', async () => {

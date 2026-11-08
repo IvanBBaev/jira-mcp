@@ -28,6 +28,7 @@ const BASE_SETTINGS: Settings = {
   writeMode: 'plan',
   allowIrreversible: false,
   irreversibleConfirm: 'off',
+  writeConfirm: 'off',
   requestTimeoutMs: 30_000,
   callBudgetMs: 120_000,
   hostConcurrency: 4,

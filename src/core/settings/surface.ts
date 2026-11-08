@@ -3,14 +3,17 @@
 
 import {
   IRREVERSIBLE_CONFIRMS,
+  WRITE_CONFIRMS,
   WRITE_MODES,
   type IrreversibleConfirm,
   type Settings,
+  type WriteConfirm,
   type WriteMode,
 } from '../types.js';
 import {
   DEFAULT_IRREVERSIBLE_CONFIRM,
   DEFAULT_TOOL_PACKAGES,
+  DEFAULT_WRITE_CONFIRM,
   DEFAULT_WRITE_MODE,
 } from './defaults.js';
 import type { EnvReader } from './env-reader.js';
@@ -34,6 +37,7 @@ export type SurfaceSettings = Pick<
   | 'writeMode'
   | 'allowIrreversible'
   | 'irreversibleConfirm'
+  | 'writeConfirm'
   | 'reconcileWrites'
 >;
 
@@ -92,6 +96,13 @@ export function readSurface(read: EnvReader, add: Add): SurfaceSettings {
     IRREVERSIBLE_CONFIRMS,
     DEFAULT_IRREVERSIBLE_CONFIRM,
   );
+  // D529: a human confirmation for writes of every tier, not only the
+  // irreversible ones D303 covers. The two knobs add up; neither weakens the other.
+  const writeConfirm = read.enumOf<WriteConfirm>(
+    'JIRA_WRITE_CONFIRM',
+    WRITE_CONFIRMS,
+    DEFAULT_WRITE_CONFIRM,
+  );
   // D535: the read-after-write ring. On by default — it only ever adds ids
   // this session wrote to a read that would otherwise miss them.
   const reconcileWrites = read.bool('JIRA_RECONCILE_WRITES', true);
@@ -104,6 +115,7 @@ export function readSurface(read: EnvReader, add: Add): SurfaceSettings {
     writeMode,
     allowIrreversible,
     irreversibleConfirm,
+    writeConfirm,
     reconcileWrites,
   };
 }

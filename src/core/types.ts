@@ -260,6 +260,19 @@ export const IRREVERSIBLE_CONFIRMS = ['off', 'elicit'] as const;
  */
 export type IrreversibleConfirm = (typeof IRREVERSIBLE_CONFIRMS)[number];
 
+/** Value space of `JIRA_WRITE_CONFIRM` (default `off`, D529). */
+export const WRITE_CONFIRMS = ['off', 'elicit', 'tainted'] as const;
+
+/**
+ * Whether a write apply of ANY tier asks the human at the client: `elicit`
+ * asks on every apply; `tainted` asks once this session has received a result
+ * branded as tenant content (D15); `off` leaves standard writes to the plan_id
+ * and irreversible ones to `JIRA_IRREVERSIBLE_CONFIRM`.
+ *
+ * Produced by: `core/settings.ts`. Consumed by: `mcp/write-mode.ts`.
+ */
+export type WriteConfirm = (typeof WRITE_CONFIRMS)[number];
+
 /** Value space of `JIRA_TRANSPORT` (default `stdio`). */
 export const TRANSPORT_KINDS = ['stdio', 'http'] as const;
 
@@ -499,6 +512,11 @@ export interface Settings {
    * confirmation, asked through the client, to every irreversible apply.
    */
   readonly irreversibleConfirm: IrreversibleConfirm;
+  /**
+   * `JIRA_WRITE_CONFIRM` (default `off`, D529). `elicit` asks the human before
+   * every write apply, `tainted` once the session has read tenant content.
+   */
+  readonly writeConfirm: WriteConfirm;
   /**
    * `JIRA_RECONCILE_WRITES` (default true, D535). Whether the server remembers
    * the issue ids its applied writes touched (60 s, at most 50) and sends them

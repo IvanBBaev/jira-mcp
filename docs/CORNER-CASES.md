@@ -4431,3 +4431,37 @@ fake handles, and the download peak is measured on the byte sink.
   (`data.nextPageToken`, `data.nextStartAt`, `paging.nextStartAt`,
   `paging.nextPageToken`) and the flag that says more rows exist, where the
   tool has one (`data.partial`, `data.hasMore`, `paging.partial`).
+
+## Write confirmation for every write (V3-42, 2026-11-08)
+
+`JIRA_WRITE_CONFIRM` (D529) and the confirm-prompt layout (D530). Tests:
+`src/mcp/write-mode.confirm.test.ts`, `src/mcp/server.test.ts`,
+`src/core/settings.test.ts`.
+
+- **CC-5230** — under `elicit` a standard write asks once before Jira is
+  touched; the question's first line is the server's action line and the
+  body it sends follows on one fenced line.
+- **CC-5231** — under `elicit` an irreversible write is asked too, even with
+  `JIRA_IRREVERSIBLE_CONFIRM=off`, and the request says it is irreversible.
+- **CC-5232** — a declined write sends no unsafe request and spends the plan.
+- **CC-5233** — a client without form elicitation, or no confirmer at all, is
+  refused with `JIRA_WRITE_CONFIRM` named in message and remediation, the
+  plan kept, nobody asked.
+- **CC-5234** — under `off`, and with the knob absent, nobody is asked, even
+  after a tainted read.
+- **CC-5235** — under `tainted` nobody is asked until a gate result branded
+  `_untrusted` passed; an unbranded read does not taint; the latch then stays
+  for the session.
+- **CC-5236** — under `tainted` a plan carrying a before-state taints its own
+  apply.
+- **CC-5237** — under `tainted` a tainted session with no confirmer is refused,
+  never allowed.
+- **CC-5238** — `confirmQuote` flattens to one line, drops control, bidi and
+  line-separator characters and the fence marks, and clips at 200 characters.
+- **CC-5239** — quoted text can neither lead the prompt nor add a line: a
+  planted fake action line stays inside the fence.
+- **CC-5240** — `JIRA_WRITE_CONFIRM` parses `off|elicit|tainted`, defaults to
+  `off`, and any other value is a startup error.
+- **CC-5241** — end to end over MCP, a standard write under `elicit` asks the
+  client with a field labelled for a write, not a destruction, and honours
+  the answer.

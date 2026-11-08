@@ -24,6 +24,7 @@ import {
   DEFAULT_RETRY_ATTEMPTS,
   DEFAULT_TOOL_PACKAGES,
   DEFAULT_TRANSPORT,
+  DEFAULT_WRITE_CONFIRM,
   DEFAULT_WRITE_MODE,
   assertStartupOk,
   collectSecrets,
@@ -829,6 +830,20 @@ describe('loadSettings — numeric and enum knobs', () => {
     const { report, settings } = load({ ...VALID, JIRA_META_CACHE_TTL_S: '86401' });
     assert.deepEqual(codes(report), ['invalid_number']);
     assert.equal(settings.metaCacheTtlS, DEFAULT_META_CACHE_TTL_S);
+  });
+
+  it('[CC-5240] JIRA_WRITE_CONFIRM parses off|elicit|tainted and defaults to off', () => {
+    assert.equal(DEFAULT_WRITE_CONFIRM, 'off');
+    assert.equal(load({ ...VALID }).settings.writeConfirm, 'off');
+    for (const value of ['off', 'elicit', 'tainted'] as const) {
+      const { report, settings } = load({ ...VALID, JIRA_WRITE_CONFIRM: value });
+      assert.equal(report.ok, true);
+      assert.equal(settings.writeConfirm, value);
+    }
+    const { report, settings } = load({ ...VALID, JIRA_WRITE_CONFIRM: 'always' });
+    assert.equal(report.ok, false);
+    assert.deepEqual(codes(report), ['invalid_enum']);
+    assert.equal(settings.writeConfirm, 'off');
   });
 
   it('treats an invalid enum as an error finding', () => {

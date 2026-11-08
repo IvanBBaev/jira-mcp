@@ -120,6 +120,8 @@ apply additionally needs the operator opt-in \`JIRA_ALLOW_IRREVERSIBLE=true\`.
 If the server runs with \`JIRA_IRREVERSIBLE_CONFIRM=elicit\`, the apply also asks
 the human through the client and runs only on a yes; a declined confirmation
 spends the plan_id, so plan again rather than retrying.
+\`JIRA_WRITE_CONFIRM=elicit\` asks the same for every applied write, any tier;
+\`tainted\` asks once this session has returned content read from Jira.
 Prefer the reversible alternative each tool's description names (close instead
 of delete, archive instead of delete).
 

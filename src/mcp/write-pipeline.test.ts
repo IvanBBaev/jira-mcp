@@ -33,6 +33,7 @@ const SETTINGS: WritePipelineDeps['settings'] = {
   writeMode: 'apply',
   allowIrreversible: false,
   irreversibleConfirm: 'off',
+  writeConfirm: 'off',
 };
 
 const identity = (value: unknown): unknown => value;

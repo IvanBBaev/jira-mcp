@@ -272,8 +272,33 @@ the exposure is this document's.
   `JIRA_ALLOW_IRREVERSIBLE` and, opt-in, the elicitation confirm above. A
   deployment that reads text written by people outside the tenant (JSM
   portals, mail handlers) and needs a human on every write should stay in
-  `plan` mode, or rely on a client that asks before each tool call, until an
-  elicitation gate for every write exists (roadmap V3-42).
+  `plan` mode, set `JIRA_WRITE_CONFIRM=elicit` (below), or rely on a client
+  that asks before each tool call.
+- **Optional human confirmation per write (`JIRA_WRITE_CONFIRM`, D529, SEC-01).**
+  `elicit` puts the same form-elicitation question as D303 in front of every
+  applied write, any tier; `tainted` does so only once this session's gate
+  has returned a result branded `_untrusted` (a read of tenant text, a plan
+  carrying a before-state or diff, a receipt) and then stays on for the
+  session. The order is D303's: the availability check comes before the claim,
+  so a client that does not declare form elicitation is refused
+  (`write_confirm_unavailable`, naming `JIRA_WRITE_CONFIRM`) with the plan
+  kept, and a registry built without a server has no confirmer and fails
+  closed; a decline, cancel or undeliverable question spends the plan and
+  nothing unsafe is sent (CC-5230…CC-5237). It adds to
+  `JIRA_IRREVERSIBLE_CONFIRM` and never weakens it; default `off` keeps
+  today's behaviour. Residual risks: a client that auto-accepts collapses it;
+  the `tainted` latch sees only tool results passing the gate, not resources
+  or prompts a client reads, it is per session and in memory, and it is a
+  heuristic — `elicit` is the setting that does not depend on it.
+- **The confirm prompt never lets tenant text speak first (D530, SEC-06).**
+  An elicitation message is shown verbatim, so the question opens with a
+  server-authored action line — `Confirm WRITE|IRREVERSIBLE <tool>: <METHOD>
+  <path>.` plus the consequence — and anything that may carry tenant or model
+  text (the before-state, the body a write sends) follows on one labelled line,
+  flattened (control, format and line-separator characters removed), stripped
+  of the fence marks and clipped to 200 characters inside `⟦…⟧`. A planted
+  "safe, approve" or a fake second action line therefore stays visibly inside
+  the quote (CC-5238, CC-5239).
   `jira_add_remote_link` accepts any https URL, so a steered write can carry
   data out in the URL itself.
 

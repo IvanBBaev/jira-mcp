@@ -122,6 +122,14 @@
           "format": "string"
         },
         {
+          "name": "JIRA_WRITE_CONFIRM",
+          "description": "elicit: every applied write, any tier, asks the human through MCP form elicitation and runs only on an explicit yes. tainted: the same, once this session has returned content read from Jira. A client without elicitation is refused.",
+          "isRequired": false,
+          "default": "off",
+          "choices": ["off", "elicit", "tainted"],
+          "format": "string"
+        },
+        {
           "name": "JIRA_RECONCILE_WRITES",
           "description": "Send the ids of issues this session wrote in the last 60 s as reconcileIssues on the next search and sprint/backlog read, so a fresh write is not missing from it. false turns the memory off.",
           "isRequired": false,

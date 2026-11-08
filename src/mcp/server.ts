@@ -391,7 +391,9 @@ function buildSessionServer(
             confirm: {
               type: 'boolean',
               title: `Run ${request.tool}`,
-              description: 'Tick to destroy it. Jira cannot undo this.',
+              description: request.irreversible
+                ? 'Tick to destroy it. Jira cannot undo this.'
+                : 'Tick to send this write to Jira.',
             },
           },
           required: ['confirm'],

@@ -29,7 +29,8 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
   would overwrite, and an apply is refused if the issue changed since the
   plan. Irreversible applies can also ask you directly
   (`JIRA_IRREVERSIBLE_CONFIRM=elicit`), and Claude Code asks before every
-  irreversible tool runs.
+  irreversible tool runs. `JIRA_WRITE_CONFIRM=elicit|tainted` extends the ask
+  to every write, or to every write once the session has read Jira content.
 - **24 new tools**, among them multi-issue reads, bulk change history, sprint
   summary, backlog, ranking, estimates, saved filters, JQL validation, remote
   links and a cross-project portfolio analysis.
@@ -62,9 +63,9 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
    or `jira_count` (`sprint = <id>`) instead. A token passed in `startAt`
    still works.
 3. Nothing else is required. The new settings are optional:
-   `JIRA_PROJECTS`, `JIRA_IRREVERSIBLE_CONFIRM`, `JIRA_CLOUD_ID`,
-   `JIRA_OAUTH_GRANT`, `JIRA_REPORT_DIR` and `JIRA_EXPORT_DIR` are unset or
-   off by default; `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300
+   `JIRA_PROJECTS`, `JIRA_IRREVERSIBLE_CONFIRM`, `JIRA_WRITE_CONFIRM`,
+   `JIRA_CLOUD_ID`, `JIRA_OAUTH_GRANT`, `JIRA_REPORT_DIR` and
+   `JIRA_EXPORT_DIR` are unset or off by default; `JIRA_META_CACHE_TTL_S` sets the new metadata cache (300
    seconds by default, `0` turns it off); `JIRA_MEDIA_MAX_BYTES` caps each
    output directory at 1 GiB by default (`0` turns it off);
    `JIRA_HTTP_BIND` keeps the http transport on `127.0.0.1` by default;
@@ -150,6 +151,11 @@ date those reads fail on 1.0.0, so upgrade before or soon after it.
 - `JIRA_IRREVERSIBLE_CONFIRM=elicit`: every irreversible apply also asks you
   through the client's form elicitation and runs only on an explicit yes. A
   client without elicitation is refused, and the plan is kept.
+- `JIRA_WRITE_CONFIRM=elicit|tainted` (default `off`): `elicit` asks you the
+  same way before every applied write, any tier; `tainted` asks once the
+  session has returned content read from Jira. The question leads with the
+  server's own action line; text quoted from the write is fenced on one line.
+  A client without elicitation is refused, and the plan is kept.
 - Authentication: scoped API tokens through `JIRA_CLOUD_ID` (the `cloudId`
   from `https://<site>/_edge/tenant_info`), and Atlassian service accounts
   through `JIRA_AUTH_MODE=oauth` plus `JIRA_OAUTH_GRANT=client_credentials`

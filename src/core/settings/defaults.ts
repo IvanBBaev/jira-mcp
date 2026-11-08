@@ -11,6 +11,7 @@ import type {
   LogLevel,
   OAuthGrant,
   TransportKind,
+  WriteConfirm,
   WriteMode,
 } from '../types.js';
 
@@ -20,6 +21,8 @@ export const DEFAULT_TOOL_PACKAGES = 'all';
 export const DEFAULT_WRITE_MODE: WriteMode = 'plan';
 /** `JIRA_IRREVERSIBLE_CONFIRM` default: no elicitation, the D45 gate alone. */
 export const DEFAULT_IRREVERSIBLE_CONFIRM: IrreversibleConfirm = 'off';
+/** `JIRA_WRITE_CONFIRM` default: standard writes are not confirmed (D529). */
+export const DEFAULT_WRITE_CONFIRM: WriteConfirm = 'off';
 /** `JIRA_REQUEST_TIMEOUT_MS` default. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 /** `JIRA_CALL_BUDGET_MS` default. */
